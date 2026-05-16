@@ -1,23 +1,26 @@
 import { PrismaClient, UserRole, RoleLevel, EmploymentType, BehaviorType } from '@prisma/client';
+import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcryptjs';
 
-const prisma = new PrismaClient();
+const adapter = new PrismaPg({
+  connectionString: process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/orgos?schema=public',
+});
+const prisma = new PrismaClient({ adapter });
 
 async function main() {
   console.log('🌱 Seeding OrgOS database...');
 
-  // Super Admin
-  const superAdmin = await prisma.user.upsert({
-    where: { email_organization_id: { email: 'superadmin@orgos.io', organization_id: null as any } },
-    update: {},
-    create: {
-      name: 'Super Admin',
-      email: 'superadmin@orgos.io',
-      password_hash: await bcrypt.hash('Admin@123', 12),
-      role: UserRole.super_admin,
-      organization_id: null,
-    },
-  });
+  // Super Admin (organization_id is null so compound unique can't be used in upsert)
+  const superAdmin = await prisma.user.findFirst({ where: { email: 'superadmin@orgos.io', organization_id: null } })
+    ?? await prisma.user.create({
+      data: {
+        name: 'Super Admin',
+        email: 'superadmin@orgos.io',
+        password_hash: await bcrypt.hash('Admin@123', 12),
+        role: UserRole.super_admin,
+        organization_id: null,
+      },
+    });
   console.log('✅ Super Admin created:', superAdmin.email);
 
   // Organization
