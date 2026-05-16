@@ -96,18 +96,18 @@ export default function OrgDetailPage() {
     if (!orgId) return
     let cancelled = false
 
-    Promise.all([
+    Promise.allSettled([
       getOrganization(orgId),
       getUsers(orgId),
       getDepartments(orgId),
       getRoles(orgId),
     ])
-      .then(([orgData, usersData, depts, roles]) => {
+      .then(([orgResult, usersResult, deptsResult, rolesResult]) => {
         if (cancelled) return
-        setOrg(orgData)
-        setUsers(usersData)
-        setDeptCount(depts.length)
-        setRoleCount(roles.length)
+        if (orgResult.status === 'fulfilled') setOrg(orgResult.value)
+        if (usersResult.status === 'fulfilled') setUsers(usersResult.value)
+        if (deptsResult.status === 'fulfilled') setDeptCount(deptsResult.value.length)
+        if (rolesResult.status === 'fulfilled') setRoleCount(rolesResult.value.length)
       })
       .finally(() => { if (!cancelled) setIsLoading(false) })
 
