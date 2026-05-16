@@ -8,19 +8,10 @@ export class CultureService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findAll(orgId: string) {
-    const all = await this.prisma.cultureStandard.findMany({
+    return this.prisma.cultureStandard.findMany({
       where: { organization_id: orgId },
       orderBy: { created_at: 'asc' },
     });
-
-    return {
-      expected: all.filter(
-        (s) => s.type === BehaviorType.EXPECTED_BEHAVIOR,
-      ),
-      unacceptable: all.filter(
-        (s) => s.type === BehaviorType.UNACCEPTABLE_BEHAVIOR,
-      ),
-    };
   }
 
   async findOne(id: string, orgId: string) {
