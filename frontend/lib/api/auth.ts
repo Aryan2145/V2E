@@ -4,11 +4,11 @@ import type { AuthTokens, AuthUser, ApiResponse } from '../types';
 // ─── Auth API ──────────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string): Promise<AuthTokens> {
-  const { data } = await apiClient.post<ApiResponse<AuthTokens>>('/api/v1/auth/login', {
+  const { data } = await apiClient.post<AuthTokens>('/api/v1/auth/login', {
     email,
     password,
   });
-  return data.data;
+  return data;
 }
 
 export async function register(registerData: {

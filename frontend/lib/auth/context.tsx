@@ -76,7 +76,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     setUser(tokens.user);
-  }, []);
+    router.push('/dashboard');
+  }, [router]);
 
   const logout = useCallback(async () => {
     try {
