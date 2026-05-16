@@ -1,0 +1,98 @@
+'use client'
+
+import React, { useEffect, useRef } from 'react'
+import { X } from 'lucide-react'
+
+type ModalSize = 'sm' | 'md' | 'lg'
+
+interface ModalProps {
+  isOpen: boolean
+  onClose: () => void
+  title?: string
+  children: React.ReactNode
+  size?: ModalSize
+}
+
+const sizeClasses: Record<ModalSize, string> = {
+  sm: 'max-w-sm',
+  md: 'max-w-lg',
+  lg: 'max-w-2xl',
+}
+
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  size = 'md',
+}: ModalProps) {
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // Close on Escape key
+  useEffect(() => {
+    if (!isOpen) return
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKey)
+    return () => document.removeEventListener('keydown', handleKey)
+  }, [isOpen, onClose])
+
+  // Prevent body scroll when open
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = ''
+    }
+    return () => {
+      document.body.style.overflow = ''
+    }
+  }, [isOpen])
+
+  if (!isOpen) return null
+
+  const handleBackdropClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.target === e.currentTarget) onClose()
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={handleBackdropClick}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={title ? 'modal-title' : undefined}
+    >
+      <div
+        ref={panelRef}
+        className={[
+          'relative w-full bg-white rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0]',
+          sizeClasses[size],
+        ].join(' ')}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0]">
+          {title && (
+            <h2
+              id="modal-title"
+              className="text-[22px] font-semibold text-[#0F172A] leading-tight"
+            >
+              {title}
+            </h2>
+          )}
+          <button
+            onClick={onClose}
+            className="ml-auto flex items-center justify-center w-8 h-8 rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+            aria-label="Close modal"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="px-6 py-5">{children}</div>
+      </div>
+    </div>
+  )
+}

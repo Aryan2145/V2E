@@ -1,0 +1,178 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useAuth } from '@/lib/auth/context'
+import { getCultureStandards } from '@/lib/api/culture'
+import Button from '@/components/ui/Button'
+import type { CultureStandard } from '@/lib/types'
+import { CheckCircle2, XCircle, Pencil, Heart } from 'lucide-react'
+
+// ─── Standard card ─────────────────────────────────────────────────────────────
+
+function StandardCard({
+  standard,
+  type,
+}: {
+  standard: CultureStandard
+  type: 'expected' | 'unacceptable'
+}) {
+  const isExpected = type === 'expected'
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 flex gap-3">
+      <div className="flex-shrink-0 mt-0.5">
+        {isExpected ? (
+          <CheckCircle2 size={18} className="text-[#16A34A]" />
+        ) : (
+          <XCircle size={18} className="text-[#DC2626]" />
+        )}
+      </div>
+      <div>
+        <h3 className="font-bold text-[#0F172A] text-sm leading-snug">{standard.title}</h3>
+        {standard.description && (
+          <p className="text-[#1E293B] text-xs mt-1.5 leading-relaxed">{standard.description}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─── Column ────────────────────────────────────────────────────────────────────
+
+function Column({
+  title,
+  accent,
+  accentBg,
+  icon,
+  items,
+  type,
+}: {
+  title: string
+  accent: string
+  accentBg: string
+  icon: React.ReactNode
+  items: CultureStandard[]
+  type: 'expected' | 'unacceptable'
+}) {
+  return (
+    <div className="flex flex-col gap-3">
+      <div
+        className={`flex items-center gap-2 px-4 py-2.5 rounded-[8px] ${accentBg}`}
+      >
+        <span className={accent}>{icon}</span>
+        <h2 className={`font-semibold text-sm ${accent}`}>{title}</h2>
+        <span
+          className={`ml-auto text-xs font-medium rounded-full px-2 py-0.5 ${accentBg} ${accent} border ${
+            type === 'expected' ? 'border-[#86EFAC]' : 'border-[#FECACA]'
+          }`}
+        >
+          {items.length}
+        </span>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[#94A3B8] text-sm text-center py-10">No standards defined yet.</p>
+      ) : (
+        items.map((s) => <StandardCard key={s.id} standard={s} type={type} />)
+      )}
+    </div>
+  )
+}
+
+// ─── Empty state ──────────────────────────────────────────────────────────────
+
+function EmptyState({ canEdit }: { canEdit: boolean }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 text-center">
+      <div className="w-16 h-16 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+        <Heart size={28} className="text-[#94A3B8]" />
+      </div>
+      <h2 className="text-lg font-semibold text-[#0F172A]">No culture standards defined yet</h2>
+      <p className="text-[#475569] text-sm mt-1 max-w-xs">
+        Define the behaviors your organization expects and prohibits.
+      </p>
+      {canEdit && (
+        <Link href="/setup/step-2-culture" className="mt-5">
+          <Button>Define culture</Button>
+        </Link>
+      )}
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function CulturePage() {
+  const { user } = useAuth()
+  const orgId = user?.organization_id ?? ''
+  const canEdit = user?.role === 'org_admin' || user?.role === 'hr_manager'
+
+  const [standards, setStandards] = useState<CultureStandard[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!orgId) {
+      setLoading(false)
+      return
+    }
+    getCultureStandards(orgId)
+      .then(setStandards)
+      .catch(() => setStandards([]))
+      .finally(() => setLoading(false))
+  }, [orgId])
+
+  const expected = standards.filter((s) => s.type === 'expected_behavior')
+  const unacceptable = standards.filter((s) => s.type === 'unacceptable_behavior')
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Page header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Culture Standards</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">
+            The behaviors your organization expects and prohibits.
+          </p>
+        </div>
+        {canEdit && standards.length > 0 && (
+          <Link href="/setup/step-2-culture">
+            <Button variant="secondary" size="sm">
+              <Pencil size={14} />
+              Edit
+            </Button>
+          </Link>
+        )}
+      </div>
+
+      {standards.length === 0 ? (
+        <EmptyState canEdit={canEdit} />
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Column
+            title="Expected Behaviors"
+            accent="text-[#16A34A]"
+            accentBg="bg-[#DCFCE7]"
+            icon={<CheckCircle2 size={16} />}
+            items={expected}
+            type="expected"
+          />
+          <Column
+            title="Unacceptable Behaviors"
+            accent="text-[#DC2626]"
+            accentBg="bg-[#FEE2E2]"
+            icon={<XCircle size={16} />}
+            items={unacceptable}
+            type="unacceptable"
+          />
+        </div>
+      )}
+    </div>
+  )
+}

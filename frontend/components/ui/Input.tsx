@@ -1,0 +1,115 @@
+'use client'
+
+import React, { useState } from 'react'
+import { Eye, EyeOff } from 'lucide-react'
+
+interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
+  label?: string
+  error?: string
+  helperText?: string
+  type?: 'text' | 'email' | 'password' | 'number' | 'date'
+}
+
+export default function Input({
+  label,
+  error,
+  helperText,
+  type = 'text',
+  placeholder,
+  value,
+  onChange,
+  disabled = false,
+  required = false,
+  className = '',
+  name,
+  id,
+  ...rest
+}: InputProps) {
+  const [showPassword, setShowPassword] = useState(false)
+
+  const isPassword = type === 'password'
+  const resolvedType = isPassword ? (showPassword ? 'text' : 'password') : type
+  const inputId = id ?? name
+
+  const baseInput = [
+    'w-full rounded-[8px] bg-white px-3 py-[10px] text-[#0F172A] placeholder:text-[#94A3B8] text-sm transition-colors duration-150',
+    'focus:outline-none',
+    error
+      ? 'border-2 border-[#DC2626] focus:border-[#DC2626]'
+      : 'border border-[#CBD5E1] focus:border-2 focus:border-[#2563EB]',
+    disabled ? 'bg-[#F8FAFC] cursor-not-allowed text-[#94A3B8]' : '',
+    isPassword ? 'pr-10' : '',
+    className,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div className="flex flex-col gap-1">
+      {label && (
+        <label
+          htmlFor={inputId}
+          className="text-sm font-medium text-[#374151]"
+        >
+          {label}
+          {required && (
+            <span className="ml-0.5 text-[#DC2626]" aria-hidden="true">
+              *
+            </span>
+          )}
+        </label>
+      )}
+
+      <div className="relative">
+        <input
+          id={inputId}
+          name={name}
+          type={resolvedType}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          disabled={disabled}
+          required={required}
+          aria-invalid={!!error}
+          aria-describedby={
+            error
+              ? `${inputId}-error`
+              : helperText
+              ? `${inputId}-helper`
+              : undefined
+          }
+          className={baseInput}
+          {...rest}
+        />
+
+        {isPassword && (
+          <button
+            type="button"
+            onClick={() => setShowPassword((prev) => !prev)}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569] transition-colors duration-150 focus:outline-none"
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            tabIndex={-1}
+          >
+            {showPassword ? (
+              <EyeOff size={16} aria-hidden="true" />
+            ) : (
+              <Eye size={16} aria-hidden="true" />
+            )}
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <p id={`${inputId}-error`} className="text-xs text-[#DC2626]" role="alert">
+          {error}
+        </p>
+      )}
+
+      {!error && helperText && (
+        <p id={`${inputId}-helper`} className="text-xs text-[#64748B]">
+          {helperText}
+        </p>
+      )}
+    </div>
+  )
+}

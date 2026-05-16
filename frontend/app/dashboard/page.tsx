@@ -1,0 +1,233 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useAuth } from '@/lib/auth/context'
+import { getOrganization } from '@/lib/api/organizations'
+import { getOrgIdentity } from '@/lib/api/org-identity'
+import { getDepartments } from '@/lib/api/departments'
+import { getRoles } from '@/lib/api/roles'
+import { getEmployees } from '@/lib/api/employees'
+import type { Organization, OrgIdentity, Department, Role, EmployeeProfile } from '@/lib/types'
+import {
+  Building2,
+  Briefcase,
+  Users,
+  UserCheck,
+  ChevronRight,
+  Heart,
+  Network,
+  ArrowRight,
+  BookOpen,
+} from 'lucide-react'
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function calcSetupProgress(
+  identity: OrgIdentity | null,
+  departments: Department[],
+  roles: Role[],
+  employees: EmployeeProfile[]
+): number {
+  let score = 0
+  if (identity?.philosophy || identity?.vision || identity?.mission || identity?.purpose) score += 25
+  if (departments.length > 0) score += 25
+  if (roles.length > 0) score += 25
+  if (employees.length > 0) score += 25
+  return score
+}
+
+// ─── Stat card ─────────────────────────────────────────────────────────────────
+
+function StatCard({
+  label,
+  value,
+  icon,
+}: {
+  label: string
+  value: number
+  icon: React.ReactNode
+}) {
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6 flex items-start gap-4">
+      <div className="w-10 h-10 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center text-[#2563EB] flex-shrink-0">
+        {icon}
+      </div>
+      <div>
+        <p className="text-3xl font-bold text-[#0F172A] leading-tight tabular-nums">{value}</p>
+        <p className="text-sm text-[#475569] mt-0.5">{label}</p>
+      </div>
+    </div>
+  )
+}
+
+// ─── Quick nav card ─────────────────────────────────────────────────────────────
+
+interface QuickNavCardProps {
+  label: string
+  description: string
+  href: string
+  icon: React.ReactNode
+  iconBg: string
+}
+
+function QuickNavCard({ label, description, href, icon, iconBg }: QuickNavCardProps) {
+  return (
+    <Link
+      href={href}
+      className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 flex items-start gap-4 hover:border-[#2563EB] hover:shadow-md transition-all duration-150 group"
+    >
+      <div
+        className={`w-10 h-10 rounded-[8px] flex items-center justify-center flex-shrink-0 ${iconBg}`}
+      >
+        {icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-[#0F172A] text-sm">{label}</p>
+        <p className="text-xs text-[#475569] mt-0.5 leading-relaxed">{description}</p>
+      </div>
+      <ChevronRight
+        size={16}
+        className="text-[#CBD5E1] group-hover:text-[#2563EB] transition-colors mt-0.5 flex-shrink-0"
+      />
+    </Link>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function DashboardPage() {
+  const { user } = useAuth()
+  const orgId = user?.organization_id ?? ''
+
+  const [org, setOrg] = useState<Organization | null>(null)
+  const [identity, setIdentity] = useState<OrgIdentity | null>(null)
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [employees, setEmployees] = useState<EmployeeProfile[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (!orgId) {
+      setLoading(false)
+      return
+    }
+    Promise.all([
+      getOrganization(orgId).catch(() => null),
+      getOrgIdentity(orgId).catch(() => null),
+      getDepartments(orgId).catch(() => []),
+      getRoles(orgId).catch(() => []),
+      getEmployees(orgId).catch(() => []),
+    ]).then(([orgData, identityData, depts, rolesData, emps]) => {
+      setOrg(orgData)
+      setIdentity(identityData)
+      setDepartments(depts)
+      setRoles(rolesData)
+      setEmployees(emps)
+    }).finally(() => setLoading(false))
+  }, [orgId])
+
+  const activeEmployees = employees.filter((e) => e.status === 'active').length
+  const setupProgress = calcSetupProgress(identity, departments, roles, employees)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Page header */}
+      <div>
+        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">
+          Welcome to {org?.name ?? 'your organization'}
+        </h1>
+        <p className="mt-1 text-[15px] text-[#475569]">
+          Here&apos;s an overview of your organization&apos;s current state.
+        </p>
+      </div>
+
+      {/* Setup banner */}
+      {setupProgress < 100 && (
+        <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[12px] p-5">
+          <div className="flex items-start justify-between gap-4 mb-3">
+            <div>
+              <p className="font-semibold text-[#1D4ED8] text-sm">
+                Complete your organization setup
+              </p>
+              <p className="text-xs text-[#3B82F6] mt-0.5">
+                {setupProgress}% complete — finish setting up to unlock all features.
+              </p>
+            </div>
+            <Link
+              href="/setup/step-1-identity"
+              className="flex items-center gap-1.5 text-sm font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors flex-shrink-0 whitespace-nowrap"
+            >
+              Continue setup
+              <ArrowRight size={14} />
+            </Link>
+          </div>
+          <div className="h-2 bg-[#BFDBFE] rounded-full overflow-hidden">
+            <div
+              className="h-full bg-[#2563EB] rounded-full transition-all duration-500"
+              style={{ width: `${setupProgress}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Departments" value={departments.length} icon={<Network size={20} />} />
+        <StatCard label="Roles" value={roles.length} icon={<Briefcase size={20} />} />
+        <StatCard label="Employees" value={employees.length} icon={<Users size={20} />} />
+        <StatCard label="Active" value={activeEmployees} icon={<UserCheck size={20} />} />
+      </div>
+
+      {/* Quick nav */}
+      <div>
+        <h2 className="text-base font-semibold text-[#0F172A] mb-4">Quick access</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+          <QuickNavCard
+            label="Identity"
+            description="Company philosophy, vision, mission, purpose and values."
+            href="/dashboard/identity"
+            icon={<BookOpen size={18} className="text-[#2563EB]" />}
+            iconBg="bg-[#EFF6FF]"
+          />
+          <QuickNavCard
+            label="Culture"
+            description="Expected and unacceptable behaviors that define your culture."
+            href="/dashboard/culture"
+            icon={<Heart size={18} className="text-[#DC2626]" />}
+            iconBg="bg-[#FEE2E2]"
+          />
+          <QuickNavCard
+            label="Org Chart"
+            description="Visual hierarchy of departments and their relationships."
+            href="/dashboard/org-chart"
+            icon={<Network size={18} className="text-[#16A34A]" />}
+            iconBg="bg-[#DCFCE7]"
+          />
+          <QuickNavCard
+            label="Roles"
+            description="Job descriptions, KRAs and KPIs for each role."
+            href="/dashboard/roles"
+            icon={<Briefcase size={18} className="text-[#CA8A04]" />}
+            iconBg="bg-[#FEF9C3]"
+          />
+          <QuickNavCard
+            label="Employees"
+            description="Directory of all employees with profiles and reporting chains."
+            href="/dashboard/employees"
+            icon={<Users size={18} className="text-[#7C3AED]" />}
+            iconBg="bg-[#F3E8FF]"
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
