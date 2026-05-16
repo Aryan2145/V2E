@@ -4,6 +4,7 @@ import './globals.css'
 import { AuthProvider } from '@/lib/auth/context'
 import QueryProvider from '@/lib/providers/QueryProvider'
 import { ToastProvider } from '@/components/ui/Toast'
+import NoScrollNumberInputs from '@/components/ui/NoScrollNumberInputs'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="font-[family-name:var(--font-inter)] antialiased bg-[#F8FAFC] text-[#1E293B]">
         <QueryProvider>
           <AuthProvider>
+            <NoScrollNumberInputs />
             <ToastProvider>{children}</ToastProvider>
           </AuthProvider>
         </QueryProvider>
