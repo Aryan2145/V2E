@@ -76,11 +76,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     setUser(tokens.user);
-    const destination = tokens.user.role === 'super_admin'
-      ? '/super-admin/organizations'
-      : '/dashboard';
-    router.push(destination);
-  }, [router]);
+  }, []);
 
   const logout = useCallback(async () => {
     try {

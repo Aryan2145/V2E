@@ -1,12 +1,21 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 
 export default function LoginPage() {
-  const { login } = useAuth()
+  const { login, user } = useAuth()
+  const router = useRouter()
+
+  // Redirect after React commits the user state update
+  useEffect(() => {
+    if (!user) return
+    const dest = user.role === 'super_admin' ? '/super-admin/organizations' : '/dashboard'
+    router.replace(dest)
+  }, [user, router])
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
