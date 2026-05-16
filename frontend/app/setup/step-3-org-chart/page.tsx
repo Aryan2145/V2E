@@ -6,7 +6,9 @@ import ReactFlow, {
   addEdge,
   Background,
   Controls,
+  Handle,
   MiniMap,
+  Position,
   useEdgesState,
   useNodesState,
   type Connection,
@@ -28,6 +30,7 @@ import type { Department, User } from '@/lib/types'
 function DeptNode({ data }: { data: Department & { headName?: string } }) {
   return (
     <div className="bg-white border-2 border-[#2563EB] rounded-[12px] shadow-md px-4 py-3 min-w-[180px]">
+      <Handle type="target" position={Position.Top} style={{ background: '#94A3B8', width: 8, height: 8 }} />
       <p className="font-bold text-sm text-[#0F172A] leading-tight">{data.name}</p>
       {data.headName && (
         <p className="text-xs text-[#94A3B8] mt-1">{data.headName}</p>
@@ -40,6 +43,7 @@ function DeptNode({ data }: { data: Department & { headName?: string } }) {
           </span>
         </div>
       )}
+      <Handle type="source" position={Position.Bottom} style={{ background: '#94A3B8', width: 8, height: 8 }} />
     </div>
   )
 }
@@ -224,7 +228,7 @@ function OrgChartFlow({ orgId, departments, users, onRefresh }: FlowProps) {
   )
 
   return (
-    <div className="relative flex-1 min-h-0">
+    <div className="relative w-full h-full">
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -234,6 +238,7 @@ function OrgChartFlow({ orgId, departments, users, onRefresh }: FlowProps) {
         onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         fitView
+        style={{ width: '100%', height: '100%' }}
         className="bg-[#F8FAFC] rounded-[12px] border border-[#E2E8F0]"
       >
         <Background color="#E2E8F0" gap={20} />
@@ -313,7 +318,7 @@ export default function Step3OrgChartPage() {
       {isLoading ? (
         <div className="h-[480px] rounded-[12px] bg-[#E2E8F0] animate-pulse" />
       ) : (
-        <div className="h-[480px]">
+        <div className="h-[480px] w-full">
           <ReactFlowProvider>
             <OrgChartFlow
               orgId={orgId}
