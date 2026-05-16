@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { MessagingService } from './messaging.service';
+import { ChatGateway } from './chat.gateway';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 
@@ -23,7 +24,10 @@ import { SendMessageDto } from './dto/send-message.dto';
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
 @Controller('api/v1/org/:orgId/messaging')
 export class MessagingController {
-  constructor(private readonly service: MessagingService) {}
+  constructor(
+    private readonly service: MessagingService,
+    private readonly chatGateway: ChatGateway,
+  ) {}
 
   // ─── Conversations ─────────────────────────────────────────────────────────
 
@@ -96,7 +100,10 @@ export class MessagingController {
     @Request() req: any,
     @Body() dto: SendMessageDto,
   ) {
-    return this.service.sendMessage(convId, req.user.id, orgId, dto);
+    return this.service.sendMessage(convId, req.user.id, orgId, dto).then(msg => {
+      this.chatGateway.emitNewMessage(convId, msg);
+      return msg;
+    });
   }
 
   @Patch('conversations/:convId/messages/:msgId')

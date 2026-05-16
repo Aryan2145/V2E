@@ -31,6 +31,8 @@ export default function MessagesPage() {
   const socketRef = useRef<Socket | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Tracks IDs of messages we already added optimistically so the socket echo is ignored
+  const ownSentIds = useRef<Set<string>>(new Set())
 
   // Load conversations
   useEffect(() => {
@@ -54,7 +56,15 @@ export default function MessagesPage() {
     socketRef.current = socket
 
     socket.on('newMessage', (msg: Message) => {
-      setMessages(prev => [...prev, msg])
+      setMessages(prev => {
+        // Skip messages we sent ourselves (already shown via optimistic update)
+        if (ownSentIds.current.has(msg.id)) {
+          ownSentIds.current.delete(msg.id)
+          return prev
+        }
+        if (prev.some(m => m.id === msg.id)) return prev
+        return [...prev, msg]
+      })
       setConversations(prev => prev.map(c =>
         c.id === msg.conversation_id ? { ...c, last_message: msg, updated_at: msg.created_at } : c
       ).sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()))
@@ -108,12 +118,39 @@ export default function MessagesPage() {
   }, [messages])
 
   const handleSend = useCallback(async () => {
-    if (!orgId || !activeConvId || !messageInput.trim() || sending) return
+    if (!orgId || !activeConvId || !messageInput.trim() || sending || !user) return
     const body = messageInput.trim()
     setMessageInput('')
     setSending(true)
+
+    // Optimistic: show message immediately
+    const tempId = `temp-${Date.now()}`
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: activeConvId,
+      sender_user_id: user.id,
+      organization_id: orgId,
+      body,
+      is_deleted: false,
+      attachment_urls: [],
+      reply_to_message_id: undefined,
+      reply_to_message: null,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      sender: { id: user.id, name: user.name, email: user.email, role: user.role },
+    }
+    setMessages(prev => [...prev, optimistic])
+
     try {
-      await sendMessage(orgId, activeConvId, { body })
+      const real = await sendMessage(orgId, activeConvId, { body })
+      // Register the real ID so the socket echo is ignored
+      ownSentIds.current.add(real.id)
+      // Swap optimistic with confirmed server message
+      setMessages(prev => prev.map(m => m.id === tempId ? real : m))
+    } catch {
+      // Remove optimistic message on failure
+      setMessages(prev => prev.filter(m => m.id !== tempId))
+      setMessageInput(body)
     } finally {
       setSending(false)
     }
