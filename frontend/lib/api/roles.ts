@@ -4,7 +4,7 @@ import type { Role, RoleLevel, KraItem, KpiItem, ApiResponse } from '../types';
 // ─── Roles API ────────────────────────────────────────────────────────────────
 
 export async function getRoles(orgId: string, departmentId?: string): Promise<Role[]> {
-  const params = departmentId ? { department_id: departmentId } : undefined;
+  const params = departmentId ? { departmentId } : undefined;
   const { data } = await apiClient.get<ApiResponse<Role[]>>(
     `/api/v1/org/${orgId}/roles`,
     { params }

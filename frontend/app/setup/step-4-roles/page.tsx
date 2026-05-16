@@ -57,6 +57,8 @@ interface RoleFormProps {
 }
 
 function AddRoleForm({ deptId, orgId, onSaved, onCancel }: RoleFormProps) {
+  const [formError, setFormError] = useState<string | null>(null)
+
   const {
     register,
     handleSubmit,
@@ -72,8 +74,28 @@ function AddRoleForm({ deptId, orgId, onSaved, onCancel }: RoleFormProps) {
   const kpiArray = useFieldArray({ control, name: 'kpi' })
 
   const onSubmit = async (data: RoleFormValues) => {
-    await createRole(orgId, { ...data, department_id: deptId })
-    onSaved()
+    setFormError(null)
+    try {
+      const payload = {
+        ...data,
+        department_id: deptId,
+        kra: (data.kra ?? [])
+          .filter((k) => k.title.trim() || k.description.trim())
+          .map((k) => ({ title: k.title.trim(), description: k.description.trim() })),
+        kpi: (data.kpi ?? [])
+          .filter((k) => k.title.trim() || k.metric.trim() || k.target.trim() || k.unit.trim())
+          .map((k) => ({
+            title: k.title.trim(),
+            metric: k.metric.trim(),
+            target: k.target.trim(),
+            unit: k.unit.trim(),
+          })),
+      }
+      await createRole(orgId, payload)
+      onSaved()
+    } catch (err: any) {
+      setFormError(err?.response?.data?.message ?? 'Failed to save role.')
+    }
   }
 
   return (
@@ -201,6 +223,12 @@ function AddRoleForm({ deptId, orgId, onSaved, onCancel }: RoleFormProps) {
           ))}
         </div>
       </div>
+
+      {formError && (
+        <p className="text-sm text-[#DC2626] rounded-[8px] bg-[#FEF2F2] border border-[#FECACA] px-4 py-3">
+          {formError}
+        </p>
+      )}
 
       <div className="flex gap-3">
         <Button type="submit" variant="primary" isLoading={isSubmitting}>
