@@ -1,0 +1,164 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/auth/context'
+import { getBoards, createBoard, deleteBoard } from '@/lib/api/bulletin'
+import type { BulletinBoard } from '@/lib/types/communication'
+import Link from 'next/link'
+import { Layout, Plus, Trash2, MessageSquare, Eye, MessageCircle } from 'lucide-react'
+
+const MODE_LABEL: Record<string, string> = {
+  read_only: 'Read Only',
+  comments_only: 'Comments',
+  comments_and_reactions: 'Comments & Reactions',
+}
+
+export default function BulletinBoardsPage() {
+  const { user } = useAuth()
+  const orgId = user?.organization_id ?? ''
+  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdmin = user?.role === 'org_admin'
+  const [boards, setBoards] = useState<BulletinBoard[]>([])
+  const [loading, setLoading] = useState(true)
+  const [showCreate, setShowCreate] = useState(false)
+  const [form, setForm] = useState({ name: '', description: '', interaction_mode: 'comments_and_reactions' })
+  const [creating, setCreating] = useState(false)
+
+  useEffect(() => {
+    if (!orgId) return
+    getBoards(orgId).then(setBoards).finally(() => setLoading(false))
+  }, [orgId])
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    if (!orgId || !form.name.trim()) return
+    setCreating(true)
+    try {
+      const board = await createBoard(orgId, {
+        name: form.name.trim(),
+        description: form.description.trim(),
+        interaction_mode: form.interaction_mode as any,
+        scope: 'org_wide' as any,
+      } as any)
+      setBoards(prev => [board, ...prev])
+      setForm({ name: '', description: '', interaction_mode: 'comments_and_reactions' })
+      setShowCreate(false)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    if (!orgId) return
+    await deleteBoard(orgId, id)
+    setBoards(prev => prev.filter(b => b.id !== id))
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] p-6">
+      <div className="max-w-3xl mx-auto">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-[#0F172A]">Bulletin Boards</h1>
+            <p className="text-sm text-[#475569] mt-0.5">Company and team boards for posts and updates</p>
+          </div>
+          {isHR && (
+            <button
+              onClick={() => setShowCreate(s => !s)}
+              className="flex items-center gap-2 bg-[#2563EB] text-white px-4 py-2 rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors"
+            >
+              <Plus size={16} />
+              New Board
+            </button>
+          )}
+        </div>
+
+        {showCreate && (
+          <form onSubmit={handleCreate} className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 mb-6 flex flex-col gap-4">
+            <h2 className="text-base font-semibold text-[#0F172A]">Create Board</h2>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Board Name</label>
+              <input
+                value={form.name}
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. General, Engineering, HR"
+                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB]"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Description (optional)</label>
+              <input
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                placeholder="What is this board for?"
+                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB]"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Interaction Mode</label>
+              <select
+                value={form.interaction_mode}
+                onChange={e => setForm(f => ({ ...f, interaction_mode: e.target.value }))}
+                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB]"
+              >
+                <option value="read_only">Read Only</option>
+                <option value="comments_only">Comments Only</option>
+                <option value="comments_and_reactions">Comments & Reactions</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => setShowCreate(false)} className="flex-1 border border-[#E2E8F0] text-[#475569] px-4 py-2 rounded-[8px] text-sm font-semibold hover:bg-[#F8FAFC] transition-colors">
+                Cancel
+              </button>
+              <button type="submit" disabled={creating} className="flex-1 bg-[#2563EB] text-white px-4 py-2 rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                {creating ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </form>
+        )}
+
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : boards.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Layout size={40} className="text-[#CBD5E1] mb-3" />
+            <p className="text-[#475569] font-medium">No boards yet</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {boards.map(board => (
+              <div key={board.id} className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 flex flex-col gap-3 hover:border-[#2563EB] transition-colors">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <Link href={`/communication/bulletin/${board.id}`}>
+                      <h3 className="text-base font-semibold text-[#0F172A] hover:text-[#2563EB] transition-colors">{board.name}</h3>
+                    </Link>
+                    {board.description && <p className="text-xs text-[#475569] mt-0.5 line-clamp-2">{board.description}</p>}
+                  </div>
+                  {isAdmin && (
+                    <button onClick={() => handleDelete(board.id)} className="p-1.5 text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEF2F2] rounded-[6px] transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-[#94A3B8]">
+                  <span className="flex items-center gap-1">
+                    <MessageSquare size={12} />
+                    {board._count?.posts ?? 0} posts
+                  </span>
+                  <span>·</span>
+                  <span className="flex items-center gap-1">
+                    {board.interaction_mode === 'read_only' ? <Eye size={12} /> : <MessageCircle size={12} />}
+                    {MODE_LABEL[board.interaction_mode]}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

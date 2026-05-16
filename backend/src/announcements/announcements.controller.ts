@@ -1,0 +1,112 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { OrgScopeGuard } from '../common/guards/org-scope.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { AnnouncementsService } from './announcements.service';
+import { CreateAnnouncementDto } from './dto/create-announcement.dto';
+import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
+
+@ApiTags('announcements')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@Controller('api/v1/org/:orgId/announcements')
+export class AnnouncementsController {
+  constructor(private readonly service: AnnouncementsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'List published announcements' })
+  findAll(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('type') type?: string,
+    @Query('scope') scope?: string,
+    @Query('priority') priority?: string,
+    @Query('pinned') pinned?: string,
+  ) {
+    return this.service.findAll(orgId, req.user.id, { type, scope, priority, pinned });
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get announcement detail' })
+  findOne(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Request() req: any,
+  ) {
+    return this.service.findOne(id, orgId, req.user.id);
+  }
+
+  @Post()
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Create an announcement' })
+  create(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Body() dto: CreateAnnouncementDto,
+  ) {
+    return this.service.create(orgId, req.user.id, dto);
+  }
+
+  @Patch(':id')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Update an announcement' })
+  update(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Request() req: any,
+    @Body() dto: UpdateAnnouncementDto,
+  ) {
+    return this.service.update(id, orgId, req.user.id, req.user.role, dto);
+  }
+
+  @Post(':id/publish')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Publish an announcement' })
+  publish(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.publish(id, orgId);
+  }
+
+  @Post(':id/pin')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Toggle pin on announcement' })
+  togglePin(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.togglePin(id, orgId);
+  }
+
+  @Post(':id/read')
+  @ApiOperation({ summary: 'Mark announcement as read' })
+  markRead(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Request() req: any,
+  ) {
+    return this.service.markRead(id, orgId, req.user.id);
+  }
+
+  @Get(':id/read-status')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Get read receipt status' })
+  getReadStatus(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.getReadStatus(id, orgId);
+  }
+
+  @Delete(':id')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Delete an announcement' })
+  remove(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.remove(id, orgId);
+  }
+}

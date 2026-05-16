@@ -10,6 +10,10 @@ import { DepartmentsModule } from './departments/departments.module';
 import { RolesModule } from './roles/roles.module';
 import { EmployeesModule } from './employees/employees.module';
 import { LearningModule } from './learning/learning.module';
+import { AnnouncementsModule } from './announcements/announcements.module';
+import { BulletinModule } from './bulletin/bulletin.module';
+import { KnowledgeModule } from './knowledge/knowledge.module';
+import { MessagingModule } from './messaging/messaging.module';
 
 @Module({
   imports: [
@@ -24,6 +28,10 @@ import { LearningModule } from './learning/learning.module';
     RolesModule,
     EmployeesModule,
     LearningModule,
+    AnnouncementsModule,
+    BulletinModule,
+    KnowledgeModule,
+    MessagingModule,
   ],
 })
 export class AppModule {}

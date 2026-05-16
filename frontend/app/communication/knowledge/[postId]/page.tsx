@@ -1,0 +1,233 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
+import { useAuth } from '@/lib/auth/context'
+import { getKnowledgePost, addKnowledgeComment, deleteKnowledgeComment, toggleKnowledgeReaction } from '@/lib/api/knowledge'
+import type { KnowledgePost, KnowledgeComment } from '@/lib/types/communication'
+import Link from 'next/link'
+import { ArrowLeft, Trash2, MessageSquare } from 'lucide-react'
+
+const REACTIONS = ['👍', '❤️', '💡', '🎉', '🔥']
+
+export default function KnowledgePostPage() {
+  const { postId } = useParams<{ postId: string }>()
+  const { user } = useAuth()
+  const orgId = user?.organization_id ?? ''
+  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const [post, setPost] = useState<KnowledgePost | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [comment, setComment] = useState('')
+  const [replyTo, setReplyTo] = useState<{ id: string; name: string } | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (!orgId || !postId) return
+    getKnowledgePost(orgId, postId).then(setPost).finally(() => setLoading(false))
+  }, [orgId, postId])
+
+  async function handleComment(e: React.FormEvent) {
+    e.preventDefault()
+    if (!orgId || !postId || !comment.trim()) return
+    setSubmitting(true)
+    try {
+      const c = await addKnowledgeComment(orgId, postId, comment.trim(), replyTo?.id)
+      setPost(prev => {
+        if (!prev) return prev
+        if (replyTo) {
+          return {
+            ...prev,
+            comments: prev.comments?.map(cm =>
+              cm.id === replyTo.id ? { ...cm, replies: [...(cm.replies ?? []), c] } : cm
+            ),
+          }
+        }
+        return { ...prev, comments: [...(prev.comments ?? []), c] }
+      })
+      setComment('')
+      setReplyTo(null)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  async function handleDeleteComment(commentId: string) {
+    if (!orgId) return
+    await deleteKnowledgeComment(orgId, commentId)
+    setPost(prev => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        comments: prev.comments?.filter(c => c.id !== commentId).map(c => ({
+          ...c,
+          replies: c.replies?.filter(r => r.id !== commentId),
+        })),
+      }
+    })
+  }
+
+  async function handleReact(emoji: string) {
+    if (!orgId || !postId) return
+    const res = await toggleKnowledgeReaction(orgId, postId, emoji)
+    setPost(prev => {
+      if (!prev) return prev
+      const reactions = prev.reactions ?? []
+      if (res.toggled) {
+        return { ...prev, reactions: [...reactions, { emoji, user_id: user?.id ?? '' }] }
+      } else {
+        return { ...prev, reactions: reactions.filter(r => !(r.emoji === emoji && r.user_id === user?.id)) }
+      }
+    })
+  }
+
+  if (loading) return (
+    <div className="flex items-center justify-center min-h-screen">
+      <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+
+  if (!post) return null
+
+  return (
+    <div className="min-h-screen bg-[#F8FAFC] p-6">
+      <div className="max-w-2xl mx-auto">
+        <Link href="/communication/knowledge" className="flex items-center gap-2 text-sm text-[#475569] hover:text-[#0F172A] mb-6 w-fit">
+          <ArrowLeft size={16} />
+          Knowledge Hub
+        </Link>
+
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 mb-4">
+          <h1 className="text-xl font-bold text-[#0F172A] mb-2">{post.title}</h1>
+          <div className="flex items-center gap-3 text-xs text-[#94A3B8] mb-4">
+            <span>{post.created_by?.name}</span>
+            <span>·</span>
+            <span>{new Date(post.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}</span>
+          </div>
+
+          {post.tags?.length > 0 && (
+            <div className="flex gap-1.5 mb-4 flex-wrap">
+              {post.tags.map(t => (
+                <span key={t} className="text-xs bg-[#EFF6FF] text-[#2563EB] px-2 py-0.5 rounded-full">{t}</span>
+              ))}
+            </div>
+          )}
+
+          <p className="text-sm text-[#1E293B] leading-relaxed whitespace-pre-wrap">{post.body}</p>
+
+          <div className="flex items-center gap-1.5 mt-5 flex-wrap">
+            {REACTIONS.map(emoji => {
+              const count = post.reactions?.filter(r => r.emoji === emoji).length ?? 0
+              const mine = post.reactions?.some(r => r.emoji === emoji && r.user_id === user?.id)
+              return (
+                <button
+                  key={emoji}
+                  onClick={() => handleReact(emoji)}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-sm border transition-colors ${mine ? 'bg-[#EFF6FF] border-[#2563EB] text-[#2563EB]' : 'bg-[#F8FAFC] border-[#E2E8F0] text-[#475569] hover:border-[#2563EB]'}`}
+                >
+                  {emoji} {count > 0 && <span className="text-xs font-semibold">{count}</span>}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6">
+          <h2 className="text-sm font-semibold text-[#0F172A] mb-4 flex items-center gap-1.5">
+            <MessageSquare size={15} />
+            {post.comments?.length ?? 0} Comments
+          </h2>
+
+          <div className="flex flex-col gap-5 mb-5">
+            {(post.comments ?? []).map(c => (
+              <CommentRow key={c.id} comment={c} userId={user?.id ?? ''} isHR={isHR} onDelete={handleDeleteComment} onReply={() => setReplyTo({ id: c.id, name: c.created_by.name })} />
+            ))}
+          </div>
+
+          {replyTo && (
+            <div className="flex items-center gap-2 mb-2 text-xs text-[#475569] bg-[#F1F5F9] px-3 py-1.5 rounded-[6px]">
+              <span>Replying to <strong>{replyTo.name}</strong></span>
+              <button onClick={() => setReplyTo(null)} className="ml-auto text-[#94A3B8] hover:text-[#475569]">✕</button>
+            </div>
+          )}
+
+          <form onSubmit={handleComment} className="flex gap-2">
+            <input
+              value={comment}
+              onChange={e => setComment(e.target.value)}
+              placeholder={replyTo ? `Reply to ${replyTo.name}…` : 'Write a comment…'}
+              className="flex-1 border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB]"
+            />
+            <button
+              type="submit"
+              disabled={submitting || !comment.trim()}
+              className="bg-[#2563EB] text-white px-4 py-2 rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              Post
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function CommentRow({ comment, userId, isHR, onDelete, onReply }: {
+  comment: KnowledgeComment
+  userId: string
+  isHR: boolean
+  onDelete: (id: string) => void
+  onReply: () => void
+}) {
+  return (
+    <div>
+      <div className="flex gap-3">
+        <div className="w-7 h-7 rounded-full bg-[#2563EB] flex items-center justify-center text-white text-xs font-bold shrink-0">
+          {comment.created_by?.name?.charAt(0).toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <span className="text-sm font-semibold text-[#0F172A]">{comment.created_by?.name}</span>
+              <span className="text-xs text-[#94A3B8] ml-2">{new Date(comment.created_at).toLocaleString()}</span>
+            </div>
+            <div className="flex gap-1">
+              <button onClick={onReply} className="text-xs text-[#2563EB] hover:underline">Reply</button>
+              {(comment.created_by_user_id === userId || isHR) && (
+                <button onClick={() => onDelete(comment.id)} className="p-1 text-[#94A3B8] hover:text-[#DC2626] rounded transition-colors">
+                  <Trash2 size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="text-sm text-[#1E293B] mt-0.5 whitespace-pre-wrap">{comment.body}</p>
+        </div>
+      </div>
+
+      {comment.replies && comment.replies.length > 0 && (
+        <div className="ml-10 mt-3 flex flex-col gap-3">
+          {comment.replies.map(reply => (
+            <div key={reply.id} className="flex gap-2">
+              <div className="w-6 h-6 rounded-full bg-[#475569] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                {reply.created_by?.name?.charAt(0).toUpperCase()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <span className="text-xs font-semibold text-[#0F172A]">{reply.created_by?.name}</span>
+                    <span className="text-xs text-[#94A3B8] ml-2">{new Date(reply.created_at).toLocaleString()}</span>
+                  </div>
+                  {(reply.created_by_user_id === userId || isHR) && (
+                    <button onClick={() => onDelete(reply.id)} className="p-1 text-[#94A3B8] hover:text-[#DC2626] rounded transition-colors">
+                      <Trash2 size={12} />
+                    </button>
+                  )}
+                </div>
+                <p className="text-xs text-[#1E293B] mt-0.5 whitespace-pre-wrap">{reply.body}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
