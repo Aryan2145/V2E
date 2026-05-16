@@ -27,14 +27,15 @@ export async function getReportingTree(orgId: string): Promise<EmployeeProfile[]
 export async function createEmployee(
   orgId: string,
   employeeData: {
-    user_id: string;
+    name: string;
+    email: string;
+    password: string;
     role_id: string;
     department_id: string;
-    employment_type: EmploymentType;
     reporting_to_user_id?: string;
     employee_code?: string;
     date_of_joining?: string;
-    status?: EmployeeStatus;
+    employment_type?: EmploymentType;
   }
 ): Promise<EmployeeProfile> {
   const { data } = await apiClient.post<ApiResponse<EmployeeProfile>>(

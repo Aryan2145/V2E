@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import Link from 'next/link'
+import { ChevronLeft } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import SetupSidebar from '@/components/setup-wizard/SetupSidebar'
 import type { SetupStep } from '@/components/setup-wizard/SetupSidebar'
@@ -65,7 +67,15 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
     <div className="flex flex-col min-h-screen bg-[#F8FAFC]">
       {/* Top header bar */}
       <header className="bg-white border-b border-[#E2E8F0] h-14 flex items-center px-6 gap-6 shrink-0">
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-4 shrink-0">
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-1 text-sm text-[#64748B] hover:text-[#0F172A] transition-colors"
+          >
+            <ChevronLeft size={15} />
+            Dashboard
+          </Link>
+          <span className="text-[#E2E8F0]">|</span>
           <span className="font-bold text-[#0F172A] text-base">OrgOS Setup</span>
           {user.organization_id && (
             <span className="text-sm text-[#64748B]">— {user.name}</span>

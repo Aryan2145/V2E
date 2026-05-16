@@ -9,7 +9,6 @@ import { Eye, EyeOff, CheckCircle2, Users } from 'lucide-react'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import { getEmployees, createEmployee } from '@/lib/api/employees'
-import { createUser } from '@/lib/api/users'
 import { useAuth } from '@/lib/auth/context'
 import Button from '@/components/ui/Button'
 import type { Department, Role, EmployeeProfile } from '@/lib/types'
@@ -161,24 +160,15 @@ export default function Step5EmployeesPage() {
     setServerError(null)
     setSuccessMsg(null)
     try {
-      // Create user account first
-      const newUser = await createUser(orgId, {
+      await createEmployee(orgId, {
         name: data.name,
         email: data.email,
         password: data.password,
-        role: 'employee',
-      })
-
-      // Create employee profile
-      await createEmployee(orgId, {
-        user_id: newUser.id,
         role_id: data.role_id,
         department_id: data.department_id,
         employment_type: 'full_time',
         reporting_to_user_id: data.reporting_to_user_id || undefined,
-        status: 'active',
       })
-
       setSuccessMsg(`${data.name} added successfully!`)
       reset({ department_id: '', role_id: '', reporting_to_user_id: '' })
       await loadData()
