@@ -9,6 +9,7 @@ import { CultureModule } from './culture/culture.module';
 import { DepartmentsModule } from './departments/departments.module';
 import { RolesModule } from './roles/roles.module';
 import { EmployeesModule } from './employees/employees.module';
+import { LearningModule } from './learning/learning.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { EmployeesModule } from './employees/employees.module';
     DepartmentsModule,
     RolesModule,
     EmployeesModule,
+    LearningModule,
   ],
 })
 export class AppModule {}

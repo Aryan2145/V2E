@@ -1,14 +1,17 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { EmployeeStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { LearningService } from '../learning/learning.service';
 
 const USER_SELECT = {
   id: true,
@@ -28,7 +31,11 @@ const PROFILE_INCLUDE = {
 
 @Injectable()
 export class EmployeesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => LearningService))
+    private readonly learningService: LearningService,
+  ) {}
 
   async findAll(orgId: string) {
     return this.prisma.employeeProfile.findMany({
@@ -108,7 +115,7 @@ export class EmployeesService {
 
     const password_hash = await bcrypt.hash(password, 12);
 
-    return this.prisma.$transaction(async (tx) => {
+    const { profile, createdUserId } = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
           name,
@@ -133,8 +140,18 @@ export class EmployeesService {
         include: PROFILE_INCLUDE,
       });
 
-      return profile;
+      return { profile, createdUserId: user.id };
     });
+
+    // Auto-assign published learning paths after transaction commits
+    await this.learningService.autoAssignForNewEmployee(
+      profile.id,
+      profileData.role_id,
+      orgId,
+      createdUserId,
+    );
+
+    return profile;
   }
 
   async update(id: string, orgId: string, dto: UpdateEmployeeDto) {

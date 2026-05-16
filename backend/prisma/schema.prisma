@@ -44,6 +44,35 @@ enum EmployeeStatus {
   on_leave
 }
 
+enum ContentType {
+  video
+  document
+  url
+  article
+}
+
+enum LearningPathStatus {
+  draft
+  published
+  archived
+}
+
+enum AssignmentStatus {
+  not_started
+  in_progress
+  completed
+}
+
+enum SequentialMode {
+  sequential
+  free_form
+}
+
+enum CompletionType {
+  manual
+  auto_opened
+}
+
 model Organization {
   id         String    @id @default(uuid())
   name       String
@@ -62,6 +91,7 @@ model Organization {
   departments       Department[]
   roles             Role[]
   employee_profiles EmployeeProfile[]
+  learning_paths    LearningPath[]
 
   @@map("organizations")
 }
@@ -172,11 +202,104 @@ model EmployeeProfile {
   created_at           DateTime       @default(now())
   updated_at           DateTime       @updatedAt
 
-  organization Organization @relation(fields: [organization_id], references: [id])
-  user         User         @relation(fields: [user_id], references: [id])
-  role         Role         @relation(fields: [role_id], references: [id])
-  department   Department   @relation(fields: [department_id], references: [id])
-  reporting_to User?        @relation("ReportingTo", fields: [reporting_to_user_id], references: [id])
+  organization         Organization             @relation(fields: [organization_id], references: [id])
+  user                 User                     @relation(fields: [user_id], references: [id])
+  role                 Role                     @relation(fields: [role_id], references: [id])
+  department           Department               @relation(fields: [department_id], references: [id])
+  reporting_to         User?                    @relation("ReportingTo", fields: [reporting_to_user_id], references: [id])
+  learning_assignments LearningPathAssignment[]
 
   @@map("employee_profiles")
+}
+
+model LearningPath {
+  id                 String             @id @default(uuid())
+  organization_id    String
+  title              String
+  description        String?            @db.Text
+  thumbnail_url      String?
+  status             LearningPathStatus @default(draft)
+  mode               SequentialMode     @default(free_form)
+  role_id            String?
+  created_by_user_id String
+  estimated_minutes  Int?
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
+
+  organization Organization             @relation(fields: [organization_id], references: [id])
+  items        LearningItem[]
+  assignments  LearningPathAssignment[]
+
+  @@map("learning_paths")
+}
+
+model LearningItem {
+  id                String      @id @default(uuid())
+  path_id           String
+  title             String
+  description       String?     @db.Text
+  content_type      ContentType
+  content_url       String?
+  content_body      String?     @db.Text
+  order_index       Int         @default(0)
+  estimated_minutes Int?
+  is_required       Boolean     @default(true)
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  path     LearningPath           @relation(fields: [path_id], references: [id], onDelete: Cascade)
+  progress LearningItemProgress[]
+
+  @@map("learning_items")
+}
+
+model LearningPathAssignment {
+  id                  String           @id @default(uuid())
+  path_id             String
+  employee_profile_id String
+  assigned_by_user_id String
+  assigned_at         DateTime         @default(now())
+  due_date            DateTime?
+  status              AssignmentStatus @default(not_started)
+  completed_at        DateTime?
+
+  path             LearningPath           @relation(fields: [path_id], references: [id])
+  employee_profile EmployeeProfile        @relation(fields: [employee_profile_id], references: [id])
+  item_progress    LearningItemProgress[]
+  path_progress    LearningPathProgress?
+
+  @@unique([path_id, employee_profile_id])
+  @@map("learning_path_assignments")
+}
+
+model LearningItemProgress {
+  id                  String           @id @default(uuid())
+  assignment_id       String
+  item_id             String
+  employee_profile_id String
+  status              AssignmentStatus @default(not_started)
+  completion_type     CompletionType?
+  started_at          DateTime?
+  completed_at        DateTime?
+
+  assignment LearningPathAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+  item       LearningItem           @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@unique([assignment_id, item_id])
+  @@map("learning_item_progress")
+}
+
+model LearningPathProgress {
+  id                  String   @id @default(uuid())
+  assignment_id       String   @unique
+  employee_profile_id String
+  path_id             String
+  total_items         Int      @default(0)
+  completed_items     Int      @default(0)
+  progress_percent    Float    @default(0)
+  last_activity_at    DateTime @default(now())
+
+  assignment LearningPathAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
+
+  @@map("learning_path_progress")
 }

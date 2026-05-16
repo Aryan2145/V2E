@@ -1,0 +1,467 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  AssignmentStatus,
+  CompletionType,
+  LearningPathStatus,
+} from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateLearningPathDto } from './dto/create-learning-path.dto';
+import { UpdateLearningPathDto } from './dto/update-learning-path.dto';
+import { CreateLearningItemDto } from './dto/create-learning-item.dto';
+import { UpdateLearningItemDto } from './dto/update-learning-item.dto';
+import { AssignPathDto } from './dto/assign-path.dto';
+import { CompleteItemDto } from './dto/complete-item.dto';
+import { ReorderItemsDto } from './dto/reorder-items.dto';
+
+const PATH_INCLUDE = {
+  items: {
+    orderBy: { order_index: 'asc' as const },
+  },
+  _count: {
+    select: { items: true, assignments: true },
+  },
+};
+
+@Injectable()
+export class LearningService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  // ─── Paths ──────────────────────────────────────────────────────────────────
+
+  async findAllPaths(orgId: string) {
+    return this.prisma.learningPath.findMany({
+      where: { organization_id: orgId },
+      include: PATH_INCLUDE,
+      orderBy: { created_at: 'desc' },
+    });
+  }
+
+  async findOnePath(pathId: string, orgId: string) {
+    const path = await this.prisma.learningPath.findFirst({
+      where: { id: pathId, organization_id: orgId },
+      include: PATH_INCLUDE,
+    });
+    if (!path) throw new NotFoundException(`Learning path ${pathId} not found`);
+    return path;
+  }
+
+  async createPath(orgId: string, userId: string, dto: CreateLearningPathDto) {
+    return this.prisma.learningPath.create({
+      data: {
+        ...dto,
+        organization_id: orgId,
+        created_by_user_id: userId,
+      },
+      include: PATH_INCLUDE,
+    });
+  }
+
+  async updatePath(pathId: string, orgId: string, dto: UpdateLearningPathDto) {
+    await this.findOnePath(pathId, orgId);
+    return this.prisma.learningPath.update({
+      where: { id: pathId },
+      data: dto,
+      include: PATH_INCLUDE,
+    });
+  }
+
+  async publishPath(pathId: string, orgId: string, actorUserId: string) {
+    const path = await this.findOnePath(pathId, orgId);
+    if (path.status === LearningPathStatus.published) {
+      throw new BadRequestException('Path is already published');
+    }
+
+    const updated = await this.prisma.learningPath.update({
+      where: { id: pathId },
+      data: { status: LearningPathStatus.published },
+      include: PATH_INCLUDE,
+    });
+
+    // Auto-assign to all active employees with the matching role_id
+    if (path.role_id) {
+      const employees = await this.prisma.employeeProfile.findMany({
+        where: {
+          organization_id: orgId,
+          role_id: path.role_id,
+          status: 'active',
+        },
+      });
+
+      const employeeIds = employees.map((e) => e.id);
+      await this.bulkAssign(pathId, orgId, actorUserId, employeeIds, undefined);
+    }
+
+    return updated;
+  }
+
+  async archivePath(pathId: string, orgId: string) {
+    await this.findOnePath(pathId, orgId);
+    return this.prisma.learningPath.update({
+      where: { id: pathId },
+      data: { status: LearningPathStatus.archived },
+      include: PATH_INCLUDE,
+    });
+  }
+
+  async deletePath(pathId: string, orgId: string) {
+    await this.findOnePath(pathId, orgId);
+    return this.prisma.learningPath.delete({ where: { id: pathId } });
+  }
+
+  // ─── Items ──────────────────────────────────────────────────────────────────
+
+  async addItem(pathId: string, orgId: string, dto: CreateLearningItemDto) {
+    await this.findOnePath(pathId, orgId);
+
+    const maxOrder = await this.prisma.learningItem.aggregate({
+      where: { path_id: pathId },
+      _max: { order_index: true },
+    });
+
+    const order_index = dto.order_index ?? (maxOrder._max.order_index ?? -1) + 1;
+
+    return this.prisma.learningItem.create({
+      data: { ...dto, path_id: pathId, order_index },
+    });
+  }
+
+  async updateItem(
+    pathId: string,
+    itemId: string,
+    orgId: string,
+    dto: UpdateLearningItemDto,
+  ) {
+    await this.findOnePath(pathId, orgId);
+    const item = await this.prisma.learningItem.findFirst({
+      where: { id: itemId, path_id: pathId },
+    });
+    if (!item) throw new NotFoundException(`Item ${itemId} not found`);
+
+    return this.prisma.learningItem.update({ where: { id: itemId }, data: dto });
+  }
+
+  async deleteItem(pathId: string, itemId: string, orgId: string) {
+    await this.findOnePath(pathId, orgId);
+    const item = await this.prisma.learningItem.findFirst({
+      where: { id: itemId, path_id: pathId },
+    });
+    if (!item) throw new NotFoundException(`Item ${itemId} not found`);
+    return this.prisma.learningItem.delete({ where: { id: itemId } });
+  }
+
+  async reorderItems(pathId: string, orgId: string, dto: ReorderItemsDto) {
+    await this.findOnePath(pathId, orgId);
+    await this.prisma.$transaction(
+      dto.items.map((item) =>
+        this.prisma.learningItem.update({
+          where: { id: item.id },
+          data: { order_index: item.order_index },
+        }),
+      ),
+    );
+    return { success: true };
+  }
+
+  // ─── Assignments ─────────────────────────────────────────────────────────────
+
+  async assignPath(
+    pathId: string,
+    orgId: string,
+    actorUserId: string,
+    dto: AssignPathDto,
+  ) {
+    await this.findOnePath(pathId, orgId);
+    const dueDate = dto.due_date ? new Date(dto.due_date) : undefined;
+    await this.bulkAssign(
+      pathId,
+      orgId,
+      actorUserId,
+      dto.employee_profile_ids,
+      dueDate,
+    );
+    return { assigned: dto.employee_profile_ids.length };
+  }
+
+  private async bulkAssign(
+    pathId: string,
+    orgId: string,
+    actorUserId: string,
+    employeeProfileIds: string[],
+    dueDate?: Date,
+  ) {
+    const items = await this.prisma.learningItem.findMany({
+      where: { path_id: pathId },
+    });
+
+    for (const empId of employeeProfileIds) {
+      // Skip if already assigned
+      const existing = await this.prisma.learningPathAssignment.findUnique({
+        where: { path_id_employee_profile_id: { path_id: pathId, employee_profile_id: empId } },
+      });
+      if (existing) continue;
+
+      await this.prisma.$transaction(async (tx) => {
+        const assignment = await tx.learningPathAssignment.create({
+          data: {
+            path_id: pathId,
+            employee_profile_id: empId,
+            assigned_by_user_id: actorUserId,
+            due_date: dueDate,
+          },
+        });
+
+        if (items.length > 0) {
+          await tx.learningItemProgress.createMany({
+            data: items.map((item) => ({
+              assignment_id: assignment.id,
+              item_id: item.id,
+              employee_profile_id: empId,
+            })),
+          });
+        }
+
+        await tx.learningPathProgress.create({
+          data: {
+            assignment_id: assignment.id,
+            employee_profile_id: empId,
+            path_id: pathId,
+            total_items: items.length,
+            completed_items: 0,
+            progress_percent: 0,
+          },
+        });
+      });
+    }
+  }
+
+  async getAssignments(pathId: string, orgId: string) {
+    await this.findOnePath(pathId, orgId);
+    return this.prisma.learningPathAssignment.findMany({
+      where: { path_id: pathId },
+      include: {
+        employee_profile: {
+          include: {
+            user: { select: { id: true, name: true, email: true } },
+            role: { select: { id: true, title: true } },
+            department: { select: { id: true, name: true } },
+          },
+        },
+        path_progress: true,
+      },
+      orderBy: { assigned_at: 'desc' },
+    });
+  }
+
+  // ─── Employee: My Learning ──────────────────────────────────────────────────
+
+  async getMyAssignments(employeeProfileId: string) {
+    return this.prisma.learningPathAssignment.findMany({
+      where: { employee_profile_id: employeeProfileId },
+      include: {
+        path: {
+          include: { _count: { select: { items: true } } },
+        },
+        path_progress: true,
+      },
+      orderBy: { assigned_at: 'desc' },
+    });
+  }
+
+  async getMyAssignment(assignmentId: string, employeeProfileId: string) {
+    const assignment = await this.prisma.learningPathAssignment.findFirst({
+      where: { id: assignmentId, employee_profile_id: employeeProfileId },
+      include: {
+        path: true,
+        path_progress: true,
+      },
+    });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+
+    const items = await this.prisma.learningItem.findMany({
+      where: { path_id: assignment.path_id },
+      orderBy: { order_index: 'asc' },
+    });
+
+    const progresses = await this.prisma.learningItemProgress.findMany({
+      where: { assignment_id: assignmentId },
+    });
+
+    const progressMap = new Map(progresses.map((p) => [p.item_id, p]));
+    const isSequential = assignment.path.mode === 'sequential';
+
+    const itemsWithStatus = items.map((item, idx) => {
+      const prog = progressMap.get(item.id);
+      let is_locked = false;
+      if (isSequential && idx > 0) {
+        const prevItem = items[idx - 1];
+        const prevProg = progressMap.get(prevItem.id);
+        is_locked = !prevProg || prevProg.status !== 'completed';
+      }
+      return { ...item, is_locked, progress: prog ?? null };
+    });
+
+    return { ...assignment, items: itemsWithStatus };
+  }
+
+  async completeItem(
+    assignmentId: string,
+    itemId: string,
+    employeeProfileId: string,
+    dto: CompleteItemDto,
+  ) {
+    const assignment = await this.prisma.learningPathAssignment.findFirst({
+      where: { id: assignmentId, employee_profile_id: employeeProfileId },
+    });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+
+    const now = new Date();
+
+    const progress = await this.prisma.learningItemProgress.upsert({
+      where: { assignment_id_item_id: { assignment_id: assignmentId, item_id: itemId } },
+      update: {
+        status: AssignmentStatus.completed,
+        completion_type: dto.completion_type as CompletionType,
+        completed_at: now,
+      },
+      create: {
+        assignment_id: assignmentId,
+        item_id: itemId,
+        employee_profile_id: employeeProfileId,
+        status: AssignmentStatus.completed,
+        completion_type: dto.completion_type as CompletionType,
+        started_at: now,
+        completed_at: now,
+      },
+    });
+
+    await this.recalculateProgress(assignmentId, employeeProfileId);
+
+    return progress;
+  }
+
+  private async recalculateProgress(
+    assignmentId: string,
+    employeeProfileId: string,
+  ) {
+    const [total, completed] = await Promise.all([
+      this.prisma.learningItemProgress.count({ where: { assignment_id: assignmentId } }),
+      this.prisma.learningItemProgress.count({
+        where: { assignment_id: assignmentId, status: AssignmentStatus.completed },
+      }),
+    ]);
+
+    const percent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+    await this.prisma.learningPathProgress.update({
+      where: { assignment_id: assignmentId },
+      data: {
+        completed_items: completed,
+        total_items: total,
+        progress_percent: percent,
+        last_activity_at: new Date(),
+      },
+    });
+
+    if (percent === 100) {
+      await this.prisma.learningPathAssignment.update({
+        where: { id: assignmentId },
+        data: {
+          status: AssignmentStatus.completed,
+          completed_at: new Date(),
+        },
+      });
+    } else if (completed > 0) {
+      await this.prisma.learningPathAssignment.update({
+        where: { id: assignmentId },
+        data: { status: AssignmentStatus.in_progress },
+      });
+    }
+  }
+
+  // ─── Progress Dashboard ──────────────────────────────────────────────────────
+
+  async getOrgProgress(orgId: string) {
+    const paths = await this.prisma.learningPath.findMany({
+      where: { organization_id: orgId },
+      include: {
+        assignments: {
+          include: { path_progress: true },
+        },
+      },
+    });
+
+    let totalAssignments = 0;
+    let completedAssignments = 0;
+    let inProgressAssignments = 0;
+    let notStartedAssignments = 0;
+    let sumPercent = 0;
+
+    const pathSummaries = paths.map((path) => {
+      const assignments = path.assignments;
+      totalAssignments += assignments.length;
+
+      let pCompleted = 0;
+      let pInProgress = 0;
+      let pNotStarted = 0;
+      let pSumPercent = 0;
+
+      for (const a of assignments) {
+        if (a.status === 'completed') { pCompleted++; completedAssignments++; }
+        else if (a.status === 'in_progress') { pInProgress++; inProgressAssignments++; }
+        else { pNotStarted++; notStartedAssignments++; }
+        pSumPercent += a.path_progress?.progress_percent ?? 0;
+        sumPercent += a.path_progress?.progress_percent ?? 0;
+      }
+
+      return {
+        path_id: path.id,
+        title: path.title,
+        status: path.status,
+        total_assignments: assignments.length,
+        completed: pCompleted,
+        in_progress: pInProgress,
+        not_started: pNotStarted,
+        avg_percent:
+          assignments.length > 0
+            ? Math.round(pSumPercent / assignments.length)
+            : 0,
+      };
+    });
+
+    return {
+      total_paths: paths.length,
+      total_assignments: totalAssignments,
+      completed_assignments: completedAssignments,
+      in_progress_assignments: inProgressAssignments,
+      not_started_assignments: notStartedAssignments,
+      avg_progress_percent:
+        totalAssignments > 0 ? Math.round(sumPercent / totalAssignments) : 0,
+      paths: pathSummaries,
+    };
+  }
+
+  // ─── Auto-assign on employee creation ─────────────────────────────────────
+
+  async autoAssignForNewEmployee(
+    employeeProfileId: string,
+    roleId: string,
+    orgId: string,
+    assignedByUserId: string,
+  ) {
+    const publishedPaths = await this.prisma.learningPath.findMany({
+      where: {
+        organization_id: orgId,
+        status: LearningPathStatus.published,
+        role_id: roleId,
+      },
+    });
+
+    for (const path of publishedPaths) {
+      await this.bulkAssign(path.id, orgId, assignedByUserId, [employeeProfileId], undefined);
+    }
+  }
+}
