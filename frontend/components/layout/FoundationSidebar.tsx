@@ -39,7 +39,7 @@ export default function FoundationSidebar({ collapsed, onToggle }: FoundationSid
       {/* Toggle button row */}
       <div className="h-12 flex items-center border-b border-white/10 shrink-0 px-2">
         {!collapsed && (
-          <span className="flex-1 px-2 text-xs font-semibold text-[#475569] uppercase tracking-widest whitespace-nowrap">
+          <span className="flex-1 px-2 text-xs font-semibold text-[#94A3B8] uppercase tracking-widest whitespace-nowrap">
             Foundation
           </span>
         )}
