@@ -68,7 +68,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
         <div className="flex items-center gap-3 shrink-0">
           <span className="font-bold text-[#0F172A] text-base">OrgOS Setup</span>
           {user.organization_id && (
-            <span className="text-sm text-[#94A3B8]">— {user.name}</span>
+            <span className="text-sm text-[#64748B]">— {user.name}</span>
           )}
         </div>
 
@@ -85,7 +85,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
           </span>
         </div>
 
-        <span className="text-xs text-[#94A3B8] shrink-0">
+        <span className="text-xs text-[#64748B] shrink-0">
           Step {currentStep} of {STEPS.length}
         </span>
       </header>

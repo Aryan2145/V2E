@@ -24,7 +24,7 @@ export default function SetupSidebar({ currentStep, steps }: SetupSidebarProps) 
     <aside className="w-[280px] shrink-0 bg-white border-r border-[#E2E8F0] h-full flex flex-col">
       {/* Brand header */}
       <div className="px-6 pt-6 pb-5 border-b border-[#E2E8F0]">
-        <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-widest mb-1">
+        <p className="text-xs font-semibold text-[#64748B] uppercase tracking-widest mb-1">
           Setup Wizard
         </p>
         <h2 className="text-[18px] font-bold text-[#0F172A]">OrgOS</h2>
@@ -61,7 +61,7 @@ export default function SetupSidebar({ currentStep, steps }: SetupSidebarProps) 
                 </div>
               ) : (
                 <div className="w-7 h-7 rounded-full bg-[#F1F5F9] border-2 border-[#CBD5E1] flex items-center justify-center shrink-0">
-                  <span className="text-[#94A3B8] text-xs font-semibold">{step.id}</span>
+                  <span className="text-[#64748B] text-xs font-semibold">{step.id}</span>
                 </div>
               )}
 
@@ -73,7 +73,7 @@ export default function SetupSidebar({ currentStep, steps }: SetupSidebarProps) 
                     ? 'font-bold text-[#0F172A]'
                     : isCompleted
                     ? 'font-medium text-[#475569]'
-                    : 'font-medium text-[#94A3B8]',
+                    : 'font-medium text-[#64748B]',
                 ].join(' ')}
               >
                 {step.label}
@@ -85,7 +85,7 @@ export default function SetupSidebar({ currentStep, steps }: SetupSidebarProps) 
 
       {/* Footer */}
       <div className="px-6 py-4 border-t border-[#E2E8F0]">
-        <p className="text-xs text-[#94A3B8]">
+        <p className="text-xs text-[#64748B]">
           Complete all steps to finish your organization setup.
         </p>
       </div>
