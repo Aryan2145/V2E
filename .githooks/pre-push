@@ -1,0 +1,92 @@
+#!/bin/sh
+# Pre-push hook — catches issues that break the Docker production build.
+# Install once: git config core.hooksPath .githooks
+
+set -e
+
+PASS=0
+FAIL=1
+status=0
+
+fail() {
+  echo "  ✗ $1"
+  status=1
+}
+
+pass() {
+  echo "  ✓ $1"
+}
+
+echo ""
+echo "Pre-push checks running..."
+echo ""
+
+# ── 1. Uncommitted lock files ──────────────────────────────────────────────
+echo "[1/4] Package lock files"
+
+if ! git diff --quiet HEAD -- frontend/package-lock.json 2>/dev/null; then
+  fail "frontend/package-lock.json has uncommitted changes — commit it before pushing"
+else
+  pass "frontend/package-lock.json is committed"
+fi
+
+if ! git diff --quiet HEAD -- backend/package-lock.json 2>/dev/null; then
+  fail "backend/package-lock.json has uncommitted changes — commit it before pushing"
+else
+  pass "backend/package-lock.json is committed"
+fi
+
+# ── 2. Uncommitted Prisma schema ───────────────────────────────────────────
+echo ""
+echo "[2/4] Prisma schema"
+
+if ! git diff --quiet HEAD -- backend/prisma/schema.prisma 2>/dev/null; then
+  fail "backend/prisma/schema.prisma has uncommitted changes — commit it before pushing"
+else
+  pass "schema.prisma is committed"
+fi
+
+# ── 3. TypeScript — frontend ───────────────────────────────────────────────
+echo ""
+echo "[3/4] TypeScript: frontend"
+
+cd frontend
+if npx tsc --noEmit 2>&1; then
+  pass "No TypeScript errors"
+else
+  fail "TypeScript errors found in frontend"
+fi
+cd ..
+
+# ── 4. TypeScript — backend ────────────────────────────────────────────────
+echo ""
+echo "[4/4] TypeScript: backend"
+
+cd backend
+
+if npx tsc --noEmit 2>&1; then
+  pass "No TypeScript errors"
+else
+  fail "TypeScript errors found in backend"
+fi
+
+# Prisma validate
+if npx prisma validate 2>&1; then
+  pass "Prisma schema valid"
+else
+  fail "Prisma schema validation failed"
+fi
+
+cd ..
+
+# ── Result ─────────────────────────────────────────────────────────────────
+echo ""
+if [ $status -eq 1 ]; then
+  echo "Push blocked. Fix the issues above and try again."
+  echo ""
+  exit 1
+fi
+
+echo "All checks passed. Pushing..."
+echo ""
+exit 0
