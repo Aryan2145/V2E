@@ -46,3 +46,7 @@ coverage/
 # Misc
 .agents/
 skills-lock.json
+
+# Dev-only docs
+CLAUDE.md
+DESIGN_RULES.md
