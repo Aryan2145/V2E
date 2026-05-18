@@ -44,6 +44,38 @@ enum EmployeeStatus {
   on_leave
 }
 
+enum AnnouncementType {
+  announcement
+  circular
+}
+
+enum AnnouncementPriority {
+  normal
+  important
+  urgent
+}
+
+enum CommunicationScope {
+  company_wide
+  department
+}
+
+enum BoardInteractionMode {
+  read_only
+  comments_only
+  comments_and_reactions
+}
+
+enum ConversationType {
+  direct
+  group
+}
+
+enum ChatMemberRole {
+  admin
+  member
+}
+
 enum ContentType {
   video
   document
@@ -85,13 +117,25 @@ model Organization {
   created_at DateTime  @default(now())
   updated_at DateTime  @updatedAt
 
-  users             User[]
-  org_identity      OrgIdentity?
-  culture_standards CultureStandard[]
-  departments       Department[]
-  roles             Role[]
-  employee_profiles EmployeeProfile[]
-  learning_paths    LearningPath[]
+  users              User[]
+  org_identity       OrgIdentity?
+  culture_standards  CultureStandard[]
+  departments        Department[]
+  roles              Role[]
+  employee_profiles  EmployeeProfile[]
+  learning_paths     LearningPath[]
+  announcements      Announcement[]
+  announcement_reads AnnouncementRead[]
+  bulletin_boards    BulletinBoard[]
+  bulletin_posts     BulletinPost[]
+  bulletin_comments  BulletinComment[]
+  bulletin_reactions BulletinReaction[]
+  knowledge_posts    KnowledgePost[]
+  knowledge_comments KnowledgeComment[]
+  knowledge_reactions KnowledgeReaction[]
+  conversations      Conversation[]
+  conversation_members ConversationMember[]
+  messages           Message[]
 
   @@map("organizations")
 }
@@ -108,10 +152,22 @@ model User {
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  organization         Organization?     @relation(fields: [organization_id], references: [id])
-  employee_profile     EmployeeProfile?
-  headed_departments   Department[]      @relation("DepartmentHead")
-  reports_to_employees EmployeeProfile[] @relation("ReportingTo")
+  organization          Organization?      @relation(fields: [organization_id], references: [id])
+  employee_profile      EmployeeProfile?
+  headed_departments    Department[]       @relation("DepartmentHead")
+  reports_to_employees  EmployeeProfile[]  @relation("ReportingTo")
+  announcements         Announcement[]
+  announcement_reads    AnnouncementRead[]
+  bulletin_boards       BulletinBoard[]
+  bulletin_posts        BulletinPost[]
+  bulletin_comments     BulletinComment[]
+  bulletin_reactions    BulletinReaction[]
+  knowledge_posts       KnowledgePost[]
+  knowledge_comments    KnowledgeComment[]
+  knowledge_reactions   KnowledgeReaction[]
+  conversations         Conversation[]
+  conversation_memberships ConversationMember[]
+  sent_messages         Message[]          @relation("SentMessages")
 
   @@unique([email, organization_id])
   @@map("users")
@@ -159,12 +215,15 @@ model Department {
   created_at           DateTime @default(now())
   updated_at           DateTime @updatedAt
 
-  organization      Organization  @relation(fields: [organization_id], references: [id])
-  parent_department Department?   @relation("DepartmentHierarchy", fields: [parent_department_id], references: [id])
-  child_departments Department[]  @relation("DepartmentHierarchy")
-  head_user         User?         @relation("DepartmentHead", fields: [head_user_id], references: [id])
-  roles             Role[]
-  employee_profiles EmployeeProfile[]
+  organization        Organization    @relation(fields: [organization_id], references: [id])
+  parent_department   Department?     @relation("DepartmentHierarchy", fields: [parent_department_id], references: [id])
+  child_departments   Department[]    @relation("DepartmentHierarchy")
+  head_user           User?           @relation("DepartmentHead", fields: [head_user_id], references: [id])
+  roles               Role[]
+  employee_profiles   EmployeeProfile[]
+  announcements       Announcement[]
+  bulletin_boards     BulletinBoard[]
+  knowledge_posts     KnowledgePost[]
 
   @@map("departments")
 }
@@ -302,4 +361,234 @@ model LearningPathProgress {
   assignment LearningPathAssignment @relation(fields: [assignment_id], references: [id], onDelete: Cascade)
 
   @@map("learning_path_progress")
+}
+
+// ─── Communication Layer ────────────────────────────────────────────────────
+
+model Announcement {
+  id                  String              @id @default(uuid())
+  organization_id     String
+  title               String
+  body                String              @db.Text
+  type                AnnouncementType    @default(announcement)
+  scope               CommunicationScope  @default(company_wide)
+  department_id       String?
+  priority            AnnouncementPriority @default(normal)
+  published_at        DateTime?
+  expires_at          DateTime?
+  created_by_user_id  String
+  is_pinned           Boolean             @default(false)
+  attachment_urls     Json?
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+
+  organization Organization      @relation(fields: [organization_id], references: [id])
+  department   Department?       @relation(fields: [department_id], references: [id])
+  created_by   User              @relation(fields: [created_by_user_id], references: [id])
+  reads        AnnouncementRead[]
+
+  @@map("announcements")
+}
+
+model AnnouncementRead {
+  id              String   @id @default(uuid())
+  organization_id String
+  announcement_id String
+  user_id         String
+  read_at         DateTime @default(now())
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+  announcement Announcement @relation(fields: [announcement_id], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [user_id], references: [id])
+
+  @@unique([announcement_id, user_id])
+  @@map("announcement_reads")
+}
+
+model BulletinBoard {
+  id                  String               @id @default(uuid())
+  organization_id     String
+  name                String
+  description         String?              @db.Text
+  scope               CommunicationScope   @default(company_wide)
+  department_id       String?
+  interaction_mode    BoardInteractionMode @default(comments_and_reactions)
+  created_by_user_id  String
+  is_active           Boolean              @default(true)
+  created_at          DateTime             @default(now())
+  updated_at          DateTime             @updatedAt
+
+  organization Organization    @relation(fields: [organization_id], references: [id])
+  department   Department?     @relation(fields: [department_id], references: [id])
+  created_by   User            @relation(fields: [created_by_user_id], references: [id])
+  posts        BulletinPost[]
+
+  @@map("bulletin_boards")
+}
+
+model BulletinPost {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  bulletin_board_id   String
+  title               String
+  body                String   @db.Text
+  attachment_urls     Json?
+  is_pinned           Boolean  @default(false)
+  created_by_user_id  String
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  organization   Organization       @relation(fields: [organization_id], references: [id])
+  bulletin_board BulletinBoard      @relation(fields: [bulletin_board_id], references: [id], onDelete: Cascade)
+  created_by     User               @relation(fields: [created_by_user_id], references: [id])
+  comments       BulletinComment[]
+  reactions      BulletinReaction[]
+
+  @@map("bulletin_posts")
+}
+
+model BulletinComment {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  bulletin_post_id    String
+  body                String   @db.Text
+  created_by_user_id  String
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  organization  Organization @relation(fields: [organization_id], references: [id])
+  bulletin_post BulletinPost @relation(fields: [bulletin_post_id], references: [id], onDelete: Cascade)
+  created_by    User         @relation(fields: [created_by_user_id], references: [id])
+
+  @@map("bulletin_comments")
+}
+
+model BulletinReaction {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  bulletin_post_id    String
+  user_id             String
+  emoji               String
+  created_at          DateTime @default(now())
+
+  organization  Organization @relation(fields: [organization_id], references: [id])
+  bulletin_post BulletinPost @relation(fields: [bulletin_post_id], references: [id], onDelete: Cascade)
+  user          User         @relation(fields: [user_id], references: [id])
+
+  @@unique([bulletin_post_id, user_id, emoji])
+  @@map("bulletin_reactions")
+}
+
+model KnowledgePost {
+  id                  String             @id @default(uuid())
+  organization_id     String
+  title               String?
+  body                String             @db.Text
+  scope               CommunicationScope @default(company_wide)
+  department_id       String?
+  tags                Json?
+  is_pinned           Boolean            @default(false)
+  attachment_urls     Json?
+  created_by_user_id  String
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+
+  organization Organization          @relation(fields: [organization_id], references: [id])
+  department   Department?           @relation(fields: [department_id], references: [id])
+  created_by   User                  @relation(fields: [created_by_user_id], references: [id])
+  comments     KnowledgeComment[]
+  reactions    KnowledgeReaction[]
+
+  @@map("knowledge_posts")
+}
+
+model KnowledgeComment {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  knowledge_post_id   String
+  body                String   @db.Text
+  parent_comment_id   String?
+  created_by_user_id  String
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  organization   Organization       @relation(fields: [organization_id], references: [id])
+  knowledge_post KnowledgePost      @relation(fields: [knowledge_post_id], references: [id], onDelete: Cascade)
+  parent_comment KnowledgeComment?  @relation("CommentReplies", fields: [parent_comment_id], references: [id])
+  replies        KnowledgeComment[] @relation("CommentReplies")
+  created_by     User               @relation(fields: [created_by_user_id], references: [id])
+
+  @@map("knowledge_comments")
+}
+
+model KnowledgeReaction {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  knowledge_post_id   String
+  user_id             String
+  emoji               String
+  created_at          DateTime @default(now())
+
+  organization   Organization  @relation(fields: [organization_id], references: [id])
+  knowledge_post KnowledgePost @relation(fields: [knowledge_post_id], references: [id], onDelete: Cascade)
+  user           User          @relation(fields: [user_id], references: [id])
+
+  @@unique([knowledge_post_id, user_id, emoji])
+  @@map("knowledge_reactions")
+}
+
+model Conversation {
+  id                  String           @id @default(uuid())
+  organization_id     String
+  type                ConversationType @default(direct)
+  name                String?
+  avatar_url          String?
+  created_by_user_id  String
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
+
+  organization Organization         @relation(fields: [organization_id], references: [id])
+  created_by   User                 @relation(fields: [created_by_user_id], references: [id])
+  members      ConversationMember[]
+  messages     Message[]
+
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id              String         @id @default(uuid())
+  organization_id String
+  conversation_id String
+  user_id         String
+  role            ChatMemberRole @default(member)
+  joined_at       DateTime       @default(now())
+  last_read_at    DateTime       @default(now())
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [user_id], references: [id])
+
+  @@unique([conversation_id, user_id])
+  @@map("conversation_members")
+}
+
+model Message {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  conversation_id     String
+  sender_user_id      String
+  body                String   @db.Text
+  attachment_urls     Json?
+  reply_to_message_id String?
+  is_deleted          Boolean  @default(false)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  organization     Organization @relation(fields: [organization_id], references: [id])
+  conversation     Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  sender           User         @relation("SentMessages", fields: [sender_user_id], references: [id])
+  reply_to_message Message?     @relation("MessageReplies", fields: [reply_to_message_id], references: [id])
+  replies          Message[]    @relation("MessageReplies")
+
+  @@map("messages")
 }
