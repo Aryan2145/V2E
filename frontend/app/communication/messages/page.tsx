@@ -11,7 +11,7 @@ import type { EmployeeProfile } from '@/lib/types'
 import { MessageSquare, Plus, Send, X, Users, Search } from 'lucide-react'
 import { io, Socket } from 'socket.io-client'
 
-const SOCKET_URL = 'http://localhost:3001'
+const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
 
 export default function MessagesPage() {
   const { user } = useAuth()
