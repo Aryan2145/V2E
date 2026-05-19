@@ -10,10 +10,9 @@ export default function LoginPage() {
   const { login, user } = useAuth()
   const router = useRouter()
 
-  // Redirect after React commits the user state update
   useEffect(() => {
     if (!user) return
-    const dest = user.role === 'super_admin' ? '/super-admin/organizations' : '/dashboard'
+    const dest = user.isSuperAdmin ? '/super-admin/organizations' : '/dashboard'
     router.replace(dest)
   }, [user, router])
 
@@ -33,7 +32,6 @@ export default function LoginPage() {
 
     setIsLoading(true)
     try {
-      // login() handles token storage + redirect via AuthProvider
       await login(email.trim(), password)
     } catch (err: unknown) {
       const message =
@@ -47,9 +45,7 @@ export default function LoginPage() {
 
   return (
     <div className="w-full max-w-[420px]">
-      {/* Card */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-8">
-        {/* Logo / brand */}
         <div className="mb-8 text-center">
           <span className="text-[28px] font-bold text-[#0F172A] tracking-tight">
             OrgOS
@@ -59,7 +55,6 @@ export default function LoginPage() {
           </p>
         </div>
 
-        {/* Global error */}
         {error && (
           <div
             role="alert"
@@ -69,7 +64,6 @@ export default function LoginPage() {
           </div>
         )}
 
-        {/* Form */}
         <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
           <Input
             id="email"

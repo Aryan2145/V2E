@@ -17,7 +17,6 @@ const USER_SELECT = {
   id: true,
   name: true,
   email: true,
-  role: true,
   is_active: true,
   created_at: true,
 };
@@ -83,16 +82,6 @@ export class EmployeesService {
   async create(orgId: string, dto: CreateEmployeeDto) {
     const { name, email, password, ...profileData } = dto;
 
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email_organization_id: { email, organization_id: orgId } },
-    });
-
-    if (existingUser) {
-      throw new ConflictException(
-        `A user with email '${email}' already exists in this organization`,
-      );
-    }
-
     const roleExists = await this.prisma.role.findFirst({
       where: { id: profileData.role_id, organization_id: orgId },
     });
@@ -113,19 +102,28 @@ export class EmployeesService {
       );
     }
 
-    const password_hash = await bcrypt.hash(password, 12);
-
     const { profile, createdUserId } = await this.prisma.$transaction(async (tx) => {
-      const user = await tx.user.create({
-        data: {
-          name,
-          email,
-          password_hash,
-          role: 'employee',
-          organization_id: orgId,
-          is_active: true,
-        },
-        select: USER_SELECT,
+      let user = await tx.user.findUnique({ where: { email } });
+
+      if (user) {
+        const existing = await tx.organizationMember.findFirst({
+          where: { user_id: user.id, organization_id: orgId },
+        });
+        if (existing) {
+          throw new ConflictException(
+            `A user with email '${email}' already exists in this organization`,
+          );
+        }
+      } else {
+        const password_hash = await bcrypt.hash(password, 12);
+        user = await tx.user.create({
+          data: { name, email, password_hash, is_active: true },
+          select: { id: true, name: true, email: true, is_active: true, created_at: true } as any,
+        });
+      }
+
+      await tx.organizationMember.create({
+        data: { organization_id: orgId, user_id: user.id, role: 'employee' },
       });
 
       const profile = await tx.employeeProfile.create({

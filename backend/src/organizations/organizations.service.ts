@@ -17,7 +17,7 @@ export class OrganizationsService {
       include: {
         _count: {
           select: {
-            users: true,
+            members: true,
             departments: true,
           },
         },
@@ -32,7 +32,7 @@ export class OrganizationsService {
       include: {
         _count: {
           select: {
-            users: true,
+            members: true,
             departments: true,
           },
         },
@@ -58,47 +58,37 @@ export class OrganizationsService {
       throw new ConflictException(`Slug '${orgData.slug}' is already taken`);
     }
 
-    const existingUser = await this.prisma.user.findFirst({
-      where: { email: admin_email, organization_id: null },
-    });
-
-    if (existingUser) {
-      throw new ConflictException(
-        `User with email '${admin_email}' already exists`,
-      );
-    }
-
     const password_hash = await bcrypt.hash(admin_password, 12);
 
     return this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
-        data: {
-          ...orgData,
-          status: 'active' as any,
-        },
+        data: { ...orgData, status: 'active' as any },
       });
 
-      const adminUser = await tx.user.create({
-        data: {
-          name: admin_name,
-          email: admin_email,
-          password_hash,
-          role: 'org_admin',
+      let adminUser = await tx.user.findUnique({ where: { email: admin_email } });
+
+      if (!adminUser) {
+        adminUser = await tx.user.create({
+          data: { name: admin_name, email: admin_email, password_hash, is_active: true },
+        });
+      }
+
+      const member = await tx.organizationMember.create({
+        data: { organization_id: organization.id, user_id: adminUser.id, role: 'org_admin', is_active: true },
+      });
+
+      return {
+        organization,
+        admin: {
+          id: adminUser.id,
+          name: adminUser.name,
+          email: adminUser.email,
+          role: member.role,
           organization_id: organization.id,
-          is_active: true,
+          is_active: adminUser.is_active,
+          created_at: adminUser.created_at,
         },
-        select: {
-          id: true,
-          name: true,
-          email: true,
-          role: true,
-          organization_id: true,
-          is_active: true,
-          created_at: true,
-        },
-      });
-
-      return { organization, admin: adminUser };
+      };
     });
   }
 

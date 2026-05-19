@@ -10,7 +10,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
   const router = useRouter()
 
   useEffect(() => {
-    if (!isLoading && (!user || user.role !== 'super_admin')) {
+    if (!isLoading && (!user || !user.isSuperAdmin)) {
       router.replace('/login')
     }
   }, [user, isLoading, router])
@@ -26,7 +26,7 @@ export default function SuperAdminLayout({ children }: { children: React.ReactNo
     )
   }
 
-  if (!user || user.role !== 'super_admin') {
+  if (!user || !user.isSuperAdmin) {
     return null
   }
 

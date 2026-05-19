@@ -9,8 +9,8 @@ import React, {
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { login as apiLogin, logout as apiLogout, getMe } from '../api/auth';
-import type { AuthUser } from '../types';
+import { login as apiLogin, logout as apiLogout, getMe, switchOrg as apiSwitchOrg } from '../api/auth';
+import type { AuthUser, OrgChoice } from '../types';
 
 // ─── Context Shape ─────────────────────────────────────────────────────────────
 
@@ -18,11 +18,14 @@ interface AuthState {
   user: AuthUser | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  pendingOrgSelection: OrgChoice[] | null;
 }
 
 interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  selectOrg: (organizationId: string) => Promise<void>;
+  switchOrg: (organizationId: string) => Promise<void>;
 }
 
 // ─── Context ───────────────────────────────────────────────────────────────────
@@ -31,16 +34,12 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
-interface AuthProviderProps {
-  children: ReactNode;
-}
-
-export function AuthProvider({ children }: AuthProviderProps) {
+export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingOrgSelection, setPendingOrgSelection] = useState<OrgChoice[] | null>(null);
 
-  // Restore session on mount if a token exists
   useEffect(() => {
     async function restoreSession() {
       const token = typeof window !== 'undefined'
@@ -56,7 +55,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const me = await getMe();
         setUser(me);
       } catch {
-        // Token invalid or expired — clear storage (client interceptor handles redirect)
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
       } finally {
@@ -68,13 +66,44 @@ export function AuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const tokens = await apiLogin(email, password);
+    const result = await apiLogin(email, password);
 
+    if ('requires_org_selection' in result && result.requires_org_selection) {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('selection_token', result.selection_token);
+        // Store selection token as access_token so the API client can attach it
+        localStorage.setItem('access_token', result.selection_token);
+      }
+      setPendingOrgSelection(result.organizations);
+      router.replace('/select-org');
+      return;
+    }
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('access_token', result.access_token);
+      localStorage.setItem('refresh_token', result.refresh_token);
+    }
+
+    setUser(result.user);
+  }, [router]);
+
+  const selectOrg = useCallback(async (organizationId: string) => {
+    const tokens = await apiSwitchOrg(organizationId);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('access_token', tokens.access_token);
+      localStorage.setItem('refresh_token', tokens.refresh_token);
+      localStorage.removeItem('selection_token');
+    }
+    setPendingOrgSelection(null);
+    setUser(tokens.user);
+  }, []);
+
+  const switchOrg = useCallback(async (organizationId: string) => {
+    const tokens = await apiSwitchOrg(organizationId);
     if (typeof window !== 'undefined') {
       localStorage.setItem('access_token', tokens.access_token);
       localStorage.setItem('refresh_token', tokens.refresh_token);
     }
-
     setUser(tokens.user);
   }, []);
 
@@ -87,8 +116,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
       if (typeof window !== 'undefined') {
         localStorage.removeItem('access_token');
         localStorage.removeItem('refresh_token');
+        localStorage.removeItem('selection_token');
       }
       setUser(null);
+      setPendingOrgSelection(null);
       router.push('/login');
     }
   }, [router]);
@@ -97,8 +128,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
     user,
     isLoading,
     isAuthenticated: !!user,
+    pendingOrgSelection,
     login,
     logout,
+    selectOrg,
+    switchOrg,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

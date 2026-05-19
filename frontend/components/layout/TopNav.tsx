@@ -13,6 +13,13 @@ const NAV_ITEMS = [
   { label: 'Communication', href: '/communication' },
 ]
 
+const ROLE_LABELS: Record<string, string> = {
+  org_admin: 'Org Admin',
+  hr_manager: 'HR Manager',
+  employee: 'Employee',
+  super_admin: 'Super Admin',
+}
+
 export default function TopNav() {
   const pathname = usePathname()
   const { user, logout } = useAuth()
@@ -25,6 +32,12 @@ export default function TopNav() {
   const initials = user?.name
     ? user.name.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase()
     : '?'
+
+  const roleLabel = user?.isSuperAdmin
+    ? 'Super Admin'
+    : user?.role
+      ? (ROLE_LABELS[user.role] ?? user.role.replace(/_/g, ' '))
+      : ''
 
   return (
     <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-[#E2E8F0] flex items-center z-50">
@@ -62,9 +75,9 @@ export default function TopNav() {
         <div className="flex items-center gap-3 px-6 shrink-0">
           <div className="text-right hidden sm:block">
             <p className="text-sm font-semibold text-[#0F172A] leading-tight">{user.name}</p>
-            <p className="text-xs text-[#64748B] capitalize leading-tight">
-              {user.role.replace(/_/g, ' ')}
-            </p>
+            {roleLabel && (
+              <p className="text-xs text-[#64748B] leading-tight">{roleLabel}</p>
+            )}
           </div>
           <div className="w-8 h-8 rounded-full bg-[#2563EB] flex items-center justify-center text-white text-xs font-bold shrink-0">
             {initials}

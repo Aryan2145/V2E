@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { SwitchOrgDto } from './dto/switch-org.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
@@ -39,5 +40,19 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: any) {
     return { data: user };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Post('switch-org')
+  switchOrg(@CurrentUser('id') userId: string, @Body() dto: SwitchOrgDto) {
+    return this.authService.switchOrg(userId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('my-orgs')
+  myOrgs(@CurrentUser('id') userId: string) {
+    return this.authService.getMyOrgs(userId);
   }
 }

@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateKnowledgePostDto } from './dto/create-knowledge-post.dto';
 import { CreateKnowledgeCommentDto } from './dto/create-comment.dto';
 
-const AUTHOR_SELECT = { id: true, name: true, email: true, role: true };
+const AUTHOR_SELECT = { id: true, name: true, email: true };
 
 const POST_INCLUDE = {
   created_by: { select: AUTHOR_SELECT },

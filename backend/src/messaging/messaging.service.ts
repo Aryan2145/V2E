@@ -8,7 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 
-const USER_SELECT = { id: true, name: true, email: true, role: true };
+const USER_SELECT = { id: true, name: true, email: true };
 
 @Injectable()
 export class MessagingService {

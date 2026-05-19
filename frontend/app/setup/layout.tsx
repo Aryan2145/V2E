@@ -33,7 +33,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname()
 
   useEffect(() => {
-    if (!isLoading && (!user || !['org_admin', 'hr_manager'].includes(user.role))) {
+    if (!isLoading && (!user || (user.role !== 'org_admin' && user.role !== 'hr_manager'))) {
       router.replace('/login')
     }
   }, [user, isLoading, router])
@@ -59,7 +59,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
     )
   }
 
-  if (!user || !['org_admin', 'hr_manager'].includes(user.role)) {
+  if (!user || (user.role !== 'org_admin' && user.role !== 'hr_manager')) {
     return null
   }
 
@@ -77,7 +77,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
           </Link>
           <span className="text-[#E2E8F0]">|</span>
           <span className="font-bold text-[#0F172A] text-base">OrgOS Setup</span>
-          {user.organization_id && (
+          {user.organizationId && (
             <span className="text-sm text-[#64748B]">— {user.name}</span>
           )}
         </div>

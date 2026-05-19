@@ -1,10 +1,8 @@
 import apiClient from './client';
-import type { AuthTokens, AuthUser, ApiResponse } from '../types';
+import type { AuthTokens, AuthUser, ApiResponse, OrgMembership, LoginResponse } from '../types';
 
-// ─── Auth API ──────────────────────────────────────────────────────────────────
-
-export async function login(email: string, password: string): Promise<AuthTokens> {
-  const { data } = await apiClient.post<{ data: AuthTokens }>('/api/v1/auth/login', {
+export async function login(email: string, password: string): Promise<LoginResponse> {
+  const { data } = await apiClient.post<{ data: LoginResponse }>('/api/v1/auth/login', {
     email,
     password,
   });
@@ -39,5 +37,17 @@ export async function logout(): Promise<void> {
 
 export async function getMe(): Promise<AuthUser> {
   const { data } = await apiClient.get<ApiResponse<AuthUser>>('/api/v1/auth/me');
+  return data.data;
+}
+
+export async function switchOrg(organizationId: string): Promise<AuthTokens> {
+  const { data } = await apiClient.post<{ data: AuthTokens }>('/api/v1/auth/switch-org', {
+    organizationId,
+  });
+  return data.data;
+}
+
+export async function getMyOrgs(): Promise<OrgMembership[]> {
+  const { data } = await apiClient.get<ApiResponse<OrgMembership[]>>('/api/v1/auth/my-orgs');
   return data.data;
 }

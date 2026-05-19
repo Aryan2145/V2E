@@ -3,13 +3,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
+import { MemberRole } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 
 const AUTHOR_SELECT = {
-  id: true, name: true, email: true, role: true,
+  id: true, name: true, email: true,
 };
 
 const ANNOUNCEMENT_INCLUDE = {
@@ -72,7 +72,7 @@ export class AnnouncementsService {
     });
   }
 
-  async update(id: string, orgId: string, userId: string, userRole: UserRole, dto: UpdateAnnouncementDto) {
+  async update(id: string, orgId: string, userId: string, userRole: MemberRole, dto: UpdateAnnouncementDto) {
     const ann = await this.findOneRaw(id, orgId);
     if (ann.created_by_user_id !== userId && !['org_admin', 'hr_manager'].includes(userRole)) {
       throw new ForbiddenException('Not allowed to edit this announcement');
@@ -122,7 +122,7 @@ export class AnnouncementsService {
         where: { announcement_id: id },
         include: { user: { select: AUTHOR_SELECT } },
       }),
-      this.prisma.user.count({ where: { organization_id: orgId, is_active: true } }),
+      this.prisma.organizationMember.count({ where: { organization_id: orgId, is_active: true } }),
     ]);
     return { total_employees: totalEmployees, read_count: reads.length, reads };
   }

@@ -1,5 +1,4 @@
 import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
-import { UserRole } from '@prisma/client';
 
 @Injectable()
 export class OrgScopeGuard implements CanActivate {
@@ -9,9 +8,9 @@ export class OrgScopeGuard implements CanActivate {
     const orgId = request.params.orgId;
 
     if (!orgId) return true;
-    if (user.role === UserRole.super_admin) return true;
+    if (user.isSuperAdmin) return true;
 
-    if (user.organization_id !== orgId) {
+    if (user.organizationId !== orgId) {
       throw new ForbiddenException('Access denied to this organization');
     }
     return true;

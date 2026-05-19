@@ -12,8 +12,7 @@ enum OrgStatus {
   pending_setup
 }
 
-enum UserRole {
-  super_admin
+enum MemberRole {
   org_admin
   hr_manager
   employee
@@ -117,7 +116,7 @@ model Organization {
   created_at DateTime  @default(now())
   updated_at DateTime  @updatedAt
 
-  users              User[]
+  members            OrganizationMember[]
   org_identity       OrgIdentity?
   culture_standards  CultureStandard[]
   departments        Department[]
@@ -140,36 +139,50 @@ model Organization {
   @@map("organizations")
 }
 
+model OrganizationMember {
+  id              String     @id @default(uuid())
+  organization_id String
+  user_id         String
+  role            MemberRole
+  is_active       Boolean    @default(true)
+  joined_at       DateTime   @default(now())
+
+  organization Organization @relation(fields: [organization_id], references: [id])
+  user         User         @relation(fields: [user_id], references: [id])
+
+  @@unique([organization_id, user_id])
+  @@map("organization_members")
+}
+
 model User {
   id              String   @id @default(uuid())
-  organization_id String?
   name            String
   email           String
   password_hash   String
-  role            UserRole @default(employee)
+  is_super_admin  Boolean  @default(false)
   is_active       Boolean  @default(true)
   refresh_token   String?
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  organization          Organization?      @relation(fields: [organization_id], references: [id])
-  employee_profile      EmployeeProfile?
-  headed_departments    Department[]       @relation("DepartmentHead")
-  reports_to_employees  EmployeeProfile[]  @relation("ReportingTo")
-  announcements         Announcement[]
-  announcement_reads    AnnouncementRead[]
-  bulletin_boards       BulletinBoard[]
-  bulletin_posts        BulletinPost[]
-  bulletin_comments     BulletinComment[]
-  bulletin_reactions    BulletinReaction[]
-  knowledge_posts       KnowledgePost[]
-  knowledge_comments    KnowledgeComment[]
-  knowledge_reactions   KnowledgeReaction[]
-  conversations         Conversation[]
+  organization_memberships OrganizationMember[]
+  employee_profile         EmployeeProfile?
+  headed_departments       Department[]       @relation("DepartmentHead")
+  reports_to_employees     EmployeeProfile[]  @relation("ReportingTo")
+  announcements            Announcement[]
+  announcement_reads       AnnouncementRead[]
+  bulletin_boards          BulletinBoard[]
+  bulletin_posts           BulletinPost[]
+  bulletin_comments        BulletinComment[]
+  bulletin_reactions       BulletinReaction[]
+  knowledge_posts          KnowledgePost[]
+  knowledge_comments       KnowledgeComment[]
+  knowledge_reactions      KnowledgeReaction[]
+  conversations            Conversation[]
   conversation_memberships ConversationMember[]
-  sent_messages         Message[]          @relation("SentMessages")
+  sent_messages            Message[]          @relation("SentMessages")
 
-  @@unique([email, organization_id])
+  @@unique([email])
   @@map("users")
 }
 

@@ -2,7 +2,10 @@
 
 export type OrgStatus = 'active' | 'inactive' | 'pending_setup';
 
-export type UserRole = 'super_admin' | 'org_admin' | 'hr_manager' | 'employee';
+export type MemberRole = 'org_admin' | 'hr_manager' | 'employee';
+
+// kept for sidebar/nav display logic that needs the super_admin variant
+export type UserRole = MemberRole | 'super_admin';
 
 export type BehaviorType = 'expected_behavior' | 'unacceptable_behavior';
 
@@ -32,7 +35,7 @@ export interface User {
   organization_id?: string;
   name: string;
   email: string;
-  role: UserRole;
+  role: MemberRole;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -42,8 +45,34 @@ export interface AuthUser {
   id: string;
   name: string;
   email: string;
-  role: UserRole;
-  organization_id?: string;
+  isSuperAdmin: boolean;
+  organizationId: string | null;
+  role: MemberRole | null;
+}
+
+export interface OrgMembership {
+  id: string;
+  organization_id: string;
+  user_id: string;
+  role: MemberRole;
+  is_active: boolean;
+  joined_at: string;
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+    logo_url?: string | null;
+    industry?: string | null;
+  };
+}
+
+export interface OrgChoice {
+  id: string;
+  name: string;
+  slug: string;
+  logo_url?: string | null;
+  role: MemberRole;
+  joined_at: string;
 }
 
 // ─── Org Identity ──────────────────────────────────────────────────────────────
@@ -172,3 +201,12 @@ export interface AuthTokens {
   refresh_token: string;
   user: AuthUser;
 }
+
+export interface OrgSelectionRequired {
+  requires_org_selection: true;
+  selection_token: string;
+  user: { id: string; name: string; email: string };
+  organizations: OrgChoice[];
+}
+
+export type LoginResponse = AuthTokens | OrgSelectionRequired;

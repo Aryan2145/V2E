@@ -7,14 +7,7 @@ import {
   IsString,
   MinLength,
 } from 'class-validator';
-
-export enum UserRole {
-  SUPER_ADMIN = 'super_admin',
-  ORG_ADMIN = 'org_admin',
-  HR_MANAGER = 'hr_manager',
-  DEPARTMENT_HEAD = 'department_head',
-  EMPLOYEE = 'employee',
-}
+import { MemberRole } from '@prisma/client';
 
 export class CreateUserDto {
   @ApiProperty()
@@ -33,10 +26,10 @@ export class CreateUserDto {
   @MinLength(8)
   password: string;
 
-  @ApiPropertyOptional({ enum: UserRole })
-  @IsEnum(UserRole)
+  @ApiPropertyOptional({ enum: MemberRole })
+  @IsEnum(MemberRole)
   @IsOptional()
-  role?: UserRole;
+  role?: MemberRole;
 
   @ApiPropertyOptional()
   @IsString()

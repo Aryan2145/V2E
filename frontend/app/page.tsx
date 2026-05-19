@@ -11,7 +11,7 @@ export default function HomePage() {
     if (isLoading) return;
     if (!user) {
       router.replace('/login');
-    } else if (user.role === 'super_admin') {
+    } else if (user.isSuperAdmin) {
       router.replace('/super-admin/organizations');
     } else {
       router.replace('/dashboard');

@@ -12,7 +12,7 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { MemberRole } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -36,7 +36,7 @@ export class OrgIdentityController {
 
   @Put()
   @UseGuards(JwtAuthGuard, OrgScopeGuard, RolesGuard)
-  @Roles(UserRole.org_admin, UserRole.hr_manager)
+  @Roles(MemberRole.org_admin, MemberRole.hr_manager)
   @ApiOperation({ summary: 'Upsert org identity' })
   @ApiParam({ name: 'orgId', type: String })
   upsert(

@@ -1,6 +1,6 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -14,11 +14,12 @@ import {
   UserCircle,
   Settings,
   LogOut,
+  ChevronUp,
+  Check,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
-import type { UserRole } from '@/lib/types'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
+import { getMyOrgs } from '@/lib/api/auth'
+import type { UserRole, OrgMembership } from '@/lib/types'
 
 interface NavItem {
   label: string
@@ -30,8 +31,6 @@ interface SidebarProps {
   role: UserRole
   orgId?: string
 }
-
-// ─── Nav configs per role ─────────────────────────────────────────────────────
 
 const superAdminNav: NavItem[] = [
   { label: 'Dashboard', href: '/super-admin', icon: <LayoutDashboard size={18} /> },
@@ -64,8 +63,6 @@ const navByRole: Record<UserRole, NavItem[]> = {
   employee: employeeNav,
 }
 
-// ─── Role label helper ────────────────────────────────────────────────────────
-
 const roleLabels: Record<UserRole, string> = {
   super_admin: 'Super Admin',
   org_admin: 'Org Admin',
@@ -73,29 +70,56 @@ const roleLabels: Record<UserRole, string> = {
   employee: 'Employee',
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export default function Sidebar({ role }: SidebarProps) {
-  const { user, logout } = useAuth()
+  const { user, logout, switchOrg } = useAuth()
   const pathname = usePathname()
+  const [showOrgSwitcher, setShowOrgSwitcher] = useState(false)
+  const [orgs, setOrgs] = useState<OrgMembership[] | null>(null)
+  const [switching, setSwitching] = useState<string | null>(null)
 
   const navItems = navByRole[role] ?? orgStaffNav
 
   const isActive = (href: string): boolean => {
-    // Exact match for root-level dashboard entries
-    if (href === '/dashboard' || href === '/super-admin') {
-      return pathname === href
-    }
+    if (href === '/dashboard' || href === '/super-admin') return pathname === href
     return pathname.startsWith(href)
   }
+
+  async function handleOrgSwitcherOpen() {
+    if (!showOrgSwitcher && !orgs) {
+      try {
+        const data = await getMyOrgs()
+        setOrgs(data)
+      } catch {
+        setOrgs([])
+      }
+    }
+    setShowOrgSwitcher((v) => !v)
+  }
+
+  async function handleOrgSwitch(orgId: string) {
+    if (orgId === user?.organizationId) {
+      setShowOrgSwitcher(false)
+      return
+    }
+    setSwitching(orgId)
+    try {
+      await switchOrg(orgId)
+      setShowOrgSwitcher(false)
+      setOrgs(null)
+    } catch {
+      // ignore
+    } finally {
+      setSwitching(null)
+    }
+  }
+
+  const currentOrgName = orgs?.find((m) => m.organization_id === user?.organizationId)?.organization?.name
 
   return (
     <aside className="fixed left-0 top-0 h-full w-[240px] bg-[#0F172A] flex flex-col z-40">
       {/* Logo */}
       <div className="flex items-center h-16 px-6 border-b border-white/10 shrink-0">
-        <span className="text-white font-bold text-xl tracking-tight select-none">
-          OrgOS
-        </span>
+        <span className="text-white font-bold text-xl tracking-tight select-none">OrgOS</span>
       </div>
 
       {/* Navigation */}
@@ -119,6 +143,66 @@ export default function Sidebar({ role }: SidebarProps) {
           )
         })}
       </nav>
+
+      {/* Org Switcher (only for org members, not super_admin) */}
+      {user && !user.isSuperAdmin && user.organizationId && (
+        <div className="shrink-0 border-t border-white/10">
+          <button
+            onClick={handleOrgSwitcherOpen}
+            className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#1E293B] transition-colors"
+          >
+            <div className="w-7 h-7 rounded-[6px] bg-[#2563EB] flex items-center justify-center shrink-0">
+              <Building2 size={14} className="text-white" />
+            </div>
+            <div className="flex-1 min-w-0 text-left">
+              <p className="text-[12px] text-[#64748B] leading-none mb-0.5">Organization</p>
+              <p className="text-[13px] text-[#CBD5E1] font-medium truncate leading-tight">
+                {currentOrgName ?? '—'}
+              </p>
+            </div>
+            <ChevronUp
+              size={14}
+              className={`text-[#64748B] shrink-0 transition-transform ${showOrgSwitcher ? '' : 'rotate-180'}`}
+            />
+          </button>
+
+          {/* Dropdown */}
+          {showOrgSwitcher && (
+            <div className="mx-3 mb-2 bg-[#1E293B] rounded-[8px] overflow-hidden">
+              {!orgs ? (
+                <div className="px-3 py-4 text-center">
+                  <div className="w-4 h-4 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin mx-auto" />
+                </div>
+              ) : orgs.length === 0 ? (
+                <p className="px-3 py-3 text-[12px] text-[#64748B]">No other organizations</p>
+              ) : (
+                orgs.map((m) => {
+                  const isCurrent = m.organization_id === user.organizationId
+                  const isLoading = switching === m.organization_id
+                  return (
+                    <button
+                      key={m.organization_id}
+                      onClick={() => handleOrgSwitch(m.organization_id)}
+                      disabled={!!switching}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-[#0F172A]/60 transition-colors disabled:opacity-60"
+                    >
+                      <div className="w-6 h-6 rounded-[4px] bg-[#0F172A] flex items-center justify-center shrink-0">
+                        <Building2 size={12} className="text-[#64748B]" />
+                      </div>
+                      <div className="flex-1 min-w-0 text-left">
+                        <p className="text-[12px] text-[#CBD5E1] font-medium truncate">{m.organization.name}</p>
+                        <p className="text-[11px] text-[#64748B] capitalize">{roleLabels[m.role] ?? m.role}</p>
+                      </div>
+                      {isCurrent && !isLoading && <Check size={12} className="text-[#2563EB] shrink-0" />}
+                      {isLoading && <div className="w-3 h-3 border border-[#2563EB] border-t-transparent rounded-full animate-spin shrink-0" />}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* User footer */}
       <div className="shrink-0 border-t border-white/10 p-4 flex flex-col gap-3">
