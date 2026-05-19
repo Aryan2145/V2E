@@ -13,7 +13,7 @@ const REACTIONS = ['👍', '❤️', '😂', '🎉', '🔥']
 export default function BulletinPostPage() {
   const { boardId, postId } = useParams<{ boardId: string; postId: string }>()
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
   const [board, setBoard] = useState<BulletinBoard | null>(null)
   const [post, setPost] = useState<BulletinPost | null>(null)

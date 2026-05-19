@@ -9,7 +9,7 @@ import { ArrowLeft } from 'lucide-react'
 
 export default function NewAnnouncementPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const router = useRouter()
   const [form, setForm] = useState({
     title: '',

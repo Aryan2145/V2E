@@ -247,7 +247,7 @@ function AddRoleForm({ deptId, orgId, onSaved, onCancel }: RoleFormProps) {
 export default function Step4RolesPage() {
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [departments, setDepartments] = useState<Department[]>([])
   const [selectedDeptId, setSelectedDeptId] = useState<string | null>(null)

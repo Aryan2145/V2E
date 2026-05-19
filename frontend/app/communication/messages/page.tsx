@@ -15,7 +15,7 @@ const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
 
 export default function MessagesPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConvId, setActiveConvId] = useState<string | null>(null)
   const [messages, setMessages] = useState<Message[]>([])

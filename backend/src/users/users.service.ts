@@ -59,11 +59,11 @@ export class UsersService {
     }
 
     const member = await this.prisma.organizationMember.create({
-      data: { organization_id, user_id: user.id, role: (role ?? 'employee') as any },
+      data: { organization_id: organization_id!, user_id: user.id, role: (role ?? 'employee') as any },
       include: { user: { select: USER_SELECT } },
     });
 
-    return this.toUserDto(member, organization_id);
+    return this.toUserDto(member, organization_id!);
   }
 
   async update(id: string, orgId: string, dto: UpdateUserDto) {

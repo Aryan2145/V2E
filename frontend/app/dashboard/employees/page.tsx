@@ -90,7 +90,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 
 export default function EmployeesPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [departments, setDepartments] = useState<Department[]>([])

@@ -11,7 +11,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { SuperAdmin } from '../common/decorators/super-admin.decorator';
 import {
   CreateOrgWithAdminDto,
 } from './dto/create-organization.dto';
@@ -26,31 +26,31 @@ export class OrganizationsController {
   constructor(private readonly organizationsService: OrganizationsService) {}
 
   @Get()
-  @Roles('super_admin')
+  @SuperAdmin()
   findAll() {
     return this.organizationsService.findAll();
   }
 
   @Post()
-  @Roles('super_admin')
+  @SuperAdmin()
   create(@Body() dto: CreateOrgWithAdminDto) {
     return this.organizationsService.create(dto);
   }
 
   @Get(':id')
-  @Roles('super_admin')
+  @SuperAdmin()
   findOne(@Param('id') id: string) {
     return this.organizationsService.findOne(id);
   }
 
   @Patch(':id')
-  @Roles('super_admin')
+  @SuperAdmin()
   update(@Param('id') id: string, @Body() dto: UpdateOrganizationDto) {
     return this.organizationsService.update(id, dto);
   }
 
   @Delete(':id/deactivate')
-  @Roles('super_admin')
+  @SuperAdmin()
   deactivate(@Param('id') id: string) {
     return this.organizationsService.deactivate(id);
   }

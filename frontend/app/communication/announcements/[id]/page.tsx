@@ -17,7 +17,7 @@ const PRIORITY_BADGE: Record<string, string> = {
 export default function AnnouncementDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
   const [ann, setAnn] = useState<Announcement | null>(null)
   const [readStatus, setReadStatus] = useState<{ total_employees: number; read_count: number; reads: any[] } | null>(null)

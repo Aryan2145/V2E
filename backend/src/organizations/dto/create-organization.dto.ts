@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, ValidateIf } from 'class-validator';
 
 export class CreateOrganizationDto {
   @ApiProperty()
@@ -44,9 +44,9 @@ export class CreateOrgWithAdminDto extends CreateOrganizationDto {
   @IsNotEmpty()
   admin_email: string;
 
-  @ApiProperty()
+  @ApiPropertyOptional()
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @MinLength(8)
-  admin_password: string;
+  admin_password?: string;
 }

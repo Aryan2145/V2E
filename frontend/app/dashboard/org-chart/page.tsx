@@ -136,7 +136,7 @@ function EmptyState() {
 
 export default function OrgChartPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const readOnly = user?.role === 'employee'
 
   const [departments, setDepartments] = useState<Department[]>([])

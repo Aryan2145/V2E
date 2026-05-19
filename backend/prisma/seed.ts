@@ -15,15 +15,16 @@ async function main() {
   console.log('🌱 Seeding OrgOS database...');
 
   // Super Admin
-  const superAdmin = await prisma.user.findFirst({ where: { email: 'superadmin@orgos.io', is_super_admin: true } })
-    ?? await prisma.user.create({
-      data: {
-        name: 'Super Admin',
-        email: 'superadmin@orgos.io',
-        password_hash: await bcrypt.hash('Admin@123', 12),
-        is_super_admin: true,
-      },
-    });
+  const superAdmin = await prisma.user.upsert({
+    where: { email: 'superadmin@orgos.io' },
+    update: { is_super_admin: true },
+    create: {
+      name: 'Super Admin',
+      email: 'superadmin@orgos.io',
+      password_hash: await bcrypt.hash('Admin@123', 12),
+      is_super_admin: true,
+    },
+  });
   console.log('✅ Super Admin created:', superAdmin.email);
 
   // Organization
@@ -172,31 +173,29 @@ async function main() {
   });
   console.log('✅ Roles created');
 
+  async function upsertProfile(userId: string, data: Parameters<typeof prisma.employeeProfile.create>[0]['data']) {
+    return prisma.employeeProfile.upsert({
+      where: { user_id: userId },
+      update: {},
+      create: data,
+    });
+  }
+
   // Employees
   const ceoUser = await upsertMember('Vikram Singh', 'ceo@acme.com', MemberRole.employee);
-  await prisma.employeeProfile.create({
-    data: { organization_id: org.id, user_id: ceoUser.id, role_id: ceoRole.id, department_id: ceoOffice.id, employee_code: 'EMP001', employment_type: EmploymentType.full_time, date_of_joining: new Date('2020-01-01') },
-  });
+  await upsertProfile(ceoUser.id, { organization_id: org.id, user_id: ceoUser.id, role_id: ceoRole.id, department_id: ceoOffice.id, employee_code: 'EMP001', employment_type: EmploymentType.full_time, date_of_joining: new Date('2020-01-01') });
 
   const hrUser = await upsertMember('Priya Sharma', 'priya@acme.com', MemberRole.employee);
-  await prisma.employeeProfile.create({
-    data: { organization_id: org.id, user_id: hrUser.id, role_id: hrHeadRole.id, department_id: hrDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP002', employment_type: EmploymentType.full_time, date_of_joining: new Date('2020-03-15') },
-  });
+  await upsertProfile(hrUser.id, { organization_id: org.id, user_id: hrUser.id, role_id: hrHeadRole.id, department_id: hrDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP002', employment_type: EmploymentType.full_time, date_of_joining: new Date('2020-03-15') });
 
   const salesUser = await upsertMember('Arjun Nair', 'arjun@acme.com', MemberRole.employee);
-  await prisma.employeeProfile.create({
-    data: { organization_id: org.id, user_id: salesUser.id, role_id: salesRole.id, department_id: salesDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP003', employment_type: EmploymentType.full_time, date_of_joining: new Date('2021-06-01') },
-  });
+  await upsertProfile(salesUser.id, { organization_id: org.id, user_id: salesUser.id, role_id: salesRole.id, department_id: salesDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP003', employment_type: EmploymentType.full_time, date_of_joining: new Date('2021-06-01') });
 
   const pmUser = await upsertMember('Meera Iyer', 'meera@acme.com', MemberRole.employee);
-  await prisma.employeeProfile.create({
-    data: { organization_id: org.id, user_id: pmUser.id, role_id: productRole.id, department_id: productDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP004', employment_type: EmploymentType.full_time, date_of_joining: new Date('2021-09-10') },
-  });
+  await upsertProfile(pmUser.id, { organization_id: org.id, user_id: pmUser.id, role_id: productRole.id, department_id: productDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP004', employment_type: EmploymentType.full_time, date_of_joining: new Date('2021-09-10') });
 
   const devUser = await upsertMember('Rahul Dev', 'rahul@acme.com', MemberRole.employee);
-  await prisma.employeeProfile.create({
-    data: { organization_id: org.id, user_id: devUser.id, role_id: devRole.id, department_id: techDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP005', employment_type: EmploymentType.full_time, date_of_joining: new Date('2022-02-14') },
-  });
+  await upsertProfile(devUser.id, { organization_id: org.id, user_id: devUser.id, role_id: devRole.id, department_id: techDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP005', employment_type: EmploymentType.full_time, date_of_joining: new Date('2022-02-14') });
 
   // Update dept heads
   await prisma.department.update({ where: { id: ceoOffice.id }, data: { head_user_id: ceoUser.id } });

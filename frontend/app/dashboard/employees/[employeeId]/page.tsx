@@ -120,7 +120,7 @@ interface EditModalProps {
 
 function EditModal({ employee, allEmployees, roles, departments, onClose, onSaved }: EditModalProps) {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [form, setForm] = useState({
     role_id: employee.role_id,
@@ -289,7 +289,7 @@ export default function EmployeeDetailPage() {
   const params = useParams()
   const employeeId = params?.employeeId as string
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [employee, setEmployee] = useState<EmployeeProfile | null>(null)
   const [allEmployees, setAllEmployees] = useState<EmployeeProfile[]>([])

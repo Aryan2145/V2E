@@ -97,7 +97,7 @@ function ReportingTree({ employees }: { employees: EmployeeProfile[] }) {
 export default function Step5EmployeesPage() {
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [departments, setDepartments] = useState<Department[]>([])
   const [allRoles, setAllRoles] = useState<Role[]>([])

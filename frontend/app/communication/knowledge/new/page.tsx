@@ -9,7 +9,7 @@ import { ArrowLeft, X } from 'lucide-react'
 
 export default function NewKnowledgePostPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const router = useRouter()
   const [form, setForm] = useState({ title: '', body: '', scope: 'org_wide', tagInput: '', tags: [] as string[] })
   const [saving, setSaving] = useState(false)

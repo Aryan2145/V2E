@@ -33,7 +33,7 @@ export default function ManagePathPage() {
   const { pathId } = useParams<{ pathId: string }>()
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [path, setPath] = useState<LearningPath | null>(null)
   const [loading, setLoading] = useState(true)

@@ -7,7 +7,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Eye, EyeOff, ChevronLeft } from 'lucide-react'
 import { createOrganization } from '@/lib/api/organizations'
-import { createUser } from '@/lib/api/users'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 
@@ -24,7 +23,7 @@ const schema = z.object({
   timezone: z.string().optional(),
   admin_name: z.string().min(2, 'Admin name is required'),
   admin_email: z.string().email('Enter a valid email'),
-  admin_password: z.string().min(8, 'Password must be at least 8 characters'),
+  admin_password: z.string().min(8, 'Password must be at least 8 characters').optional().or(z.literal('')),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -35,11 +34,13 @@ function Field({
   label,
   error,
   required,
+  hint,
   children,
 }: {
   label: string
   error?: string
   required?: boolean
+  hint?: string
   children: React.ReactNode
 }) {
   return (
@@ -50,6 +51,7 @@ function Field({
       </label>
       {children}
       {error && <p className="text-xs text-[#DC2626]">{error}</p>}
+      {!error && hint && <p className="text-xs text-[#64748B]">{hint}</p>}
     </div>
   )
 }
@@ -106,23 +108,16 @@ export default function NewOrganizationPage() {
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
     try {
-      const org = await createOrganization({
+      await createOrganization({
         name: values.name,
         slug: values.slug,
         industry: values.industry,
         country: values.country,
         timezone: values.timezone,
-        status: 'pending_setup',
+        admin_name: values.admin_name,
+        admin_email: values.admin_email,
+        admin_password: values.admin_password || undefined,
       })
-
-      // Create admin user for this org
-      await createUser(org.id, {
-        name: values.admin_name,
-        email: values.admin_email,
-        password: values.admin_password,
-        role: 'org_admin',
-      })
-
       router.push('/super-admin/organizations')
     } catch (err: any) {
       setServerError(
@@ -253,7 +248,7 @@ export default function NewOrganizationPage() {
               </Field>
             </div>
 
-            <Field label="Password" error={errors.admin_password?.message} required>
+            <Field label="Password" error={errors.admin_password?.message} hint="Leave blank if this email already has an account">
               <div className="relative">
                 <input
                   {...register('admin_password')}

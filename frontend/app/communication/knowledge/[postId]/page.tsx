@@ -13,7 +13,7 @@ const REACTIONS = ['👍', '❤️', '💡', '🎉', '🔥']
 export default function KnowledgePostPage() {
   const { postId } = useParams<{ postId: string }>()
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
   const [post, setPost] = useState<KnowledgePost | null>(null)
   const [loading, setLoading] = useState(true)

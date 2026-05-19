@@ -22,7 +22,7 @@ const TYPE_LABEL: Record<string, string> = {
 
 export default function AnnouncementsPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
   const [items, setItems] = useState<Announcement[]>([])
   const [loading, setLoading] = useState(true)

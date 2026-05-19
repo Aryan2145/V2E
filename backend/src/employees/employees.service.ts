@@ -118,7 +118,6 @@ export class EmployeesService {
         const password_hash = await bcrypt.hash(password, 12);
         user = await tx.user.create({
           data: { name, email, password_hash, is_active: true },
-          select: { id: true, name: true, email: true, is_active: true, created_at: true } as any,
         });
       }
 

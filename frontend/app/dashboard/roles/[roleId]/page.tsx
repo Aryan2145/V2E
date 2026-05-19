@@ -52,7 +52,7 @@ export default function RoleDetailPage() {
   const params = useParams()
   const roleId = params?.roleId as string
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const canEdit = user?.role === 'org_admin' || user?.role === 'hr_manager'
 
   const [role, setRole] = useState<Role | null>(null)

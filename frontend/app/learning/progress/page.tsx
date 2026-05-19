@@ -23,7 +23,7 @@ function StatCard({ label, value, icon: Icon, color }: { label: string; value: s
 
 export default function ProgressPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const [summary, setSummary] = useState<OrgProgressSummary | null>(null)
   const [loading, setLoading] = useState(true)
 

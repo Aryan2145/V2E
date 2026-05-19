@@ -13,9 +13,18 @@ export async function getOrganization(id: string): Promise<Organization> {
   return data.data;
 }
 
-export async function createOrganization(
-  orgData: Partial<Omit<Organization, 'id' | 'created_at' | 'updated_at'>>
-): Promise<Organization> {
+export async function createOrganization(orgData: {
+  name: string
+  slug: string
+  admin_name: string
+  admin_email: string
+  admin_password?: string
+  logo_url?: string
+  industry?: string
+  country?: string
+  timezone?: string
+  status?: string
+}): Promise<Organization> {
   const { data } = await apiClient.post<ApiResponse<Organization>>(
     '/api/v1/organizations',
     orgData

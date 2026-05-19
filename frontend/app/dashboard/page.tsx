@@ -98,7 +98,7 @@ function QuickNavCard({ label, description, href, icon, iconBg }: QuickNavCardPr
 
 export default function DashboardPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [org, setOrg] = useState<Organization | null>(null)
   const [identity, setIdentity] = useState<OrgIdentity | null>(null)

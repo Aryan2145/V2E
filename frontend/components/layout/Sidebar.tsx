@@ -1,8 +1,8 @@
 'use client'
 
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import {
   Building2,
   Users,
@@ -73,26 +73,26 @@ const roleLabels: Record<UserRole, string> = {
 export default function Sidebar({ role }: SidebarProps) {
   const { user, logout, switchOrg } = useAuth()
   const pathname = usePathname()
+  const router = useRouter()
   const [showOrgSwitcher, setShowOrgSwitcher] = useState(false)
   const [orgs, setOrgs] = useState<OrgMembership[] | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
 
   const navItems = navByRole[role] ?? orgStaffNav
 
+  // Eagerly load orgs so the current org name is visible without opening the switcher
+  useEffect(() => {
+    if (user && !user.isSuperAdmin && user.organizationId) {
+      getMyOrgs().then(setOrgs).catch(() => setOrgs([]))
+    }
+  }, [user?.organizationId])
+
   const isActive = (href: string): boolean => {
     if (href === '/dashboard' || href === '/super-admin') return pathname === href
     return pathname.startsWith(href)
   }
 
-  async function handleOrgSwitcherOpen() {
-    if (!showOrgSwitcher && !orgs) {
-      try {
-        const data = await getMyOrgs()
-        setOrgs(data)
-      } catch {
-        setOrgs([])
-      }
-    }
+  function handleOrgSwitcherOpen() {
     setShowOrgSwitcher((v) => !v)
   }
 
@@ -105,7 +105,7 @@ export default function Sidebar({ role }: SidebarProps) {
     try {
       await switchOrg(orgId)
       setShowOrgSwitcher(false)
-      setOrgs(null)
+      router.push('/dashboard')
     } catch {
       // ignore
     } finally {

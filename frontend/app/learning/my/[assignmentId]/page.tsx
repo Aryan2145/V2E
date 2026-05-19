@@ -23,7 +23,7 @@ const TYPE_ICONS: Record<ContentType, any> = {
 export default function LearnPathPage() {
   const { assignmentId } = useParams<{ assignmentId: string }>()
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [assignment, setAssignment] = useState<LearningPathAssignment | null>(null)
   const [loading, setLoading] = useState(true)

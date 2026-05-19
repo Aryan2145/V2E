@@ -11,7 +11,7 @@ import type { SequentialMode } from '@/lib/types/learning'
 export default function NewLearningPathPage() {
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [form, setForm] = useState({
     title: '',

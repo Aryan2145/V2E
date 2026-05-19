@@ -278,7 +278,7 @@ function OrgChartFlow({ orgId, departments, users, onRefresh }: FlowProps) {
 export default function Step3OrgChartPage() {
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [departments, setDepartments] = useState<Department[]>([])
   const [users, setUsers] = useState<User[]>([])

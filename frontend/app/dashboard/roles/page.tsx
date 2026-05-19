@@ -56,7 +56,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 
 export default function RolesPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [roles, setRoles] = useState<Role[]>([])
   const [departments, setDepartments] = useState<Department[]>([])

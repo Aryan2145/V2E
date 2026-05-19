@@ -11,7 +11,7 @@ import PathStatusBadge from '@/components/learning/PathStatusBadge'
 
 export default function LearningPathsPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const [paths, setPaths] = useState<LearningPath[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')

@@ -16,7 +16,7 @@ const STATUS_CONFIG = {
 
 export default function MyLearningPage() {
   const { user } = useAuth()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const [assignments, setAssignments] = useState<LearningPathAssignment[]>([])
   const [loading, setLoading] = useState(true)
 

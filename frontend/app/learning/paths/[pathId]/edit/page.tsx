@@ -12,7 +12,7 @@ export default function EditLearningPathPage() {
   const { pathId } = useParams<{ pathId: string }>()
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [form, setForm] = useState({
     title: '',

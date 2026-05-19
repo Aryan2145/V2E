@@ -254,7 +254,7 @@ function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
 export default function Step2CulturePage() {
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
 
   const [standards, setStandards] = useState<CultureStandard[]>([])
   const [isLoading, setIsLoading] = useState(true)

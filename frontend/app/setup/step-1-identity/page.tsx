@@ -57,7 +57,7 @@ function SectionHeading({ label, description }: { label: string; description?: s
 export default function Step1IdentityPage() {
   const { user } = useAuth()
   const router = useRouter()
-  const orgId = user?.organization_id ?? ''
+  const orgId = user?.organizationId ?? ''
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
 

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
@@ -58,8 +59,6 @@ export class OrganizationsService {
       throw new ConflictException(`Slug '${orgData.slug}' is already taken`);
     }
 
-    const password_hash = await bcrypt.hash(admin_password, 12);
-
     return this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
         data: { ...orgData, status: 'active' as any },
@@ -68,6 +67,10 @@ export class OrganizationsService {
       let adminUser = await tx.user.findUnique({ where: { email: admin_email } });
 
       if (!adminUser) {
+        if (!admin_password) {
+          throw new BadRequestException('admin_password is required when the email does not belong to an existing user');
+        }
+        const password_hash = await bcrypt.hash(admin_password, 12);
         adminUser = await tx.user.create({
           data: { name: admin_name, email: admin_email, password_hash, is_active: true },
         });
