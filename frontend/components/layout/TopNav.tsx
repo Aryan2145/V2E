@@ -14,6 +14,7 @@ const NAV_ITEMS = [
   { label: 'Goals', href: '/goals' },
   { label: 'Learning', href: '/learning' },
   { label: 'Communication', href: '/communication' },
+  { label: 'Tasks', href: '/dashboard/tasks' },
 ]
 
 const ROLE_LABELS: Record<string, string> = {
@@ -52,7 +53,7 @@ export default function TopNav() {
   }, [open])
 
   const isActive = (href: string) => {
-    if (href === '/dashboard') return pathname === '/dashboard' || pathname.startsWith('/dashboard/')
+    if (href === '/dashboard') return pathname === '/dashboard'
     return pathname.startsWith(href)
   }
 
