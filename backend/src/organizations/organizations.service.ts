@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  UnprocessableEntityException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,12 +17,8 @@ export class OrganizationsService {
   async findAll() {
     return this.prisma.organization.findMany({
       include: {
-        _count: {
-          select: {
-            members: true,
-            departments: true,
-          },
-        },
+        _count: { select: { members: true, departments: true } },
+        group: { select: { id: true, name: true } },
       },
       orderBy: { created_at: 'desc' },
     });
@@ -31,49 +28,72 @@ export class OrganizationsService {
     const org = await this.prisma.organization.findUnique({
       where: { id },
       include: {
-        _count: {
-          select: {
-            members: true,
-            departments: true,
-          },
-        },
+        _count: { select: { members: true, departments: true } },
         org_identity: true,
+        group: { select: { id: true, name: true } },
+        members: {
+          include: { user: { select: { id: true, name: true, email: true, is_active: true } } },
+          orderBy: { joined_at: 'asc' },
+        },
       },
     });
 
-    if (!org) {
-      throw new NotFoundException(`Organization with id ${id} not found`);
-    }
+    if (!org) throw new NotFoundException(`Organization with id ${id} not found`);
 
-    return org;
+    // Enrich members with their other org memberships (also_in)
+    const enrichedMembers = await Promise.all(
+      org.members.map(async (m) => {
+        const otherMemberships = await this.prisma.organizationMember.findMany({
+          where: { user_id: m.user_id, organization_id: { not: id }, is_active: true },
+          include: { organization: { select: { id: true, name: true } } },
+        });
+        return { ...m, also_in: otherMemberships.map((om) => om.organization) };
+      }),
+    );
+
+    return { ...org, members: enrichedMembers };
   }
 
   async create(dto: CreateOrgWithAdminDto) {
-    const { admin_name, admin_email, admin_password, ...orgData } = dto;
+    const { admin_name, admin_email, admin_password, existing_user_id, ...orgData } = dto;
 
-    const existingOrg = await this.prisma.organization.findUnique({
-      where: { slug: orgData.slug },
-    });
-
-    if (existingOrg) {
-      throw new ConflictException(`Slug '${orgData.slug}' is already taken`);
+    if (!existing_user_id && !admin_email) {
+      throw new UnprocessableEntityException('Either existing_user_id or admin_email is required');
     }
+
+    const existingOrg = await this.prisma.organization.findUnique({ where: { slug: orgData.slug } });
+    if (existingOrg) throw new ConflictException(`Slug '${orgData.slug}' is already taken`);
 
     return this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
         data: { ...orgData, status: 'active' as any },
       });
 
-      let adminUser = await tx.user.findUnique({ where: { email: admin_email } });
+      let adminUser: { id: string; name: string; email: string; is_active: boolean; created_at: Date };
 
-      if (!adminUser) {
-        if (!admin_password) {
-          throw new BadRequestException('admin_password is required when the email does not belong to an existing user');
-        }
-        const password_hash = await bcrypt.hash(admin_password, 12);
-        adminUser = await tx.user.create({
-          data: { name: admin_name, email: admin_email, password_hash, is_active: true },
+      if (existing_user_id) {
+        // Path A: pick an existing user directly by ID
+        const found = await tx.user.findUnique({
+          where: { id: existing_user_id },
+          select: { id: true, name: true, email: true, is_active: true, created_at: true },
         });
+        if (!found) throw new NotFoundException(`User ${existing_user_id} not found`);
+        adminUser = found;
+      } else {
+        // Path B: find or create by email
+        const found = await tx.user.findUnique({ where: { email: admin_email! } });
+        if (found) {
+          adminUser = found;
+        } else {
+          if (!admin_password) {
+            throw new BadRequestException('admin_password is required when the email does not belong to an existing user');
+          }
+          const password_hash = await bcrypt.hash(admin_password, 12);
+          adminUser = await tx.user.create({
+            data: { name: admin_name!, email: admin_email!, password_hash, is_active: true },
+            select: { id: true, name: true, email: true, is_active: true, created_at: true },
+          });
+        }
       }
 
       const member = await tx.organizationMember.create({

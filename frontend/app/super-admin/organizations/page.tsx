@@ -121,7 +121,14 @@ export default function OrganizationsPage() {
                     <div className="w-8 h-8 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
                       <Building2 size={16} className="text-[#2563EB]" />
                     </div>
-                    <span className="font-medium text-[#0F172A]">{org.name}</span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium text-[#0F172A]">{org.name}</span>
+                      {org.group && (
+                        <span className="inline-flex self-start items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5">
+                          {org.group.name}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </td>
                 <td className="px-6 py-4 text-[#475569] font-mono text-xs">{org.slug}</td>

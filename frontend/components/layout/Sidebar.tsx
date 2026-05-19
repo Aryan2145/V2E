@@ -16,6 +16,7 @@ import {
   LogOut,
   ChevronUp,
   Check,
+  Layers,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { getMyOrgs } from '@/lib/api/auth'
@@ -35,6 +36,7 @@ interface SidebarProps {
 const superAdminNav: NavItem[] = [
   { label: 'Dashboard', href: '/super-admin', icon: <LayoutDashboard size={18} /> },
   { label: 'Organizations', href: '/super-admin/organizations', icon: <Building2 size={18} /> },
+  { label: 'Groups', href: '/super-admin/groups', icon: <Layers size={18} /> },
 ]
 
 const orgStaffNav: NavItem[] = [

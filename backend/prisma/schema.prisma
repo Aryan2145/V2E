@@ -104,6 +104,18 @@ enum CompletionType {
   auto_opened
 }
 
+model OrganizationGroup {
+  id            String         @id @default(uuid())
+  name          String
+  slug          String         @unique
+  description   String?
+  created_at    DateTime       @default(now())
+  updated_at    DateTime       @updatedAt
+  organizations Organization[]
+
+  @@map("organization_groups")
+}
+
 model Organization {
   id         String    @id @default(uuid())
   name       String
@@ -113,6 +125,8 @@ model Organization {
   country    String?
   timezone   String?
   status     OrgStatus @default(pending_setup)
+  group_id   String?
+  group      OrganizationGroup? @relation(fields: [group_id], references: [id])
   created_at DateTime  @default(now())
   updated_at DateTime  @updatedAt
 

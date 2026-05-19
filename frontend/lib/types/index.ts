@@ -17,6 +17,17 @@ export type EmployeeStatus = 'active' | 'inactive' | 'on_leave';
 
 // ─── Core Entities ─────────────────────────────────────────────────────────────
 
+export interface OrganizationGroup {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  organizations?: Organization[];
+  _count?: { organizations: number };
+}
+
 export interface Organization {
   id: string;
   name: string;
@@ -28,6 +39,28 @@ export interface Organization {
   status: OrgStatus;
   created_at: string;
   updated_at: string;
+  group?: { id: string; name: string } | null;
+  _count?: { members: number; departments: number };
+}
+
+export interface OrgDetailMember {
+  id: string;
+  user_id: string;
+  role: MemberRole;
+  is_active: boolean;
+  joined_at: string;
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    is_active: boolean;
+  };
+  also_in: Array<{ id: string; name: string }>;
+}
+
+export interface OrgDetail extends Organization {
+  org_identity?: unknown;
+  members: OrgDetailMember[];
 }
 
 export interface User {

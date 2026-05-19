@@ -13,14 +13,13 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { getOrganization, deactivateOrganization } from '@/lib/api/organizations'
-import { getUsers } from '@/lib/api/users'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 import Modal from '@/components/ui/Modal'
-import type { Organization, User, OrgStatus } from '@/lib/types'
+import type { OrgDetail, OrgStatus } from '@/lib/types'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -83,9 +82,7 @@ export default function OrgDetailPage() {
   const { orgId } = useParams<{ orgId: string }>()
   const router = useRouter()
 
-  const [org, setOrg] = useState<Organization | null>(null)
-  const [users, setUsers] = useState<User[]>([])
-  const [deptCount, setDeptCount] = useState(0)
+  const [org, setOrg] = useState<OrgDetail | null>(null)
   const [roleCount, setRoleCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
   const [showConfirm, setShowConfirm] = useState(false)
@@ -96,17 +93,10 @@ export default function OrgDetailPage() {
     if (!orgId) return
     let cancelled = false
 
-    Promise.allSettled([
-      getOrganization(orgId),
-      getUsers(orgId),
-      getDepartments(orgId),
-      getRoles(orgId),
-    ])
-      .then(([orgResult, usersResult, deptsResult, rolesResult]) => {
+    Promise.allSettled([getOrganization(orgId), getRoles(orgId)])
+      .then(([orgResult, rolesResult]) => {
         if (cancelled) return
         if (orgResult.status === 'fulfilled') setOrg(orgResult.value)
-        if (usersResult.status === 'fulfilled') setUsers(usersResult.value)
-        if (deptsResult.status === 'fulfilled') setDeptCount(deptsResult.value.length)
         if (rolesResult.status === 'fulfilled') setRoleCount(rolesResult.value.length)
       })
       .finally(() => { if (!cancelled) setIsLoading(false) })
@@ -150,6 +140,10 @@ export default function OrgDetailPage() {
     )
   }
 
+  const members = org.members ?? []
+  const memberCount = org._count?.members ?? members.length
+  const deptCount = org._count?.departments ?? 0
+
   return (
     <div className="flex flex-col gap-6 max-w-4xl">
       {/* Header */}
@@ -181,6 +175,15 @@ export default function OrgDetailPage() {
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-xl font-bold text-[#0F172A]">{org.name}</h2>
               <Badge status={orgStatusToBadge(org.status)} label={orgStatusLabel(org.status)} />
+              {org.group && (
+                <button
+                  onClick={() => router.push(`/super-admin/groups/${org.group!.id}`)}
+                  className="inline-flex items-center gap-1 rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2.5 py-0.5 hover:bg-[#BAE6FD] transition-colors"
+                >
+                  <Layers size={11} />
+                  {org.group.name}
+                </button>
+              )}
             </div>
             <p className="text-sm text-[#94A3B8] font-mono mt-0.5">{org.slug}</p>
           </div>
@@ -195,53 +198,66 @@ export default function OrgDetailPage() {
 
       {/* Stats row */}
       <div className="grid grid-cols-3 gap-4">
-        <StatCard icon={<Users size={18} />} label="Users" value={users.length} />
+        <StatCard icon={<Users size={18} />} label="Members" value={memberCount} />
         <StatCard icon={<Layers size={18} />} label="Departments" value={deptCount} />
         <StatCard icon={<Shield size={18} />} label="Roles" value={roleCount} />
       </div>
 
-      {/* Users table */}
+      {/* Members table */}
       <Card title="Members">
-        {users.length === 0 ? (
+        {members.length === 0 ? (
           <div className="flex flex-col items-center gap-2 py-8">
             <Users size={28} className="text-[#CBD5E1]" />
-            <p className="text-sm text-[#94A3B8]">No users in this organization yet.</p>
+            <p className="text-sm text-[#94A3B8]">No members in this organization yet.</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E2E8F0]">
-                {['Name', 'Email', 'Role', 'Status'].map((col) => (
-                  <th
-                    key={col}
-                    className="py-2 pr-4 text-left text-xs font-semibold text-[#475569] uppercase tracking-wider"
-                  >
-                    {col}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-[#E2E8F0] last:border-0">
-                  <td className="py-3 pr-4 font-medium text-[#0F172A]">{u.name}</td>
-                  <td className="py-3 pr-4 text-[#475569]">{u.email}</td>
-                  <td className="py-3 pr-4">
-                    <Badge
-                      status={roleBadgeStatus(u.role) as any}
-                      label={roleBadgeLabel(u.role)}
-                    />
-                  </td>
-                  <td className="py-3 pr-4">
-                    <Badge
-                      status={u.is_active ? 'active' : 'inactive'}
-                      label={u.is_active ? 'Active' : 'Inactive'}
-                    />
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2E8F0]">
+                  {['Name', 'Email', 'Role', 'Also In', 'Status'].map((col) => (
+                    <th key={col} className="py-2 pr-4 text-left text-xs font-semibold text-[#475569] uppercase tracking-wider">
+                      {col}
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {members.map((m) => (
+                  <tr key={m.id} className="border-b border-[#E2E8F0] last:border-0">
+                    <td className="py-3 pr-4 font-medium text-[#0F172A]">{m.user.name}</td>
+                    <td className="py-3 pr-4 text-[#475569]">{m.user.email}</td>
+                    <td className="py-3 pr-4">
+                      <Badge status={roleBadgeStatus(m.role) as any} label={roleBadgeLabel(m.role)} />
+                    </td>
+                    <td className="py-3 pr-4">
+                      {m.also_in.length === 0 ? (
+                        <span className="text-[#94A3B8] text-xs">—</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {m.also_in.map((o) => (
+                            <button
+                              key={o.id}
+                              onClick={() => router.push(`/super-admin/organizations/${o.id}`)}
+                              className="inline-flex items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5 hover:bg-[#BAE6FD] transition-colors"
+                            >
+                              {o.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <Badge
+                        status={m.user.is_active ? 'active' : 'inactive'}
+                        label={m.user.is_active ? 'Active' : 'Inactive'}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
 
@@ -260,13 +276,9 @@ export default function OrgDetailPage() {
               accessing V2E. This action can be reversed by re-activating the organization.
             </p>
           </div>
-          {deactivateError && (
-            <p className="text-sm text-[#DC2626]">{deactivateError}</p>
-          )}
+          {deactivateError && <p className="text-sm text-[#DC2626]">{deactivateError}</p>}
           <div className="flex gap-3 pt-1">
-            <Button variant="danger" isLoading={isDeactivating} onClick={handleDeactivate}>
-              Deactivate
-            </Button>
+            <Button variant="danger" isLoading={isDeactivating} onClick={handleDeactivate}>Deactivate</Button>
             <Button
               variant="secondary"
               onClick={() => { setShowConfirm(false); setDeactivateError(null) }}

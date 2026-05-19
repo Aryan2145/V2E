@@ -1,0 +1,118 @@
+'use client'
+
+import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { z } from 'zod'
+import { ChevronLeft } from 'lucide-react'
+import { createGroup } from '@/lib/api/groups'
+import Button from '@/components/ui/Button'
+import Card from '@/components/ui/Card'
+
+const schema = z.object({
+  name: z.string().min(2, 'Name must be at least 2 characters'),
+  slug: z.string().min(2, 'Slug must be at least 2 characters').regex(/^[a-z0-9-]+$/, 'Only lowercase letters, numbers, and hyphens'),
+  description: z.string().optional(),
+})
+
+type FormValues = z.infer<typeof schema>
+
+function Field({ label, error, required, children }: { label: string; error?: string; required?: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label className="text-sm font-medium text-[#374151]">
+        {label}{required && <span className="text-[#DC2626] ml-0.5">*</span>}
+      </label>
+      {children}
+      {error && <p className="text-xs text-[#DC2626]">{error}</p>}
+    </div>
+  )
+}
+
+const inputCls = (hasError?: boolean) =>
+  [
+    'w-full rounded-[8px] bg-white px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none transition-colors',
+    hasError ? 'border-2 border-[#DC2626]' : 'border border-[#CBD5E1] focus:border-2 focus:border-[#2563EB]',
+  ].join(' ')
+
+export default function NewGroupPage() {
+  const router = useRouter()
+  const [serverError, setServerError] = useState<string | null>(null)
+
+  const { register, handleSubmit, setValue, formState: { errors, isSubmitting } } = useForm<FormValues>({
+    resolver: zodResolver(schema),
+  })
+
+  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const slug = e.target.value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-')
+    setValue('slug', slug, { shouldValidate: true })
+  }
+
+  const onSubmit = async (values: FormValues) => {
+    setServerError(null)
+    try {
+      await createGroup(values)
+      router.push('/super-admin/groups')
+    } catch (err: any) {
+      setServerError(err?.response?.data?.message ?? 'Something went wrong.')
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-6 max-w-2xl">
+      <div>
+        <button
+          onClick={() => router.back()}
+          className="inline-flex items-center gap-1 text-sm text-[#475569] hover:text-[#0F172A] mb-3 transition-colors"
+        >
+          <ChevronLeft size={16} /> Back
+        </button>
+        <h1 className="text-[28px] font-bold text-[#0F172A]">Create Group</h1>
+        <p className="text-sm text-[#475569] mt-1">Groups let you cluster related organizations and share users across them.</p>
+      </div>
+
+      {serverError && (
+        <div className="rounded-[8px] bg-[#FEE2E2] border border-[#FECACA] px-4 py-3 text-sm text-[#DC2626]">
+          {serverError}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-6">
+        <Card>
+          <h2 className="text-[16px] font-semibold text-[#0F172A] mb-5 pb-4 border-b border-[#E2E8F0]">Group Details</h2>
+          <div className="flex flex-col gap-5">
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Group Name" error={errors.name?.message} required>
+                <input
+                  {...register('name')}
+                  onChange={(e) => { register('name').onChange(e); handleNameChange(e) }}
+                  placeholder="RGB Group"
+                  className={inputCls(!!errors.name)}
+                />
+              </Field>
+              <Field label="Slug" error={errors.slug?.message} required>
+                <input {...register('slug')} placeholder="rgb-group" className={inputCls(!!errors.slug)} />
+              </Field>
+            </div>
+            <Field label="Description" error={errors.description?.message}>
+              <textarea
+                {...register('description')}
+                placeholder="Optional — describe what this group represents"
+                rows={3}
+                className={[inputCls(!!errors.description), 'resize-none'].join(' ')}
+              />
+            </Field>
+          </div>
+        </Card>
+
+        <div className="flex items-center gap-3">
+          <Button type="submit" variant="primary" isLoading={isSubmitting}>Create Group</Button>
+          <Button type="button" variant="secondary" onClick={() => router.push('/super-admin/groups')} disabled={isSubmitting}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+    </div>
+  )
+}

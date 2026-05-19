@@ -14,12 +14,14 @@ import { AnnouncementsModule } from './announcements/announcements.module';
 import { BulletinModule } from './bulletin/bulletin.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
 import { MessagingModule } from './messaging/messaging.module';
+import { GroupsModule } from './groups/groups.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
     AuthModule,
+    GroupsModule,
     OrganizationsModule,
     UsersModule,
     OrgIdentityModule,

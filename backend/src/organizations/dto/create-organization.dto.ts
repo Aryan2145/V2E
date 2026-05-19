@@ -31,18 +31,30 @@ export class CreateOrganizationDto {
   @IsString()
   @IsOptional()
   timezone?: string;
+
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  group_id?: string;
 }
 
 export class CreateOrgWithAdminDto extends CreateOrganizationDto {
-  @ApiProperty()
+  // Option A: pick an existing user by ID (group user picker)
+  @ApiPropertyOptional()
   @IsString()
-  @IsNotEmpty()
-  admin_name: string;
+  @IsOptional()
+  existing_user_id?: string;
 
-  @ApiProperty()
+  // Option B: create/use by email
+  @ApiPropertyOptional()
+  @IsString()
+  @IsOptional()
+  admin_name?: string;
+
+  @ApiPropertyOptional()
   @IsEmail()
-  @IsNotEmpty()
-  admin_email: string;
+  @IsOptional()
+  admin_email?: string;
 
   @ApiPropertyOptional()
   @IsString()
