@@ -89,7 +89,7 @@ export default function CreateTaskModal({
   // Load org members
   useEffect(() => {
     if (!orgId || !isOpen) return
-    apiClient.get(`/api/v1/org/${orgId}/members`).then((res) => {
+    apiClient.get(`/api/v1/org/${orgId}/users/members`).then((res) => {
       const data = res.data?.data ?? res.data ?? []
       setMembers(Array.isArray(data) ? data : [])
     }).catch(() => setMembers([]))

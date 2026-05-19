@@ -30,6 +30,21 @@ export class UsersService {
     return members.map((m) => this.toUserDto(m, orgId));
   }
 
+  // Returns members in the format the task assignee picker expects — open to all roles
+  async findMembers(orgId: string) {
+    const members = await this.prisma.organizationMember.findMany({
+      where: { organization_id: orgId, is_active: true },
+      include: { user: { select: { id: true, name: true, email: true } } },
+      orderBy: { joined_at: 'asc' },
+    });
+    return members.map((m) => ({
+      id: m.id,
+      user_id: m.user_id,
+      role: m.role,
+      user: { id: m.user.id, name: m.user.name, email: m.user.email },
+    }));
+  }
+
   async findOne(id: string, orgId: string) {
     const member = await this.prisma.organizationMember.findFirst({
       where: { user_id: id, organization_id: orgId },

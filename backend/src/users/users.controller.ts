@@ -31,6 +31,13 @@ export class UsersController {
     return this.usersService.findAll(orgId);
   }
 
+  // Open to all org members — used by the task assignee picker
+  @Get('members')
+  @UseGuards(OrgScopeGuard)
+  findMembers(@Param('orgId') orgId: string) {
+    return this.usersService.findMembers(orgId);
+  }
+
   @Post()
   @Roles('org_admin')
   create(
