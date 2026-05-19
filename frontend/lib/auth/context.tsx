@@ -79,12 +79,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    const tokens = result as import('../types').AuthTokens;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('access_token', result.access_token);
-      localStorage.setItem('refresh_token', result.refresh_token);
+      localStorage.setItem('access_token', tokens.access_token);
+      localStorage.setItem('refresh_token', tokens.refresh_token);
     }
 
-    setUser(result.user);
+    setUser(tokens.user);
   }, [router]);
 
   const selectOrg = useCallback(async (organizationId: string) => {

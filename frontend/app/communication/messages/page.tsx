@@ -137,7 +137,7 @@ export default function MessagesPage() {
       reply_to_message: null,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      sender: { id: user.id, name: user.name, email: user.email, role: user.role },
+      sender: { id: user.id, name: user.name, email: user.email, role: user.role ?? '' },
     }
     setMessages(prev => [...prev, optimistic])
 
