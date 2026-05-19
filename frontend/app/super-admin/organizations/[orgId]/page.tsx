@@ -257,7 +257,7 @@ export default function OrgDetailPage() {
             <AlertTriangle size={18} className="text-[#DC2626] shrink-0 mt-0.5" />
             <p className="text-sm text-[#7F1D1D]">
               Deactivating <strong>{org.name}</strong> will prevent all its users from
-              accessing OrgOS. This action can be reversed by re-activating the organization.
+              accessing V2E. This action can be reversed by re-activating the organization.
             </p>
           </div>
           {deactivateError && (

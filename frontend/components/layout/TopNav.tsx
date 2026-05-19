@@ -86,7 +86,7 @@ export default function TopNav() {
     <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-[#E2E8F0] flex items-center z-50">
       {/* Brand */}
       <div className="w-[200px] shrink-0 px-6">
-        <span className="text-[#0F172A] font-bold text-lg tracking-tight select-none">OrgOS</span>
+        <span className="text-[#0F172A] font-bold text-lg tracking-tight select-none">V2E</span>
       </div>
 
       {/* Nav tabs */}

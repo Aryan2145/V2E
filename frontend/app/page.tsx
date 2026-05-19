@@ -20,7 +20,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
-      <div className="text-[#475569] text-sm">Loading OrgOS...</div>
+      <div className="text-[#475569] text-sm">Loading V2E...</div>
     </div>
   );
 }

@@ -12,15 +12,15 @@ const adapter = new PrismaPg({
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
-  console.log('🌱 Seeding OrgOS database...');
+  console.log('🌱 Seeding V2E database...');
 
   // Super Admin
   const superAdmin = await prisma.user.upsert({
-    where: { email: 'superadmin@orgos.io' },
+    where: { email: 'superadmin@V2E.io' },
     update: { is_super_admin: true },
     create: {
       name: 'Super Admin',
-      email: 'superadmin@orgos.io',
+      email: 'superadmin@V2E.io',
       password_hash: await bcrypt.hash('Admin@123', 12),
       is_super_admin: true,
     },
@@ -207,7 +207,7 @@ async function main() {
   console.log('✅ Employees created');
   console.log('\n🎉 Seed complete!');
   console.log('\nLogin credentials:');
-  console.log('  Super Admin: superadmin@orgos.io / Admin@123');
+  console.log('  Super Admin: superadmin@V2E.io / Admin@123');
   console.log('  Org Admin:   admin@acme.com / Admin@123');
   console.log('  HR Manager:  hr@acme.com / Admin@123');
 }

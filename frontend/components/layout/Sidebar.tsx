@@ -119,7 +119,7 @@ export default function Sidebar({ role }: SidebarProps) {
     <aside className="fixed left-0 top-0 h-full w-[240px] bg-[#0F172A] flex flex-col z-40">
       {/* Logo */}
       <div className="flex items-center h-16 px-6 border-b border-white/10 shrink-0">
-        <span className="text-white font-bold text-xl tracking-tight select-none">OrgOS</span>
+        <span className="text-white font-bold text-xl tracking-tight select-none">V2E</span>
       </div>
 
       {/* Navigation */}

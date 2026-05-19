@@ -48,7 +48,7 @@ export default function LoginPage() {
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-8">
         <div className="mb-8 text-center">
           <span className="text-[28px] font-bold text-[#0F172A] tracking-tight">
-            OrgOS
+            V2E
           </span>
           <p className="mt-1 text-sm text-[#475569]">
             Sign in to your workspace

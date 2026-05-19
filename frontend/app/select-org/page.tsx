@@ -62,7 +62,7 @@ export default function SelectOrgPage() {
       <div className="w-full max-w-[640px]">
         {/* Header */}
         <div className="text-center mb-10">
-          <span className="text-[28px] font-bold text-[#0F172A] tracking-tight">OrgOS</span>
+          <span className="text-[28px] font-bold text-[#0F172A] tracking-tight">V2E</span>
           <h1 className="mt-4 text-[22px] font-semibold text-[#0F172A]">Select an Organization</h1>
           <p className="mt-1 text-[15px] text-[#475569]">
             You belong to multiple organizations. Choose one to enter.

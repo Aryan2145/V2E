@@ -16,7 +16,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(new ResponseInterceptor());
 
   const config = new DocumentBuilder()
-    .setTitle('OrgOS API')
+    .setTitle('V2E API')
     .setDescription('Multi-tenant organizational workspace platform API')
     .setVersion('1.0')
     .addBearerAuth()
@@ -26,7 +26,7 @@ async function bootstrap() {
 
   const port = process.env.PORT ?? 3001;
   await app.listen(port);
-  console.log(`OrgOS API running on http://localhost:${port}`);
+  console.log(`V2E API running on http://localhost:${port}`);
   console.log(`Swagger docs: http://localhost:${port}/api/docs`);
 }
 bootstrap();

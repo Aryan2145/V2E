@@ -76,7 +76,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
             Dashboard
           </Link>
           <span className="text-[#E2E8F0]">|</span>
-          <span className="font-bold text-[#0F172A] text-base">OrgOS Setup</span>
+          <span className="font-bold text-[#0F172A] text-base">V2E Setup</span>
           {user.organizationId && (
             <span className="text-sm text-[#64748B]">— {user.name}</span>
           )}

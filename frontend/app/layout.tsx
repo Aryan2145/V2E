@@ -13,7 +13,7 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'OrgOS',
+  title: 'V2E',
   description: 'The operating system for your organisation',
 }
 

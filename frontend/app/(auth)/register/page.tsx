@@ -78,7 +78,7 @@ function RegisterForm() {
           </div>
           <h1 className="text-[22px] font-bold text-[#0F172A]">Create your account</h1>
           <p className="text-sm text-[#475569] mt-1">
-            {orgId ? 'You\'ve been invited to join OrgOS.' : 'Set up your OrgOS account.'}
+            {orgId ? 'You\'ve been invited to join V2E.' : 'Set up your V2E account.'}
           </p>
         </div>
 

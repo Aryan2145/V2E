@@ -27,7 +27,7 @@ export default function SetupSidebar({ currentStep, steps }: SetupSidebarProps) 
         <p className="text-xs font-semibold text-[#64748B] uppercase tracking-widest mb-1">
           Setup Wizard
         </p>
-        <h2 className="text-[18px] font-bold text-[#0F172A]">OrgOS</h2>
+        <h2 className="text-[18px] font-bold text-[#0F172A]">V2E</h2>
       </div>
 
       {/* Steps */}
