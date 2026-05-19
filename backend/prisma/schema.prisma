@@ -619,3 +619,324 @@ model Message {
 
   @@map("messages")
 }
+
+// ─── Task Management Layer ──────────────────────────────────────────────────
+
+enum TaskQuadrant {
+  Q1
+  Q2
+  Q3
+  Q4
+}
+
+enum TaskType {
+  one_time
+  recurring
+}
+
+enum CompletionMode {
+  all_must_complete
+  any_can_complete
+}
+
+enum ReminderType {
+  assignee
+  assigner
+  cc
+}
+
+enum TaskActionType {
+  created
+  edited
+  assigned
+  reassigned
+  status_changed
+  completed
+  reopened
+  proof_attached
+  checklist_updated
+  escalated
+  reminder_sent
+  deleted
+  comment_added
+  comment_deleted
+  file_attached
+}
+
+enum RecurringScheduleType {
+  daily
+  weekly
+  monthly
+  yearly
+}
+
+enum RecurringEndCondition {
+  never
+  on_date
+  after_n
+}
+
+// All task tables use plain string IDs for cross-module references
+// (no FK constraints to Organization/User/Department tables)
+// This allows extraction as a standalone microservice.
+
+model TaskMaster {
+  id                          String   @id @default(uuid())
+  organization_id             String   @unique
+  task_creation_roles         Json     @default("[\"org_admin\",\"hr_manager\",\"employee\"]")
+  task_edit_roles             Json     @default("[\"org_admin\",\"hr_manager\"]")
+  task_delete_roles           Json     @default("[\"org_admin\"]")
+  default_reminder_days_before Int     @default(1)
+  default_reminder_frequency  String   @default("once")
+  reopen_window_minutes       Int      @default(10)
+  escalation_levels           Int      @default(2)
+  archive_view_roles          Json     @default("[\"org_admin\"]")
+  created_at                  DateTime @default(now())
+  updated_at                  DateTime @updatedAt
+
+  @@map("task_masters")
+}
+
+model TaskCategory {
+  id                    String   @id @default(uuid())
+  organization_id       String
+  name                  String
+  description           String?
+  color                 String   @default("#2563EB")
+  created_by_user_id    String
+  visible_to_departments Json    @default("[]")
+  visible_to_roles      Json     @default("[]")
+  is_active             Boolean  @default(true)
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  tasks Task[]
+
+  @@map("task_categories")
+}
+
+model TaskPriority {
+  id              String   @id @default(uuid())
+  organization_id String
+  label           String
+  color           String   @default("#2563EB")
+  order_index     Int      @default(0)
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  tasks Task[]
+
+  @@map("task_priorities")
+}
+
+model TaskStatus {
+  id              String   @id @default(uuid())
+  organization_id String
+  label           String
+  type            String
+  color           String   @default("#2563EB")
+  order_index     Int      @default(0)
+  is_default      Boolean  @default(false)
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  tasks Task[]
+
+  @@map("task_statuses")
+}
+
+model Task {
+  id                   String         @id @default(uuid())
+  organization_id      String
+  title                String
+  description          String?        @db.Text
+  category_id          String?
+  priority_id          String?
+  status_id            String
+  quadrant             TaskQuadrant   @default(Q2)
+  type                 TaskType       @default(one_time)
+  created_by_user_id   String
+  department_id        String?
+  completion_mode      CompletionMode @default(any_can_complete)
+  proof_required       Boolean        @default(false)
+  proof_url            String?
+  proof_submitted_at   DateTime?
+  is_deleted           Boolean        @default(false)
+  deleted_by_user_id   String?
+  deleted_at           DateTime?
+  deletion_reason      String?        @db.Text
+  reopened_at          DateTime?
+  reopen_expires_at    DateTime?
+  deadline             DateTime?
+  recurring_template_id String?
+  created_at           DateTime       @default(now())
+  updated_at           DateTime       @updatedAt
+
+  category   TaskCategory?   @relation(fields: [category_id], references: [id])
+  priority   TaskPriority?   @relation(fields: [priority_id], references: [id])
+  status     TaskStatus      @relation(fields: [status_id], references: [id])
+  assignees  TaskAssignee[]
+  checklist  TaskChecklist[]
+  reminders  TaskReminder[]
+  escalations TaskEscalation[]
+  activity_logs TaskActivityLog[]
+  comments   TaskComment[]
+
+  @@map("tasks")
+}
+
+model TaskAssignee {
+  id              String    @id @default(uuid())
+  organization_id String
+  task_id         String
+  user_id         String
+  is_completed    Boolean   @default(false)
+  completed_at    DateTime?
+  is_cc           Boolean   @default(false)
+  created_at      DateTime  @default(now())
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@unique([task_id, user_id])
+  @@map("task_assignees")
+}
+
+model TaskChecklist {
+  id              String   @id @default(uuid())
+  organization_id String
+  task_id         String
+  title           String
+  is_completed    Boolean  @default(false)
+  order_index     Int      @default(0)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@map("task_checklists")
+}
+
+model TaskChecklistTemplate {
+  id                 String   @id @default(uuid())
+  organization_id    String
+  name               String
+  created_by_user_id String
+  items              Json     @default("[]")
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@map("task_checklist_templates")
+}
+
+model TaskReminder {
+  id              String       @id @default(uuid())
+  organization_id String
+  task_id         String
+  remind_at       DateTime
+  type            ReminderType @default(assignee)
+  is_sent         Boolean      @default(false)
+  created_at      DateTime     @default(now())
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@map("task_reminders")
+}
+
+model TaskEscalation {
+  id                   String    @id @default(uuid())
+  organization_id      String
+  task_id              String
+  level                Int       @default(1)
+  escalate_to_user_id  String
+  escalated_at         DateTime?
+  is_acknowledged      Boolean   @default(false)
+  acknowledged_at      DateTime?
+  is_active            Boolean   @default(true)
+  created_at           DateTime  @default(now())
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@map("task_escalations")
+}
+
+model TaskActivityLog {
+  id                   String         @id @default(uuid())
+  organization_id      String
+  task_id              String
+  performed_by_user_id String
+  action               TaskActionType
+  metadata             Json?
+  created_at           DateTime       @default(now())
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@map("task_activity_logs")
+}
+
+model TaskComment {
+  id                  String    @id @default(uuid())
+  organization_id     String
+  task_id             String
+  user_id             String
+  body                String    @db.Text
+  attachment_urls     Json?
+  reply_to_comment_id String?
+  is_deleted          Boolean   @default(false)
+  deleted_at          DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  task             Task          @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  reply_to_comment TaskComment?  @relation("CommentReplies", fields: [reply_to_comment_id], references: [id])
+  replies          TaskComment[] @relation("CommentReplies")
+
+  @@map("task_comments")
+}
+
+model RecurringTemplate {
+  id                   String                @id @default(uuid())
+  organization_id      String
+  title                String
+  description          String?               @db.Text
+  quadrant             TaskQuadrant          @default(Q2)
+  category_id          String?
+  priority_id          String?
+  schedule_type        RecurringScheduleType @default(daily)
+  every                Int                   @default(1)
+  days                 Json                  @default("[]")
+  month_day            Int?
+  month                Int?
+  time                 String                @default("09:00")
+  start_date           DateTime
+  end_condition        RecurringEndCondition @default(never)
+  end_date             DateTime?
+  end_after            Int?
+  occurrence_count     Int                   @default(0)
+  is_active            Boolean               @default(true)
+  completion_mode      CompletionMode        @default(any_can_complete)
+  proof_required       Boolean               @default(false)
+  assignee_user_ids    Json                  @default("[]")
+  cc_user_ids          Json                  @default("[]")
+  department_id        String?
+  linked_goal_id       String?
+  created_by_user_id   String
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+
+  @@map("recurring_templates")
+}
+
+model TaskArchive {
+  id                String   @id @default(uuid())
+  organization_id   String
+  original_task_id  String
+  task_snapshot     Json
+  deleted_by_user_id String
+  deletion_reason   String?  @db.Text
+  deleted_at        DateTime
+  created_at        DateTime @default(now())
+
+  @@map("task_archives")
+}

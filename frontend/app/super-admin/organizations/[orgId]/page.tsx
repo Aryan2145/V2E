@@ -13,7 +13,6 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import { getOrganization, deactivateOrganization } from '@/lib/api/organizations'
-import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'

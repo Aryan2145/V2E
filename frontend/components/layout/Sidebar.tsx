@@ -17,6 +17,7 @@ import {
   ChevronUp,
   Check,
   Layers,
+  CheckSquare,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { getMyOrgs } from '@/lib/api/auth'
@@ -46,6 +47,7 @@ const orgStaffNav: NavItem[] = [
   { label: 'Org Chart', href: '/dashboard/org-chart', icon: <GitBranch size={18} /> },
   { label: 'Roles', href: '/dashboard/roles', icon: <Briefcase size={18} /> },
   { label: 'Employees', href: '/dashboard/employees', icon: <Users size={18} /> },
+  { label: 'Tasks', href: '/dashboard/tasks', icon: <CheckSquare size={18} /> },
   { label: 'Setup', href: '/setup/step-1-identity', icon: <Settings size={18} /> },
 ]
 
