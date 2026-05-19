@@ -2,8 +2,10 @@ import { PrismaClient, UserRole, RoleLevel, EmploymentType, BehaviorType } from 
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcryptjs';
 
+const connectionString = process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/orgos?schema=public';
 const adapter = new PrismaPg({
-  connectionString: process.env['DATABASE_URL'] ?? 'postgresql://postgres:postgres@localhost:5432/orgos?schema=public',
+  connectionString,
+  ssl: connectionString.includes('sslmode') ? { rejectUnauthorized: false } : undefined,
 });
 const prisma = new PrismaClient({ adapter });
 
