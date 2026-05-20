@@ -274,4 +274,21 @@ export const tasksApi = {
     const res = await apiClient.get('/api/v1/my-tasks/collective')
     return unwrap<CollectiveOrgTasks[]>(res)
   },
+
+  getEligibleAssignees: async (orgId: string, search?: string, sort?: 'frequency' | 'workload' | 'name'): Promise<import('@/lib/types/tasks').EligibleAssigneesResponse> => {
+    const params = new URLSearchParams()
+    if (search) params.set('search', search)
+    if (sort) params.set('sort', sort)
+    const qs = params.toString()
+    const res = await apiClient.get(`${base(orgId)}/eligible-assignees${qs ? `?${qs}` : ''}`)
+    return unwrap<import('@/lib/types/tasks').EligibleAssigneesResponse>(res)
+  },
+
+  updateAssigneeVisibility: async (orgId: string, dto: {
+    assignee_visibility_mode?: string
+    assignee_custom_rules?: Record<string, unknown>
+    assignee_visibility_config_roles?: string[]
+  }): Promise<void> => {
+    await apiClient.patch(`${base(orgId)}/masters/assignee-visibility`, dto)
+  },
 }

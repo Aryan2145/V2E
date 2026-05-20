@@ -64,6 +64,30 @@ export class TaskMastersService {
     });
   }
 
+  async updateAssigneeVisibility(orgId: string, userId: string, dto: {
+    assignee_visibility_mode?: string;
+    assignee_custom_rules?: Record<string, unknown>;
+    assignee_visibility_config_roles?: string[];
+  }) {
+    const config = await this.getOrCreateConfig(orgId);
+    const configRoles = config.assignee_visibility_config_roles as string[];
+    const member = await this.prisma.organizationMember.findUnique({
+      where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
+      select: { role: true },
+    });
+    if (!member || !Array.isArray(configRoles) || !configRoles.includes(member.role)) {
+      throw new Error('You do not have permission to update assignee visibility settings');
+    }
+    return this.prisma.taskMaster.update({
+      where: { organization_id: orgId },
+      data: {
+        ...(dto.assignee_visibility_mode !== undefined && { assignee_visibility_mode: dto.assignee_visibility_mode }),
+        ...(dto.assignee_custom_rules !== undefined && { assignee_custom_rules: dto.assignee_custom_rules }),
+        ...(dto.assignee_visibility_config_roles !== undefined && { assignee_visibility_config_roles: dto.assignee_visibility_config_roles }),
+      },
+    });
+  }
+
   // ─── Categories ─────────────────────────────────────────────────────────────
 
   async listCategories(orgId: string, userId: string) {

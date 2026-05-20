@@ -171,6 +171,34 @@ export class TasksService {
       });
     }
 
+    // Upsert frequency counts for non-CC assignees
+    if (assigneeIds.length > 0) {
+      await Promise.all(
+        assigneeIds.map((assigneeUserId) =>
+          this.prisma.taskAssigneeFrequency.upsert({
+            where: {
+              organization_id_assigner_user_id_assignee_user_id: {
+                organization_id: orgId,
+                assigner_user_id: userId,
+                assignee_user_id: assigneeUserId,
+              },
+            },
+            create: {
+              organization_id: orgId,
+              assigner_user_id: userId,
+              assignee_user_id: assigneeUserId,
+              frequency_count: 1,
+              last_assigned_at: new Date(),
+            },
+            update: {
+              frequency_count: { increment: 1 },
+              last_assigned_at: new Date(),
+            },
+          }).catch(() => null), // ignore if constraint fails on race condition
+        ),
+      );
+    }
+
     // Create checklist items
     if (dto.checklist_items && dto.checklist_items.length > 0) {
       await this.prisma.taskChecklist.createMany({
@@ -822,6 +850,179 @@ export class TasksService {
         one_time: { total: oneTimeTotal, completed: oneTimeCompleted },
       },
     };
+  }
+
+  // ─── Eligible Assignees ───────────────────────────────────────────────────────
+
+  async getEligibleAssignees(
+    orgId: string,
+    userId: string,
+    search?: string,
+    sort: 'frequency' | 'workload' | 'name' = 'frequency',
+  ) {
+    const [config, userMember] = await Promise.all([
+      this.getOrgConfig(orgId),
+      this.prisma.organizationMember.findUnique({
+        where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
+        select: { role: true },
+      }),
+    ]);
+
+    const userProfile = await this.prisma.employeeProfile.findFirst({
+      where: { user_id: userId, organization_id: orgId },
+      select: { department_id: true },
+    });
+
+    // Get all active employee profiles in the org
+    const allProfiles = await this.prisma.employeeProfile.findMany({
+      where: { organization_id: orgId, status: 'active' },
+      include: {
+        user: { select: { id: true, name: true, is_active: true } },
+        department: { select: { id: true, name: true } },
+        role: { select: { id: true, title: true } },
+      },
+    });
+
+    const allMembers = await this.prisma.organizationMember.findMany({
+      where: { organization_id: orgId, is_active: true },
+      select: { user_id: true, role: true },
+    });
+    const memberRoleMap = new Map(allMembers.map((m) => [m.user_id, m.role]));
+
+    const customRules = (config.assignee_custom_rules as Record<string, any>) ?? {};
+    const mode = config.assignee_visibility_mode ?? 'hierarchy_and_dept';
+    const isAdmin = userMember?.role === 'org_admin' || userMember?.role === 'hr_manager';
+
+    const eligibleUserIds = new Set<string>();
+
+    if (isAdmin && !userProfile) {
+      // Admins without employee profile see everyone
+      allProfiles.forEach((p) => { if (p.user_id !== userId) eligibleUserIds.add(p.user_id); });
+    } else if (mode === 'hierarchy_and_dept' || mode === 'hierarchy_only') {
+      const subordinates = this.getSubordinates(allProfiles, userId);
+      subordinates.forEach((id) => eligibleUserIds.add(id));
+      if (mode === 'hierarchy_and_dept' && userProfile?.department_id) {
+        allProfiles
+          .filter((p) => p.department_id === userProfile.department_id && p.user_id !== userId)
+          .forEach((p) => eligibleUserIds.add(p.user_id));
+      }
+    } else if (mode === 'dept_only') {
+      if (userProfile?.department_id) {
+        allProfiles
+          .filter((p) => p.department_id === userProfile.department_id && p.user_id !== userId)
+          .forEach((p) => eligibleUserIds.add(p.user_id));
+      }
+    } else if (mode === 'custom') {
+      const includeDepts = (customRules.include_departments as string[]) ?? [];
+      const includeRoles = (customRules.include_roles as string[]) ?? [];
+      const allowCrossDept = customRules.allow_cross_dept ?? false;
+      const allowOutsideHierarchy = customRules.allow_outside_hierarchy ?? false;
+      allProfiles.forEach((p) => {
+        if (p.user_id === userId) return;
+        let include = allowCrossDept || allowOutsideHierarchy;
+        if (includeDepts.includes(p.department_id)) include = true;
+        const memberRole = memberRoleMap.get(p.user_id);
+        if (memberRole && includeRoles.includes(memberRole)) include = true;
+        if (include) eligibleUserIds.add(p.user_id);
+      });
+    }
+
+    const excludeDepts = (customRules.exclude_departments as string[]) ?? [];
+    const excludeRoles = (customRules.exclude_roles as string[]) ?? [];
+
+    let eligibleProfiles = allProfiles.filter((p) => {
+      if (!eligibleUserIds.has(p.user_id)) return false;
+      if (!p.user.is_active) return false;
+      if (excludeDepts.includes(p.department_id)) return false;
+      const memberRole = memberRoleMap.get(p.user_id);
+      if (memberRole && excludeRoles.includes(memberRole)) return false;
+      return true;
+    });
+
+    if (search?.trim()) {
+      const q = search.toLowerCase();
+      eligibleProfiles = eligibleProfiles.filter((p) => p.user.name.toLowerCase().includes(q));
+    }
+
+    // Get active task counts
+    const eligibleUserIdArray = eligibleProfiles.map((p) => p.user_id);
+    const activeTasks = eligibleUserIdArray.length > 0
+      ? await this.prisma.taskAssignee.findMany({
+          where: {
+            organization_id: orgId,
+            is_cc: false,
+            user_id: { in: eligibleUserIdArray },
+            task: { is_deleted: false, status: { type: { not: 'completed' } } },
+          },
+          select: { user_id: true },
+        })
+      : [];
+
+    const activeTaskMap = new Map<string, number>();
+    for (const ta of activeTasks) {
+      activeTaskMap.set(ta.user_id, (activeTaskMap.get(ta.user_id) ?? 0) + 1);
+    }
+
+    // Get frequency counts
+    const frequencies = eligibleUserIdArray.length > 0
+      ? await this.prisma.taskAssigneeFrequency.findMany({
+          where: { organization_id: orgId, assigner_user_id: userId, assignee_user_id: { in: eligibleUserIdArray } },
+          select: { assignee_user_id: true, frequency_count: true },
+        })
+      : [];
+    const frequencyMap = new Map(frequencies.map((f) => [f.assignee_user_id, f.frequency_count]));
+
+    // Top 3 by frequency = is_frequent
+    const sortedFreq = [...frequencyMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const frequentUserIds = new Set(sortedFreq.filter(([, c]) => c > 0).map(([id]) => id));
+
+    const items = eligibleProfiles.map((p) => ({
+      user_id: p.user_id,
+      name: p.user.name,
+      avatar_url: null as null,
+      role_title: p.role.title,
+      department_id: p.department_id,
+      department_name: p.department.name,
+      active_task_count: activeTaskMap.get(p.user_id) ?? 0,
+      frequency_count: frequencyMap.get(p.user_id) ?? 0,
+      is_frequent: frequentUserIds.has(p.user_id),
+    }));
+
+    let sorted: typeof items;
+    if (sort === 'frequency') {
+      sorted = items.sort((a, b) => b.frequency_count - a.frequency_count || a.name.localeCompare(b.name));
+    } else if (sort === 'workload') {
+      sorted = items.sort((a, b) => a.active_task_count - b.active_task_count || a.name.localeCompare(b.name));
+    } else {
+      sorted = items.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    // Group by department (flat list when searching)
+    if (search?.trim()) {
+      return { departments: [{ department_id: 'search', department_name: 'Results', users: sorted }], total: sorted.length };
+    }
+
+    const deptMap = new Map<string, { department_id: string; department_name: string; users: typeof items }>();
+    for (const item of sorted) {
+      if (!deptMap.has(item.department_id)) {
+        deptMap.set(item.department_id, { department_id: item.department_id, department_name: item.department_name, users: [] });
+      }
+      deptMap.get(item.department_id)!.users.push(item);
+    }
+
+    return { departments: Array.from(deptMap.values()), total: sorted.length };
+  }
+
+  private getSubordinates(profiles: { user_id: string; reporting_to_user_id?: string | null }[], userId: string, visited = new Set<string>()): string[] {
+    if (visited.has(userId)) return [];
+    visited.add(userId);
+    const result: string[] = [];
+    const directReports = profiles.filter((p) => p.reporting_to_user_id === userId);
+    for (const dr of directReports) {
+      result.push(dr.user_id);
+      result.push(...this.getSubordinates(profiles, dr.user_id, visited));
+    }
+    return result;
   }
 
   // ─── Collective (cross-org) ───────────────────────────────────────────────────

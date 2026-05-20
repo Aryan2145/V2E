@@ -29,6 +29,16 @@ export class TaskMastersController {
 
   // ─── Config ─────────────────────────────────────────────────────────────────
 
+  @Patch('assignee-visibility')
+  @ApiOperation({ summary: 'Update assignee visibility configuration' })
+  updateAssigneeVisibility(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Body() dto: { assignee_visibility_mode?: string; assignee_custom_rules?: Record<string, unknown>; assignee_visibility_config_roles?: string[] },
+  ) {
+    return this.service.updateAssigneeVisibility(orgId, req.user.id, dto);
+  }
+
   @Get('config')
   @ApiOperation({ summary: 'Get task master config for org' })
   getConfig(@Param('orgId') orgId: string) {

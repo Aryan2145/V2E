@@ -12,6 +12,9 @@ export interface TaskMasterConfig {
   reopen_window_minutes: number
   escalation_levels: number
   archive_view_roles: string[]
+  assignee_visibility_mode?: string
+  assignee_custom_rules?: Record<string, unknown>
+  assignee_visibility_config_roles?: string[]
 }
 
 export interface TaskCategory {
@@ -204,4 +207,46 @@ export interface CollectiveOrgTasks {
   organization: { id: string; name: string; slug: string }
   role: string
   tasks: Task[]
+}
+
+// ─── Assignee Selector ────────────────────────────────────────────────────────
+
+export type AssigneeVisibilityMode = 'hierarchy_and_dept' | 'hierarchy_only' | 'dept_only' | 'custom'
+
+export interface AssigneeCustomRules {
+  include_departments: string[]
+  exclude_departments: string[]
+  include_roles: string[]
+  exclude_roles: string[]
+  allow_cross_dept: boolean
+  allow_outside_hierarchy: boolean
+}
+
+export interface EligibleAssigneeUser {
+  user_id: string
+  name: string
+  avatar_url: string | null
+  role_title: string
+  department_id: string
+  department_name: string
+  active_task_count: number
+  frequency_count: number
+  is_frequent: boolean
+}
+
+export interface EligibleAssigneeGroup {
+  department_id: string
+  department_name: string
+  users: EligibleAssigneeUser[]
+}
+
+export interface EligibleAssigneesResponse {
+  departments: EligibleAssigneeGroup[]
+  total: number
+}
+
+export interface SelectedAssignee {
+  user_id: string
+  name: string
+  is_cc: boolean
 }

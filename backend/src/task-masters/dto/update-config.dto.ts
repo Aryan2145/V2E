@@ -39,4 +39,16 @@ export class UpdateConfigDto {
   @IsArray()
   @IsString({ each: true })
   archive_view_roles?: string[];
+
+  @IsOptional()
+  @IsString()
+  assignee_visibility_mode?: string;
+
+  @IsOptional()
+  assignee_custom_rules?: Record<string, unknown>;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  assignee_visibility_config_roles?: string[];
 }

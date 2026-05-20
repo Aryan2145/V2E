@@ -1,25 +1,13 @@
 'use client'
 
-import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Plus, Trash2, Search } from 'lucide-react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { X, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { TaskCategory, TaskPriority, TaskStatus, TaskQuadrant, CompletionMode } from '@/lib/types/tasks'
-import apiClient from '@/lib/api/client'
+import type { SelectedAssignee } from '@/lib/types/tasks'
 import QuadrantBadge from './QuadrantBadge'
-
-interface OrgMember {
-  id: string
-  user_id: string
-  user: { id: string; name: string; email: string }
-}
-
-interface AssigneeEntry {
-  user_id: string
-  user_name: string
-  user_email: string
-  is_cc: boolean
-}
+import AssigneeSelector from './AssigneeSelector'
 
 interface ChecklistEntry {
   title: string
@@ -68,15 +56,11 @@ export default function CreateTaskModal({
   const [deadline, setDeadline] = useState('')
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
-  const [assignees, setAssignees] = useState<AssigneeEntry[]>([])
+  const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
   const [checklist, setChecklist] = useState<ChecklistEntry[]>([])
   const [newChecklistItem, setNewChecklistItem] = useState('')
-  const [memberSearch, setMemberSearch] = useState('')
-  const [members, setMembers] = useState<OrgMember[]>([])
-  const [memberResults, setMemberResults] = useState<OrgMember[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const memberSearchRef = useRef<HTMLDivElement>(null)
 
   // Set default status
   useEffect(() => {
@@ -85,46 +69,6 @@ export default function CreateTaskModal({
       setStatusId(def.id)
     }
   }, [statuses, statusId])
-
-  // Load org members
-  useEffect(() => {
-    if (!orgId || !isOpen) return
-    apiClient.get(`/api/v1/org/${orgId}/users/members`).then((res) => {
-      const data = res.data?.data ?? res.data ?? []
-      setMembers(Array.isArray(data) ? data : [])
-    }).catch(() => setMembers([]))
-  }, [orgId, isOpen])
-
-  // Filter members by search
-  useEffect(() => {
-    if (!memberSearch.trim()) {
-      setMemberResults([])
-      return
-    }
-    const q = memberSearch.toLowerCase()
-    const alreadyAdded = new Set(assignees.map((a) => a.user_id))
-    setMemberResults(
-      members
-        .filter((m) => {
-          const name = m.user?.name ?? ''
-          const email = m.user?.email ?? ''
-          return !alreadyAdded.has(m.user_id) &&
-            (name.toLowerCase().includes(q) || email.toLowerCase().includes(q))
-        })
-        .slice(0, 6)
-    )
-  }, [memberSearch, members, assignees])
-
-  // Close on outside click
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (memberSearchRef.current && !memberSearchRef.current.contains(e.target as Node)) {
-        setMemberResults([])
-      }
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [])
 
   // Close on Escape
   useEffect(() => {
@@ -156,32 +100,12 @@ export default function CreateTaskModal({
     setAssignees([])
     setChecklist([])
     setNewChecklistItem('')
-    setMemberSearch('')
     setError(null)
   }, [statuses])
 
   function handleClose() {
     reset()
     onClose()
-  }
-
-  function addMember(m: OrgMember) {
-    setAssignees((prev) => [
-      ...prev,
-      { user_id: m.user_id, user_name: m.user.name, user_email: m.user.email, is_cc: false },
-    ])
-    setMemberSearch('')
-    setMemberResults([])
-  }
-
-  function toggleCC(userId: string) {
-    setAssignees((prev) =>
-      prev.map((a) => (a.user_id === userId ? { ...a, is_cc: !a.is_cc } : a))
-    )
-  }
-
-  function removeAssignee(userId: string) {
-    setAssignees((prev) => prev.filter((a) => a.user_id !== userId))
   }
 
   function addChecklistItem() {
@@ -365,68 +289,11 @@ export default function CreateTaskModal({
           {/* Assignees */}
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees</label>
-            <div className="relative" ref={memberSearchRef}>
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-              <input
-                type="text"
-                value={memberSearch}
-                onChange={(e) => setMemberSearch(e.target.value)}
-                placeholder="Search members by name or email..."
-                className="w-full pl-9 pr-3 border border-[#CBD5E1] rounded-[8px] py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              />
-              {memberResults.length > 0 && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-[#E2E8F0] rounded-[8px] shadow-lg z-20 overflow-hidden">
-                  {memberResults.map((m) => (
-                    <button
-                      key={m.user_id}
-                      type="button"
-                      onClick={() => addMember(m)}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#F8FAFC] transition-colors text-left"
-                    >
-                      <div className="w-7 h-7 rounded-full bg-[#2563EB] flex items-center justify-center text-white text-[10px] font-bold shrink-0">
-                        {m.user.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-[#0F172A]">{m.user.name}</p>
-                        <p className="text-xs text-[#475569]">{m.user.email}</p>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            {assignees.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {assignees.map((a) => (
-                  <div
-                    key={a.user_id}
-                    className="inline-flex items-center gap-1.5 bg-[#F1F5F9] border border-[#E2E8F0] rounded-[6px] pl-2 pr-1 py-1"
-                  >
-                    <span className="text-xs font-medium text-[#0F172A]">{a.user_name}</span>
-                    <button
-                      type="button"
-                      onClick={() => toggleCC(a.user_id)}
-                      className={[
-                        'text-[10px] font-semibold rounded px-1 py-0.5 transition-colors',
-                        a.is_cc
-                          ? 'bg-[#D97706] text-white'
-                          : 'bg-[#E2E8F0] text-[#475569] hover:bg-[#CBD5E1]',
-                      ].join(' ')}
-                      title={a.is_cc ? 'Click to remove CC' : 'Click to mark as CC'}
-                    >
-                      CC
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeAssignee(a.user_id)}
-                      className="w-4 h-4 flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors"
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <AssigneeSelector
+              orgId={orgId}
+              value={assignees}
+              onChange={setAssignees}
+            />
           </div>
 
           {/* Completion mode */}

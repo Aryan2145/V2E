@@ -63,8 +63,19 @@ export class TasksController {
 
   // ─── Specific sub-routes (must be BEFORE /:id) ───────────────────────────────
 
+  @Get('eligible-assignees')
+  @ApiOperation({ summary: 'Get eligible assignees based on visibility rules' })
+  getEligibleAssignees(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('search') search?: string,
+    @Query('sort') sort?: 'frequency' | 'workload' | 'name',
+  ) {
+    return this.service.getEligibleAssignees(orgId, req.user.id, search, sort ?? 'frequency');
+  }
+
   @Get('archive')
-  @ApiOperation({ summary: 'Get archived (deleted) tasks' })
+  @ApiOperation({ summary: 'Get archived (deleted) tasks' }}
   getArchive(@Param('orgId') orgId: string, @Request() req: any) {
     return this.service.getArchive(orgId, req.user.id);
   }

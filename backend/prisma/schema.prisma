@@ -691,6 +691,9 @@ model TaskMaster {
   reopen_window_minutes       Int      @default(10)
   escalation_levels           Int      @default(2)
   archive_view_roles          Json     @default("[\"org_admin\"]")
+  assignee_visibility_mode         String   @default("hierarchy_and_dept")
+  assignee_custom_rules            Json?
+  assignee_visibility_config_roles Json     @default("[\"org_admin\",\"hr_manager\"]")
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 
@@ -939,4 +942,18 @@ model TaskArchive {
   created_at        DateTime @default(now())
 
   @@map("task_archives")
+}
+
+model TaskAssigneeFrequency {
+  id               String   @id @default(uuid())
+  organization_id  String
+  assigner_user_id String
+  assignee_user_id String
+  frequency_count  Int      @default(1)
+  last_assigned_at DateTime @default(now())
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@unique([organization_id, assigner_user_id, assignee_user_id])
+  @@map("task_assignee_frequencies")
 }

@@ -10,9 +10,10 @@ import type {
   TaskStatus,
   ChecklistTemplate,
 } from '@/lib/types/tasks'
-import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List } from 'lucide-react'
+import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users } from 'lucide-react'
+import apiClient from '@/lib/api/client'
 
-type MasterTab = 'config' | 'categories' | 'priorities' | 'statuses' | 'checklists'
+type MasterTab = 'config' | 'categories' | 'priorities' | 'statuses' | 'checklists' | 'assignee_visibility'
 
 // ─── Inline form helpers ──────────────────────────────────────────────────────
 
@@ -599,6 +600,280 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
   )
 }
 
+// ─── Assignee Visibility Tab ──────────────────────────────────────────────────
+
+const VISIBILITY_MODES = [
+  {
+    id: 'hierarchy_and_dept',
+    title: 'Hierarchy + Department',
+    description: 'Users below in reporting structure AND users in same department',
+    icon: '🏢',
+  },
+  {
+    id: 'hierarchy_only',
+    title: 'Hierarchy Only',
+    description: 'Only users below the assigner in the reporting structure',
+    icon: '📊',
+  },
+  {
+    id: 'dept_only',
+    title: 'Department Only',
+    description: 'Only users in the same department as the assigner',
+    icon: '🏠',
+  },
+  {
+    id: 'custom',
+    title: 'Custom Rules',
+    description: 'Fully configure who appears using include/exclude rules',
+    icon: '⚙️',
+  },
+]
+
+const ALL_ROLES = ['org_admin', 'hr_manager', 'employee']
+
+function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
+  const [config, setConfig] = useState<import('@/lib/types/tasks').TaskMasterConfig | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
+
+  // Local edit state
+  const [mode, setMode] = useState('hierarchy_and_dept')
+  const [configRoles, setConfigRoles] = useState<string[]>(['org_admin', 'hr_manager'])
+  const [customRules, setCustomRules] = useState({
+    include_departments: [] as string[],
+    exclude_departments: [] as string[],
+    include_roles: [] as string[],
+    exclude_roles: [] as string[],
+    allow_cross_dept: false,
+    allow_outside_hierarchy: false,
+  })
+
+  useEffect(() => {
+    setLoading(true)
+    Promise.all([
+      tasksApi.getConfig(orgId),
+      apiClient.get(`/api/v1/org/${orgId}/departments`).then((r) => r.data?.data ?? r.data ?? []).catch(() => []),
+    ]).then(([cfg, depts]) => {
+      setConfig(cfg)
+      setMode(cfg.assignee_visibility_mode ?? 'hierarchy_and_dept')
+      setConfigRoles((cfg.assignee_visibility_config_roles as string[]) ?? ['org_admin', 'hr_manager'])
+      const rules = (cfg.assignee_custom_rules as typeof customRules) ?? {}
+      setCustomRules({
+        include_departments: rules.include_departments ?? [],
+        exclude_departments: rules.exclude_departments ?? [],
+        include_roles: rules.include_roles ?? [],
+        exclude_roles: rules.exclude_roles ?? [],
+        allow_cross_dept: rules.allow_cross_dept ?? false,
+        allow_outside_hierarchy: rules.allow_outside_hierarchy ?? false,
+      })
+      setDepartments(Array.isArray(depts) ? depts : [])
+    }).catch(() => null).finally(() => setLoading(false))
+  }, [orgId])
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await tasksApi.updateAssigneeVisibility(orgId, {
+        assignee_visibility_mode: mode,
+        assignee_custom_rules: mode === 'custom' ? customRules as unknown as Record<string, unknown> : undefined,
+        assignee_visibility_config_roles: configRoles,
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch {
+      // ignore
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function toggleMultiSelect<T extends string>(arr: T[], value: T): T[] {
+    return arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value]
+  }
+
+  if (loading) return <div className="h-40 flex items-center justify-center"><div className="w-6 h-6 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" /></div>
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Visibility mode cards */}
+      <div>
+        <label className="block text-sm font-medium text-[#374151] mb-3">Visibility Mode</label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {VISIBILITY_MODES.map((vm) => (
+            <button
+              key={vm.id}
+              type="button"
+              onClick={() => setMode(vm.id)}
+              className={[
+                'flex items-start gap-3 p-4 rounded-[10px] border-2 text-left transition-all',
+                mode === vm.id
+                  ? 'border-[#2563EB] bg-[#EFF6FF]'
+                  : 'border-[#E2E8F0] bg-white hover:border-[#CBD5E1]',
+              ].join(' ')}
+            >
+              <span className="text-xl shrink-0">{vm.icon}</span>
+              <div>
+                <p className={`text-sm font-semibold ${mode === vm.id ? 'text-[#2563EB]' : 'text-[#0F172A]'}`}>
+                  {vm.title}
+                </p>
+                <p className="text-xs text-[#475569] mt-0.5 leading-relaxed">{vm.description}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom rules panel */}
+      {mode === 'custom' && (
+        <div className="border border-[#E2E8F0] rounded-[10px] p-5 space-y-5 bg-[#F8FAFC]">
+          <p className="text-sm font-semibold text-[#0F172A]">Custom Rules</p>
+
+          {/* Include Departments */}
+          <div>
+            <label className="block text-xs font-medium text-[#374151] mb-2">Include Departments</label>
+            <div className="flex flex-wrap gap-2">
+              {departments.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setCustomRules({ ...customRules, include_departments: toggleMultiSelect(customRules.include_departments, d.id) })}
+                  className={`px-3 py-1 rounded-[6px] text-xs font-medium border transition-colors ${
+                    customRules.include_departments.includes(d.id)
+                      ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                      : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB]'
+                  }`}
+                >
+                  {d.name}
+                </button>
+              ))}
+              {departments.length === 0 && <p className="text-xs text-[#94A3B8]">No departments configured</p>}
+            </div>
+          </div>
+
+          {/* Exclude Departments */}
+          <div>
+            <label className="block text-xs font-medium text-[#374151] mb-2">Exclude Departments</label>
+            <div className="flex flex-wrap gap-2">
+              {departments.map((d) => (
+                <button
+                  key={d.id}
+                  type="button"
+                  onClick={() => setCustomRules({ ...customRules, exclude_departments: toggleMultiSelect(customRules.exclude_departments, d.id) })}
+                  className={`px-3 py-1 rounded-[6px] text-xs font-medium border transition-colors ${
+                    customRules.exclude_departments.includes(d.id)
+                      ? 'bg-[#DC2626] text-white border-[#DC2626]'
+                      : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#DC2626]'
+                  }`}
+                >
+                  {d.name}
+                </button>
+              ))}
+              {departments.length === 0 && <p className="text-xs text-[#94A3B8]">No departments configured</p>}
+            </div>
+          </div>
+
+          {/* Include Roles */}
+          <div>
+            <label className="block text-xs font-medium text-[#374151] mb-2">Include Roles</label>
+            <div className="flex gap-2">
+              {ALL_ROLES.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setCustomRules({ ...customRules, include_roles: toggleMultiSelect(customRules.include_roles, r) })}
+                  className={`px-3 py-1 rounded-[6px] text-xs font-medium border capitalize transition-colors ${
+                    customRules.include_roles.includes(r)
+                      ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                      : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB]'
+                  }`}
+                >
+                  {r.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Exclude Roles */}
+          <div>
+            <label className="block text-xs font-medium text-[#374151] mb-2">Exclude Roles</label>
+            <div className="flex gap-2">
+              {ALL_ROLES.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setCustomRules({ ...customRules, exclude_roles: toggleMultiSelect(customRules.exclude_roles, r) })}
+                  className={`px-3 py-1 rounded-[6px] text-xs font-medium border capitalize transition-colors ${
+                    customRules.exclude_roles.includes(r)
+                      ? 'bg-[#DC2626] text-white border-[#DC2626]'
+                      : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#DC2626]'
+                  }`}
+                >
+                  {r.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Toggles */}
+          <div className="space-y-3">
+            {[
+              { key: 'allow_cross_dept' as const, label: 'Allow cross-department assignees' },
+              { key: 'allow_outside_hierarchy' as const, label: 'Allow assignees outside reporting hierarchy' },
+            ].map(({ key, label }) => (
+              <div key={key} className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCustomRules({ ...customRules, [key]: !customRules[key] })}
+                  className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${customRules[key] ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]'}`}
+                  role="switch"
+                  aria-checked={customRules[key]}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${customRules[key] ? 'translate-x-4' : 'translate-x-0'}`} />
+                </button>
+                <span className="text-sm text-[#1E293B]">{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Who can configure */}
+      <div>
+        <label className="block text-sm font-medium text-[#374151] mb-2">Who can change these settings</label>
+        <div className="flex gap-2">
+          {ALL_ROLES.map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setConfigRoles(toggleMultiSelect(configRoles, r))}
+              className={`px-3 py-1.5 rounded-[6px] text-xs font-medium border capitalize transition-colors ${
+                configRoles.includes(r)
+                  ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                  : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB]'
+              }`}
+            >
+              {r.replace('_', ' ')}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-[#64748B] mt-1.5">Selected roles can modify these visibility settings.</p>
+      </div>
+
+      <button
+        type="button"
+        onClick={handleSave}
+        disabled={saving}
+        className="flex items-center gap-2 px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+      >
+        <Save size={15} />
+        {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Settings'}
+      </button>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const tabs: { key: MasterTab; label: string; icon: React.ReactNode }[] = [
@@ -607,6 +882,7 @@ const tabs: { key: MasterTab; label: string; icon: React.ReactNode }[] = [
   { key: 'priorities', label: 'Priorities', icon: <BarChart size={15} /> },
   { key: 'statuses', label: 'Statuses', icon: <Activity size={15} /> },
   { key: 'checklists', label: 'Checklist Templates', icon: <List size={15} /> },
+  { key: 'assignee_visibility', label: 'Assignee Visibility', icon: <Users size={15} /> },
 ]
 
 export default function MastersPage() {
@@ -658,6 +934,7 @@ export default function MastersPage() {
           {activeTab === 'priorities' && <PrioritiesTab orgId={orgId} />}
           {activeTab === 'statuses' && <StatusesTab orgId={orgId} />}
           {activeTab === 'checklists' && <ChecklistTemplatesTab orgId={orgId} />}
+          {activeTab === 'assignee_visibility' && <AssigneeVisibilityTab orgId={orgId} />}
         </div>
       </div>
     </div>

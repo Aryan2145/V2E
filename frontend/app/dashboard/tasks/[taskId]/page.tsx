@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskComment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 import QuadrantBadge from '@/components/tasks/QuadrantBadge'
+import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -169,6 +170,9 @@ export default function TaskDetailPage() {
   const [selectedStatusId, setSelectedStatusId] = useState('')
   const [deleteReason, setDeleteReason] = useState('')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [editingAssignees, setEditingAssignees] = useState(false)
+  const [editAssigneesList, setEditAssigneesList] = useState<import('@/lib/types/tasks').SelectedAssignee[]>([])
+  const [savingAssignees, setSavingAssignees] = useState(false)
 
   const loadTask = useCallback(async () => {
     if (!orgId || !taskId) return
@@ -282,6 +286,38 @@ export default function TaskDetailPage() {
       setProofUrl('')
     } finally {
       setSubmittingProof(false)
+    }
+  }
+
+  async function handleSaveAssignees() {
+    if (!task) return
+    setSavingAssignees(true)
+    try {
+      const currentIds = new Set((task.assignees ?? []).map((a) => a.user_id))
+      const newIds = new Set(editAssigneesList.map((a) => a.user_id))
+
+      // Remove assignees that are no longer in the list
+      const toRemove = [...currentIds].filter((id) => !newIds.has(id))
+      await Promise.all(toRemove.map((uid) => tasksApi.removeAssignee(orgId, taskId, uid).catch(() => null)))
+
+      // Add new assignees
+      const toAdd = editAssigneesList.filter((a) => !currentIds.has(a.user_id))
+      await Promise.all(toAdd.map((a) => tasksApi.addAssignee(orgId, taskId, a.user_id, a.is_cc).catch(() => null)))
+
+      // Update is_cc for existing (remove and re-add)
+      const toUpdateCC = editAssigneesList.filter((a) => {
+        const existing = (task.assignees ?? []).find((ea) => ea.user_id === a.user_id)
+        return existing && existing.is_cc !== a.is_cc
+      })
+      await Promise.all(toUpdateCC.map(async (a) => {
+        await tasksApi.removeAssignee(orgId, taskId, a.user_id).catch(() => null)
+        await tasksApi.addAssignee(orgId, taskId, a.user_id, a.is_cc).catch(() => null)
+      }))
+
+      await loadTask()
+      setEditingAssignees(false)
+    } finally {
+      setSavingAssignees(false)
     }
   }
 
@@ -644,43 +680,98 @@ export default function TaskDetailPage() {
             </div>
 
             {/* Assignees */}
-            {(assignees.length > 0 || ccUsers.length > 0) && (
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
-                <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-3">Assignees</p>
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Assignees</p>
+                {!editingAssignees ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditAssigneesList((task.assignees ?? []).map((a) => ({
+                        user_id: a.user_id,
+                        name: a.user?.name ?? a.user_name ?? 'Unknown',
+                        is_cc: a.is_cc,
+                      })))
+                      setEditingAssignees(true)
+                    }}
+                    className="text-xs font-medium text-[#2563EB] hover:underline"
+                  >
+                    Edit
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveAssignees}
+                      disabled={savingAssignees}
+                      className="text-xs font-semibold text-white bg-[#2563EB] px-2.5 py-1 rounded-[6px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors"
+                    >
+                      {savingAssignees ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingAssignees(false)}
+                      className="text-xs font-medium text-[#475569] hover:text-[#0F172A]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {editingAssignees ? (
+                <AssigneeSelector
+                  orgId={orgId}
+                  value={editAssigneesList}
+                  onChange={setEditAssigneesList}
+                />
+              ) : (
                 <div className="space-y-3">
-                  {assignees.map((a) => (
-                    <div key={a.id} className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-full ${avatarColor(a.user_name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
-                        {getInitials(a.user_name)}
+                  {assignees.map((a) => {
+                    const name = a.user?.name ?? a.user_name ?? 'Unknown'
+                    const email = a.user?.email ?? a.user_email ?? ''
+                    return (
+                      <div key={a.id} className="flex items-center gap-3">
+                        <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                          {getInitials(name)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
+                          <p className="text-xs text-[#475569] truncate">{email}</p>
+                        </div>
+                        {a.is_completed ? (
+                          <CheckCircle2 size={14} className="text-[#16A34A] shrink-0" />
+                        ) : (
+                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[#CBD5E1] shrink-0" />
+                        )}
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[#0F172A] truncate">{a.user_name}</p>
-                        <p className="text-xs text-[#475569] truncate">{a.user_email}</p>
-                      </div>
-                      {a.is_completed && (
-                        <CheckCircle2 size={14} className="text-[#16A34A] shrink-0" />
-                      )}
-                    </div>
-                  ))}
+                    )
+                  })}
                   {ccUsers.length > 0 && (
                     <>
                       <p className="text-xs text-[#94A3B8] pt-1">CC</p>
-                      {ccUsers.map((a) => (
-                        <div key={a.id} className="flex items-center gap-3 opacity-70">
-                          <div className={`w-8 h-8 rounded-full ${avatarColor(a.user_name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
-                            {getInitials(a.user_name)}
+                      {ccUsers.map((a) => {
+                        const name = a.user?.name ?? a.user_name ?? 'Unknown'
+                        return (
+                          <div key={a.id} className="flex items-center gap-3 opacity-70">
+                            <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                              {getInitials(name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
+                            </div>
+                            <span className="text-[10px] font-semibold bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A] rounded px-1.5 py-0.5">CC</span>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-[#0F172A] truncate">{a.user_name}</p>
-                          </div>
-                          <span className="text-[10px] font-semibold bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A] rounded px-1.5 py-0.5">CC</span>
-                        </div>
-                      ))}
+                        )
+                      })}
                     </>
                   )}
+                  {assignees.length === 0 && ccUsers.length === 0 && (
+                    <p className="text-sm text-[#475569]">No assignees yet.</p>
+                  )}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
             {/* Completion mode */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
