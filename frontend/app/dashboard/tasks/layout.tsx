@@ -13,6 +13,7 @@ import {
   Archive,
   BarChart2,
   Settings2,
+  Globe,
 } from 'lucide-react'
 
 interface SubNavItem {
@@ -28,8 +29,9 @@ const subNavItems: SubNavItem[] = [
   { label: 'Assigned by Me', href: '/dashboard/tasks/assigned', icon: <UserCheck size={16} /> },
   { label: 'Recurring', href: '/dashboard/tasks/recurring', icon: <RotateCcw size={16} /> },
   { label: 'Escalated', href: '/dashboard/tasks/escalated', icon: <AlertTriangle size={16} /> },
+  { label: 'Collective', href: '/dashboard/tasks/collective', icon: <Globe size={16} /> },
   { label: 'Archive', href: '/dashboard/tasks/archive', icon: <Archive size={16} />, adminOnly: true },
-  { label: 'Reports', href: '/dashboard/tasks/reports', icon: <BarChart2 size={16} /> },
+  { label: 'Reports', href: '/dashboard/tasks/reports', icon: <BarChart2 size={16} />, adminOnly: true },
   { label: 'Masters', href: '/dashboard/tasks/masters', icon: <Settings2 size={16} />, adminOnly: true },
 ]
 

@@ -1,0 +1,155 @@
+'use client'
+
+import React, { useEffect, useState, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
+import { tasksApi } from '@/lib/api/tasks'
+import type { CollectiveOrgTasks, Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
+import TaskCard from '@/components/tasks/TaskCard'
+import { Globe, Building2 } from 'lucide-react'
+
+export default function CollectivePage() {
+  const router = useRouter()
+  const [data, setData] = useState<CollectiveOrgTasks[]>([])
+  const [loading, setLoading] = useState(true)
+  const [activeOrg, setActiveOrg] = useState<string>('all')
+
+  useEffect(() => {
+    tasksApi.getCollective().then(setData).catch(() => setData([])).finally(() => setLoading(false))
+  }, [])
+
+  // Merged lists for "All" tab
+  const allTasks = useMemo(() => data.flatMap((d) => d.tasks), [data])
+
+  // Gather all unique priorities, statuses, categories across orgs
+  const priorities = useMemo(() => {
+    const map = new Map<string, TaskPriority>()
+    allTasks.forEach((t) => { if (t.priority) map.set(t.priority.id, t.priority) })
+    return Array.from(map.values())
+  }, [allTasks])
+
+  const statuses = useMemo(() => {
+    const map = new Map<string, TaskStatus>()
+    allTasks.forEach((t) => { if (t.status) map.set(t.status.id, t.status) })
+    return Array.from(map.values())
+  }, [allTasks])
+
+  const categories = useMemo(() => {
+    const map = new Map<string, TaskCategory>()
+    allTasks.forEach((t) => { if (t.category) map.set(t.category.id, t.category) })
+    return Array.from(map.values())
+  }, [allTasks])
+
+  const orgById = useMemo(() => new Map(data.map((d) => [d.organization.id, d.organization])), [data])
+
+  const displayTasks: Task[] = activeOrg === 'all'
+    ? allTasks
+    : (data.find((d) => d.organization.id === activeOrg)?.tasks ?? [])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (data.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+          <Globe size={24} className="text-[#94A3B8]" />
+        </div>
+        <p className="font-semibold text-[#0F172A]">No organizations found</p>
+        <p className="text-sm text-[#475569] mt-1">You don't appear to be a member of any organization.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Collective View</h1>
+        <p className="mt-1 text-[15px] text-[#475569]">Tasks across all organizations you belong to.</p>
+      </div>
+
+      {/* Org tabs */}
+      <div className="flex items-center gap-1 border-b border-[#E2E8F0] overflow-x-auto pb-0">
+        {/* All tab */}
+        <button
+          onClick={() => setActiveOrg('all')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap -mb-px ${
+            activeOrg === 'all'
+              ? 'border-[#2563EB] text-[#2563EB]'
+              : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
+          }`}
+        >
+          <Globe size={14} />
+          All Organizations
+          <span className="ml-1 text-xs bg-[#F1F5F9] text-[#475569] px-1.5 py-0.5 rounded-full font-medium">
+            {allTasks.length}
+          </span>
+        </button>
+
+        {/* Per-org tabs */}
+        {data.map((d) => (
+          <button
+            key={d.organization.id}
+            onClick={() => setActiveOrg(d.organization.id)}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap -mb-px ${
+              activeOrg === d.organization.id
+                ? 'border-[#2563EB] text-[#2563EB]'
+                : 'border-transparent text-[#64748B] hover:text-[#0F172A]'
+            }`}
+          >
+            <Building2 size={14} />
+            {d.organization.name}
+            <span className="ml-1 text-xs bg-[#F1F5F9] text-[#475569] px-1.5 py-0.5 rounded-full font-medium">
+              {d.tasks.length}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Task count */}
+      <p className="text-sm text-[#475569]">
+        {displayTasks.length} task{displayTasks.length !== 1 ? 's' : ''}
+      </p>
+
+      {/* Task list */}
+      {displayTasks.length === 0 ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
+          <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+            <Globe size={24} className="text-[#94A3B8]" />
+          </div>
+          <p className="font-semibold text-[#0F172A]">No tasks</p>
+          <p className="text-sm text-[#475569] mt-1">This organization has no tasks yet.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {displayTasks.map((task) => {
+            const org = orgById.get(task.organization_id)
+            return (
+              <div key={task.id} className="relative">
+                {activeOrg === 'all' && org && (
+                  <div className="absolute -top-0 right-3 z-10">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-b-[6px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] border-t-0">
+                      {org.name}
+                    </span>
+                  </div>
+                )}
+                <TaskCard
+                  task={task}
+                  onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
+                  priorities={priorities}
+                  statuses={statuses}
+                  categories={categories}
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}

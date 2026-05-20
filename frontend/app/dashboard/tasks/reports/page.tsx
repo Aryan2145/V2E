@@ -1,39 +1,474 @@
 'use client'
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
-import type { Task, TaskCategory, TaskPriority, TaskStatus, TaskQuadrant } from '@/lib/types/tasks'
-import QuadrantBadge from '@/components/tasks/QuadrantBadge'
-import { BarChart2, CheckCircle2, Clock, AlertTriangle, TrendingUp } from 'lucide-react'
+import type { TaskReportData } from '@/lib/types/tasks'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  PieChart, Pie, Cell,
+} from 'recharts'
+import { Download, Users, Building2, Tag, CheckCircle2, RotateCcw, BarChart2, AlertTriangle } from 'lucide-react'
 
-// ─── Stat card ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function StatCard({
-  label,
-  value,
-  sub,
-  icon,
-  color,
-}: {
-  label: string
-  value: number | string
-  sub?: string
-  icon: React.ReactNode
-  color: string
-}) {
+function exportCsv(filename: string, rows: string[][], headers: string[]) {
+  const lines = [headers, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob = new Blob([lines], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
+function completionRate(completed: number, total: number): string {
+  if (total === 0) return '0%'
+  return `${Math.round((completed / total) * 100)}%`
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionHeader({ icon, title, onExport }: { icon: React.ReactNode; title: string; onExport: () => void }) {
   return (
-    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6 flex items-start gap-4">
-      <div
-        className="w-10 h-10 rounded-[8px] flex items-center justify-center shrink-0"
-        style={{ backgroundColor: color + '18', color }}
-      >
+    <div className="flex items-center justify-between mb-5">
+      <h2 className="flex items-center gap-2 text-[17px] font-semibold text-[#0F172A]">
         {icon}
-      </div>
-      <div>
-        <p className="text-3xl font-bold text-[#0F172A] leading-tight tabular-nums">{value}</p>
-        <p className="text-sm text-[#475569] mt-0.5">{label}</p>
-        {sub && <p className="text-xs text-[#94A3B8] mt-0.5">{sub}</p>}
+        {title}
+      </h2>
+      <button
+        onClick={onExport}
+        className="flex items-center gap-1.5 px-3 py-[7px] text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+      >
+        <Download size={14} />
+        Export CSV
+      </button>
+    </div>
+  )
+}
+
+function StatBanner({ data }: { data: TaskReportData }) {
+  const total = data.total_tasks
+  const completed = data.user_performance.reduce((s, u) => s + u.completed, 0)
+  const overdue = data.user_performance.reduce((s, u) => s + u.overdue, 0)
+  const rate = total > 0 ? Math.round((completed / total) * 100) : 0
+
+  const stats = [
+    { label: 'Total Tasks', value: total, icon: <BarChart2 size={20} />, color: '#2563EB' },
+    { label: 'Completed', value: completed, icon: <CheckCircle2 size={20} />, color: '#16A34A' },
+    { label: 'Overdue', value: overdue, icon: <AlertTriangle size={20} />, color: '#DC2626' },
+    { label: 'Completion Rate', value: `${rate}%`, icon: <BarChart2 size={20} />, color: '#0891B2' },
+  ]
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {stats.map((s) => (
+        <div
+          key={s.label}
+          className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 flex items-start gap-4"
+        >
+          <div
+            className="w-10 h-10 rounded-[8px] flex items-center justify-center shrink-0"
+            style={{ backgroundColor: s.color + '18', color: s.color }}
+          >
+            {s.icon}
+          </div>
+          <div>
+            <p className="text-3xl font-bold text-[#0F172A] leading-tight tabular-nums">{s.value}</p>
+            <p className="text-sm text-[#475569] mt-0.5">{s.label}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+const CHART_TOOLTIP_STYLE = { borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13 }
+
+// ─── User Performance ─────────────────────────────────────────────────────────
+
+function UserPerformanceSection({ data }: { data: TaskReportData }) {
+  const rows = data.user_performance.sort((a, b) => b.total - a.total)
+
+  const chartData = rows.slice(0, 10).map((u) => ({
+    name: u.user?.name ?? 'Unknown',
+    Total: u.total,
+    Completed: u.completed,
+    Overdue: u.overdue,
+  }))
+
+  function handleExport() {
+    exportCsv('user_performance.csv',
+      rows.map((u) => [
+        u.user?.name ?? 'Unknown',
+        u.user?.email ?? '',
+        String(u.total),
+        String(u.completed),
+        String(u.overdue),
+        completionRate(u.completed, u.total),
+      ]),
+      ['Name', 'Email', 'Total', 'Completed', 'Overdue', 'Completion Rate'],
+    )
+  }
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
+      <SectionHeader icon={<Users size={16} className="text-[#2563EB]" />} title="User Performance" onExport={handleExport} />
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-[#475569] text-center py-8">No user data available for this period.</p>
+      ) : (
+        <div className="space-y-6">
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748B' }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="Total" fill="#93C5FD" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Completed" fill="#16A34A" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Overdue" fill="#DC2626" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2E8F0]">
+                  {['Name', 'Email', 'Total', 'Completed', 'Overdue', 'Rate'].map((h) => (
+                    <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((u) => {
+                  const rate = u.total > 0 ? Math.round((u.completed / u.total) * 100) : 0
+                  return (
+                    <tr key={u.user_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                      <td className="py-2.5 px-3 font-medium text-[#0F172A]">{u.user?.name ?? 'Unknown'}</td>
+                      <td className="py-2.5 px-3 text-[#475569]">{u.user?.email ?? '—'}</td>
+                      <td className="py-2.5 px-3 text-[#0F172A] tabular-nums">{u.total}</td>
+                      <td className="py-2.5 px-3 text-[#16A34A] font-medium tabular-nums">{u.completed}</td>
+                      <td className="py-2.5 px-3 text-[#DC2626] font-medium tabular-nums">{u.overdue}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+                            <div className="h-full bg-[#16A34A] rounded-full" style={{ width: `${rate}%` }} />
+                          </div>
+                          <span className="text-xs font-semibold text-[#475569] w-8 shrink-0">{rate}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Department Performance ───────────────────────────────────────────────────
+
+function DeptPerformanceSection({ data }: { data: TaskReportData }) {
+  const rows = data.department_performance.sort((a, b) => b.total - a.total)
+
+  const chartData = rows.map((d) => ({
+    name: d.department?.name ?? 'No Department',
+    Total: d.total,
+    Completed: d.completed,
+    Overdue: d.overdue,
+  }))
+
+  function handleExport() {
+    exportCsv('department_performance.csv',
+      rows.map((d) => [
+        d.department?.name ?? 'No Department',
+        String(d.total),
+        String(d.completed),
+        String(d.overdue),
+        completionRate(d.completed, d.total),
+      ]),
+      ['Department', 'Total', 'Completed', 'Overdue', 'Completion Rate'],
+    )
+  }
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
+      <SectionHeader icon={<Building2 size={16} className="text-[#7C3AED]" />} title="Department Performance" onExport={handleExport} />
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-[#475569] text-center py-8">No department data available for this period.</p>
+      ) : (
+        <div className="space-y-6">
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 16, bottom: 4, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 11, fill: '#64748B' }} />
+                <YAxis dataKey="name" type="category" width={110} tick={{ fontSize: 11, fill: '#64748B' }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="Total" fill="#93C5FD" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="Completed" fill="#16A34A" radius={[0, 4, 4, 0]} />
+                <Bar dataKey="Overdue" fill="#DC2626" radius={[0, 4, 4, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2E8F0]">
+                  {['Department', 'Total', 'Completed', 'Overdue', 'Rate'].map((h) => (
+                    <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((d) => {
+                  const rate = d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0
+                  return (
+                    <tr key={d.department_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                      <td className="py-2.5 px-3 font-medium text-[#0F172A]">{d.department?.name ?? 'No Department'}</td>
+                      <td className="py-2.5 px-3 text-[#0F172A] tabular-nums">{d.total}</td>
+                      <td className="py-2.5 px-3 text-[#16A34A] font-medium tabular-nums">{d.completed}</td>
+                      <td className="py-2.5 px-3 text-[#DC2626] font-medium tabular-nums">{d.overdue}</td>
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+                            <div className="h-full bg-[#16A34A] rounded-full" style={{ width: `${rate}%` }} />
+                          </div>
+                          <span className="text-xs font-semibold text-[#475569] w-8 shrink-0">{rate}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Breakdown Pie ─────────────────────────────────────────────────────────────
+
+interface BreakdownRow { label: string; color: string; total: number; completed: number; overdue: number }
+
+function BreakdownSection({
+  icon, title, rows, exportFilename,
+}: {
+  icon: React.ReactNode; title: string; rows: BreakdownRow[]; exportFilename: string
+}) {
+  const grandTotal = rows.reduce((s, r) => s + r.total, 0)
+  const pieData = rows.map((r) => ({ name: r.label, value: r.total, color: r.color }))
+
+  function handleExport() {
+    exportCsv(exportFilename,
+      rows.map((r) => [r.label, String(r.total), String(r.completed), String(r.overdue), completionRate(r.completed, r.total)]),
+      ['Label', 'Total', 'Completed', 'Overdue', 'Completion Rate'],
+    )
+  }
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
+      <SectionHeader icon={icon} title={title} onExport={handleExport} />
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-[#475569] text-center py-8">No data available for this period.</p>
+      ) : (
+        <div className="flex flex-col lg:flex-row gap-6 items-start">
+          <div className="w-full lg:w-48 shrink-0 h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={48}
+                  outerRadius={72}
+                  paddingAngle={2}
+                  dataKey="value"
+                >
+                  {pieData.map((entry, i) => (
+                    <Cell key={i} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [`${v} tasks`, '']} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex-1 min-w-0 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[#E2E8F0]">
+                  {['Label', 'Total', 'Completed', 'Overdue', 'Rate', 'Share'].map((h) => (
+                    <th key={h} className="text-left py-2 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const rate = r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0
+                  const share = grandTotal > 0 ? Math.round((r.total / grandTotal) * 100) : 0
+                  return (
+                    <tr key={r.label} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                      <td className="py-2 px-3">
+                        <div className="flex items-center gap-2">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                          <span className="font-medium text-[#0F172A] truncate">{r.label}</span>
+                        </div>
+                      </td>
+                      <td className="py-2 px-3 text-[#0F172A] tabular-nums">{r.total}</td>
+                      <td className="py-2 px-3 text-[#16A34A] font-medium tabular-nums">{r.completed}</td>
+                      <td className="py-2 px-3 text-[#DC2626] font-medium tabular-nums">{r.overdue}</td>
+                      <td className="py-2 px-3 text-[#475569] tabular-nums">{rate}%</td>
+                      <td className="py-2 px-3 text-[#475569] tabular-nums">{share}%</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Status Breakdown ─────────────────────────────────────────────────────────
+
+function StatusBreakdownSection({ data }: { data: TaskReportData }) {
+  const rows = data.status_breakdown
+  const total = rows.reduce((s, r) => s + r.total, 0)
+  const pieData = rows.map((r) => ({ name: r.label, value: r.total, color: r.color }))
+
+  function handleExport() {
+    exportCsv('status_breakdown.csv',
+      rows.map((r) => [r.label, String(r.total), total > 0 ? `${Math.round((r.total / total) * 100)}%` : '0%']),
+      ['Status', 'Count', 'Share'],
+    )
+  }
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
+      <SectionHeader icon={<CheckCircle2 size={16} className="text-[#16A34A]" />} title="Status Distribution" onExport={handleExport} />
+
+      {rows.length === 0 ? (
+        <p className="text-sm text-[#475569] text-center py-8">No status data available.</p>
+      ) : (
+        <div className="flex flex-col lg:flex-row gap-6 items-start">
+          <div className="w-full lg:w-48 shrink-0 h-48">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={pieData} cx="50%" cy="50%" innerRadius={48} outerRadius={72} paddingAngle={2} dataKey="value">
+                  {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Pie>
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [`${v} tasks`, '']} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex-1 space-y-2.5">
+            {rows.map((r) => {
+              const pct = total > 0 ? Math.round((r.total / total) * 100) : 0
+              return (
+                <div key={r.label}>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                      <span className="text-sm font-medium text-[#0F172A]">{r.label}</span>
+                    </div>
+                    <span className="text-sm text-[#475569] tabular-nums">{r.total} ({pct}%)</span>
+                  </div>
+                  <div className="h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+                    <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: r.color }} />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Frequency Breakdown ──────────────────────────────────────────────────────
+
+function FrequencySection({ data }: { data: TaskReportData }) {
+  const { recurring, one_time } = data.frequency_breakdown
+  const total = recurring.total + one_time.total
+
+  const chartData = [
+    { name: 'Recurring', Total: recurring.total, Completed: recurring.completed },
+    { name: 'One-Time', Total: one_time.total, Completed: one_time.completed },
+  ]
+
+  function handleExport() {
+    exportCsv('frequency_breakdown.csv',
+      [
+        ['Recurring', String(recurring.total), String(recurring.completed), completionRate(recurring.completed, recurring.total)],
+        ['One-Time', String(one_time.total), String(one_time.completed), completionRate(one_time.completed, one_time.total)],
+      ],
+      ['Type', 'Total', 'Completed', 'Completion Rate'],
+    )
+  }
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
+      <SectionHeader icon={<RotateCcw size={16} className="text-[#D97706]" />} title="Task Frequency" onExport={handleExport} />
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="h-48">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+              <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#64748B' }} />
+              <YAxis tick={{ fontSize: 11, fill: '#64748B' }} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+              <Legend iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="Total" fill="#93C5FD" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="Completed" fill="#16A34A" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="space-y-3">
+          {[
+            { label: 'Recurring', data: recurring, color: '#D97706' },
+            { label: 'One-Time', data: one_time, color: '#2563EB' },
+          ].map(({ label, data: d, color }) => {
+            const pct = total > 0 ? Math.round((d.total / total) * 100) : 0
+            const rate = d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0
+            return (
+              <div key={label} className="border border-[#E2E8F0] rounded-[10px] p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-[#0F172A]">{label}</span>
+                  <span
+                    className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                    style={{ backgroundColor: color + '18', color }}
+                  >
+                    {pct}% of all tasks
+                  </span>
+                </div>
+                <div className="flex gap-4 text-sm">
+                  <span className="text-[#475569]">Total: <strong className="text-[#0F172A]">{d.total}</strong></span>
+                  <span className="text-[#475569]">Completed: <strong className="text-[#16A34A]">{d.completed}</strong></span>
+                  <span className="text-[#475569]">Rate: <strong className="text-[#0F172A]">{rate}%</strong></span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
@@ -45,69 +480,24 @@ export default function ReportsPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
 
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [categories, setCategories] = useState<TaskCategory[]>([])
-  const [priorities, setPriorities] = useState<TaskPriority[]>([])
-  const [statuses, setStatuses] = useState<TaskStatus[]>([])
+  const [data, setData] = useState<TaskReportData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
     setLoading(true)
-    Promise.all([
-      tasksApi.listTasks(orgId).catch(() => []),
-      tasksApi.getCategories(orgId).catch(() => []),
-      tasksApi.getPriorities(orgId).catch(() => []),
-      tasksApi.getStatuses(orgId).catch(() => []),
-    ]).then(([t, c, p, s]) => {
-      setTasks(t)
-      setCategories(c)
-      setPriorities(p)
-      setStatuses(s)
-    }).finally(() => setLoading(false))
-  }, [orgId])
+    tasksApi.getReports(orgId, {
+      from_date: fromDate || undefined,
+      to_date: toDate || undefined,
+    })
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false))
+  }, [orgId, fromDate, toDate])
 
   useEffect(() => { loadData() }, [loadData])
-
-  const completed = useMemo(() => tasks.filter((t) => t.status?.type === 'completed').length, [tasks])
-  const overdue = useMemo(() => {
-    const now = new Date()
-    return tasks.filter((t) => t.deadline && new Date(t.deadline) < now && t.status?.type !== 'completed').length
-  }, [tasks])
-  const completionRate = tasks.length > 0 ? Math.round((completed / tasks.length) * 100) : 0
-
-  // By quadrant
-  const byQuadrant = useMemo(() => {
-    const map: Record<TaskQuadrant, number> = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 }
-    tasks.forEach((t) => { map[t.quadrant] = (map[t.quadrant] ?? 0) + 1 })
-    return map
-  }, [tasks])
-
-  // By status
-  const byStatus = useMemo(() => {
-    const map: Record<string, { label: string; count: number; color: string }> = {}
-    tasks.forEach((t) => {
-      const s = statuses.find((s) => s.id === t.status_id) ?? t.status
-      if (!s) return
-      if (!map[s.id]) map[s.id] = { label: s.label, count: 0, color: s.color }
-      map[s.id].count++
-    })
-    return Object.values(map).sort((a, b) => b.count - a.count)
-  }, [tasks, statuses])
-
-  // By category
-  const byCategory = useMemo(() => {
-    const map: Record<string, { name: string; count: number; color: string }> = {}
-    tasks.forEach((t) => {
-      const c = categories.find((c) => c.id === t.category_id) ?? t.category
-      const key = c ? c.id : 'uncategorized'
-      const name = c ? c.name : 'Uncategorized'
-      const color = c ? c.color : '#94A3B8'
-      if (!map[key]) map[key] = { name, count: 0, color }
-      map[key].count++
-    })
-    return Object.values(map).sort((a, b) => b.count - a.count)
-  }, [tasks, categories])
 
   if (!orgId) {
     return (
@@ -117,135 +507,75 @@ export default function ReportsPage() {
     )
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Task Reports</h1>
-        <p className="mt-1 text-[15px] text-[#475569]">Overview and analytics for your organization&apos;s tasks.</p>
-      </div>
-
-      {/* Summary stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Tasks" value={tasks.length} icon={<BarChart2 size={20} />} color="#2563EB" />
-        <StatCard label="Completed" value={completed} sub={`${completionRate}% completion rate`} icon={<CheckCircle2 size={20} />} color="#16A34A" />
-        <StatCard label="Overdue" value={overdue} icon={<AlertTriangle size={20} />} color="#DC2626" />
-        <StatCard label="In Progress" value={tasks.filter((t) => t.status?.type === 'in_progress').length} icon={<Clock size={20} />} color="#D97706" />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* By Quadrant */}
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">By Quadrant</h3>
-          <div className="space-y-3">
-            {(['Q1', 'Q2', 'Q3', 'Q4'] as TaskQuadrant[]).map((q) => {
-              const count = byQuadrant[q]
-              const pct = tasks.length > 0 ? Math.round((count / tasks.length) * 100) : 0
-              return (
-                <div key={q}>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <div className="flex items-center gap-2">
-                      <QuadrantBadge quadrant={q} />
-                      <span className="text-sm text-[#475569]">{count} tasks</span>
-                    </div>
-                    <span className="text-xs font-semibold text-[#475569]">{pct}%</span>
-                  </div>
-                  <div className="h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${pct}%`,
-                        backgroundColor: q === 'Q1' ? '#DC2626' : q === 'Q2' ? '#2563EB' : q === 'Q3' ? '#D97706' : '#6B7280',
-                      }}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+        <div>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Task Reports</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">Analytics and performance insights for your organization.</p>
         </div>
 
-        {/* By Status */}
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">By Status</h3>
-          {byStatus.length === 0 ? (
-            <p className="text-sm text-[#475569]">No status data available.</p>
-          ) : (
-            <div className="space-y-3">
-              {byStatus.map((s) => {
-                const pct = tasks.length > 0 ? Math.round((s.count / tasks.length) * 100) : 0
-                return (
-                  <div key={s.label}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
-                        <span className="text-sm text-[#475569]">{s.label}</span>
-                      </div>
-                      <span className="text-xs font-semibold text-[#475569]">{s.count} ({pct}%)</span>
-                    </div>
-                    <div className="h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: s.color }} />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* By Category */}
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">By Category</h3>
-          {byCategory.length === 0 ? (
-            <p className="text-sm text-[#475569]">No category data available.</p>
-          ) : (
-            <div className="space-y-3">
-              {byCategory.map((c) => {
-                const pct = tasks.length > 0 ? Math.round((c.count / tasks.length) * 100) : 0
-                return (
-                  <div key={c.name}>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c.color }} />
-                        <span className="text-sm text-[#475569] truncate max-w-[120px]">{c.name}</span>
-                      </div>
-                      <span className="text-xs font-semibold text-[#475569] shrink-0">{c.count} ({pct}%)</span>
-                    </div>
-                    <div className="h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
-                      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, backgroundColor: c.color }} />
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Completion trend placeholder */}
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-        <h3 className="text-[15px] font-semibold text-[#0F172A] mb-2 flex items-center gap-2">
-          <TrendingUp size={16} className="text-[#2563EB]" />
-          Completion Rate
-        </h3>
-        <div className="flex items-end gap-2">
-          <p className="text-5xl font-bold text-[#0F172A] tabular-nums">{completionRate}%</p>
-          <p className="text-sm text-[#475569] mb-2">{completed} of {tasks.length} tasks completed</p>
-        </div>
-        <div className="mt-4 h-3 bg-[#F1F5F9] rounded-full overflow-hidden">
-          <div
-            className="h-full bg-[#16A34A] rounded-full transition-all duration-700"
-            style={{ width: `${completionRate}%` }}
+        {/* Date range filter */}
+        <div className="flex items-center gap-2 shrink-0">
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
           />
+          <span className="text-[#475569] text-sm">to</span>
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+          />
+          {(fromDate || toDate) && (
+            <button
+              onClick={() => { setFromDate(''); setToDate('') }}
+              className="px-3 py-[7px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
+            >
+              Clear
+            </button>
+          )}
         </div>
       </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : !data ? (
+        <div className="flex flex-col items-center justify-center h-64">
+          <p className="font-semibold text-[#0F172A]">Failed to load reports</p>
+          <button onClick={loadData} className="mt-3 px-4 py-2 text-sm font-semibold bg-[#2563EB] text-white rounded-[8px] hover:bg-[#1D4ED8] transition-colors">Retry</button>
+        </div>
+      ) : (
+        <>
+          <StatBanner data={data} />
+          <UserPerformanceSection data={data} />
+          <DeptPerformanceSection data={data} />
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <BreakdownSection
+              icon={<Tag size={16} className="text-[#D97706]" />}
+              title="Priority Breakdown"
+              rows={data.priority_breakdown}
+              exportFilename="priority_breakdown.csv"
+            />
+            <BreakdownSection
+              icon={<Tag size={16} className="text-[#0891B2]" />}
+              title="Category Breakdown"
+              rows={data.category_breakdown}
+              exportFilename="category_breakdown.csv"
+            />
+          </div>
+
+          <StatusBreakdownSection data={data} />
+          <FrequencySection data={data} />
+        </>
+      )}
     </div>
   )
 }

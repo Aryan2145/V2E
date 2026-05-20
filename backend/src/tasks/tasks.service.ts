@@ -30,6 +30,25 @@ export class TasksService {
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+  private async checkTaskPermission(
+    orgId: string,
+    userId: string,
+    field: 'task_creation_roles' | 'task_edit_roles' | 'task_delete_roles' | 'archive_view_roles',
+  ) {
+    const [config, member] = await Promise.all([
+      this.getOrgConfig(orgId),
+      this.prisma.organizationMember.findUnique({
+        where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
+        select: { role: true },
+      }),
+    ]);
+    if (!member) throw new ForbiddenException('Not a member of this organization');
+    const allowedRoles = config[field] as string[];
+    if (!Array.isArray(allowedRoles) || !allowedRoles.includes(member.role)) {
+      throw new ForbiddenException(`Your role is not permitted to perform this action`);
+    }
+  }
+
   private async getOrgConfig(orgId: string) {
     return this.prisma.taskMaster.upsert({
       where: { organization_id: orgId },
@@ -93,6 +112,7 @@ export class TasksService {
   // ─── Create Task ──────────────────────────────────────────────────────────────
 
   async createTask(orgId: string, userId: string, dto: CreateTaskDto) {
+    await this.checkTaskPermission(orgId, userId, 'task_creation_roles');
     const config = await this.getOrgConfig(orgId);
 
     // Resolve status
@@ -352,6 +372,7 @@ export class TasksService {
   // ─── Update Task ──────────────────────────────────────────────────────────────
 
   async updateTask(orgId: string, userId: string, taskId: string, dto: UpdateTaskDto) {
+    await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
     const old = await this.findTaskOrFail(orgId, taskId);
     const changedFields: Array<{ field: string; from: unknown; to: unknown }> = [];
 
@@ -406,6 +427,7 @@ export class TasksService {
   // ─── Delete Task ──────────────────────────────────────────────────────────────
 
   async deleteTask(orgId: string, userId: string, taskId: string, reason: string) {
+    await this.checkTaskPermission(orgId, userId, 'task_delete_roles');
     if (!reason || reason.trim().length === 0) {
       throw new BadRequestException('Deletion reason is required');
     }
@@ -678,10 +700,157 @@ export class TasksService {
 
   // ─── Archive ─────────────────────────────────────────────────────────────────
 
-  async getArchive(orgId: string) {
+  async getArchive(orgId: string, userId: string) {
+    await this.checkTaskPermission(orgId, userId, 'archive_view_roles');
     return this.prisma.taskArchive.findMany({
       where: { organization_id: orgId },
       orderBy: { deleted_at: 'desc' },
     });
+  }
+
+  // ─── Reports ─────────────────────────────────────────────────────────────────
+
+  async getReports(orgId: string, fromDate?: string, toDate?: string) {
+    const where: any = { organization_id: orgId, is_deleted: false };
+    if (fromDate || toDate) {
+      where.created_at = {};
+      if (fromDate) where.created_at.gte = new Date(fromDate);
+      if (toDate) where.created_at.lte = new Date(toDate);
+    }
+
+    const tasks = await this.prisma.task.findMany({
+      where,
+      include: {
+        status: true,
+        priority: true,
+        category: true,
+        assignees: { where: { is_cc: false } },
+      },
+    });
+
+    const completedStatuses = await this.prisma.taskStatus.findMany({
+      where: { organization_id: orgId, type: 'completed' },
+      select: { id: true },
+    });
+    const completedIds = new Set(completedStatuses.map((s) => s.id));
+    const now = new Date();
+
+    const userMap = new Map<string, { user_id: string; total: number; completed: number; overdue: number }>();
+    const deptMap = new Map<string, { department_id: string; total: number; completed: number; overdue: number }>();
+    const priorityMap = new Map<string, { label: string; color: string; total: number; completed: number; overdue: number }>();
+    const categoryMap = new Map<string, { label: string; color: string; total: number; completed: number; overdue: number }>();
+    const statusMap = new Map<string, { label: string; color: string; total: number }>();
+    let recurringTotal = 0, recurringCompleted = 0, oneTimeTotal = 0, oneTimeCompleted = 0;
+
+    for (const task of tasks) {
+      const isCompleted = completedIds.has(task.status_id);
+      const isOverdue = !!task.deadline && task.deadline < now && !isCompleted;
+
+      if (task.priority_id && task.priority) {
+        if (!priorityMap.has(task.priority_id)) {
+          priorityMap.set(task.priority_id, { label: task.priority.label, color: task.priority.color, total: 0, completed: 0, overdue: 0 });
+        }
+        const p = priorityMap.get(task.priority_id)!;
+        p.total++; if (isCompleted) p.completed++; if (isOverdue) p.overdue++;
+      }
+
+      if (task.category_id && task.category) {
+        if (!categoryMap.has(task.category_id)) {
+          categoryMap.set(task.category_id, { label: task.category.name, color: task.category.color, total: 0, completed: 0, overdue: 0 });
+        }
+        const c = categoryMap.get(task.category_id)!;
+        c.total++; if (isCompleted) c.completed++; if (isOverdue) c.overdue++;
+      }
+
+      if (task.status) {
+        if (!statusMap.has(task.status_id)) {
+          statusMap.set(task.status_id, { label: task.status.label, color: task.status.color, total: 0 });
+        }
+        statusMap.get(task.status_id)!.total++;
+      }
+
+      for (const a of task.assignees) {
+        if (!userMap.has(a.user_id)) {
+          userMap.set(a.user_id, { user_id: a.user_id, total: 0, completed: 0, overdue: 0 });
+        }
+        const u = userMap.get(a.user_id)!;
+        u.total++; if (isCompleted) u.completed++; if (isOverdue) u.overdue++;
+      }
+
+      if (task.department_id) {
+        if (!deptMap.has(task.department_id)) {
+          deptMap.set(task.department_id, { department_id: task.department_id, total: 0, completed: 0, overdue: 0 });
+        }
+        const d = deptMap.get(task.department_id)!;
+        d.total++; if (isCompleted) d.completed++; if (isOverdue) d.overdue++;
+      }
+
+      if (task.type === 'recurring') {
+        recurringTotal++; if (isCompleted) recurringCompleted++;
+      } else {
+        oneTimeTotal++; if (isCompleted) oneTimeCompleted++;
+      }
+    }
+
+    const userIds = Array.from(userMap.keys());
+    const users = userIds.length > 0
+      ? await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, email: true } })
+      : [];
+    const userEnrich = new Map(users.map((u) => [u.id, u]));
+
+    const deptIds = Array.from(deptMap.keys());
+    const depts = deptIds.length > 0
+      ? await this.prisma.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } })
+      : [];
+    const deptEnrich = new Map(depts.map((d) => [d.id, d]));
+
+    return {
+      total_tasks: tasks.length,
+      user_performance: Array.from(userMap.entries()).map(([id, data]) => ({
+        ...data,
+        user: userEnrich.get(id) ?? null,
+      })),
+      department_performance: Array.from(deptMap.entries()).map(([id, data]) => ({
+        ...data,
+        department: deptEnrich.get(id) ?? null,
+      })),
+      priority_breakdown: Array.from(priorityMap.values()),
+      category_breakdown: Array.from(categoryMap.values()),
+      status_breakdown: Array.from(statusMap.values()),
+      frequency_breakdown: {
+        recurring: { total: recurringTotal, completed: recurringCompleted },
+        one_time: { total: oneTimeTotal, completed: oneTimeCompleted },
+      },
+    };
+  }
+
+  // ─── Collective (cross-org) ───────────────────────────────────────────────────
+
+  async getCollectiveTasks(userId: string) {
+    const memberships = await this.prisma.organizationMember.findMany({
+      where: { user_id: userId, is_active: true },
+      include: { organization: { select: { id: true, name: true, slug: true } } },
+    });
+
+    return Promise.all(
+      memberships.map(async (m) => {
+        const tasks = await this.prisma.task.findMany({
+          where: { organization_id: m.organization_id, is_deleted: false },
+          include: {
+            status: true,
+            priority: true,
+            category: true,
+            assignees: true,
+          },
+          orderBy: { created_at: 'desc' },
+          take: 100,
+        });
+        return {
+          organization: m.organization,
+          role: m.role,
+          tasks: await this.enrichTaskList(tasks),
+        };
+      }),
+    );
   }
 }

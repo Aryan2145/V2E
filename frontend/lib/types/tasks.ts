@@ -48,8 +48,9 @@ export interface TaskAssigneeUser {
   id: string
   task_id: string
   user_id: string
-  user_name: string
-  user_email: string
+  user_name?: string
+  user_email?: string
+  user?: { id: string; name: string; email: string }
   is_completed: boolean
   completed_at?: string
   is_cc: boolean
@@ -150,4 +151,57 @@ export interface ChecklistTemplate {
   name: string
   items: { title: string; order_index: number }[]
   created_at: string
+}
+
+// ─── Reports ──────────────────────────────────────────────────────────────────
+
+export interface UserPerformance {
+  user_id: string
+  user: { id: string; name: string; email: string } | null
+  total: number
+  completed: number
+  overdue: number
+}
+
+export interface DeptPerformance {
+  department_id: string
+  department: { id: string; name: string } | null
+  total: number
+  completed: number
+  overdue: number
+}
+
+export interface BreakdownItem {
+  label: string
+  color: string
+  total: number
+  completed: number
+  overdue: number
+}
+
+export interface StatusBreakdown {
+  label: string
+  color: string
+  total: number
+}
+
+export interface TaskReportData {
+  total_tasks: number
+  user_performance: UserPerformance[]
+  department_performance: DeptPerformance[]
+  priority_breakdown: BreakdownItem[]
+  category_breakdown: BreakdownItem[]
+  status_breakdown: StatusBreakdown[]
+  frequency_breakdown: {
+    recurring: { total: number; completed: number }
+    one_time: { total: number; completed: number }
+  }
+}
+
+// ─── Collective ───────────────────────────────────────────────────────────────
+
+export interface CollectiveOrgTasks {
+  organization: { id: string; name: string; slug: string }
+  role: string
+  tasks: Task[]
 }

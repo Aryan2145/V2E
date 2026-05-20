@@ -174,6 +174,26 @@ export class TaskMastersService {
     });
   }
 
+  async deactivatePriority(orgId: string, priorityId: string) {
+    await this.findPriorityOrFail(orgId, priorityId);
+    return this.prisma.taskPriority.update({
+      where: { id: priorityId },
+      data: { is_active: false },
+    });
+  }
+
+  async reorderPriorities(orgId: string, items: { id: string; order_index: number }[]) {
+    await Promise.all(
+      items.map((item) =>
+        this.prisma.taskPriority.updateMany({
+          where: { id: item.id, organization_id: orgId },
+          data: { order_index: item.order_index },
+        }),
+      ),
+    );
+    return this.listPriorities(orgId);
+  }
+
   private async findPriorityOrFail(orgId: string, priorityId: string) {
     const p = await this.prisma.taskPriority.findFirst({ where: { id: priorityId, organization_id: orgId } });
     if (!p) throw new NotFoundException(`Priority ${priorityId} not found`);
@@ -231,6 +251,29 @@ export class TaskMastersService {
       });
     }
     return status;
+  }
+
+  async deactivateStatus(orgId: string, statusId: string) {
+    const status = await this.findStatusOrFail(orgId, statusId);
+    if (status.is_default) {
+      throw new Error('Cannot deactivate the default status. Set another status as default first.');
+    }
+    return this.prisma.taskStatus.update({
+      where: { id: statusId },
+      data: { is_active: false },
+    });
+  }
+
+  async reorderStatuses(orgId: string, items: { id: string; order_index: number }[]) {
+    await Promise.all(
+      items.map((item) =>
+        this.prisma.taskStatus.updateMany({
+          where: { id: item.id, organization_id: orgId },
+          data: { order_index: item.order_index },
+        }),
+      ),
+    );
+    return this.listStatuses(orgId);
   }
 
   private async findStatusOrFail(orgId: string, statusId: string) {

@@ -6,21 +6,20 @@ import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskCategory, TaskPriority, TaskStatus, TaskQuadrant } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
+import KanbanView from '@/components/tasks/KanbanView'
+import CalendarView from '@/components/tasks/CalendarView'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
-import { Plus, CheckSquare, AlertTriangle, Calendar, CheckCircle2, TrendingUp, Filter } from 'lucide-react'
+import {
+  Plus, CheckSquare, AlertTriangle, Calendar, CheckCircle2,
+  TrendingUp, Filter, LayoutList, Columns, CalendarDays,
+} from 'lucide-react'
 
-// ─── Stat card ─────────────────────────────────────────────────────────────────
+type ViewMode = 'list' | 'kanban' | 'calendar'
 
-function StatCard({
-  label,
-  value,
-  icon,
-  color,
-}: {
-  label: string
-  value: number
-  icon: React.ReactNode
-  color: string
+// ─── Stat card ────────────────────────────────────────────────────────────────
+
+function StatCard({ label, value, icon, color }: {
+  label: string; value: number; icon: React.ReactNode; color: string
 }) {
   return (
     <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6 flex items-start gap-4">
@@ -50,43 +49,28 @@ function EmptyState({ filtered }: { filtered: boolean }) {
         {filtered ? 'No tasks match your filters' : 'No tasks yet'}
       </p>
       <p className="text-[#475569] text-sm mt-1 text-center max-w-xs">
-        {filtered
-          ? 'Try adjusting your filters to find tasks.'
-          : 'Create your first task to get started.'}
+        {filtered ? 'Try adjusting your filters.' : 'Create your first task to get started.'}
       </p>
     </div>
   )
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
-function isToday(dateStr: string): boolean {
-  const d = new Date(dateStr)
-  const now = new Date()
-  return d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
+function isToday(d: string) {
+  const v = new Date(d), n = new Date()
+  return v.getFullYear() === n.getFullYear() && v.getMonth() === n.getMonth() && v.getDate() === n.getDate()
 }
-
-function isPast(dateStr: string): boolean {
-  return new Date(dateStr) < new Date()
+function isPast(d: string) { return new Date(d) < new Date() }
+function isThisWeek(d: string) {
+  const v = new Date(d), n = new Date()
+  const start = new Date(n); start.setDate(n.getDate() - n.getDay()); start.setHours(0, 0, 0, 0)
+  const end = new Date(start); end.setDate(start.getDate() + 7)
+  return v >= start && v < end
 }
-
-function isThisWeek(dateStr: string): boolean {
-  const d = new Date(dateStr)
-  const now = new Date()
-  const start = new Date(now)
-  start.setDate(now.getDate() - now.getDay())
-  start.setHours(0, 0, 0, 0)
-  const end = new Date(start)
-  end.setDate(start.getDate() + 7)
-  return d >= start && d < end
-}
-
-function isThisMonth(dateStr: string): boolean {
-  const d = new Date(dateStr)
-  const now = new Date()
-  return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+function isThisMonth(d: string) {
+  const v = new Date(d), n = new Date()
+  return v.getMonth() === n.getMonth() && v.getFullYear() === n.getFullYear()
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -102,6 +86,7 @@ export default function TasksPage() {
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
 
   // Filters
   const [filterStatus, setFilterStatus] = useState('all')
@@ -118,43 +103,38 @@ export default function TasksPage() {
       tasksApi.getPriorities(orgId).catch(() => []),
       tasksApi.getStatuses(orgId).catch(() => []),
     ]).then(([t, c, p, s]) => {
-      setTasks(t)
-      setCategories(c)
-      setPriorities(p)
-      setStatuses(s)
+      setTasks(t); setCategories(c); setPriorities(p); setStatuses(s)
     }).finally(() => setLoading(false))
   }, [orgId])
 
   useEffect(() => { loadData() }, [loadData])
 
-  // Stats
   const myUserId = user?.id ?? ''
   const myTasksToday = useMemo(() =>
-    tasks.filter((t) =>
-      t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) &&
-      t.deadline && isToday(t.deadline)
-    ).length, [tasks, myUserId])
-
+    tasks.filter((t) => t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) && t.deadline && isToday(t.deadline)).length,
+    [tasks, myUserId])
   const overdue = useMemo(() =>
     tasks.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed').length,
     [tasks])
-
   const dueThisWeek = useMemo(() =>
     tasks.filter((t) => t.deadline && isThisWeek(t.deadline)).length, [tasks])
-
   const completedThisMonth = useMemo(() =>
     tasks.filter((t) => t.status?.type === 'completed' && isThisMonth(t.updated_at)).length, [tasks])
 
-  // Filtered tasks
-  const filtered = useMemo(() => {
-    return tasks.filter((t) => {
-      if (filterStatus !== 'all' && t.status_id !== filterStatus) return false
-      if (filterPriority !== 'all' && t.priority_id !== filterPriority) return false
-      if (filterCategory !== 'all' && t.category_id !== filterCategory) return false
-      if (filterQuadrant !== 'all' && t.quadrant !== filterQuadrant) return false
-      return true
-    })
-  }, [tasks, filterStatus, filterPriority, filterCategory, filterQuadrant])
+  const filtered = useMemo(() => tasks.filter((t) => {
+    if (filterStatus !== 'all' && t.status_id !== filterStatus) return false
+    if (filterPriority !== 'all' && t.priority_id !== filterPriority) return false
+    if (filterCategory !== 'all' && t.category_id !== filterCategory) return false
+    if (filterQuadrant !== 'all' && t.quadrant !== filterQuadrant) return false
+    return true
+  }), [tasks, filterStatus, filterPriority, filterCategory, filterQuadrant])
+
+  const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' || filterQuadrant !== 'all'
+
+  async function handleStatusChange(taskId: string, newStatusId: string) {
+    await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
+    loadData()
+  }
 
   if (!orgId) {
     return (
@@ -173,17 +153,13 @@ export default function TasksPage() {
     )
   }
 
-  const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' || filterQuadrant !== 'all'
-
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Tasks</h1>
-          <p className="mt-1 text-[15px] text-[#475569]">
-            Manage and track all tasks across your organization.
-          </p>
+          <p className="mt-1 text-[15px] text-[#475569]">Manage and track all tasks across your organization.</p>
         </div>
         <button
           onClick={() => setShowCreateModal(true)}
@@ -203,88 +179,129 @@ export default function TasksPage() {
         <StatCard label="Total Tasks" value={tasks.length} icon={<TrendingUp size={20} />} color="#0891B2" />
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3 flex-wrap">
-        <div className="flex items-center gap-2 text-sm text-[#475569]">
-          <Filter size={15} />
-          <span className="font-medium">Filter by</span>
-        </div>
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-3 py-[8px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-        >
-          <option value="all">All Statuses</option>
-          {statuses.map((s) => (
-            <option key={s.id} value={s.id}>{s.label}</option>
-          ))}
-        </select>
-        <select
-          value={filterPriority}
-          onChange={(e) => setFilterPriority(e.target.value)}
-          className="px-3 py-[8px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-        >
-          <option value="all">All Priorities</option>
-          {priorities.map((p) => (
-            <option key={p.id} value={p.id}>{p.label}</option>
-          ))}
-        </select>
-        <select
-          value={filterCategory}
-          onChange={(e) => setFilterCategory(e.target.value)}
-          className="px-3 py-[8px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-        >
-          <option value="all">All Categories</option>
-          {categories.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <select
-          value={filterQuadrant}
-          onChange={(e) => setFilterQuadrant(e.target.value as 'all' | TaskQuadrant)}
-          className="px-3 py-[8px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-        >
-          <option value="all">All Quadrants</option>
-          <option value="Q1">Q1 — Urgent + Important</option>
-          <option value="Q2">Q2 — Not Urgent + Important</option>
-          <option value="Q3">Q3 — Urgent + Not Important</option>
-          <option value="Q4">Q4 — Not Urgent + Not Important</option>
-        </select>
-        {isFiltered && (
-          <button
-            onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setFilterCategory('all'); setFilterQuadrant('all') }}
-            className="px-3 py-[8px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
-          >
-            Clear filters
-          </button>
+      {/* Toolbar: filters + view toggle */}
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between flex-wrap">
+        {/* Filters (hidden in calendar view) */}
+        {viewMode !== 'calendar' && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 text-sm text-[#475569]">
+              <Filter size={15} />
+              <span className="font-medium">Filter</span>
+            </div>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+            >
+              <option value="all">All Statuses</option>
+              {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+            <select
+              value={filterPriority}
+              onChange={(e) => setFilterPriority(e.target.value)}
+              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+            >
+              <option value="all">All Priorities</option>
+              {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+            <select
+              value={filterCategory}
+              onChange={(e) => setFilterCategory(e.target.value)}
+              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+            >
+              <option value="all">All Categories</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <select
+              value={filterQuadrant}
+              onChange={(e) => setFilterQuadrant(e.target.value as 'all' | TaskQuadrant)}
+              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+            >
+              <option value="all">All Quadrants</option>
+              <option value="Q1">Q1 — Urgent + Important</option>
+              <option value="Q2">Q2 — Not Urgent + Important</option>
+              <option value="Q3">Q3 — Urgent + Not Important</option>
+              <option value="Q4">Q4 — Not Urgent + Not Important</option>
+            </select>
+            {isFiltered && (
+              <button
+                onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setFilterCategory('all'); setFilterQuadrant('all') }}
+                className="px-3 py-[7px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         )}
+
+        {/* View toggle */}
+        <div className="flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5 shrink-0 ml-auto sm:ml-0">
+          {([
+            { mode: 'list', icon: <LayoutList size={15} />, label: 'List' },
+            { mode: 'kanban', icon: <Columns size={15} />, label: 'Kanban' },
+            { mode: 'calendar', icon: <CalendarDays size={15} />, label: 'Calendar' },
+          ] as const).map(({ mode, icon, label }) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-[6px] text-sm font-medium transition-colors ${
+                viewMode === mode
+                  ? 'bg-[#2563EB] text-white'
+                  : 'text-[#475569] hover:text-[#0F172A] hover:bg-[#F1F5F9]'
+              }`}
+            >
+              {icon}
+              <span className="hidden sm:inline">{label}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Count */}
-      <p className="text-sm text-[#475569]">
-        {filtered.length} task{filtered.length !== 1 ? 's' : ''}
-        {isFiltered && ` (filtered from ${tasks.length})`}
-      </p>
-
-      {/* Task list */}
-      {filtered.length === 0 ? (
-        <EmptyState filtered={isFiltered} />
-      ) : (
-        <div className="flex flex-col gap-2">
-          {filtered.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
-              priorities={priorities}
-              statuses={statuses}
-              categories={categories}
-            />
-          ))}
-        </div>
+      {/* Content */}
+      {viewMode === 'list' && (
+        <>
+          <p className="text-sm text-[#475569]">
+            {filtered.length} task{filtered.length !== 1 ? 's' : ''}
+            {isFiltered && ` (filtered from ${tasks.length})`}
+          </p>
+          {filtered.length === 0 ? (
+            <EmptyState filtered={isFiltered} />
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filtered.map((task) => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
+                  priorities={priorities}
+                  statuses={statuses}
+                  categories={categories}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Create Task Modal */}
+      {viewMode === 'kanban' && (
+        <KanbanView
+          tasks={filtered}
+          statuses={statuses}
+          priorities={priorities}
+          categories={categories}
+          onStatusChange={handleStatusChange}
+          onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
+        />
+      )}
+
+      {viewMode === 'calendar' && (
+        <CalendarView
+          tasks={tasks}
+          priorities={priorities}
+          onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
+        />
+      )}
+
       <CreateTaskModal
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}

@@ -11,6 +11,8 @@ import type {
   RecurringTemplate,
   TaskArchiveItem,
   ChecklistTemplate,
+  TaskReportData,
+  CollectiveOrgTasks,
 } from '@/lib/types/tasks'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/tasks`
@@ -71,6 +73,15 @@ export const tasksApi = {
     return unwrap<TaskPriority>(res)
   },
 
+  deletePriority: async (orgId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/masters/priorities/${id}`)
+  },
+
+  reorderPriorities: async (orgId: string, items: { id: string; order_index: number }[]): Promise<TaskPriority[]> => {
+    const res = await apiClient.patch(`${base(orgId)}/masters/priorities/reorder`, { items })
+    return unwrap<TaskPriority[]>(res)
+  },
+
   getStatuses: async (orgId: string): Promise<TaskStatus[]> => {
     const res = await apiClient.get(`${base(orgId)}/masters/statuses`)
     return unwrap<TaskStatus[]>(res)
@@ -84,6 +95,15 @@ export const tasksApi = {
   updateStatus: async (orgId: string, id: string, dto: Partial<TaskStatus>): Promise<TaskStatus> => {
     const res = await apiClient.patch(`${base(orgId)}/masters/statuses/${id}`, dto)
     return unwrap<TaskStatus>(res)
+  },
+
+  deleteStatus: async (orgId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/masters/statuses/${id}`)
+  },
+
+  reorderStatuses: async (orgId: string, items: { id: string; order_index: number }[]): Promise<TaskStatus[]> => {
+    const res = await apiClient.patch(`${base(orgId)}/masters/statuses/reorder`, { items })
+    return unwrap<TaskStatus[]>(res)
   },
 
   getChecklistTemplates: async (orgId: string): Promise<ChecklistTemplate[]> => {
@@ -242,5 +262,16 @@ export const tasksApi = {
   getRecurringStats: async (orgId: string, id: string): Promise<{ total: number; completed: number; pending: number }> => {
     const res = await apiClient.get(`${base(orgId)}/recurring/${id}/stats`)
     return unwrap<{ total: number; completed: number; pending: number }>(res)
+  },
+
+  getReports: async (orgId: string, params?: { from_date?: string; to_date?: string }): Promise<TaskReportData> => {
+    const qs = params ? new URLSearchParams(Object.fromEntries(Object.entries(params).filter(([, v]) => v))).toString() : ''
+    const res = await apiClient.get(`${base(orgId)}/reports${qs ? `?${qs}` : ''}`)
+    return unwrap<TaskReportData>(res)
+  },
+
+  getCollective: async (): Promise<CollectiveOrgTasks[]> => {
+    const res = await apiClient.get('/api/v1/my-tasks/collective')
+    return unwrap<CollectiveOrgTasks[]>(res)
   },
 }

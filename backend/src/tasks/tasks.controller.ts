@@ -13,6 +13,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { OrgScopeGuard } from '../common/guards/org-scope.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -21,7 +23,7 @@ import { AddAssigneeDto } from './dto/add-assignee.dto';
 
 @ApiTags('tasks')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
 @Controller('api/v1/org/:orgId/tasks')
 export class TasksController {
   constructor(private readonly service: TasksService) {}
@@ -54,22 +56,17 @@ export class TasksController {
     @Query('to_date') to_date?: string,
   ) {
     return this.service.listTasks(orgId, req.user.id, {
-      status_id,
-      priority_id,
-      category_id,
-      quadrant,
-      type,
-      assignee_user_id,
-      search,
-      from_date,
-      to_date,
+      status_id, priority_id, category_id, quadrant, type,
+      assignee_user_id, search, from_date, to_date,
     });
   }
 
+  // ─── Specific sub-routes (must be BEFORE /:id) ───────────────────────────────
+
   @Get('archive')
   @ApiOperation({ summary: 'Get archived (deleted) tasks' })
-  getArchive(@Param('orgId') orgId: string) {
-    return this.service.getArchive(orgId);
+  getArchive(@Param('orgId') orgId: string, @Request() req: any) {
+    return this.service.getArchive(orgId, req.user.id);
   }
 
   @Get('my')
@@ -89,6 +86,19 @@ export class TasksController {
   getEscalated(@Param('orgId') orgId: string, @Request() req: any) {
     return this.service.getEscalatedTasks(orgId, req.user.id);
   }
+
+  @Get('reports')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Get task analytics and reports' })
+  getReports(
+    @Param('orgId') orgId: string,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.getReports(orgId, from_date, to_date);
+  }
+
+  // ─── /:id routes ─────────────────────────────────────────────────────────────
 
   @Get(':id')
   @ApiOperation({ summary: 'Get task by ID' })

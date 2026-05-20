@@ -12,6 +12,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { TaskMastersService } from './task-masters.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -21,7 +22,7 @@ import { CreateChecklistTemplateDto } from './dto/create-checklist-template.dto'
 
 @ApiTags('task-masters')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
 @Controller('api/v1/org/:orgId/tasks/masters')
 export class TaskMastersController {
   constructor(private readonly service: TaskMastersService) {}
@@ -75,6 +76,7 @@ export class TaskMastersController {
   }
 
   // ─── Priorities ─────────────────────────────────────────────────────────────
+  // NOTE: 'priorities/reorder' MUST be defined before 'priorities/:id'
 
   @Get('priorities')
   @ApiOperation({ summary: 'List task priorities' })
@@ -88,6 +90,15 @@ export class TaskMastersController {
     return this.service.createPriority(orgId, dto);
   }
 
+  @Patch('priorities/reorder')
+  @ApiOperation({ summary: 'Reorder task priorities' })
+  reorderPriorities(
+    @Param('orgId') orgId: string,
+    @Body() body: { items: { id: string; order_index: number }[] },
+  ) {
+    return this.service.reorderPriorities(orgId, body.items);
+  }
+
   @Patch('priorities/:id')
   @ApiOperation({ summary: 'Update a task priority' })
   updatePriority(
@@ -98,7 +109,14 @@ export class TaskMastersController {
     return this.service.updatePriority(orgId, id, dto);
   }
 
+  @Delete('priorities/:id')
+  @ApiOperation({ summary: 'Deactivate a task priority' })
+  deletePriority(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.deactivatePriority(orgId, id);
+  }
+
   // ─── Statuses ────────────────────────────────────────────────────────────────
+  // NOTE: 'statuses/reorder' MUST be defined before 'statuses/:id'
 
   @Get('statuses')
   @ApiOperation({ summary: 'List task statuses' })
@@ -112,6 +130,15 @@ export class TaskMastersController {
     return this.service.createStatus(orgId, dto);
   }
 
+  @Patch('statuses/reorder')
+  @ApiOperation({ summary: 'Reorder task statuses' })
+  reorderStatuses(
+    @Param('orgId') orgId: string,
+    @Body() body: { items: { id: string; order_index: number }[] },
+  ) {
+    return this.service.reorderStatuses(orgId, body.items);
+  }
+
   @Patch('statuses/:id')
   @ApiOperation({ summary: 'Update a task status' })
   updateStatus(
@@ -120,6 +147,12 @@ export class TaskMastersController {
     @Body() dto: CreateStatusDto,
   ) {
     return this.service.updateStatus(orgId, id, dto);
+  }
+
+  @Delete('statuses/:id')
+  @ApiOperation({ summary: 'Deactivate a task status (cannot delete default status)' })
+  deleteStatus(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.deactivateStatus(orgId, id);
   }
 
   // ─── Checklist Templates ─────────────────────────────────────────────────────
