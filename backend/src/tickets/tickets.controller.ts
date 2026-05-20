@@ -1,0 +1,165 @@
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Req } from '@nestjs/common'
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
+import { RolesGuard } from '../common/guards/roles.guard'
+import { OrgScopeGuard } from '../common/guards/org-scope.guard'
+import { CurrentUser } from '../common/decorators/current-user.decorator'
+import { TicketsService } from './tickets.service'
+import { RaiseTicketDto } from './dto/raise-ticket.dto'
+import { UpdateTicketDto } from './dto/update-ticket.dto'
+import { AssignTicketDto } from './dto/assign-ticket.dto'
+import { ResolveTicketDto } from './dto/resolve-ticket.dto'
+import { CloseTicketDto } from './dto/close-ticket.dto'
+import { RateTicketDto } from './dto/rate-ticket.dto'
+import { AddTicketCommentDto } from './dto/add-comment.dto'
+import { DeleteTicketDto } from './dto/delete-ticket.dto'
+
+interface AuthUser {
+  id: string
+  role: string
+  organizationId: string
+}
+
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@Controller('api/v1/org/:orgId/tickets')
+export class TicketsController {
+  constructor(private readonly ticketsService: TicketsService) {}
+
+  @Post()
+  raise(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Body() dto: RaiseTicketDto) {
+    return this.ticketsService.raiseTicket(orgId, user.id, dto)
+  }
+
+  @Get()
+  list(
+    @Param('orgId') orgId: string,
+    @Query('typeId') typeId?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('priorityId') priorityId?: string,
+    @Query('statusId') statusId?: string,
+    @Query('assignedTo') assignedTo?: string,
+    @Query('raisedBy') raisedBy?: string,
+    @Query('slaBreached') slaBreached?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('search') search?: string,
+  ) {
+    return this.ticketsService.listTickets(orgId, {
+      typeId,
+      categoryId,
+      priorityId,
+      statusId,
+      assignedTo,
+      raisedBy,
+      slaBreached: slaBreached !== undefined ? slaBreached === 'true' : undefined,
+      from,
+      to,
+      search,
+    })
+  }
+
+  @Get('stats')
+  getStats(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.ticketsService.getStats(orgId, user.id)
+  }
+
+  @Get('my')
+  listMy(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.ticketsService.listTickets(orgId, { raisedBy: user.id })
+  }
+
+  @Get('assigned')
+  listAssigned(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.ticketsService.listTickets(orgId, { assignedTo: user.id })
+  }
+
+  @Get('archive')
+  listArchive(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    const isAdminOrHR = ['org_admin', 'hr_manager'].includes(user.role)
+    return this.ticketsService.listArchive(orgId, isAdminOrHR ? undefined : user.id)
+  }
+
+  @Get('notifications')
+  getNotifications(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.ticketsService.getNotifications(orgId, user.id)
+  }
+
+  @Patch('notifications/:nid/read')
+  markRead(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('nid') nid: string) {
+    return this.ticketsService.markNotificationRead(orgId, user.id, nid)
+  }
+
+  @Get(':id')
+  getOne(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.ticketsService.getTicket(orgId, id)
+  }
+
+  @Patch(':id')
+  update(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateTicketDto) {
+    return this.ticketsService.updateTicket(orgId, user.id, id, dto)
+  }
+
+  @Delete(':id')
+  remove(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DeleteTicketDto) {
+    return this.ticketsService.softDeleteTicket(orgId, user.id, id, dto.reason)
+  }
+
+  @Post(':id/assign')
+  assign(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AssignTicketDto) {
+    return this.ticketsService.assignTicket(orgId, user.id, user.role, id, dto)
+  }
+
+  @Post(':id/accept')
+  accept(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketsService.acceptTicket(orgId, user.id, id)
+  }
+
+  @Post(':id/resolve')
+  resolve(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ResolveTicketDto) {
+    return this.ticketsService.resolveTicket(orgId, user.id, id, dto)
+  }
+
+  @Post(':id/close')
+  close(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CloseTicketDto) {
+    return this.ticketsService.closeTicket(orgId, user.id, id, dto)
+  }
+
+  @Post(':id/confirm')
+  confirm(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketsService.confirmResolution(orgId, user.id, id)
+  }
+
+  @Post(':id/rate')
+  rate(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RateTicketDto) {
+    return this.ticketsService.submitRating(orgId, user.id, id, dto)
+  }
+
+  @Post(':id/proof')
+  proof(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body('proof_url') proofUrl: string) {
+    return this.ticketsService.submitProof(orgId, user.id, id, proofUrl)
+  }
+
+  @Get(':id/logs')
+  getLogs(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.ticketsService.getActivityLog(orgId, id)
+  }
+
+  @Get(':id/comments')
+  getComments(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.ticketsService.getComments(orgId, id)
+  }
+
+  @Post(':id/comments')
+  addComment(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AddTicketCommentDto) {
+    return this.ticketsService.addComment(orgId, user.id, id, dto)
+  }
+
+  @Delete(':id/comments/:cid')
+  deleteComment(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('cid') cid: string) {
+    return this.ticketsService.deleteComment(orgId, user.id, cid)
+  }
+
+  @Patch(':id/checklist/:iid')
+  toggleChecklist(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Param('iid') iid: string) {
+    return this.ticketsService.toggleChecklist(orgId, user.id, id, iid)
+  }
+}

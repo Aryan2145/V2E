@@ -51,9 +51,11 @@ const subNavGroups: SubNavGroup[] = [
   },
   {
     items: [
-      { label: 'Tickets', href: '/dashboard/tasks/tickets', icon: <Ticket size={16} />, disabled: true },
-      { label: 'My Tickets', href: '/dashboard/tasks/tickets/my', icon: <Ticket size={16} />, disabled: true },
-      { label: 'Assigned to Me', href: '/dashboard/tasks/tickets/assigned', icon: <Ticket size={16} />, disabled: true },
+      { label: 'Tickets', href: '/dashboard/tasks/tickets', icon: <Ticket size={16} /> },
+      { label: 'My Tickets', href: '/dashboard/tasks/tickets/my', icon: <Ticket size={16} /> },
+      { label: 'Assigned to Me', href: '/dashboard/tasks/tickets/assigned', icon: <Ticket size={16} /> },
+      { label: 'Archive', href: '/dashboard/tasks/tickets/archive', icon: <Archive size={16} /> },
+      { label: 'Reports', href: '/dashboard/tasks/tickets/reports', icon: <BarChart2 size={16} /> },
     ],
   },
   {

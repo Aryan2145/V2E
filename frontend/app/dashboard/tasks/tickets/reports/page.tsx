@@ -1,0 +1,466 @@
+'use client'
+
+import React, { useEffect, useState, useCallback } from 'react'
+import { useAuth } from '@/lib/auth/context'
+import { ticketsApi } from '@/lib/api/tickets'
+import type {
+  TicketReportResolutionTime,
+  TicketReportBreakdown,
+  TicketReportSlaBreaches,
+  TicketReportRatings,
+} from '@/lib/types/tickets'
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  PieChart, Pie, Cell,
+} from 'recharts'
+import { Download, Clock, Tag, BarChart2, AlertTriangle, Star, Activity } from 'lucide-react'
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function exportCsv(filename: string, rows: string[][], headers: string[]) {
+  const lines = [headers, ...rows]
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\n')
+  const blob = new Blob([lines], { type: 'text/csv' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
+const CHART_TOOLTIP_STYLE = { borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13 }
+
+type ReportTab = 'resolution' | 'by_type' | 'by_category' | 'by_priority' | 'by_status' | 'sla' | 'ratings'
+
+const TABS: { key: ReportTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+  { key: 'resolution', label: 'Resolution Time', icon: <Clock size={14} /> },
+  { key: 'by_type', label: 'By Type', icon: <Tag size={14} /> },
+  { key: 'by_category', label: 'By Category', icon: <Tag size={14} /> },
+  { key: 'by_priority', label: 'By Priority', icon: <BarChart2 size={14} /> },
+  { key: 'by_status', label: 'By Status', icon: <Activity size={14} /> },
+  { key: 'sla', label: 'SLA Breach', icon: <AlertTriangle size={14} /> },
+  { key: 'ratings', label: 'Ratings', icon: <Star size={14} /> },
+]
+
+// ─── Resolution Time ──────────────────────────────────────────────────────────
+
+function ResolutionTimeTab({
+  orgId, from, to,
+}: { orgId: string; from: string; to: string }) {
+  const [data, setData] = useState<TicketReportResolutionTime[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getResolutionTime(orgId, from || undefined, to || undefined)
+      .then(setData).catch(() => setData([])).finally(() => setLoading(false))
+  }, [orgId, from, to])
+
+  if (loading) return <Spinner />
+
+  const sorted = [...data].sort((a, b) => a.avg_days - b.avg_days)
+  const chartData = sorted.map((d) => ({ name: d.user_id.slice(0, 8), avg_days: d.avg_days, tickets: d.ticket_count }))
+  const avg = data.length > 0 ? (data.reduce((s, d) => s + d.avg_days, 0) / data.length) : 0
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard label="Assignees with data" value={data.length} color="#2563EB" />
+        <StatCard label="Avg resolution time" value={`${avg.toFixed(1)}d`} color="#0891B2" />
+        <StatCard label="Fastest" value={sorted.length > 0 ? `${sorted[0].avg_days.toFixed(1)}d` : '—'} color="#16A34A" />
+      </div>
+
+      {data.length === 0 ? (
+        <Empty />
+      ) : (
+        <>
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748B' }} unit="d" />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(1)} days`, 'Avg resolution']} />
+                <Bar dataKey="avg_days" fill="#2563EB" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv('resolution_time.csv',
+              sorted.map((d) => [d.user_id, String(d.ticket_count), d.avg_days.toFixed(2)]),
+              ['User ID', 'Ticket Count', 'Avg Days'],
+            )} />
+          </div>
+
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#E2E8F0]">
+                {['User ID', 'Tickets Resolved', 'Avg Resolution Time'].map((h) => (
+                  <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((d) => (
+                <tr key={d.user_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                  <td className="py-2.5 px-3 font-mono text-xs text-[#475569]">{d.user_id}</td>
+                  <td className="py-2.5 px-3 text-[#0F172A] tabular-nums">{d.ticket_count}</td>
+                  <td className="py-2.5 px-3 text-[#0F172A] tabular-nums font-medium">{d.avg_days.toFixed(1)} days</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Breakdown (type/category/priority/status) ────────────────────────────────
+
+function BreakdownTab({
+  label, data, loading, exportFilename,
+}: {
+  label: string; data: TicketReportBreakdown[]; loading: boolean; exportFilename: string
+}) {
+  if (loading) return <Spinner />
+
+  const total = data.reduce((s, d) => s + d.count, 0)
+  const pieData = data.map((d) => ({ name: d.label, value: d.count, color: d.color }))
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard label={`Total ${label}`} value={data.length} color="#2563EB" />
+        <StatCard label="Total Tickets" value={total} color="#0891B2" />
+      </div>
+
+      {data.length === 0 ? (
+        <Empty />
+      ) : (
+        <>
+          <div className="flex flex-col lg:flex-row gap-6 items-start">
+            <div className="w-full lg:w-52 shrink-0 h-52">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={52} outerRadius={80} paddingAngle={2} dataKey="value">
+                    {pieData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  </Pie>
+                  <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [`${v} tickets`, '']} />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="flex-1 min-w-0 space-y-2">
+              {data.map((d) => {
+                const pct = total > 0 ? Math.round((d.count / total) * 100) : 0
+                return (
+                  <div key={d.label}>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: d.color }} />
+                        <span className="text-sm font-medium text-[#0F172A]">{d.label}</span>
+                      </div>
+                      <span className="text-sm text-[#475569] tabular-nums">{d.count} ({pct}%)</span>
+                    </div>
+                    <div className="h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+                      <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: d.color }} />
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv(exportFilename,
+              data.map((d) => [d.label, String(d.count), `${d.share.toFixed(1)}%`]),
+              ['Label', 'Count', 'Share'],
+            )} />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── SLA Breach ───────────────────────────────────────────────────────────────
+
+function SlaTab({ orgId, from, to }: { orgId: string; from: string; to: string }) {
+  const [data, setData] = useState<TicketReportSlaBreaches | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getSlaBreaches(orgId, from || undefined, to || undefined)
+      .then(setData).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [orgId, from, to])
+
+  if (loading) return <Spinner />
+  if (!data) return <Empty />
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard label="Total Tickets" value={data.total} color="#2563EB" />
+        <StatCard label="SLA Breached" value={data.breached} color="#DC2626" />
+        <StatCard label="Breach Rate" value={`${data.breach_rate.toFixed(1)}%`} color="#D97706" />
+      </div>
+
+      {data.tickets.length === 0 ? (
+        <div className="text-center py-12 text-sm text-[#475569]">No SLA breaches in this period.</div>
+      ) : (
+        <>
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv('sla_breaches.csv',
+              data.tickets.map((t) => [t.ticket_number, t.title, t.sla_due_at, t.created_at]),
+              ['Ticket #', 'Title', 'SLA Due', 'Created At'],
+            )} />
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#E2E8F0]">
+                {['Ticket #', 'Title', 'SLA Due', 'Status'].map((h) => (
+                  <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.tickets.map((t) => (
+                <tr key={t.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                  <td className="py-2.5 px-3 font-mono text-xs text-[#475569]">{t.ticket_number}</td>
+                  <td className="py-2.5 px-3 text-[#0F172A] font-medium">{t.title}</td>
+                  <td className="py-2.5 px-3 text-[#DC2626] tabular-nums">{new Date(t.sla_due_at).toLocaleDateString('en-IN')}</td>
+                  <td className="py-2.5 px-3">
+                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FEE2E2] text-[#DC2626]">Breached</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Ratings ─────────────────────────────────────────────────────────────────
+
+function RatingsTab({ orgId, from, to }: { orgId: string; from: string; to: string }) {
+  const [data, setData] = useState<TicketReportRatings | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getRatings(orgId, from || undefined, to || undefined)
+      .then(setData).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [orgId, from, to])
+
+  if (loading) return <Spinner />
+  if (!data) return <Empty />
+
+  const chartData = data.distribution.map((d) => ({
+    name: `${'★'.repeat(d.rating)}`,
+    count: d.count,
+  }))
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard label="Total Ratings" value={data.total_ratings} color="#D97706" />
+        <StatCard label="Avg Rating" value={`${data.avg_rating.toFixed(2)} / 5`} color="#2563EB" />
+      </div>
+
+      {data.total_ratings === 0 ? (
+        <div className="text-center py-12 text-sm text-[#475569]">No ratings in this period.</div>
+      ) : (
+        <>
+          <div className="h-52">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                <XAxis dataKey="name" tick={{ fontSize: 13, fill: '#64748B' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748B' }} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [`${v} tickets`, '']} />
+                <Bar dataKey="count" fill="#D97706" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv('ratings.csv',
+              data.tickets.map((t) => [t.ticket_number, t.title, String(t.rating), t.rating_comment ?? '', t.rated_at]),
+              ['Ticket #', 'Title', 'Rating', 'Comment', 'Rated At'],
+            )} />
+          </div>
+
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[#E2E8F0]">
+                {['Ticket #', 'Title', 'Rating', 'Comment', 'Rated At'].map((h) => (
+                  <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.tickets.map((t) => (
+                <tr key={t.ticket_number} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
+                  <td className="py-2.5 px-3 font-mono text-xs text-[#475569]">{t.ticket_number}</td>
+                  <td className="py-2.5 px-3 text-[#0F172A] font-medium">{t.title}</td>
+                  <td className="py-2.5 px-3 text-[#D97706] font-semibold">{'★'.repeat(t.rating)}</td>
+                  <td className="py-2.5 px-3 text-[#475569] max-w-[180px] truncate">{t.rating_comment ?? '—'}</td>
+                  <td className="py-2.5 px-3 text-[#475569] tabular-nums">{new Date(t.rated_at).toLocaleDateString('en-IN')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ─── Shared micro-components ──────────────────────────────────────────────────
+
+function Spinner() {
+  return (
+    <div className="flex items-center justify-center h-40">
+      <div className="w-7 h-7 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
+
+function Empty() {
+  return <p className="text-sm text-[#475569] text-center py-12">No data available for this period.</p>
+}
+
+function ExportBtn({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 px-3 py-[7px] text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+    >
+      <Download size={14} />
+      Export CSV
+    </button>
+  )
+}
+
+function StatCard({ label, value, color }: { label: string; value: string | number; color: string }) {
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-4">
+      <p className="text-xs font-medium text-[#475569] mb-1">{label}</p>
+      <p className="text-2xl font-bold tabular-nums" style={{ color }}>{value}</p>
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
+export default function TicketReportsPage() {
+  const { user } = useAuth()
+  const orgId = user?.organizationId ?? ''
+
+  const [activeTab, setActiveTab] = useState<ReportTab>('resolution')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+
+  // Breakdown data loaded per-tab
+  const [typeData, setTypeData] = useState<TicketReportBreakdown[]>([])
+  const [typeLoading, setTypeLoading] = useState(false)
+  const [catData, setCatData] = useState<TicketReportBreakdown[]>([])
+  const [catLoading, setCatLoading] = useState(false)
+  const [priData, setPriData] = useState<TicketReportBreakdown[]>([])
+  const [priLoading, setPriLoading] = useState(false)
+  const [stData, setStData] = useState<TicketReportBreakdown[]>([])
+  const [stLoading, setStLoading] = useState(false)
+
+  const loadBreakdown = useCallback((tab: ReportTab) => {
+    if (!orgId) return
+    const f = from || undefined
+    const t = to || undefined
+    if (tab === 'by_type') { setTypeLoading(true); ticketsApi.getByType(orgId, f, t).then(setTypeData).catch(() => setTypeData([])).finally(() => setTypeLoading(false)) }
+    if (tab === 'by_category') { setCatLoading(true); ticketsApi.getByCategory(orgId, f, t).then(setCatData).catch(() => setCatData([])).finally(() => setCatLoading(false)) }
+    if (tab === 'by_priority') { setPriLoading(true); ticketsApi.getByPriority(orgId, f, t).then(setPriData).catch(() => setPriData([])).finally(() => setPriLoading(false)) }
+    if (tab === 'by_status') { setStLoading(true); ticketsApi.getByStatus(orgId, f, t).then(setStData).catch(() => setStData([])).finally(() => setStLoading(false)) }
+  }, [orgId, from, to])
+
+  useEffect(() => { loadBreakdown(activeTab) }, [activeTab, loadBreakdown])
+
+  if (!orgId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <p className="font-semibold text-[#0F172A]">No organization found</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+        <div>
+          <h1 className="text-[22px] font-bold text-[#0F172A]">Ticket Reports</h1>
+          <p className="text-sm text-[#475569] mt-0.5">Analytics and insights for your ticket system</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <input
+            type="date"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+          />
+          <span className="text-[#475569] text-sm">to</span>
+          <input
+            type="date"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
+          />
+          {(from || to) && (
+            <button
+              onClick={() => { setFrom(''); setTo('') }}
+              className="px-3 py-[7px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Tab container */}
+      <div className="flex gap-6">
+        {/* Left sidebar tabs */}
+        <div className="w-44 shrink-0 flex flex-col gap-0.5">
+          {TABS.map((tab) => (
+            <button
+              key={tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={[
+                'flex items-center gap-2.5 px-3 py-2.5 rounded-[8px] text-sm font-medium text-left transition-colors',
+                activeTab === tab.key
+                  ? 'bg-[#EFF6FF] text-[#2563EB]'
+                  : 'text-[#475569] hover:bg-[#F8FAFC] hover:text-[#0F172A]',
+              ].join(' ')}
+            >
+              <span className="shrink-0">{tab.icon}</span>
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0 bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-6">
+          {activeTab === 'resolution' && <ResolutionTimeTab orgId={orgId} from={from} to={to} />}
+          {activeTab === 'by_type' && <BreakdownTab label="types" data={typeData} loading={typeLoading} exportFilename="by_type.csv" />}
+          {activeTab === 'by_category' && <BreakdownTab label="categories" data={catData} loading={catLoading} exportFilename="by_category.csv" />}
+          {activeTab === 'by_priority' && <BreakdownTab label="priorities" data={priData} loading={priLoading} exportFilename="by_priority.csv" />}
+          {activeTab === 'by_status' && <BreakdownTab label="statuses" data={stData} loading={stLoading} exportFilename="by_status.csv" />}
+          {activeTab === 'sla' && <SlaTab orgId={orgId} from={from} to={to} />}
+          {activeTab === 'ratings' && <RatingsTab orgId={orgId} from={from} to={to} />}
+        </div>
+      </div>
+    </div>
+  )
+}
