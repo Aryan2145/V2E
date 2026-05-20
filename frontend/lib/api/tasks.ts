@@ -250,8 +250,8 @@ export const tasksApi = {
     return unwrap<RecurringTemplate>(res)
   },
 
-  deleteRecurring: async (orgId: string, id: string, mode: 'this' | 'future' | 'all'): Promise<void> => {
-    await apiClient.delete(`${base(orgId)}/recurring/${id}`, { data: { mode } })
+  deleteRecurring: async (orgId: string, id: string, mode: 'stop' | 'delete-future' | 'delete-all' = 'stop'): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/recurring/${id}?mode=${mode}`)
   },
 
   getRecurringInstances: async (orgId: string, id: string): Promise<Task[]> => {

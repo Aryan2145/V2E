@@ -127,15 +127,25 @@ export interface RecurringTemplate {
   title: string
   description?: string
   quadrant: TaskQuadrant
+  category_id?: string
+  priority_id?: string
   schedule_type: string
   every: number
   days: number[]
+  month_day?: number
+  month?: number
   time: string
   start_date: string
   end_condition: string
+  end_date?: string
+  end_after?: number
   is_active: boolean
   occurrence_count: number
+  completion_mode: string
+  proof_required: boolean
   assignee_user_ids: string[]
+  cc_user_ids: string[]
+  department_id?: string
   created_at: string
 }
 
