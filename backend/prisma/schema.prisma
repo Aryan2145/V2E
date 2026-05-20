@@ -773,7 +773,8 @@ model Task {
   reopened_at          DateTime?
   reopen_expires_at    DateTime?
   deadline             DateTime?
-  recurring_template_id String?
+  recurring_template_id     String?
+  workflow_instance_step_id String?
   created_at           DateTime       @default(now())
   updated_at           DateTime       @updatedAt
 
@@ -956,4 +957,226 @@ model TaskAssigneeFrequency {
 
   @@unique([organization_id, assigner_user_id, assignee_user_id])
   @@map("task_assignee_frequencies")
+}
+
+// ─── Workflow Engine ───────────────────────────────────────────────────────────
+
+enum WorkflowTemplateStatus {
+  draft
+  active
+  archived
+}
+
+enum WorkflowNature {
+  one_time
+  recurring
+}
+
+enum WorkflowRecurringType {
+  daily
+  weekly
+  monthly
+  yearly
+}
+
+enum WorkflowAssigneeType {
+  fixed_person
+  role
+}
+
+enum WorkflowOverdueAction {
+  block_next
+  proceed_anyway
+  trigger_branch
+}
+
+enum WorkflowAccessType {
+  view
+  edit
+  trigger
+}
+
+enum WorkflowInstanceStatus {
+  running
+  completed
+  stuck
+  cancelled
+}
+
+enum WorkflowStepStatus {
+  pending
+  active
+  completed
+  overdue
+  skipped
+  branched
+}
+
+enum WorkflowDefaultOverdue {
+  block_next
+  proceed_anyway
+}
+
+model WorkflowMaster {
+  id                      String                 @id @default(uuid())
+  organization_id         String                 @unique
+  workflow_creation_roles Json                   @default("[\"org_admin\",\"hr_manager\"]")
+  default_overdue_action  WorkflowDefaultOverdue @default(block_next)
+  created_at              DateTime               @default(now())
+  updated_at              DateTime               @updatedAt
+
+  @@map("workflow_masters")
+}
+
+model WorkflowTemplate {
+  id                          String                 @id @default(uuid())
+  organization_id             String
+  name                        String
+  description                 String?                @db.Text
+  owner_user_ids              Json                   @default("[]")
+  created_by_user_id          String
+  status                      WorkflowTemplateStatus @default(draft)
+  show_workflow_on_task_card  Boolean                @default(true)
+  workflow_nature             WorkflowNature         @default(one_time)
+  recurring_type              WorkflowRecurringType?
+  created_at                  DateTime               @default(now())
+  updated_at                  DateTime               @updatedAt
+
+  steps       WorkflowStep[]
+  triggers    WorkflowTrigger[]
+  access      WorkflowAccess[]
+  instances   WorkflowInstance[]
+  rr_trackers WorkflowRoundRobinTracker[]
+
+  @@map("workflow_templates")
+}
+
+model WorkflowStep {
+  id                    String               @id @default(uuid())
+  organization_id       String
+  workflow_template_id  String
+  order_index           Int                  @default(0)
+  title                 String
+  description           String?              @db.Text
+  assignee_type         WorkflowAssigneeType @default(fixed_person)
+  assignee_user_id      String?
+  assignee_role         String?
+  assigner_user_id      String
+  deadline_config       Json
+  proof_required        Boolean              @default(false)
+  priority_id           String?
+  category_id           String?
+  checklist_items       Json                 @default("[]")
+  if_overdue_action     WorkflowOverdueAction @default(block_next)
+  branch_step_id        String?
+  is_branch_step        Boolean              @default(false)
+  parent_branch_step_id String?
+  created_at            DateTime             @default(now())
+  updated_at            DateTime             @updatedAt
+
+  template WorkflowTemplate @relation(fields: [workflow_template_id], references: [id], onDelete: Cascade)
+
+  @@map("workflow_steps")
+}
+
+model WorkflowTrigger {
+  id                   String   @id @default(uuid())
+  organization_id      String
+  workflow_template_id String
+  type                 String
+  config               Json
+  is_active            Boolean  @default(true)
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  template WorkflowTemplate @relation(fields: [workflow_template_id], references: [id], onDelete: Cascade)
+
+  @@map("workflow_triggers")
+}
+
+model WorkflowAccess {
+  id                   String             @id @default(uuid())
+  organization_id      String
+  workflow_template_id String
+  user_id              String
+  access_type          WorkflowAccessType
+  created_at           DateTime           @default(now())
+
+  template WorkflowTemplate @relation(fields: [workflow_template_id], references: [id], onDelete: Cascade)
+
+  @@unique([workflow_template_id, user_id, access_type])
+  @@map("workflow_access")
+}
+
+model WorkflowInstance {
+  id                   String                 @id @default(uuid())
+  organization_id      String
+  workflow_template_id String
+  name                 String
+  trigger_type         String
+  triggered_by_user_id String?
+  status               WorkflowInstanceStatus @default(running)
+  started_at           DateTime               @default(now())
+  completed_at         DateTime?
+  current_step_id      String?
+  metadata             Json?
+  created_at           DateTime               @default(now())
+  updated_at           DateTime               @updatedAt
+
+  template WorkflowTemplate        @relation(fields: [workflow_template_id], references: [id])
+  steps    WorkflowInstanceStep[]
+  notifications WorkflowNotification[]
+
+  @@map("workflow_instances")
+}
+
+model WorkflowInstanceStep {
+  id                   String             @id @default(uuid())
+  organization_id      String
+  workflow_instance_id String
+  workflow_step_id     String
+  task_id              String?
+  assigned_to_user_id  String
+  status               WorkflowStepStatus @default(pending)
+  scheduled_at         DateTime?
+  task_created_at      DateTime?
+  completed_at         DateTime?
+  branch_taken         Boolean            @default(false)
+  created_at           DateTime           @default(now())
+  updated_at           DateTime           @updatedAt
+
+  instance WorkflowInstance @relation(fields: [workflow_instance_id], references: [id], onDelete: Cascade)
+
+  @@map("workflow_instance_steps")
+}
+
+model WorkflowRoundRobinTracker {
+  id                    String   @id @default(uuid())
+  organization_id       String
+  workflow_template_id  String
+  workflow_step_id      String
+  role                  String
+  last_assigned_user_id String
+  assignment_count      Int      @default(0)
+  updated_at            DateTime @updatedAt
+
+  template WorkflowTemplate @relation(fields: [workflow_template_id], references: [id], onDelete: Cascade)
+
+  @@unique([workflow_template_id, workflow_step_id, role])
+  @@map("workflow_round_robin_trackers")
+}
+
+model WorkflowNotification {
+  id                   String   @id @default(uuid())
+  organization_id      String
+  workflow_instance_id String
+  user_id              String
+  type                 String
+  message              String   @db.Text
+  is_read              Boolean  @default(false)
+  created_at           DateTime @default(now())
+
+  instance WorkflowInstance @relation(fields: [workflow_instance_id], references: [id], onDelete: Cascade)
+
+  @@map("workflow_notifications")
 }

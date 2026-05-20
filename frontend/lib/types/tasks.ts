@@ -86,6 +86,14 @@ export interface Task {
   is_deleted: boolean
   deadline?: string
   recurring_template_id?: string
+  workflow_instance_step_id?: string
+  workflow_step?: {
+    instance_id: string
+    step_order: number
+    template_name: string
+    instance_name: string
+    show_on_card: boolean
+  }
   reopen_expires_at?: string
   created_at: string
   updated_at: string

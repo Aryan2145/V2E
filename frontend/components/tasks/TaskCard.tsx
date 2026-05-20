@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Calendar, User } from 'lucide-react'
+import { Calendar, User, GitBranch } from 'lucide-react'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
 import QuadrantBadge from './QuadrantBadge'
 
@@ -107,6 +107,12 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
               {priority.label}
             </span>
           )}
+          {task.workflow_step?.show_on_card && (
+            <span className="inline-flex items-center gap-0.5 rounded-[999px] px-2 py-0.5 text-[10px] font-semibold bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">
+              <GitBranch size={9} />
+              {task.workflow_step.template_name} — Step {task.workflow_step.step_order}
+            </span>
+          )}
         </div>
       </div>
 
@@ -118,9 +124,9 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
               <div
                 key={a.id}
                 title={a.user_name}
-                className={`w-7 h-7 rounded-full ${avatarColor(a.user_name)} flex items-center justify-center text-white text-[10px] font-bold border-2 border-white`}
+                className={`w-7 h-7 rounded-full ${avatarColor(a.user_name ?? '')} flex items-center justify-center text-white text-[10px] font-bold border-2 border-white`}
               >
-                {getInitials(a.user_name)}
+                {getInitials(a.user_name ?? '')}
               </div>
             ))}
             {extraCount > 0 && (

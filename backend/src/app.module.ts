@@ -20,6 +20,7 @@ import { GroupsModule } from './groups/groups.module';
 import { TasksModule } from './tasks/tasks.module';
 import { TaskMastersModule } from './task-masters/task-masters.module';
 import { RecurringTasksModule } from './recurring-tasks/recurring-tasks.module';
+import { WorkflowsModule } from './workflows/workflows.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { RecurringTasksModule } from './recurring-tasks/recurring-tasks.module';
     TasksModule,
     TaskMastersModule,
     RecurringTasksModule,
+    WorkflowsModule,
   ],
 })
 export class AppModule {}

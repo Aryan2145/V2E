@@ -9,6 +9,7 @@ import {
   TaskActionType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -26,7 +27,10 @@ const TASK_INCLUDE = {
 
 @Injectable()
 export class TasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly workflowEngine: WorkflowEngineService,
+  ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -543,6 +547,12 @@ export class TasksService {
     }
 
     await this.logActivity(orgId, taskId, userId, 'completed');
+
+    // Advance workflow if this task belongs to a workflow step
+    if (task.workflow_instance_step_id) {
+      await this.workflowEngine.handleStepCompleted(task.workflow_instance_step_id);
+    }
+
     return this.getTask(orgId, taskId);
   }
 
