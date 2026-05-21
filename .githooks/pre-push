@@ -46,9 +46,29 @@ else
   pass "schema.prisma is committed"
 fi
 
-# ── 3. TypeScript — frontend ───────────────────────────────────────────────
+# ── 3. Docker npm install dry-run ─────────────────────────────────────────
 echo ""
-echo "[3/4] TypeScript: frontend"
+echo "[3/5] Docker npm install (dry-run)"
+
+cd frontend
+if npm ci --dry-run 2>&1 | grep -q "npm error"; then
+  fail "frontend dependency conflict — Docker build will fail (run: npm ci)"
+else
+  pass "frontend dependencies resolve cleanly"
+fi
+cd ..
+
+cd backend
+if npm ci --dry-run --legacy-peer-deps 2>&1 | grep -q "npm error"; then
+  fail "backend dependency conflict — Docker build will fail (run: npm ci --legacy-peer-deps)"
+else
+  pass "backend dependencies resolve cleanly"
+fi
+cd ..
+
+# ── 4. TypeScript — frontend ───────────────────────────────────────────────
+echo ""
+echo "[4/5] TypeScript: frontend"
 
 cd frontend
 if npx tsc --noEmit 2>&1; then
@@ -58,9 +78,9 @@ else
 fi
 cd ..
 
-# ── 4. TypeScript — backend ────────────────────────────────────────────────
+# ── 5. TypeScript — backend ────────────────────────────────────────────────
 echo ""
-echo "[4/4] TypeScript: backend"
+echo "[5/5] TypeScript: backend"
 
 cd backend
 
