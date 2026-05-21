@@ -297,7 +297,7 @@ export default function TaskDetailPage() {
       const newIds = new Set(editAssigneesList.map((a) => a.user_id))
 
       // Remove assignees that are no longer in the list
-      const toRemove = [...currentIds].filter((id) => !newIds.has(id))
+      const toRemove = Array.from(currentIds).filter((id) => !newIds.has(id))
       await Promise.all(toRemove.map((uid) => tasksApi.removeAssignee(orgId, taskId, uid).catch(() => null)))
 
       // Add new assignees

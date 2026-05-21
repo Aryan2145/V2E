@@ -905,8 +905,8 @@ export class TasksService {
 
     const eligibleUserIds = new Set<string>();
 
-    if (isAdmin && !userProfile) {
-      // Admins without employee profile see everyone
+    if (isAdmin) {
+      // Admins always see every active employee in the org
       allProfiles.forEach((p) => { if (p.user_id !== userId) eligibleUserIds.add(p.user_id); });
     } else if (mode === 'hierarchy_and_dept' || mode === 'hierarchy_only') {
       const subordinates = this.getSubordinates(allProfiles, userId);
