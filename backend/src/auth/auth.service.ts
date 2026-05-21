@@ -47,11 +47,6 @@ export class AuthService {
     const valid = await bcrypt.compare(dto.password, user.password_hash);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
 
-    if (user.is_super_admin) {
-      const tokens = await this.issueFullTokens(user.id, user.email, null, null, true);
-      return { ...tokens, user: this.buildUserPayload(user, null, null, true) };
-    }
-
     const memberships = await this.prisma.organizationMember.findMany({
       where: { user_id: user.id, is_active: true },
       include: { organization: { select: { id: true, name: true, slug: true, logo_url: true } } },
@@ -136,9 +131,67 @@ export class AuthService {
     }
   }
 
+  async adminLogin(dto: LoginDto) {
+    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (!user || !user.is_active) throw new UnauthorizedException('Invalid credentials');
+
+    const valid = await bcrypt.compare(dto.password, user.password_hash);
+    if (!valid) throw new UnauthorizedException('Invalid credentials');
+
+    if (!user.is_super_admin) throw new UnauthorizedException('Access denied. Super administrator credentials required.');
+
+    const tokens = await this.issueFullTokens(user.id, user.email, null, null, true);
+    return { ...tokens, user: this.buildUserPayload(user, null, null, true) };
+  }
+
   async logout(userId: string) {
     await this.prisma.user.update({ where: { id: userId }, data: { refresh_token: null } });
     return { message: 'Logged out successfully' };
+  }
+
+  async listAdmins() {
+    const admins = await this.prisma.user.findMany({
+      where: { is_super_admin: true },
+      select: { id: true, name: true, email: true, is_active: true, created_at: true },
+      orderBy: { created_at: 'asc' },
+    });
+    return admins;
+  }
+
+  async createAdmin(dto: { name: string; email: string; password: string }) {
+    const existing = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    if (existing) {
+      if (existing.is_super_admin) throw new ConflictException('This email is already a super administrator.');
+      // Promote existing user to super admin
+      return this.prisma.user.update({
+        where: { id: existing.id },
+        data: { is_super_admin: true },
+        select: { id: true, name: true, email: true, is_active: true, created_at: true },
+      });
+    }
+    const password_hash = await bcrypt.hash(dto.password, 12);
+    return this.prisma.user.create({
+      data: { name: dto.name, email: dto.email, password_hash, is_super_admin: true },
+      select: { id: true, name: true, email: true, is_active: true, created_at: true },
+    });
+  }
+
+  async toggleAdmin(targetId: string, requesterId: string, is_active: boolean) {
+    if (targetId === requesterId) throw new ForbiddenException('You cannot deactivate your own account.');
+    return this.prisma.user.update({
+      where: { id: targetId, is_super_admin: true },
+      data: { is_active },
+      select: { id: true, name: true, email: true, is_active: true, created_at: true },
+    });
+  }
+
+  async revokeAdmin(targetId: string, requesterId: string) {
+    if (targetId === requesterId) throw new ForbiddenException('You cannot revoke your own super admin access.');
+    return this.prisma.user.update({
+      where: { id: targetId, is_super_admin: true },
+      data: { is_super_admin: false },
+      select: { id: true, name: true, email: true, is_active: true, created_at: true },
+    });
   }
 
   private async issueFullTokens(

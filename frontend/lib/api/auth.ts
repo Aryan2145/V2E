@@ -9,6 +9,14 @@ export async function login(email: string, password: string): Promise<LoginRespo
   return data.data;
 }
 
+export async function adminLogin(email: string, password: string): Promise<AuthTokens> {
+  const { data } = await apiClient.post<{ data: AuthTokens }>('/api/v1/auth/admin-login', {
+    email,
+    password,
+  });
+  return data.data;
+}
+
 export async function register(registerData: {
   name: string;
   email: string;

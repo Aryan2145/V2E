@@ -39,6 +39,7 @@ const superAdminNav: NavItem[] = [
   { label: 'Dashboard', href: '/super-admin', icon: <LayoutDashboard size={18} /> },
   { label: 'Organizations', href: '/super-admin/organizations', icon: <Building2 size={18} /> },
   { label: 'Groups', href: '/super-admin/groups', icon: <Layers size={18} /> },
+  { label: 'Admins', href: '/super-admin/admins', icon: <Users size={18} /> },
 ]
 
 const orgStaffNav: NavItem[] = [

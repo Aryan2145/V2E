@@ -3,8 +3,7 @@
 import React, { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, ShieldCheck, Loader2 } from 'lucide-react'
-import { login as apiLogin, logout as apiLogout } from '@/lib/api/auth'
-import { getMe } from '@/lib/api/auth'
+import { adminLogin as apiAdminLogin, getMe } from '@/lib/api/auth'
 
 export default function AdminLoginPage() {
   const router = useRouter()
@@ -35,31 +34,9 @@ export default function AdminLoginPage() {
     setError(null)
     setLoading(true)
     try {
-      const result = await apiLogin(email.trim(), password)
-
-      // Super admins don't go through org selection
-      if ('requires_org_selection' in result && result.requires_org_selection) {
-        setError('This account is not a super administrator.')
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('selection_token')
-        setLoading(false)
-        return
-      }
-
-      const tokens = result as import('@/lib/types').AuthTokens
+      const tokens = await apiAdminLogin(email.trim(), password)
       localStorage.setItem('access_token', tokens.access_token)
       localStorage.setItem('refresh_token', tokens.refresh_token)
-
-      if (!tokens.user.isSuperAdmin) {
-        // Not a super admin — clear tokens and show error
-        await apiLogout().catch(() => {})
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        setError('Access denied. This portal is for super administrators only.')
-        setLoading(false)
-        return
-      }
-
       router.replace('/super-admin/organizations')
     } catch (err: unknown) {
       const msg =
