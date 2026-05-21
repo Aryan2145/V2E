@@ -900,36 +900,53 @@ model TaskComment {
 }
 
 model RecurringTemplate {
-  id                   String                @id @default(uuid())
-  organization_id      String
-  title                String
-  description          String?               @db.Text
-  quadrant             TaskQuadrant          @default(Q2)
-  category_id          String?
-  priority_id          String?
-  schedule_type        RecurringScheduleType @default(daily)
-  every                Int                   @default(1)
-  days                 Json                  @default("[]")
-  month_day            Int?
-  month                Int?
-  time                 String                @default("09:00")
-  start_date           DateTime
-  end_condition        RecurringEndCondition @default(never)
-  end_date             DateTime?
-  end_after            Int?
-  occurrence_count     Int                   @default(0)
-  is_active            Boolean               @default(true)
-  completion_mode      CompletionMode        @default(any_can_complete)
-  proof_required       Boolean               @default(false)
-  assignee_user_ids    Json                  @default("[]")
-  cc_user_ids          Json                  @default("[]")
-  department_id        String?
-  linked_goal_id       String?
-  created_by_user_id   String
-  created_at           DateTime              @default(now())
-  updated_at           DateTime              @updatedAt
+  id                     String   @id @default(uuid())
+  organization_id        String
+  title                  String
+  description            String?  @db.Text
+  quadrant               TaskQuadrant @default(Q2)
+  category_id            String?
+  priority_id            String?
+  has_multiple_schedules Boolean  @default(false)
+  is_active              Boolean  @default(true)
+  completion_mode        CompletionMode @default(any_can_complete)
+  proof_required         Boolean  @default(false)
+  assignee_user_ids      Json     @default("[]")
+  cc_user_ids            Json     @default("[]")
+  department_id          String?
+  linked_goal_id         String?
+  created_by_user_id     String
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
+
+  schedule_entries RecurringScheduleEntry[]
 
   @@map("recurring_templates")
+}
+
+model RecurringScheduleEntry {
+  id                    String                @id @default(uuid())
+  organization_id       String
+  recurring_template_id String
+  schedule_type         RecurringScheduleType
+  every                 Int                   @default(1)
+  days                  Json                  @default("[]")
+  month_days            Json                  @default("[]")
+  yearly_dates          Json                  @default("[]")
+  time                  String                @default("09:00")
+  start_date            DateTime
+  end_condition         RecurringEndCondition @default(never)
+  end_date              DateTime?
+  end_after             Int?
+  occurrence_count      Int                   @default(0)
+  is_active             Boolean               @default(true)
+  order_index           Int                   @default(0)
+  created_at            DateTime              @default(now())
+  updated_at            DateTime              @updatedAt
+
+  template RecurringTemplate @relation(fields: [recurring_template_id], references: [id], onDelete: Cascade)
+
+  @@map("recurring_schedule_entries")
 }
 
 model TaskArchive {
@@ -1496,4 +1513,166 @@ model TicketNotification {
   created_at      DateTime @default(now())
 
   @@map("ticket_notifications")
+}
+
+// ─── Holiday & Working Days ───────────────────────────────────────────────────
+
+enum HolidayOnTaskAction {
+  skip_create
+  create_anyway
+  move_to_prev_working_day
+  move_to_next_working_day
+}
+
+enum HolidayPriorityLevel {
+  individual_first
+  department_first
+  org_first
+}
+
+enum HolidayType {
+  national
+  company
+  regional
+  team
+  personal
+  leave
+}
+
+enum HolidayStatus {
+  active
+  pending_review
+}
+
+enum HolidayAuditAction {
+  moved_forward
+  moved_backward
+  skipped
+  created_anyway
+}
+
+enum HolidayEntityType {
+  task
+  recurring_task
+  workflow_step
+  ticket
+}
+
+model HolidayMaster {
+  id                            String                @id @default(uuid())
+  organization_id               String                @unique
+  country_code                  String?
+  holiday_on_task_action        HolidayOnTaskAction   @default(move_to_next_working_day)
+  priority_level                HolidayPriorityLevel  @default(individual_first)
+  pending_review_deadline_days  Int                   @default(7)
+  auto_apply_if_not_reviewed    Boolean               @default(false)
+  org_holiday_manage_roles      Json                  @default("[\"org_admin\",\"hr_manager\"]")
+  dept_holiday_manage_roles     Json                  @default("[\"org_admin\",\"hr_manager\",\"manager\"]")
+  individual_holiday_manage_roles Json               @default("[\"org_admin\",\"hr_manager\"]")
+  created_at                    DateTime              @default(now())
+  updated_at                    DateTime              @updatedAt
+
+  @@map("holiday_masters")
+}
+
+model OrgWorkingDays {
+  id              String   @id @default(uuid())
+  organization_id String   @unique
+  working_days    Json     @default("[1,2,3,4,5]")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@map("org_working_days")
+}
+
+model OrgHoliday {
+  id                   String        @id @default(uuid())
+  organization_id      String
+  name                 String
+  date                 DateTime      @db.Date
+  type                 HolidayType
+  source               String?
+  is_recurring_yearly  Boolean       @default(false)
+  description          String?       @db.Text
+  status               HolidayStatus @default(active)
+  year                 Int
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
+
+  @@map("org_holidays")
+}
+
+model HolidayAuditLog {
+  id              String             @id @default(uuid())
+  organization_id String
+  entity_type     HolidayEntityType
+  entity_id       String
+  entity_title    String
+  original_date   DateTime           @db.Date
+  adjusted_date   DateTime?          @db.Date
+  action_taken    HolidayAuditAction
+  holiday_name    String
+  holiday_date    DateTime           @db.Date
+  year            Int
+  created_at      DateTime           @default(now())
+
+  @@map("holiday_audit_logs")
+}
+
+model DepartmentWorkingDays {
+  id              String   @id @default(uuid())
+  organization_id String
+  department_id   String
+  working_days    Json     @default("[1,2,3,4,5]")
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  @@unique([organization_id, department_id])
+  @@map("department_working_days")
+}
+
+model DepartmentHoliday {
+  id                  String        @id @default(uuid())
+  organization_id     String
+  department_id       String
+  name                String
+  date                DateTime      @db.Date
+  type                HolidayType
+  is_recurring_yearly Boolean       @default(false)
+  description         String?       @db.Text
+  status              HolidayStatus @default(active)
+  year                Int
+  created_at          DateTime      @default(now())
+  updated_at          DateTime      @updatedAt
+
+  @@map("department_holidays")
+}
+
+model IndividualWorkingDays {
+  id              String    @id @default(uuid())
+  organization_id String
+  user_id         String
+  working_days    Json      @default("[1,2,3,4,5]")
+  effective_from  DateTime  @db.Date
+  effective_to    DateTime? @db.Date
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  @@map("individual_working_days")
+}
+
+model IndividualHoliday {
+  id                  String      @id @default(uuid())
+  organization_id     String
+  user_id             String
+  name                String
+  date                DateTime    @db.Date
+  type                HolidayType
+  is_recurring_yearly Boolean     @default(false)
+  description         String?     @db.Text
+  year                Int
+  created_at          DateTime    @default(now())
+  updated_at          DateTime    @updatedAt
+
+  @@map("individual_holidays")
 }

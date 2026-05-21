@@ -22,6 +22,7 @@ import { TaskMastersModule } from './task-masters/task-masters.module';
 import { RecurringTasksModule } from './recurring-tasks/recurring-tasks.module';
 import { WorkflowsModule } from './workflows/workflows.module';
 import { TicketsModule } from './tickets/tickets.module';
+import { HolidaysModule } from './holidays/holidays.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { TicketsModule } from './tickets/tickets.module';
     RecurringTasksModule,
     WorkflowsModule,
     TicketsModule,
+    HolidaysModule,
   ],
 })
 export class AppModule {}

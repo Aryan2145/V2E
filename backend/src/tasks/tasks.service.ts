@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkflowEngineService } from '../workflows/workflow-engine.service';
+import { HolidaysService } from '../holidays/holidays.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -30,6 +31,7 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly workflowEngine: WorkflowEngineService,
+    private readonly holidaysService: HolidaysService,
   ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -146,6 +148,26 @@ export class TasksService {
       },
       include: TASK_INCLUDE,
     });
+
+    // Holiday deadline adjustment (after create so we have task.id for audit log)
+    if (dto.deadline) {
+      const rawDeadline = new Date(dto.deadline);
+      const adjusted = await this.holidaysService.adjustDeadline(
+        rawDeadline, orgId,
+        dto.department_id, dto.assignee_user_ids?.[0],
+        'task', task.id, task.title,
+      );
+      if (adjusted === null) {
+        await this.prisma.task.delete({ where: { id: task.id } });
+        throw new BadRequestException(
+          'Deadline falls on a non-working day. Org settings prevent task creation on holidays. Please select a different date.',
+        );
+      }
+      if (adjusted.getTime() !== rawDeadline.getTime()) {
+        await this.prisma.task.update({ where: { id: task.id }, data: { deadline: adjusted } });
+        (task as any).deadline = adjusted;
+      }
+    }
 
     // Create assignees
     const assigneeIds = dto.assignee_user_ids ?? [];

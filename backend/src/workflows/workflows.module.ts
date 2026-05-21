@@ -1,5 +1,6 @@
 import { Module, OnModuleInit } from '@nestjs/common'
 import { PrismaModule } from '../prisma/prisma.module'
+import { HolidaysModule } from '../holidays/holidays.module'
 import { TriggerRegistryService } from './trigger-registry/trigger-registry.service'
 import { ManualTriggerHandler } from './trigger-registry/handlers/manual-trigger.handler'
 import { DateTriggerHandler } from './trigger-registry/handlers/date-trigger.handler'
@@ -10,7 +11,7 @@ import { WorkflowTemplateController } from './workflow-template.controller'
 import { WorkflowEngineService } from './workflow-engine.service'
 
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, HolidaysModule],
   controllers: [WorkflowTemplateController],
   providers: [TriggerRegistryService, WorkflowTemplateService, WorkflowEngineService],
   exports: [WorkflowEngineService, TriggerRegistryService],

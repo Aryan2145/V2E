@@ -1,6 +1,7 @@
-import { Injectable, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common'
+import { Injectable, ForbiddenException, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
+import { HolidaysService } from '../holidays/holidays.service'
 import type { RaiseTicketDto } from './dto/raise-ticket.dto'
 import type { UpdateTicketDto } from './dto/update-ticket.dto'
 import type { AssignTicketDto } from './dto/assign-ticket.dto'
@@ -26,7 +27,12 @@ const TICKET_INCLUDE = {
 
 @Injectable()
 export class TicketsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(TicketsService.name)
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly holidaysService: HolidaysService,
+  ) {}
 
   // ─── Defaults ──────────────────────────────────────────────────────────────
 
@@ -331,7 +337,9 @@ export class TicketsService {
       priority?.sla_days,
     )
     const now = new Date()
-    const sla_due_at = new Date(now.getTime() + sla_days * 24 * 60 * 60 * 1000)
+    const rawSlaDate = new Date(now.getTime() + sla_days * 24 * 60 * 60 * 1000)
+    // sla_due_at will be adjusted after ticket creation (need ticket.id for audit log)
+    const sla_due_at = rawSlaDate
 
     const assigneeId = dto.assigned_to_user_id ?? await this.resolveAutoAssignee(orgId, dto.ticket_type_id, dto.category_id, dto.template_id)
     const openStatus = await this.getStatusByType(orgId, assigneeId ? 'assigned' : 'open')
@@ -377,6 +385,20 @@ export class TicketsService {
       },
       include: TICKET_INCLUDE,
     })
+
+    // Holiday adjustment for SLA due date (create ticket first to get id for audit log)
+    const adjustedSlaDate = await this.holidaysService.adjustDeadline(
+      rawSlaDate, orgId,
+      dto.category_id ? undefined : undefined,
+      assigneeId ?? undefined,
+      'ticket', ticket.id, ticket.title,
+      true, // forTicket=true: skip_create treated as move_to_next_working_day
+    )
+    const finalSlaDate = adjustedSlaDate ?? rawSlaDate
+    if (finalSlaDate.getTime() !== rawSlaDate.getTime()) {
+      await this.prisma.ticket.update({ where: { id: ticket.id }, data: { sla_due_at: finalSlaDate } });
+      (ticket as any).sla_due_at = finalSlaDate
+    }
 
     await this.logActivity(orgId, ticket.id, userId, 'created')
 

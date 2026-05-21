@@ -1,13 +1,16 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { X, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
-import type { TaskCategory, TaskPriority, TaskStatus, TaskQuadrant, CompletionMode } from '@/lib/types/tasks'
+import { holidaysApi } from '@/lib/api/holidays'
+import type { TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
-import QuadrantBadge from './QuadrantBadge'
+import type { HolidayCheckResult } from '@/lib/types/holidays'
+// import QuadrantBadge from './QuadrantBadge'
 import AssigneeSelector from './AssigneeSelector'
+import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
 
 interface ChecklistEntry {
   title: string
@@ -22,19 +25,18 @@ interface CreateTaskModalProps {
   statuses: TaskStatus[]
 }
 
-const quadrants: { value: TaskQuadrant; label: string; sublabel: string }[] = [
-  { value: 'Q1', label: 'Q1', sublabel: 'Urgent + Important' },
-  { value: 'Q2', label: 'Q2', sublabel: 'Not Urgent + Important' },
-  { value: 'Q3', label: 'Q3', sublabel: 'Urgent + Not Important' },
-  { value: 'Q4', label: 'Q4', sublabel: 'Not Urgent + Not Important' },
-]
-
-const quadrantColors: Record<TaskQuadrant, { bg: string; text: string; border: string; activeBg: string }> = {
-  Q1: { bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]', border: 'border-[#FECACA]', activeBg: 'bg-[#DC2626]' },
-  Q2: { bg: 'bg-[#EFF6FF]', text: 'text-[#2563EB]', border: 'border-[#BFDBFE]', activeBg: 'bg-[#2563EB]' },
-  Q3: { bg: 'bg-[#FEF9C3]', text: 'text-[#D97706]', border: 'border-[#FDE68A]', activeBg: 'bg-[#D97706]' },
-  Q4: { bg: 'bg-[#F3F4F6]', text: 'text-[#6B7280]', border: 'border-[#E5E7EB]', activeBg: 'bg-[#6B7280]' },
-}
+// const quadrants: { value: TaskQuadrant; label: string; sublabel: string }[] = [
+//   { value: 'Q1', label: 'Q1', sublabel: 'Urgent + Important' },
+//   { value: 'Q2', label: 'Q2', sublabel: 'Not Urgent + Important' },
+//   { value: 'Q3', label: 'Q3', sublabel: 'Urgent + Not Important' },
+//   { value: 'Q4', label: 'Q4', sublabel: 'Not Urgent + Not Important' },
+// ]
+// const quadrantColors: Record<TaskQuadrant, { bg: string; text: string; border: string; activeBg: string }> = {
+//   Q1: { bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]', border: 'border-[#FECACA]', activeBg: 'bg-[#DC2626]' },
+//   Q2: { bg: 'bg-[#EFF6FF]', text: 'text-[#2563EB]', border: 'border-[#BFDBFE]', activeBg: 'bg-[#2563EB]' },
+//   Q3: { bg: 'bg-[#FEF9C3]', text: 'text-[#D97706]', border: 'border-[#FDE68A]', activeBg: 'bg-[#D97706]' },
+//   Q4: { bg: 'bg-[#F3F4F6]', text: 'text-[#6B7280]', border: 'border-[#E5E7EB]', activeBg: 'bg-[#6B7280]' },
+// }
 
 export default function CreateTaskModal({
   isOpen,
@@ -49,7 +51,7 @@ export default function CreateTaskModal({
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [quadrant, setQuadrant] = useState<TaskQuadrant>('Q2')
+  // const [quadrant, setQuadrant] = useState<TaskQuadrant>('Q2')
   const [priorityId, setPriorityId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [statusId, setStatusId] = useState('')
@@ -61,6 +63,14 @@ export default function CreateTaskModal({
   const [newChecklistItem, setNewChecklistItem] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
+  const holidayDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const primaryAssigneeCount = assignees.filter((a) => !a.is_cc).length
+
+  useEffect(() => {
+    if (primaryAssigneeCount <= 1) setCompletionMode('any_can_complete')
+  }, [primaryAssigneeCount])
 
   // Set default status
   useEffect(() => {
@@ -87,10 +97,26 @@ export default function CreateTaskModal({
     return () => { document.body.style.overflow = '' }
   }, [isOpen])
 
+  // Holiday check on deadline change (debounced 300ms)
+  useEffect(() => {
+    if (holidayDebounceRef.current) clearTimeout(holidayDebounceRef.current)
+    if (!deadline || !orgId) { setHolidayCheck(null); return }
+    holidayDebounceRef.current = setTimeout(async () => {
+      try {
+        const dateOnly = deadline.slice(0, 10)
+        const result = await holidaysApi.checkDate(orgId, dateOnly)
+        setHolidayCheck(result)
+      } catch {
+        setHolidayCheck(null)
+      }
+    }, 300)
+    return () => { if (holidayDebounceRef.current) clearTimeout(holidayDebounceRef.current) }
+  }, [deadline, orgId])
+
   const reset = useCallback(() => {
     setTitle('')
     setDescription('')
-    setQuadrant('Q2')
+    // setQuadrant('Q2')
     setPriorityId('')
     setCategoryId('')
     setStatusId(statuses.find((s) => s.is_default)?.id ?? statuses[0]?.id ?? '')
@@ -101,6 +127,7 @@ export default function CreateTaskModal({
     setChecklist([])
     setNewChecklistItem('')
     setError(null)
+    setHolidayCheck(null)
   }, [statuses])
 
   function handleClose() {
@@ -128,7 +155,7 @@ export default function CreateTaskModal({
       await tasksApi.createTask(orgId, {
         title: title.trim(),
         description: description.trim() || undefined,
-        quadrant,
+        // quadrant,
         priority_id: priorityId || undefined,
         category_id: categoryId || undefined,
         status_id: statusId || undefined,
@@ -192,6 +219,53 @@ export default function CreateTaskModal({
             />
           </div>
 
+          {/* Assignees */}
+          <div>
+            <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees</label>
+            <AssigneeSelector
+              orgId={orgId}
+              value={assignees}
+              onChange={setAssignees}
+            />
+          </div>
+
+          {/* Completion mode — only relevant when multiple assignees are selected */}
+          {primaryAssigneeCount > 1 && <div>
+            <label className="block text-sm font-medium text-[#374151] mb-2">Completion Mode</label>
+            <div className="flex gap-3">
+              {(['any_can_complete', 'all_must_complete'] as CompletionMode[]).map((mode) => (
+                <label
+                  key={mode}
+                  className="flex items-center gap-2 cursor-pointer"
+                >
+                  <input
+                    type="radio"
+                    name="completionMode"
+                    value={mode}
+                    checked={completionMode === mode}
+                    onChange={() => setCompletionMode(mode)}
+                    className="accent-[#2563EB]"
+                  />
+                  <span className="text-sm text-[#1E293B]">
+                    {mode === 'any_can_complete' ? 'Any assignee can complete' : 'All assignees must complete'}
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>}
+
+          {/* Deadline */}
+          <div>
+            <label className="block text-sm font-medium text-[#374151] mb-1.5">Deadline</label>
+            <input
+              type="datetime-local"
+              value={deadline}
+              onChange={(e) => setDeadline(e.target.value)}
+              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
+            />
+            <HolidayWarningBadge check={holidayCheck} />
+          </div>
+
           {/* Description */}
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Description</label>
@@ -204,8 +278,8 @@ export default function CreateTaskModal({
             />
           </div>
 
-          {/* Quadrant */}
-          <div>
+          {/* Quadrant — hidden */}
+          {/* <div>
             <label className="block text-sm font-medium text-[#374151] mb-2">Quadrant</label>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {quadrants.map((q) => {
@@ -231,7 +305,7 @@ export default function CreateTaskModal({
                 )
               })}
             </div>
-          </div>
+          </div> */}
 
           {/* Priority + Category + Status */}
           <div className="grid grid-cols-3 gap-3">
@@ -272,52 +346,6 @@ export default function CreateTaskModal({
                   <option key={s.id} value={s.id}>{s.label}</option>
                 ))}
               </select>
-            </div>
-          </div>
-
-          {/* Deadline */}
-          <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">Deadline</label>
-            <input
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-            />
-          </div>
-
-          {/* Assignees */}
-          <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees</label>
-            <AssigneeSelector
-              orgId={orgId}
-              value={assignees}
-              onChange={setAssignees}
-            />
-          </div>
-
-          {/* Completion mode */}
-          <div>
-            <label className="block text-sm font-medium text-[#374151] mb-2">Completion Mode</label>
-            <div className="flex gap-3">
-              {(['any_can_complete', 'all_must_complete'] as CompletionMode[]).map((mode) => (
-                <label
-                  key={mode}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <input
-                    type="radio"
-                    name="completionMode"
-                    value={mode}
-                    checked={completionMode === mode}
-                    onChange={() => setCompletionMode(mode)}
-                    className="accent-[#2563EB]"
-                  />
-                  <span className="text-sm text-[#1E293B]">
-                    {mode === 'any_can_complete' ? 'Any assignee can complete' : 'All assignees must complete'}
-                  </span>
-                </label>
-              ))}
             </div>
           </div>
 
@@ -392,7 +420,7 @@ export default function CreateTaskModal({
           <button
             type="submit"
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || (holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day)}
             className="px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
           >
             {submitting ? 'Creating...' : 'Create Task'}

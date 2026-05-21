@@ -1,12 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common'
 import { Cron, CronExpression } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
+import { HolidaysService } from '../holidays/holidays.service'
 
 @Injectable()
 export class WorkflowEngineService {
   private readonly logger = new Logger(WorkflowEngineService.name)
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly holidaysService: HolidaysService,
+  ) {}
 
   // ── Instance naming ─────────────────────────────────────────────────────────
 
@@ -299,12 +303,17 @@ export class WorkflowEngineService {
     const createdSteps: { id: string; order_index: number; scheduled_at: Date | null; assigned_to_user_id: string }[] = []
     for (const step of template.steps) {
       const assignedTo = await this.resolveAssignee({ ...step, organization_id: template.organization_id })
-      const scheduledAt = this.resolveDeadline(
+      const rawScheduledAt = this.resolveDeadline(
         step.deadline_config as Record<string, unknown>,
         null,
         prevScheduledAt,
         startAt,
       )
+      // Adjust for holidays — workflows always create (never skip), so use ?? rawScheduledAt
+      const instanceStepPlaceholder = { id: 'pending', order_index: step.order_index }
+      const scheduledAt = await this.holidaysService.adjustDeadline(
+        rawScheduledAt, template.organization_id,
+      ).then((adj) => adj ?? rawScheduledAt)
       const instanceStep = await this.prisma.workflowInstanceStep.create({
         data: {
           organization_id: template.organization_id,
@@ -315,6 +324,14 @@ export class WorkflowEngineService {
           scheduled_at: scheduledAt,
         },
       })
+      // Write audit log now that we have instanceStep.id
+      if (scheduledAt.getTime() !== rawScheduledAt.getTime()) {
+        await this.holidaysService.adjustDeadline(
+          rawScheduledAt, template.organization_id,
+          undefined, undefined,
+          'workflow_step', instanceStep.id, step.title,
+        )
+      }
       createdSteps.push({ id: instanceStep.id, order_index: step.order_index, scheduled_at: scheduledAt, assigned_to_user_id: assignedTo })
       prevScheduledAt = scheduledAt
     }

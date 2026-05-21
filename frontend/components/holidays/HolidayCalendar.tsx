@@ -1,0 +1,121 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { holidaysApi } from '@/lib/api/holidays'
+import type { NonWorkingDate } from '@/lib/types/holidays'
+
+const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+interface Props {
+  orgId: string
+  deptId?: string
+  userId?: string
+  refreshKey?: number
+}
+
+export default function HolidayCalendar({ orgId, deptId, userId, refreshKey }: Props) {
+  const today = new Date()
+  const [year, setYear] = useState(today.getFullYear())
+  const [month, setMonth] = useState(today.getMonth())
+  const [nonWorking, setNonWorking] = useState<NonWorkingDate[]>([])
+
+  const fetchRange = useCallback(async () => {
+    const from = new Date(year, month, 1).toISOString().slice(0, 10)
+    const to = new Date(year, month + 1, 0).toISOString().slice(0, 10)
+    try {
+      const res = await holidaysApi.getRange(orgId, from, to, { deptId, userId })
+      setNonWorking(res.non_working_dates)
+    } catch {
+      setNonWorking([])
+    }
+  }, [orgId, deptId, userId, year, month])
+
+  useEffect(() => { fetchRange() }, [fetchRange, refreshKey])
+
+  function prev() {
+    if (month === 0) { setYear((y) => y - 1); setMonth(11) }
+    else setMonth((m) => m - 1)
+  }
+  function next() {
+    if (month === 11) { setYear((y) => y + 1); setMonth(0) }
+    else setMonth((m) => m + 1)
+  }
+
+  const firstDay = new Date(year, month, 1).getDay()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+
+  const nonWorkingMap = new Map<string, NonWorkingDate>()
+  for (const d of nonWorking) nonWorkingMap.set(d.date, d)
+
+  const cells: (number | null)[] = Array(firstDay).fill(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+  while (cells.length % 7 !== 0) cells.push(null)
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-4 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex items-center justify-between mb-4">
+        <button
+          type="button"
+          onClick={prev}
+          className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] transition-colors"
+        >
+          <ChevronLeft size={16} />
+        </button>
+        <span className="text-sm font-semibold text-[#0F172A]">
+          {MONTHS[month]} {year}
+        </span>
+        <button
+          type="button"
+          onClick={next}
+          className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] transition-colors"
+        >
+          <ChevronRight size={16} />
+        </button>
+      </div>
+
+      <div className="grid grid-cols-7 gap-0.5 mb-1">
+        {DOW.map((d) => (
+          <div key={d} className="text-center text-[11px] font-semibold text-[#94A3B8] py-1">{d}</div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7 gap-0.5">
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />
+          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+          const nw = nonWorkingMap.get(dateStr)
+          const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear()
+          return (
+            <div
+              key={i}
+              title={nw ? nw.name : undefined}
+              className={[
+                'relative flex items-center justify-center h-8 rounded-[6px] text-xs cursor-default transition-colors',
+                nw ? 'bg-[#FEE2E2] text-[#DC2626] font-medium' : 'text-[#475569] hover:bg-[#F8FAFC]',
+                isToday ? 'ring-2 ring-[#2563EB] ring-inset' : '',
+              ].join(' ')}
+            >
+              {day}
+              {nw && (
+                <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[#DC2626]" />
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 text-[11px] text-[#475569]">
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#FEE2E2] border border-[#FECACA]" />
+          Non-working
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full border-2 border-[#2563EB]" />
+          Today
+        </span>
+      </div>
+    </div>
+  )
+}
