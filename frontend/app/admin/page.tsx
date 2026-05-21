@@ -1,13 +1,10 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import { Eye, EyeOff, ShieldCheck, Loader2 } from 'lucide-react'
 import { adminLogin as apiAdminLogin, getMe } from '@/lib/api/auth'
 
 export default function AdminLoginPage() {
-  const router = useRouter()
-
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -20,10 +17,10 @@ export default function AdminLoginPage() {
     const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
     if (!token) { setChecking(false); return }
     getMe().then((me) => {
-      if (me.isSuperAdmin) router.replace('/super-admin/organizations')
+      if (me.isSuperAdmin) window.location.href = '/super-admin/organizations'
       else setChecking(false)
     }).catch(() => setChecking(false))
-  }, [router])
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -37,7 +34,7 @@ export default function AdminLoginPage() {
       const tokens = await apiAdminLogin(email.trim(), password)
       localStorage.setItem('access_token', tokens.access_token)
       localStorage.setItem('refresh_token', tokens.refresh_token)
-      router.replace('/super-admin/organizations')
+      window.location.href = '/super-admin/organizations'
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message
