@@ -49,7 +49,11 @@ apiClient.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       // Auth endpoints return 401 for bad credentials — don't intercept them
       const url = originalRequest.url ?? '';
-      if (url.includes('/auth/login') || url.includes('/auth/register')) {
+      if (
+        url.includes('/auth/login') ||
+        url.includes('/auth/admin-login') ||
+        url.includes('/auth/register')
+      ) {
         return Promise.reject(error);
       }
 
