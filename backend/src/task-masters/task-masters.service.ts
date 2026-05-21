@@ -82,7 +82,7 @@ export class TaskMastersService {
       where: { organization_id: orgId },
       data: {
         ...(dto.assignee_visibility_mode !== undefined && { assignee_visibility_mode: dto.assignee_visibility_mode }),
-        ...(dto.assignee_custom_rules !== undefined && { assignee_custom_rules: dto.assignee_custom_rules }),
+        ...(dto.assignee_custom_rules !== undefined && { assignee_custom_rules: dto.assignee_custom_rules as never }),
         ...(dto.assignee_visibility_config_roles !== undefined && { assignee_visibility_config_roles: dto.assignee_visibility_config_roles }),
       },
     });

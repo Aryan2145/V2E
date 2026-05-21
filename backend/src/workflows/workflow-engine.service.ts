@@ -144,7 +144,7 @@ export class WorkflowEngineService {
       where: { organization_id: step.organization_id, role: role as never, is_active: true },
       select: { user_id: true },
     })
-    if (members.length === 0) return step.assigner_user_id as string
+    if (members.length === 0) return step.assignee_user_id ?? ''
 
     const tracker = await this.prisma.workflowRoundRobinTracker.findUnique({
       where: {
@@ -194,7 +194,7 @@ export class WorkflowEngineService {
       organization_id: string
       title: string
       description: string | null
-      quadrant: string
+      quadrant?: string | null
       priority_id: string | null
       category_id: string | null
       proof_required: boolean
@@ -209,7 +209,7 @@ export class WorkflowEngineService {
         organization_id: step.organization_id,
         title: step.title,
         description: step.description ?? undefined,
-        quadrant: step.quadrant as never,
+        quadrant: (step.quadrant ?? 'do') as never,
         type: 'one_time',
         status_id: defaultStatusId,
         priority_id: step.priority_id ?? undefined,
@@ -220,10 +220,10 @@ export class WorkflowEngineService {
         deadline: instanceStep.scheduled_at ?? undefined,
         workflow_instance_step_id: instanceStep.id,
         assignees: {
-          create: [{ user_id: instanceStep.assigned_to_user_id, is_cc: false }],
+          create: [{ organization_id: step.organization_id, user_id: instanceStep.assigned_to_user_id, is_cc: false }],
         },
         checklist: items.length > 0
-          ? { create: items.map((it) => ({ title: it.title, order_index: it.order_index })) }
+          ? { create: items.map((it) => ({ organization_id: step.organization_id, title: it.title, order_index: it.order_index })) }
           : undefined,
       },
     })
@@ -287,7 +287,7 @@ export class WorkflowEngineService {
         trigger_type: triggerType,
         triggered_by_user_id: triggeredByUserId ?? null,
         status: 'running',
-        metadata: context,
+        metadata: context as never,
       },
     })
 
@@ -298,7 +298,7 @@ export class WorkflowEngineService {
     // Create all instance steps
     const createdSteps: { id: string; order_index: number; scheduled_at: Date | null; assigned_to_user_id: string }[] = []
     for (const step of template.steps) {
-      const assignedTo = await this.resolveAssignee({ ...step, organization_id: template.organization_id, assigner_user_id: step.assigner_user_id })
+      const assignedTo = await this.resolveAssignee({ ...step, organization_id: template.organization_id })
       const scheduledAt = this.resolveDeadline(
         step.deadline_config as Record<string, unknown>,
         null,
@@ -470,7 +470,7 @@ export class WorkflowEngineService {
         const branchWorkflowStep = await this.prisma.workflowStep.findUnique({ where: { id: workflowStep.branch_step_id } })
         if (!branchWorkflowStep) continue
 
-        const assignedTo = await this.resolveAssignee({ ...branchWorkflowStep, organization_id: instance.organization_id, assigner_user_id: branchWorkflowStep.assigner_user_id })
+        const assignedTo = await this.resolveAssignee({ ...branchWorkflowStep, organization_id: instance.organization_id })
         const scheduledAt = this.resolveDeadline(branchWorkflowStep.deadline_config as Record<string, unknown>, null, step.scheduled_at, instance.started_at)
         const defaultStatusId = await this.getDefaultStatusId(instance.organization_id)
 

@@ -86,7 +86,7 @@ export class TicketsService {
         ticket_id: ticketId,
         performed_by_user_id: userId,
         action: action as never,
-        metadata,
+        metadata: metadata as never,
       },
     })
   }

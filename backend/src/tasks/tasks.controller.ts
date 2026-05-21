@@ -75,7 +75,7 @@ export class TasksController {
   }
 
   @Get('archive')
-  @ApiOperation({ summary: 'Get archived (deleted) tasks' }}
+  @ApiOperation({ summary: 'Get archived (deleted) tasks' })
   getArchive(@Param('orgId') orgId: string, @Request() req: any) {
     return this.service.getArchive(orgId, req.user.id);
   }
