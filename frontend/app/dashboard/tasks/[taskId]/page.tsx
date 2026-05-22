@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskComment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
-import QuadrantBadge from '@/components/tasks/QuadrantBadge'
+// import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import {
   ArrowLeft,
@@ -619,7 +619,7 @@ export default function TaskDetailPage() {
               <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Details</p>
 
               <div className="flex flex-wrap gap-2">
-                <QuadrantBadge quadrant={task.quadrant} size="md" />
+                {/* <QuadrantBadge quadrant={task.quadrant} size="md" /> */}
                 {status && (
                   <span
                     className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"

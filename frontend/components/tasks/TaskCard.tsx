@@ -3,7 +3,7 @@
 import React from 'react'
 import { Calendar, User, GitBranch } from 'lucide-react'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
-import QuadrantBadge from './QuadrantBadge'
+// import QuadrantBadge from './QuadrantBadge'
 
 interface TaskCardProps {
   task: Task
@@ -72,10 +72,10 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
       onClick={onClick}
       className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] px-5 py-4 flex items-center gap-4 cursor-pointer hover:border-[#2563EB] hover:shadow-md transition-all duration-150 group"
     >
-      {/* Quadrant */}
-      <div className="shrink-0">
+      {/* Quadrant — hidden */}
+      {/* <div className="shrink-0">
         <QuadrantBadge quadrant={task.quadrant} />
-      </div>
+      </div> */}
 
       {/* Title + Category */}
       <div className="flex-1 min-w-0">

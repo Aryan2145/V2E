@@ -4,7 +4,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
-import type { Task, TaskCategory, TaskPriority, TaskStatus, TaskQuadrant } from '@/lib/types/tasks'
+import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
 import KanbanView from '@/components/tasks/KanbanView'
 import CalendarView from '@/components/tasks/CalendarView'
@@ -92,7 +92,7 @@ export default function TasksPage() {
   const [filterStatus, setFilterStatus] = useState('all')
   const [filterPriority, setFilterPriority] = useState('all')
   const [filterCategory, setFilterCategory] = useState('all')
-  const [filterQuadrant, setFilterQuadrant] = useState<'all' | TaskQuadrant>('all')
+  // const [filterQuadrant, setFilterQuadrant] = useState<'all' | TaskQuadrant>('all')
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -125,11 +125,11 @@ export default function TasksPage() {
     if (filterStatus !== 'all' && t.status_id !== filterStatus) return false
     if (filterPriority !== 'all' && t.priority_id !== filterPriority) return false
     if (filterCategory !== 'all' && t.category_id !== filterCategory) return false
-    if (filterQuadrant !== 'all' && t.quadrant !== filterQuadrant) return false
+    // if (filterQuadrant !== 'all' && t.quadrant !== filterQuadrant) return false
     return true
-  }), [tasks, filterStatus, filterPriority, filterCategory, filterQuadrant])
+  }), [tasks, filterStatus, filterPriority, filterCategory])
 
-  const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all' || filterQuadrant !== 'all'
+  const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all'
 
   async function handleStatusChange(taskId: string, newStatusId: string) {
     await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
@@ -212,7 +212,8 @@ export default function TasksPage() {
               <option value="all">All Categories</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <select
+            {/* Quadrant filter — hidden */}
+            {/* <select
               value={filterQuadrant}
               onChange={(e) => setFilterQuadrant(e.target.value as 'all' | TaskQuadrant)}
               className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
@@ -222,10 +223,10 @@ export default function TasksPage() {
               <option value="Q2">Q2 — Not Urgent + Important</option>
               <option value="Q3">Q3 — Urgent + Not Important</option>
               <option value="Q4">Q4 — Not Urgent + Not Important</option>
-            </select>
+            </select> */}
             {isFiltered && (
               <button
-                onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setFilterCategory('all'); setFilterQuadrant('all') }}
+                onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setFilterCategory('all') }}
                 className="px-3 py-[7px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
               >
                 Clear

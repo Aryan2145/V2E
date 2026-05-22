@@ -5,14 +5,15 @@ import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type {
   RecurringTemplate,
+  RecurringScheduleEntry,
   TaskCategory,
   TaskPriority,
-  TaskQuadrant,
   CompletionMode,
 } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
-import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
+import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
+import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
 import {
   RotateCcw, Play, Pause, Calendar, Users, Plus, X, Trash2,
 } from 'lucide-react'
@@ -20,10 +21,7 @@ import {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MONTHS_FULL = [
-  'January', 'February', 'March', 'April', 'May', 'June',
-  'July', 'August', 'September', 'October', 'November', 'December',
-]
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 const avatarColors = [
   'bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]',
@@ -34,32 +32,55 @@ function avatarColor(str: string): string {
   return avatarColors[h % avatarColors.length]
 }
 
-function scheduleLabel(t: RecurringTemplate): string {
-  if (t.schedule_type === 'daily') return `Every ${t.every > 1 ? `${t.every} days` : 'day'}`
-  if (t.schedule_type === 'weekly') {
-    const days = (t.days ?? []).map((d) => DOW[d]).join(', ')
-    return `Every ${t.every > 1 ? `${t.every} weeks` : 'week'}${days ? ` on ${days}` : ''}`
+function entryLabel(entry: RecurringScheduleEntry | ScheduleEntryDraft): string {
+  const e = entry as RecurringScheduleEntry
+  switch (e.schedule_type) {
+    case 'daily':
+      return `Every ${e.every > 1 ? `${e.every} days` : 'day'}`
+    case 'weekly': {
+      const days = Array.isArray(e.days) ? (e.days as number[]).map((d) => DOW[d]).join(', ') : ''
+      return `Every ${e.every > 1 ? `${e.every} weeks` : 'week'}${days ? ` on ${days}` : ''}`
+    }
+    case 'monthly': {
+      const md = Array.isArray(e.month_days) ? (e.month_days as number[]) : []
+      const dayStr = md.length === 0 ? '?' : md.length <= 3 ? md.join(', ') : `${md.slice(0, 3).join(', ')}…`
+      return `Day${md.length !== 1 ? 's' : ''} ${dayStr} every ${e.every > 1 ? `${e.every} months` : 'month'}`
+    }
+    case 'yearly': {
+      const dates = Array.isArray(e.yearly_dates) ? (e.yearly_dates as { month: number; day: number }[]) : []
+      if (dates.length === 0) return 'Yearly'
+      if (dates.length === 1) return `${MONTHS_SHORT[dates[0].month - 1]} ${dates[0].day} each year`
+      return `${dates.length} dates each year`
+    }
+    default:
+      return e.schedule_type
   }
-  if (t.schedule_type === 'monthly') return `Day ${t.month_day ?? '?'} every ${t.every > 1 ? `${t.every} months` : 'month'}`
-  if (t.schedule_type === 'yearly') return `${MONTHS_FULL[(t.month ?? 1) - 1]} ${t.month_day ?? '?'} each year`
-  return t.schedule_type
+}
+
+function scheduleLabel(t: RecurringTemplate): string {
+  const entries = t.schedule_entries ?? []
+  if (entries.length === 0) return 'No schedule'
+  if (entries.length === 1) return entryLabel(entries[0])
+  return `${entries.length} schedules`
 }
 
 function formatDate(str: string): string {
   return new Date(str).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-const quadrants: { value: TaskQuadrant; label: string; sublabel: string }[] = [
-  { value: 'Q1', label: 'Q1', sublabel: 'Urgent + Important' },
-  { value: 'Q2', label: 'Q2', sublabel: 'Not Urgent + Important' },
-  { value: 'Q3', label: 'Q3', sublabel: 'Urgent + Not Important' },
-  { value: 'Q4', label: 'Q4', sublabel: 'Not Urgent + Not Important' },
-]
-const quadrantColors: Record<TaskQuadrant, { bg: string; text: string; border: string; activeBg: string }> = {
-  Q1: { bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]', border: 'border-[#FECACA]', activeBg: 'bg-[#DC2626]' },
-  Q2: { bg: 'bg-[#EFF6FF]', text: 'text-[#2563EB]', border: 'border-[#BFDBFE]', activeBg: 'bg-[#2563EB]' },
-  Q3: { bg: 'bg-[#FEF9C3]', text: 'text-[#D97706]', border: 'border-[#FDE68A]', activeBg: 'bg-[#D97706]' },
-  Q4: { bg: 'bg-[#F3F4F6]', text: 'text-[#6B7280]', border: 'border-[#E5E7EB]', activeBg: 'bg-[#6B7280]' },
+function defaultEntry(): ScheduleEntryDraft {
+  return {
+    schedule_type: 'daily',
+    every: 1,
+    days: [],
+    month_days: [],
+    yearly_dates: [],
+    time: '09:00',
+    start_date: new Date().toISOString().slice(0, 10),
+    end_condition: 'never',
+    end_date: '',
+    end_after: 10,
+  }
 }
 
 // ─── Create modal ─────────────────────────────────────────────────────────────
@@ -73,34 +94,24 @@ interface CreateRecurringModalProps {
 }
 
 function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreated }: CreateRecurringModalProps) {
-  // Basic
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [quadrant, setQuadrant] = useState<TaskQuadrant>('Q2')
   const [priorityId, setPriorityId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
+  const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryDraft[]>([defaultEntry()])
 
-  // Schedule
-  const [scheduleType, setScheduleType] = useState<'daily' | 'weekly' | 'monthly' | 'yearly'>('daily')
-  const [every, setEvery] = useState(1)
-  const [days, setDays] = useState<number[]>([])
-  const [monthDay, setMonthDay] = useState(1)
-  const [month, setMonth] = useState(1)
-  const [time, setTime] = useState('09:00')
-  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const primaryAssigneeCount = assignees.filter((a) => !a.is_cc).length
 
-  // End condition
-  const [endCondition, setEndCondition] = useState<'never' | 'on_date' | 'after_n'>('never')
-  const [endDate, setEndDate] = useState('')
-  const [endAfter, setEndAfter] = useState(10)
+  useEffect(() => {
+    if (primaryAssigneeCount <= 1) setCompletionMode('any_can_complete')
+  }, [primaryAssigneeCount])
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Escape key
   useEffect(() => {
     function handle(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', handle)
@@ -112,15 +123,21 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
     return () => { document.body.style.overflow = '' }
   }, [])
 
-  function toggleDay(d: number) {
-    setDays((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d])
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) { setError('Title is required.'); return }
-    if (scheduleType === 'weekly' && days.length === 0) { setError('Select at least one day of the week.'); return }
-    if (endCondition === 'on_date' && !endDate) { setError('End date is required.'); return }
+
+    for (const entry of scheduleEntries) {
+      if (entry.schedule_type === 'weekly' && entry.days.length === 0) {
+        setError('Select at least one day of the week for each weekly schedule.'); return
+      }
+      if (entry.schedule_type === 'monthly' && entry.month_days.length === 0) {
+        setError('Select at least one day of the month for each monthly schedule.'); return
+      }
+      if (entry.end_condition === 'on_date' && !entry.end_date) {
+        setError('End date is required for schedule entries with "On date" end condition.'); return
+      }
+    }
 
     setSubmitting(true)
     setError(null)
@@ -128,26 +145,26 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
       const result = await tasksApi.createRecurring(orgId, {
         title: title.trim(),
         description: description.trim() || undefined,
-        quadrant,
         category_id: categoryId || undefined,
         priority_id: priorityId || undefined,
-        schedule_type: scheduleType,
-        every,
-        days: scheduleType === 'weekly' ? days : [],
-        month_day: (scheduleType === 'monthly' || scheduleType === 'yearly') ? monthDay : undefined,
-        month: scheduleType === 'yearly' ? month : undefined,
-        time,
-        start_date: startDate,
-        end_condition: endCondition,
-        end_date: endCondition === 'on_date' ? endDate : undefined,
-        end_after: endCondition === 'after_n' ? endAfter : undefined,
+        schedule_entries: scheduleEntries.map((e, idx) => ({
+          schedule_type: e.schedule_type,
+          every: e.every,
+          days: e.days,
+          month_days: e.month_days,
+          yearly_dates: e.yearly_dates,
+          time: e.time,
+          start_date: e.start_date,
+          end_condition: e.end_condition,
+          end_date: e.end_condition === 'on_date' ? e.end_date : undefined,
+          end_after: e.end_condition === 'after_n' ? e.end_after : undefined,
+          order_index: idx,
+        })),
         completion_mode: completionMode,
         proof_required: proofRequired,
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
-        is_active: true,
-        occurrence_count: 0,
-      } as any)
+      })
       onCreated(result)
     } catch {
       setError('Failed to create recurring template. Please try again.')
@@ -184,7 +201,7 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
             </div>
           )}
 
-          {/* ── Basic info ─────────────────────────────────────────────────── */}
+          {/* ── Task Details ──────────────────────────────────────────────── */}
           <div className="space-y-4">
             <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Task Details</p>
 
@@ -201,6 +218,36 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
               />
             </div>
 
+            {/* Assignees */}
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees</label>
+              <AssigneeSelector orgId={orgId} value={assignees} onChange={setAssignees} />
+            </div>
+
+            {/* Completion mode — only when multiple non-CC assignees */}
+            {primaryAssigneeCount > 1 && (
+              <div>
+                <label className="block text-sm font-medium text-[#374151] mb-2">Completion Mode</label>
+                <div className="flex gap-4">
+                  {(['any_can_complete', 'all_must_complete'] as CompletionMode[]).map((mode) => (
+                    <label key={mode} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="completionMode"
+                        value={mode}
+                        checked={completionMode === mode}
+                        onChange={() => setCompletionMode(mode)}
+                        className="accent-[#2563EB]"
+                      />
+                      <span className="text-sm text-[#1E293B]">
+                        {mode === 'any_can_complete' ? 'Any assignee can complete' : 'All must complete'}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Description</label>
               <textarea
@@ -210,35 +257,6 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
                 rows={2}
                 className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white resize-none"
               />
-            </div>
-
-            {/* Quadrant */}
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-2">Quadrant</label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {quadrants.map((q) => {
-                  const cfg = quadrantColors[q.value]
-                  const isSelected = quadrant === q.value
-                  return (
-                    <button
-                      key={q.value}
-                      type="button"
-                      onClick={() => setQuadrant(q.value)}
-                      className={[
-                        'flex flex-col items-center rounded-[8px] px-2 py-2.5 border-2 transition-all',
-                        isSelected
-                          ? `${cfg.activeBg} border-transparent text-white`
-                          : `${cfg.bg} ${cfg.border} ${cfg.text} hover:opacity-80`,
-                      ].join(' ')}
-                    >
-                      <span className="text-sm font-bold">{q.label}</span>
-                      <span className={`text-[10px] leading-tight text-center mt-0.5 ${isSelected ? 'text-white/80' : 'opacity-70'}`}>
-                        {q.sublabel}
-                      </span>
-                    </button>
-                  )
-                })}
-              </div>
             </div>
 
             {/* Priority + Category */}
@@ -268,207 +286,15 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
             </div>
           </div>
 
-          {/* ── Schedule ───────────────────────────────────────────────────── */}
-          <div className="space-y-4">
-            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Schedule</p>
-
-            {/* Schedule type tabs */}
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-2">Repeat</label>
-              <div className="flex items-center border border-[#E2E8F0] rounded-[8px] p-0.5 gap-0.5">
-                {(['daily', 'weekly', 'monthly', 'yearly'] as const).map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => setScheduleType(s)}
-                    className={[
-                      'flex-1 py-1.5 text-sm font-medium rounded-[6px] transition-colors capitalize',
-                      scheduleType === s ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]',
-                    ].join(' ')}
-                  >
-                    {s.charAt(0).toUpperCase() + s.slice(1)}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Every N */}
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-[#374151] font-medium shrink-0">Every</span>
-              <input
-                type="number"
-                min={1}
-                max={365}
-                value={every}
-                onChange={(e) => setEvery(Math.max(1, Number(e.target.value)))}
-                className="w-20 border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white text-center"
-              />
-              <span className="text-sm text-[#475569]">
-                {scheduleType === 'daily' ? (every === 1 ? 'day' : 'days')
-                  : scheduleType === 'weekly' ? (every === 1 ? 'week' : 'weeks')
-                  : scheduleType === 'monthly' ? (every === 1 ? 'month' : 'months')
-                  : (every === 1 ? 'year' : 'years')}
-              </span>
-            </div>
-
-            {/* Weekly: day-of-week checkboxes */}
-            {scheduleType === 'weekly' && (
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-2">On days</label>
-                <div className="flex gap-1.5 flex-wrap">
-                  {DOW.map((d, i) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => toggleDay(i)}
-                      className={[
-                        'w-10 h-10 rounded-full text-sm font-semibold transition-colors border',
-                        days.includes(i)
-                          ? 'bg-[#2563EB] text-white border-[#2563EB]'
-                          : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]',
-                      ].join(' ')}
-                    >
-                      {d.slice(0, 2)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Monthly: day of month */}
-            {scheduleType === 'monthly' && (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-[#374151] font-medium shrink-0">On day</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={monthDay}
-                  onChange={(e) => setMonthDay(Math.min(31, Math.max(1, Number(e.target.value))))}
-                  className="w-20 border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white text-center"
-                />
-                <span className="text-sm text-[#475569]">of the month</span>
-              </div>
-            )}
-
-            {/* Yearly: month + day */}
-            {scheduleType === 'yearly' && (
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-sm text-[#374151] font-medium shrink-0">On</span>
-                <select
-                  value={month}
-                  onChange={(e) => setMonth(Number(e.target.value))}
-                  className="border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                >
-                  {MONTHS_FULL.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                </select>
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={monthDay}
-                  onChange={(e) => setMonthDay(Math.min(31, Math.max(1, Number(e.target.value))))}
-                  className="w-20 border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white text-center"
-                />
-              </div>
-            )}
-
-            {/* Time + Start date */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">Time</label>
-                <input
-                  type="time"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">Start date</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* ── End condition ──────────────────────────────────────────────── */}
+          {/* ── Schedule Entries ──────────────────────────────────────────── */}
           <div className="space-y-3">
-            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">End</p>
-            <div className="flex gap-2">
-              {(['never', 'on_date', 'after_n'] as const).map((ec) => (
-                <button
-                  key={ec}
-                  type="button"
-                  onClick={() => setEndCondition(ec)}
-                  className={[
-                    'px-4 py-2 rounded-[8px] text-sm font-medium border transition-colors',
-                    endCondition === ec
-                      ? 'bg-[#2563EB] text-white border-[#2563EB]'
-                      : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]',
-                  ].join(' ')}
-                >
-                  {ec === 'never' ? 'Never' : ec === 'on_date' ? 'On date' : 'After N times'}
-                </button>
-              ))}
-            </div>
-            {endCondition === 'on_date' && (
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">End date</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-48 border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                />
-              </div>
-            )}
-            {endCondition === 'after_n' && (
-              <div className="flex items-center gap-3">
-                <span className="text-sm text-[#374151] font-medium">After</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={9999}
-                  value={endAfter}
-                  onChange={(e) => setEndAfter(Math.max(1, Number(e.target.value)))}
-                  className="w-24 border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white text-center"
-                />
-                <span className="text-sm text-[#475569]">occurrences</span>
-              </div>
-            )}
-          </div>
-
-          {/* ── Assignees ──────────────────────────────────────────────────── */}
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Assignees</p>
-            <AssigneeSelector orgId={orgId} value={assignees} onChange={setAssignees} />
+            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Schedule</p>
+            <ScheduleEntryList entries={scheduleEntries} onChange={setScheduleEntries} />
           </div>
 
           {/* ── Completion settings ────────────────────────────────────────── */}
           <div className="space-y-3">
             <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Completion</p>
-            <div className="flex gap-4">
-              {(['any_can_complete', 'all_must_complete'] as CompletionMode[]).map((mode) => (
-                <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="completionMode"
-                    value={mode}
-                    checked={completionMode === mode}
-                    onChange={() => setCompletionMode(mode)}
-                    className="accent-[#2563EB]"
-                  />
-                  <span className="text-sm text-[#1E293B]">
-                    {mode === 'any_can_complete' ? 'Any assignee can complete' : 'All must complete'}
-                  </span>
-                </label>
-              ))}
-            </div>
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -533,13 +359,18 @@ function RecurringCard({
     }
   }
 
+  const entries = template.schedule_entries ?? []
+  const earliestStart = entries.length > 0
+    ? entries.reduce((min, e) => e.start_date < min ? e.start_date : min, entries[0].start_date)
+    : null
+  const totalOccurrences = entries.reduce((sum, e) => sum + (e.occurrence_count ?? 0), 0)
+
   return (
     <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
       {/* Header row */}
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
-            <QuadrantBadge quadrant={template.quadrant} />
             <span className={[
               'inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium',
               template.is_active
@@ -548,6 +379,11 @@ function RecurringCard({
             ].join(' ')}>
               {template.is_active ? 'Active' : 'Paused'}
             </span>
+            {entries.length > 1 && (
+              <span className="inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">
+                {entries.length} schedules
+              </span>
+            )}
           </div>
           <h3 className="text-[15px] font-semibold text-[#0F172A] truncate">{template.title}</h3>
           {template.description && (
@@ -590,17 +426,34 @@ function RecurringCard({
       </div>
 
       {/* Schedule info */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm text-[#475569]">
-        <div className="flex items-center gap-1.5">
-          <RotateCcw size={12} className="text-[#94A3B8]" />
-          <span>{scheduleLabel(template)}</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <Calendar size={12} className="text-[#94A3B8]" />
-          <span>From {formatDate(template.start_date)}</span>
-        </div>
+      <div className="space-y-1 mb-3">
+        {entries.length === 0 ? (
+          <p className="text-sm text-[#94A3B8]">No schedule configured</p>
+        ) : entries.length === 1 ? (
+          <div className="flex items-center gap-1.5 text-sm text-[#475569]">
+            <RotateCcw size={12} className="text-[#94A3B8] shrink-0" />
+            <span>{scheduleLabel(template)}</span>
+          </div>
+        ) : (
+          entries.map((entry, i) => (
+            <div key={i} className="flex items-center gap-1.5 text-sm text-[#475569]">
+              <RotateCcw size={12} className="text-[#94A3B8] shrink-0" />
+              <span>{entryLabel(entry)}</span>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Meta row */}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-[#475569]">
+        {earliestStart && (
+          <div className="flex items-center gap-1.5">
+            <Calendar size={12} className="text-[#94A3B8]" />
+            <span>From {formatDate(earliestStart)}</span>
+          </div>
+        )}
         <span className="text-[#CBD5E1]">·</span>
-        <span className="text-[#475569]">{template.occurrence_count} occurrence{template.occurrence_count !== 1 ? 's' : ''}</span>
+        <span>{totalOccurrences} occurrence{totalOccurrences !== 1 ? 's' : ''}</span>
       </div>
 
       {/* Assignee avatars */}

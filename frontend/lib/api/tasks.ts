@@ -9,6 +9,7 @@ import type {
   TaskActivityLog,
   TaskChecklistItem,
   RecurringTemplate,
+  RecurringScheduleEntry,
   TaskArchiveItem,
   ChecklistTemplate,
   TaskReportData,
@@ -142,7 +143,7 @@ export const tasksApi = {
   createTask: async (orgId: string, dto: {
     title: string
     description?: string
-    quadrant: string
+    quadrant?: string
     priority_id?: string
     category_id?: string
     status_id?: string
@@ -230,12 +231,34 @@ export const tasksApi = {
     return unwrap<RecurringTemplate[]>(res)
   },
 
-  createRecurring: async (orgId: string, dto: Omit<RecurringTemplate, 'id' | 'organization_id' | 'created_at' | 'occurrence_count'>): Promise<RecurringTemplate> => {
+  createRecurring: async (orgId: string, dto: {
+    title: string
+    description?: string
+    category_id?: string
+    priority_id?: string
+    schedule_entries: Omit<RecurringScheduleEntry, 'id' | 'organization_id' | 'recurring_template_id' | 'occurrence_count' | 'is_active' | 'created_at' | 'updated_at'>[]
+    completion_mode?: string
+    proof_required?: boolean
+    assignee_user_ids?: string[]
+    cc_user_ids?: string[]
+    department_id?: string
+  }): Promise<RecurringTemplate> => {
     const res = await apiClient.post(`${base(orgId)}/recurring`, dto)
     return unwrap<RecurringTemplate>(res)
   },
 
-  updateRecurring: async (orgId: string, id: string, dto: Partial<RecurringTemplate>): Promise<RecurringTemplate> => {
+  updateRecurring: async (orgId: string, id: string, dto: Partial<{
+    title: string
+    description: string
+    category_id: string
+    priority_id: string
+    schedule_entries: Partial<RecurringScheduleEntry>[]
+    completion_mode: string
+    proof_required: boolean
+    assignee_user_ids: string[]
+    cc_user_ids: string[]
+    department_id: string
+  }>): Promise<RecurringTemplate> => {
     const res = await apiClient.patch(`${base(orgId)}/recurring/${id}`, dto)
     return unwrap<RecurringTemplate>(res)
   },
@@ -262,6 +285,25 @@ export const tasksApi = {
   getRecurringStats: async (orgId: string, id: string): Promise<{ total: number; completed: number; pending: number }> => {
     const res = await apiClient.get(`${base(orgId)}/recurring/${id}/stats`)
     return unwrap<{ total: number; completed: number; pending: number }>(res)
+  },
+
+  listScheduleEntries: async (orgId: string, templateId: string): Promise<RecurringScheduleEntry[]> => {
+    const res = await apiClient.get(`${base(orgId)}/recurring/${templateId}/schedules`)
+    return unwrap<RecurringScheduleEntry[]>(res)
+  },
+
+  addScheduleEntry: async (orgId: string, templateId: string, dto: Partial<RecurringScheduleEntry>): Promise<RecurringScheduleEntry> => {
+    const res = await apiClient.post(`${base(orgId)}/recurring/${templateId}/schedules`, dto)
+    return unwrap<RecurringScheduleEntry>(res)
+  },
+
+  updateScheduleEntry: async (orgId: string, templateId: string, entryId: string, dto: Partial<RecurringScheduleEntry>): Promise<RecurringScheduleEntry> => {
+    const res = await apiClient.patch(`${base(orgId)}/recurring/${templateId}/schedules/${entryId}`, dto)
+    return unwrap<RecurringScheduleEntry>(res)
+  },
+
+  deleteScheduleEntry: async (orgId: string, templateId: string, entryId: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/recurring/${templateId}/schedules/${entryId}`)
   },
 
   getReports: async (orgId: string, params?: { from_date?: string; to_date?: string }): Promise<TaskReportData> => {

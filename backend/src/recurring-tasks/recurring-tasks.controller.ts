@@ -16,6 +16,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { RecurringTasksService } from './recurring-tasks.service';
 import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
+import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
 
 @ApiTags('recurring-tasks')
 @ApiBearerAuth()
@@ -32,21 +33,13 @@ export class RecurringTasksController {
 
   @Post()
   @ApiOperation({ summary: 'Create a recurring task template' })
-  create(
-    @Param('orgId') orgId: string,
-    @Request() req: any,
-    @Body() dto: CreateRecurringDto,
-  ) {
+  create(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateRecurringDto) {
     return this.service.createTemplate(orgId, req.user.id, dto);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a recurring task template' })
-  update(
-    @Param('orgId') orgId: string,
-    @Param('id') id: string,
-    @Body() dto: UpdateRecurringDto,
-  ) {
+  update(@Param('orgId') orgId: string, @Param('id') id: string, @Body() dto: UpdateRecurringDto) {
     return this.service.updateTemplate(orgId, id, dto);
   }
 
@@ -82,5 +75,44 @@ export class RecurringTasksController {
   @ApiOperation({ summary: 'Get completion stats for a recurring template' })
   getStats(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.getStats(orgId, id);
+  }
+
+  // ─── Schedule Entries ───────────────────────────────────────────────────────
+
+  @Get(':id/schedules')
+  @ApiOperation({ summary: 'List schedule entries for a template' })
+  listSchedules(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.listScheduleEntries(orgId, id);
+  }
+
+  @Post(':id/schedules')
+  @ApiOperation({ summary: 'Add a schedule entry to a template' })
+  addSchedule(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Body() dto: CreateScheduleEntryDto,
+  ) {
+    return this.service.addScheduleEntry(orgId, id, dto);
+  }
+
+  @Patch(':id/schedules/:eid')
+  @ApiOperation({ summary: 'Update a schedule entry' })
+  updateSchedule(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Param('eid') eid: string,
+    @Body() dto: Partial<CreateScheduleEntryDto>,
+  ) {
+    return this.service.updateScheduleEntry(orgId, id, eid, dto);
+  }
+
+  @Delete(':id/schedules/:eid')
+  @ApiOperation({ summary: 'Delete a schedule entry' })
+  deleteSchedule(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Param('eid') eid: string,
+  ) {
+    return this.service.deleteScheduleEntry(orgId, id, eid);
   }
 }

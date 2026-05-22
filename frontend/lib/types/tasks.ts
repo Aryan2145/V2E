@@ -129,6 +129,35 @@ export interface TaskActivityLog {
   created_at: string
 }
 
+export type RecurringScheduleType = 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type RecurringEndCondition = 'never' | 'on_date' | 'after_n'
+
+export interface YearlyDate {
+  month: number
+  day: number
+}
+
+export interface RecurringScheduleEntry {
+  id: string
+  organization_id: string
+  recurring_template_id: string
+  schedule_type: RecurringScheduleType
+  every: number
+  days: number[]
+  month_days: number[]
+  yearly_dates: YearlyDate[]
+  time: string
+  start_date: string
+  end_condition: RecurringEndCondition
+  end_date?: string
+  end_after?: number
+  occurrence_count: number
+  is_active: boolean
+  order_index: number
+  created_at: string
+  updated_at: string
+}
+
 export interface RecurringTemplate {
   id: string
   organization_id: string
@@ -137,24 +166,15 @@ export interface RecurringTemplate {
   quadrant: TaskQuadrant
   category_id?: string
   priority_id?: string
-  schedule_type: string
-  every: number
-  days: number[]
-  month_day?: number
-  month?: number
-  time: string
-  start_date: string
-  end_condition: string
-  end_date?: string
-  end_after?: number
+  has_multiple_schedules: boolean
   is_active: boolean
-  occurrence_count: number
   completion_mode: string
   proof_required: boolean
   assignee_user_ids: string[]
   cc_user_ids: string[]
   department_id?: string
   created_at: string
+  schedule_entries?: RecurringScheduleEntry[]
 }
 
 export interface TaskArchiveItem {

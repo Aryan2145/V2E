@@ -4,7 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { TaskArchiveItem } from '@/lib/types/tasks'
-import QuadrantBadge from '@/components/tasks/QuadrantBadge'
+// import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import { Archive, X } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -51,9 +51,9 @@ function SnapshotModal({ item, onClose }: { item: TaskArchiveItem; onClose: () =
         </div>
 
         <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
-          {/* Title + Quadrant */}
+          {/* Title */}
           <div className="flex items-start gap-3">
-            <QuadrantBadge quadrant={task.quadrant} />
+            {/* <QuadrantBadge quadrant={task.quadrant} /> */}
             <h3 className="text-[22px] font-bold text-[#0F172A] leading-tight flex-1">{task.title}</h3>
           </div>
 
@@ -226,7 +226,7 @@ export default function ArchivePage() {
                 <tr key={item.id} className="hover:bg-[#F8FAFC] transition-colors">
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-2">
-                      <QuadrantBadge quadrant={item.task_snapshot.quadrant} />
+                      {/* <QuadrantBadge quadrant={item.task_snapshot.quadrant} /> */}
                       <span className="font-medium text-[#0F172A] truncate max-w-[200px]">
                         {item.task_snapshot.title}
                       </span>

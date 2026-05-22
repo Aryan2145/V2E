@@ -1,21 +1,15 @@
 import {
   IsArray,
   IsBoolean,
-  IsDateString,
   IsEnum,
-  IsInt,
-  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
-  Min,
+  ValidateNested,
 } from 'class-validator';
-import {
-  CompletionMode,
-  RecurringEndCondition,
-  RecurringScheduleType,
-  TaskQuadrant,
-} from '@prisma/client';
+import { Type } from 'class-transformer';
+import { CompletionMode, TaskQuadrant } from '@prisma/client';
+import { CreateScheduleEntryDto } from './create-schedule-entry.dto';
 
 export class UpdateRecurringDto {
   @IsOptional()
@@ -40,47 +34,10 @@ export class UpdateRecurringDto {
   priority_id?: string;
 
   @IsOptional()
-  @IsEnum(RecurringScheduleType)
-  schedule_type?: RecurringScheduleType;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  every?: number;
-
-  @IsOptional()
   @IsArray()
-  @IsNumber({}, { each: true })
-  days?: number[];
-
-  @IsOptional()
-  @IsInt()
-  month_day?: number;
-
-  @IsOptional()
-  @IsInt()
-  month?: number;
-
-  @IsOptional()
-  @IsString()
-  time?: string;
-
-  @IsOptional()
-  @IsDateString()
-  start_date?: string;
-
-  @IsOptional()
-  @IsEnum(RecurringEndCondition)
-  end_condition?: RecurringEndCondition;
-
-  @IsOptional()
-  @IsDateString()
-  end_date?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  end_after?: number;
+  @ValidateNested({ each: true })
+  @Type(() => CreateScheduleEntryDto)
+  schedule_entries?: CreateScheduleEntryDto[];
 
   @IsOptional()
   @IsEnum(CompletionMode)
