@@ -205,6 +205,15 @@ async function main() {
   await prisma.department.update({ where: { id: techDept.id }, data: { head_user_id: devUser.id } });
 
   console.log('✅ Employees created');
+
+  // Project Master
+  await prisma.projectMaster.upsert({
+    where: { organization_id: org.id },
+    create: { organization_id: org.id, project_creation_roles: ['org_admin', 'hr_manager', 'employee'] },
+    update: {},
+  });
+  console.log('✅ Project Master created');
+
   console.log('\n🎉 Seed complete!');
   console.log('\nLogin credentials:');
   console.log('  Super Admin: superadmin@V2E.io / Admin@123');

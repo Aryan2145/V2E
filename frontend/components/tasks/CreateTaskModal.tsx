@@ -5,7 +5,7 @@ import { X, Plus, Trash2 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
+import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
 // import QuadrantBadge from './QuadrantBadge'
@@ -20,6 +20,7 @@ interface CreateTaskModalProps {
   isOpen: boolean
   onClose: () => void
   onCreated: () => void
+  onTaskCreated?: (task: Task) => void
   categories: TaskCategory[]
   priorities: TaskPriority[]
   statuses: TaskStatus[]
@@ -42,6 +43,7 @@ export default function CreateTaskModal({
   isOpen,
   onClose,
   onCreated,
+  onTaskCreated,
   categories,
   priorities,
   statuses,
@@ -152,7 +154,7 @@ export default function CreateTaskModal({
     setSubmitting(true)
     setError(null)
     try {
-      await tasksApi.createTask(orgId, {
+      const newTask = await tasksApi.createTask(orgId, {
         title: title.trim(),
         description: description.trim() || undefined,
         // quadrant,
@@ -167,6 +169,7 @@ export default function CreateTaskModal({
         checklist: checklist.length > 0 ? checklist : undefined,
       })
       reset()
+      onTaskCreated?.(newTask)
       onCreated()
     } catch {
       setError('Failed to create task. Please try again.')

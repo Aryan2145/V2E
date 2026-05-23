@@ -11,6 +11,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 import { HolidaysService } from '../holidays/holidays.service';
+import { ProjectProgressService } from '../projects/project-progress.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -32,6 +33,7 @@ export class TasksService {
     private readonly prisma: PrismaService,
     private readonly workflowEngine: WorkflowEngineService,
     private readonly holidaysService: HolidaysService,
+    private readonly projectProgressService: ProjectProgressService,
   ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -575,6 +577,12 @@ export class TasksService {
       await this.workflowEngine.handleStepCompleted(task.workflow_instance_step_id);
     }
 
+    // Recalculate project progress if task is linked to a project
+    const projectTask = await this.prisma.projectTask.findFirst({ where: { task_id: taskId } });
+    if (projectTask) {
+      await this.projectProgressService.recalculateProjectProgress(projectTask.project_id);
+    }
+
     return this.getTask(orgId, taskId);
   }
 
@@ -614,6 +622,13 @@ export class TasksService {
     });
 
     await this.logActivity(orgId, taskId, userId, 'reopened');
+
+    // Recalculate project progress if task is linked to a project
+    const projectTaskReopened = await this.prisma.projectTask.findFirst({ where: { task_id: taskId } });
+    if (projectTaskReopened) {
+      await this.projectProgressService.recalculateProjectProgress(projectTaskReopened.project_id);
+    }
+
     return this.getTask(orgId, taskId);
   }
 

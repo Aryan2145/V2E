@@ -50,6 +50,7 @@ const orgStaffNav: NavItem[] = [
   { label: 'Roles', href: '/dashboard/roles', icon: <Briefcase size={18} /> },
   { label: 'Employees', href: '/dashboard/employees', icon: <Users size={18} /> },
   { label: 'Tasks', href: '/dashboard/tasks', icon: <CheckSquare size={18} /> },
+  { label: 'Projects', href: '/dashboard/projects', icon: <Briefcase size={18} /> },
   { label: 'Holidays', href: '/dashboard/holidays', icon: <CalendarDays size={18} /> },
   { label: 'Setup', href: '/setup/step-1-identity', icon: <Settings size={18} /> },
 ]
@@ -61,6 +62,7 @@ const employeeNav: NavItem[] = [
   { label: 'Org Chart', href: '/dashboard/org-chart', icon: <GitBranch size={18} /> },
   { label: 'My Role', href: '/dashboard/my-role', icon: <Briefcase size={18} /> },
   { label: 'My Profile', href: '/dashboard/my-profile', icon: <UserCircle size={18} /> },
+  { label: 'Projects', href: '/dashboard/projects', icon: <Briefcase size={18} /> },
   { label: 'Holidays', href: '/dashboard/holidays', icon: <CalendarDays size={18} /> },
 ]
 

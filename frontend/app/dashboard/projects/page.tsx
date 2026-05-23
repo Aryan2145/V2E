@@ -1,0 +1,138 @@
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
+import { useAuth } from '@/lib/auth/context'
+import { projectsApi } from '@/lib/api/projects'
+import type { Project, ProjectStatus } from '@/lib/types/projects'
+import ProjectCard from '@/components/projects/ProjectCard'
+import ProjectStatCard from '@/components/projects/ProjectStatCard'
+import { Plus, Briefcase, Search } from 'lucide-react'
+
+const STATUS_OPTS: { value: 'all' | ProjectStatus; label: string }[] = [
+  { value: 'all', label: 'All Statuses' },
+  { value: 'active', label: 'Active' },
+  { value: 'on_hold', label: 'On Hold' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'cancelled', label: 'Cancelled' },
+]
+
+export default function ProjectsPage() {
+  const { user } = useAuth()
+  const orgId = user?.organizationId ?? ''
+
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+  const [filterStatus, setFilterStatus] = useState<'all' | ProjectStatus>('all')
+  const [search, setSearch] = useState('')
+
+  const load = useCallback(() => {
+    if (!orgId) { setLoading(false); return }
+    setLoading(true)
+    projectsApi.list(orgId).catch(() => []).then(setProjects).finally(() => setLoading(false))
+  }, [orgId])
+
+  useEffect(() => { load() }, [load])
+
+  const filtered = projects.filter((p) => {
+    if (filterStatus !== 'all' && p.status !== filterStatus) return false
+    if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
+
+  const active = projects.filter((p) => p.status === 'active').length
+  const onHold = projects.filter((p) => p.status === 'on_hold').length
+  const completed = projects.filter((p) => p.status === 'completed').length
+  const avgProgress = projects.length
+    ? Math.round(projects.reduce((s, p) => s + p.completion_percentage, 0) / projects.length)
+    : 0
+
+  if (!orgId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64">
+        <p className="font-semibold text-[#0F172A]">No organization found</p>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Projects</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">All projects across your organization.</p>
+        </div>
+        <Link
+          href="/dashboard/projects/new"
+          className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors shrink-0"
+        >
+          <Plus size={16} />
+          New Project
+        </Link>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <ProjectStatCard label="Total Projects" value={projects.length} color="#2563EB" />
+        <ProjectStatCard label="Active" value={active} color="#16A34A" />
+        <ProjectStatCard label="On Hold" value={onHold} color="#D97706" />
+        <ProjectStatCard label="Avg. Progress" value={`${avgProgress}%`} color="#0891B2" />
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search projects..."
+            className="w-full h-9 pl-8 pr-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none"
+          />
+        </div>
+        <select
+          value={filterStatus}
+          onChange={(e) => setFilterStatus(e.target.value as 'all' | ProjectStatus)}
+          className="h-9 px-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
+        >
+          {STATUS_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <span className="text-sm text-[#475569]">
+          {filtered.length} project{filtered.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
+          <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+            <Briefcase size={24} className="text-[#94A3B8]" />
+          </div>
+          <p className="font-semibold text-[#0F172A]">No projects found</p>
+          <p className="text-sm text-[#475569] mt-1">
+            {projects.length === 0 ? 'Create your first project to get started.' : 'Try adjusting your filters.'}
+          </p>
+          {projects.length === 0 && (
+            <Link
+              href="/dashboard/projects/new"
+              className="mt-4 px-4 py-2 bg-[#2563EB] text-white text-sm font-semibold rounded-[8px] hover:bg-[#1D4ED8] transition-colors"
+            >
+              New Project
+            </Link>
+          )}
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {filtered.map((p) => (
+            <ProjectCard key={p.id} project={p} orgId={orgId} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

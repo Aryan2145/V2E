@@ -16,6 +16,7 @@ import {
   Globe,
   GitBranch,
   Ticket,
+  Briefcase,
 } from 'lucide-react'
 
 interface SubNavItem {
@@ -41,6 +42,12 @@ const subNavGroups: SubNavGroup[] = [
       { label: 'Collective', href: '/dashboard/tasks/collective', icon: <Globe size={16} /> },
       { label: 'Archive', href: '/dashboard/tasks/archive', icon: <Archive size={16} />, adminOnly: true },
       { label: 'Reports', href: '/dashboard/tasks/reports', icon: <BarChart2 size={16} />, adminOnly: true },
+    ],
+  },
+  {
+    items: [
+      { label: 'Projects', href: '/dashboard/projects', icon: <Briefcase size={16} /> },
+      { label: 'My Projects', href: '/dashboard/projects/my', icon: <Briefcase size={16} /> },
     ],
   },
   {

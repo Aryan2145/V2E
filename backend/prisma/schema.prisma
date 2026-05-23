@@ -1676,3 +1676,270 @@ model IndividualHoliday {
 
   @@map("individual_holidays")
 }
+
+// ─── Projects ─────────────────────────────────────────────────────────────────
+
+enum ProjectStatus {
+  active
+  on_hold
+  completed
+  cancelled
+}
+
+enum ProjectMemberRole {
+  manager
+  editor
+  viewer
+}
+
+enum TaskVisibility {
+  own_tasks_only
+  all_member_tasks
+}
+
+enum MilestoneStatus {
+  pending
+  in_progress
+  achieved
+}
+
+enum ProjectActivityAction {
+  created
+  member_added
+  member_removed
+  member_role_changed
+  status_changed
+  milestone_created
+  milestone_achieved
+  task_added
+  task_completed
+  task_removed
+  dependency_added
+  dependency_removed
+  comment_added
+  document_added
+  budget_updated
+  template_applied
+  deleted
+}
+
+model ProjectMaster {
+  id                      String   @id @default(uuid())
+  organization_id         String   @unique
+  project_creation_roles  Json     @default("[\"org_admin\",\"hr_manager\",\"employee\"]")
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  @@map("project_masters")
+}
+
+model ProjectTemplate {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  name                String
+  description         String?  @db.Text
+  created_by_user_id  String
+  is_active           Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  milestones ProjectTemplateMilestone[]
+  tasks      ProjectTemplateTask[]
+
+  @@map("project_templates")
+}
+
+model ProjectTemplateMilestone {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  project_template_id String
+  name                String
+  description         String?  @db.Text
+  order_index         Int      @default(0)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  template ProjectTemplate      @relation(fields: [project_template_id], references: [id], onDelete: Cascade)
+  tasks    ProjectTemplateTask[]
+
+  @@map("project_template_milestones")
+}
+
+model ProjectTemplateTask {
+  id                       String   @id @default(uuid())
+  organization_id          String
+  project_template_id      String
+  milestone_id             String?
+  title                    String
+  description              String?  @db.Text
+  priority_id              String?
+  checklist_items          Json     @default("[]")
+  default_assignee_user_id String?
+  default_assignee_role    String?
+  order_index              Int      @default(0)
+  estimated_days           Int?
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+
+  template  ProjectTemplate           @relation(fields: [project_template_id], references: [id], onDelete: Cascade)
+  milestone ProjectTemplateMilestone? @relation(fields: [milestone_id], references: [id])
+
+  @@map("project_template_tasks")
+}
+
+model Project {
+  id                      String        @id @default(uuid())
+  organization_id         String
+  name                    String
+  description             String?       @db.Text
+  status                  ProjectStatus @default(active)
+  status_reason           String?       @db.Text
+  created_by_user_id      String
+  project_manager_user_id String
+  template_id             String?
+  start_date              DateTime?     @db.Date
+  end_date                DateTime?     @db.Date
+  planned_budget          Float?
+  actual_spent            Float?
+  currency                String        @default("INR")
+  completion_percentage   Float         @default(0)
+  total_tasks             Int           @default(0)
+  completed_tasks         Int           @default(0)
+  total_milestones        Int           @default(0)
+  achieved_milestones     Int           @default(0)
+  is_deleted              Boolean       @default(false)
+  deleted_by_user_id      String?
+  deleted_at              DateTime?
+  deletion_reason         String?       @db.Text
+  created_at              DateTime      @default(now())
+  updated_at              DateTime      @updatedAt
+
+  members       ProjectMember[]
+  milestones    ProjectMilestone[]
+  project_tasks ProjectTask[]
+  dependencies  ProjectTaskDependency[]
+  comments      ProjectComment[]
+  documents     ProjectDocument[]
+  activity_logs ProjectActivityLog[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id               String            @id @default(uuid())
+  organization_id  String
+  project_id       String
+  user_id          String
+  role             ProjectMemberRole @default(viewer)
+  task_visibility  TaskVisibility    @default(own_tasks_only)
+  added_by_user_id String
+  created_at       DateTime          @default(now())
+  updated_at       DateTime          @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([project_id, user_id])
+  @@map("project_members")
+}
+
+model ProjectMilestone {
+  id                    String          @id @default(uuid())
+  organization_id       String
+  project_id            String
+  name                  String
+  description           String?         @db.Text
+  order_index           Int             @default(0)
+  due_date              DateTime?       @db.Date
+  status                MilestoneStatus @default(pending)
+  achieved_at           DateTime?
+  total_tasks           Int             @default(0)
+  completed_tasks       Int             @default(0)
+  completion_percentage Float           @default(0)
+  created_at            DateTime        @default(now())
+  updated_at            DateTime        @updatedAt
+
+  project Project       @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  tasks   ProjectTask[]
+
+  @@map("project_milestones")
+}
+
+model ProjectTask {
+  id               String   @id @default(uuid())
+  organization_id  String
+  project_id       String
+  milestone_id     String?
+  task_id          String?
+  template_task_id String?
+  order_index      Int      @default(0)
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  project   Project           @relation(fields: [project_id], references: [id], onDelete: Cascade)
+  milestone ProjectMilestone? @relation(fields: [milestone_id], references: [id])
+
+  @@map("project_tasks")
+}
+
+model ProjectTaskDependency {
+  id                 String   @id @default(uuid())
+  organization_id    String
+  project_id         String
+  task_id            String
+  depends_on_task_id String
+  created_at         DateTime @default(now())
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([task_id, depends_on_task_id])
+  @@map("project_task_dependencies")
+}
+
+model ProjectComment {
+  id                  String    @id @default(uuid())
+  organization_id     String
+  project_id          String
+  user_id             String
+  body                String    @db.Text
+  attachment_urls     Json      @default("[]")
+  reply_to_comment_id String?
+  is_deleted          Boolean   @default(false)
+  deleted_at          DateTime?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@map("project_comments")
+}
+
+model ProjectDocument {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  project_id          String
+  name                String
+  url                 String
+  type                String?
+  uploaded_by_user_id String
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@map("project_documents")
+}
+
+model ProjectActivityLog {
+  id                   String                @id @default(uuid())
+  organization_id      String
+  project_id           String
+  performed_by_user_id String
+  action               ProjectActivityAction
+  metadata             Json                  @default("{}")
+  created_at           DateTime              @default(now())
+
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@map("project_activity_logs")
+}
+

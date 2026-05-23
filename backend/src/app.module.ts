@@ -23,6 +23,7 @@ import { RecurringTasksModule } from './recurring-tasks/recurring-tasks.module';
 import { WorkflowsModule } from './workflows/workflows.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { HolidaysModule } from './holidays/holidays.module';
+import { ProjectsModule } from './projects/projects.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { HolidaysModule } from './holidays/holidays.module';
     WorkflowsModule,
     TicketsModule,
     HolidaysModule,
+    ProjectsModule,
   ],
 })
 export class AppModule {}
