@@ -609,89 +609,91 @@ export default function TaskDetailPage() {
 
           {/* Right panel — 40% */}
           <div className="w-full lg:w-80 shrink-0 space-y-4">
+
             {/* Status */}
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
-              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-3">Status</p>
-              <select
-                value={selectedStatusId}
-                onChange={(e) => handleStatusChange(e.target.value)}
-                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              >
-                {statuses.map((s) => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </select>
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#EFF6FF] border-b border-[#BFDBFE]">
+                <span className="w-2 h-2 rounded-full bg-[#2563EB]" />
+                <p className="text-[11px] font-bold text-[#2563EB] uppercase tracking-widest">Status</p>
+              </div>
+              <div className="p-4">
+                <select
+                  value={selectedStatusId}
+                  onChange={(e) => handleStatusChange(e.target.value)}
+                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
+                >
+                  {statuses.map((s) => (
+                    <option key={s.id} value={s.id}>{s.label}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {/* Meta */}
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 space-y-4">
-              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Details</p>
-
-              <div className="flex flex-wrap gap-2">
-                {/* <QuadrantBadge quadrant={task.quadrant} size="md" /> */}
-                {status && (
-                  <span
-                    className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
-                    style={{
-                      backgroundColor: status.color + '22',
-                      color: status.color,
-                      border: `1px solid ${status.color}44`,
-                    }}
-                  >
-                    {status.label}
-                  </span>
-                )}
-                {priority && (
-                  <span
-                    className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
-                    style={{
-                      backgroundColor: priority.color + '22',
-                      color: priority.color,
-                      border: `1px solid ${priority.color}44`,
-                    }}
-                  >
-                    {priority.label}
-                  </span>
-                )}
-                {category && (
-                  <span
-                    className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
-                    style={{
-                      backgroundColor: category.color + '22',
-                      color: category.color,
-                      border: `1px solid ${category.color}44`,
-                    }}
-                  >
-                    {category.name}
-                  </span>
-                )}
+            {/* Details */}
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#F5F3FF] border-b border-[#DDD6FE]">
+                <span className="w-2 h-2 rounded-full bg-[#7C3AED]" />
+                <p className="text-[11px] font-bold text-[#7C3AED] uppercase tracking-widest">Details</p>
               </div>
-
-              {task.deadline && (
-                <div className="flex items-center gap-2">
-                  <Calendar size={14} className="text-[#94A3B8] shrink-0" />
-                  <div>
-                    <p className="text-xs text-[#94A3B8]">Deadline</p>
-                    <p className={`text-sm ${deadlineColor(task.deadline)}`}>
-                      {formatDate(task.deadline)}
-                    </p>
-                  </div>
+              <div className="p-4 space-y-4">
+                <div className="flex flex-wrap gap-2">
+                  {status && (
+                    <span
+                      className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
+                      style={{ backgroundColor: status.color + '22', color: status.color, border: `1px solid ${status.color}44` }}
+                    >
+                      {status.label}
+                    </span>
+                  )}
+                  {priority && (
+                    <span
+                      className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
+                      style={{ backgroundColor: priority.color + '22', color: priority.color, border: `1px solid ${priority.color}44` }}
+                    >
+                      {priority.label}
+                    </span>
+                  )}
+                  {category && (
+                    <span
+                      className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
+                      style={{ backgroundColor: category.color + '22', color: category.color, border: `1px solid ${category.color}44` }}
+                    >
+                      {category.name}
+                    </span>
+                  )}
                 </div>
-              )}
 
-              <div className="flex items-center gap-2">
-                <Clock size={14} className="text-[#94A3B8] shrink-0" />
-                <div>
-                  <p className="text-xs text-[#94A3B8]">Created</p>
-                  <p className="text-sm text-[#475569]">{formatDate(task.created_at)}</p>
+                {task.deadline && (
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-[6px] bg-[#FEF9C3] flex items-center justify-center shrink-0">
+                      <Calendar size={13} className="text-[#D97706]" />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide">Deadline</p>
+                      <p className={`text-sm ${deadlineColor(task.deadline)}`}>{formatDate(task.deadline)}</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-[6px] bg-[#F1F5F9] flex items-center justify-center shrink-0">
+                    <Clock size={13} className="text-[#475569]" />
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide">Created</p>
+                    <p className="text-sm text-[#475569]">{formatDate(task.created_at)}</p>
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Assignees */}
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
-              <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Assignees</p>
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-[#F0FDF4] border-b border-[#BBF7D0]">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#16A34A]" />
+                  <p className="text-[11px] font-bold text-[#16A34A] uppercase tracking-widest">Assignees</p>
+                </div>
                 {!editingAssignees ? (
                   <button
                     type="button"
@@ -703,7 +705,7 @@ export default function TaskDetailPage() {
                       })))
                       setEditingAssignees(true)
                     }}
-                    className="text-xs font-medium text-[#2563EB] hover:underline"
+                    className="text-xs font-semibold text-[#16A34A] hover:text-[#15803D] transition-colors"
                   >
                     Edit
                   </button>
@@ -713,7 +715,7 @@ export default function TaskDetailPage() {
                       type="button"
                       onClick={handleSaveAssignees}
                       disabled={savingAssignees}
-                      className="text-xs font-semibold text-white bg-[#2563EB] px-2.5 py-1 rounded-[6px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors"
+                      className="text-xs font-semibold text-white bg-[#16A34A] px-2.5 py-1 rounded-[6px] hover:bg-[#15803D] disabled:opacity-60 transition-colors"
                     >
                       {savingAssignees ? 'Saving…' : 'Save'}
                     </button>
@@ -727,77 +729,89 @@ export default function TaskDetailPage() {
                   </div>
                 )}
               </div>
-
-              {editingAssignees ? (
-                <AssigneeSelector
-                  orgId={orgId}
-                  value={editAssigneesList}
-                  onChange={setEditAssigneesList}
-                />
-              ) : (
-                <div className="space-y-3">
-                  {assignees.map((a) => {
-                    const name = a.user?.name ?? a.user_name ?? 'Unknown'
-                    const email = a.user?.email ?? a.user_email ?? ''
-                    return (
-                      <div key={a.id} className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
-                          {getInitials(name)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
-                          <p className="text-xs text-[#475569] truncate">{email}</p>
-                        </div>
-                        {a.is_completed ? (
-                          <CheckCircle2 size={14} className="text-[#16A34A] shrink-0" />
-                        ) : (
-                          <div className="w-3.5 h-3.5 rounded-full border-2 border-[#CBD5E1] shrink-0" />
-                        )}
-                      </div>
-                    )
-                  })}
-                  {ccUsers.length > 0 && (
-                    <>
-                      <p className="text-xs text-[#94A3B8] pt-1">CC</p>
-                      {ccUsers.map((a) => {
-                        const name = a.user?.name ?? a.user_name ?? 'Unknown'
-                        return (
-                          <div key={a.id} className="flex items-center gap-3 opacity-70">
-                            <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
-                              {getInitials(name)}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
-                            </div>
-                            <span className="text-[10px] font-semibold bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A] rounded px-1.5 py-0.5">CC</span>
+              <div className="p-4">
+                {editingAssignees ? (
+                  <AssigneeSelector
+                    orgId={orgId}
+                    value={editAssigneesList}
+                    onChange={setEditAssigneesList}
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {assignees.map((a) => {
+                      const name = a.user?.name ?? a.user_name ?? 'Unknown'
+                      const email = a.user?.email ?? a.user_email ?? ''
+                      return (
+                        <div key={a.id} className="flex items-center gap-3">
+                          <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                            {getInitials(name)}
                           </div>
-                        )
-                      })}
-                    </>
-                  )}
-                  {assignees.length === 0 && ccUsers.length === 0 && (
-                    <p className="text-sm text-[#475569]">No assignees yet.</p>
-                  )}
-                </div>
-              )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
+                            <p className="text-xs text-[#475569] truncate">{email}</p>
+                          </div>
+                          {a.is_completed ? (
+                            <CheckCircle2 size={14} className="text-[#16A34A] shrink-0" />
+                          ) : (
+                            <div className="w-3.5 h-3.5 rounded-full border-2 border-[#CBD5E1] shrink-0" />
+                          )}
+                        </div>
+                      )
+                    })}
+                    {ccUsers.length > 0 && (
+                      <>
+                        <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide pt-1">CC</p>
+                        {ccUsers.map((a) => {
+                          const name = a.user?.name ?? a.user_name ?? 'Unknown'
+                          return (
+                            <div key={a.id} className="flex items-center gap-3 opacity-70">
+                              <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                                {getInitials(name)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
+                              </div>
+                              <span className="text-[10px] font-semibold bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A] rounded px-1.5 py-0.5">CC</span>
+                            </div>
+                          )
+                        })}
+                      </>
+                    )}
+                    {assignees.length === 0 && ccUsers.length === 0 && (
+                      <p className="text-sm text-[#475569]">No assignees yet.</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Completion mode */}
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
-              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Completion Mode</p>
-              <p className="text-sm text-[#1E293B]">
-                {task.completion_mode === 'all_must_complete'
-                  ? 'All assignees must complete'
-                  : 'Any assignee can complete'}
-              </p>
+            {/* Completion Mode */}
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#FFFBEB] border-b border-[#FDE68A]">
+                <span className="w-2 h-2 rounded-full bg-[#D97706]" />
+                <p className="text-[11px] font-bold text-[#D97706] uppercase tracking-widest">Completion Mode</p>
+              </div>
+              <div className="p-4">
+                <p className="text-sm font-medium text-[#0F172A]">
+                  {task.completion_mode === 'all_must_complete'
+                    ? 'All assignees must complete'
+                    : 'Any assignee can complete'}
+                </p>
+              </div>
             </div>
 
             {task.proof_required && (
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
-                <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-2">Proof Required</p>
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${task.proof_url ? 'bg-[#16A34A]' : 'bg-[#D97706]'}`} />
-                  <p className="text-sm text-[#1E293B]">{task.proof_url ? 'Submitted' : 'Pending'}</p>
+              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+                <div className={`flex items-center gap-2 px-4 py-2.5 border-b ${task.proof_url ? 'bg-[#F0FDF4] border-[#BBF7D0]' : 'bg-[#FEF2F2] border-[#FECACA]'}`}>
+                  <span className={`w-2 h-2 rounded-full ${task.proof_url ? 'bg-[#16A34A]' : 'bg-[#DC2626]'}`} />
+                  <p className={`text-[11px] font-bold uppercase tracking-widest ${task.proof_url ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>
+                    Proof Required
+                  </p>
+                </div>
+                <div className="p-4">
+                  <p className={`text-sm font-medium ${task.proof_url ? 'text-[#16A34A]' : 'text-[#D97706]'}`}>
+                    {task.proof_url ? 'Submitted' : 'Pending submission'}
+                  </p>
                 </div>
               </div>
             )}
