@@ -23,6 +23,7 @@ import {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getInitials(name: string): string {
+  if (!name) return '?'
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
 }
 
@@ -31,6 +32,7 @@ const avatarColors = [
   'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]',
 ]
 function avatarColor(name: string): string {
+  if (!name) return avatarColors[0]
   let h = 0; for (let i = 0; i < name.length; i++) h += name.charCodeAt(i)
   return avatarColors[h % avatarColors.length]
 }
@@ -101,8 +103,8 @@ function CommentItem({
 
   return (
     <div className="flex gap-3">
-      <div className={`w-8 h-8 rounded-full ${avatarColor(comment.user_name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0 mt-0.5`}>
-        {getInitials(comment.user_name)}
+      <div className={`w-8 h-8 rounded-full ${avatarColor(comment.user_name ?? '')} flex items-center justify-center text-white text-[10px] font-bold shrink-0 mt-0.5`}>
+        {getInitials(comment.user_name ?? '')}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
