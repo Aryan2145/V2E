@@ -153,9 +153,25 @@ export default function CreateTaskModal({
     setChecklist((prev) => prev.filter((_, i) => i !== idx))
   }
 
+  function handleDeadlineDateChange(val: string) {
+    if (!val) { setDeadlineDate(''); setDeadlineTime(''); return }
+    if (val > '2100-12-31') return   // reject years beyond 2100 while typing
+    setDeadlineDate(val)
+  }
+
+  function handleDeadlineDateBlur(val: string) {
+    if (!val) return
+    if (val < todayStr) setDeadlineDate(todayStr)
+    else if (val > '2100-12-31') setDeadlineDate('2100-12-31')
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) { setError('Title is required.'); return }
+    if (deadlineDate) {
+      if (deadlineDate < todayStr) { setError('Deadline cannot be in the past.'); return }
+      if (deadlineDate > '2100-12-31') { setError('Deadline year cannot exceed 2100.'); return }
+    }
     setSubmitting(true)
     setError(null)
     try {
@@ -285,7 +301,8 @@ export default function CreateTaskModal({
                 <input
                   type="date"
                   value={deadlineDate}
-                  onChange={(e) => { setDeadlineDate(e.target.value); if (!e.target.value) setDeadlineTime('') }}
+                  onChange={(e) => handleDeadlineDateChange(e.target.value)}
+                  onBlur={(e) => handleDeadlineDateBlur(e.target.value)}
                   min={todayStr}
                   max="2100-12-31"
                   className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
