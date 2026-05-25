@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { X, Plus, Trash2 } from 'lucide-react'
+import { X, Plus, Trash2, Calendar, Clock } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
@@ -57,7 +57,12 @@ export default function CreateTaskModal({
   const [priorityId, setPriorityId] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [statusId, setStatusId] = useState('')
-  const [deadline, setDeadline] = useState('')
+  const [deadlineDate, setDeadlineDate] = useState('')
+  const [deadlineTime, setDeadlineTime] = useState('')
+  const deadline = deadlineDate
+    ? deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`
+    : ''
+  const todayStr = new Date().toISOString().split('T')[0]
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
@@ -102,18 +107,17 @@ export default function CreateTaskModal({
   // Holiday check on deadline change (debounced 300ms)
   useEffect(() => {
     if (holidayDebounceRef.current) clearTimeout(holidayDebounceRef.current)
-    if (!deadline || !orgId) { setHolidayCheck(null); return }
+    if (!deadlineDate || !orgId) { setHolidayCheck(null); return }
     holidayDebounceRef.current = setTimeout(async () => {
       try {
-        const dateOnly = deadline.slice(0, 10)
-        const result = await holidaysApi.checkDate(orgId, dateOnly)
+        const result = await holidaysApi.checkDate(orgId, deadlineDate)
         setHolidayCheck(result)
       } catch {
         setHolidayCheck(null)
       }
     }, 300)
     return () => { if (holidayDebounceRef.current) clearTimeout(holidayDebounceRef.current) }
-  }, [deadline, orgId])
+  }, [deadlineDate, orgId])
 
   const reset = useCallback(() => {
     setTitle('')
@@ -122,7 +126,8 @@ export default function CreateTaskModal({
     setPriorityId('')
     setCategoryId('')
     setStatusId(statuses.find((s) => s.is_default)?.id ?? statuses[0]?.id ?? '')
-    setDeadline('')
+    setDeadlineDate('')
+    setDeadlineTime('')
     setCompletionMode('any_can_complete')
     setProofRequired(false)
     setAssignees([])
@@ -259,13 +264,51 @@ export default function CreateTaskModal({
 
           {/* Deadline */}
           <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">Deadline</label>
-            <input
-              type="datetime-local"
-              value={deadline}
-              onChange={(e) => setDeadline(e.target.value)}
-              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-            />
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-medium text-[#374151]">Deadline</label>
+              {deadlineDate && (
+                <button
+                  type="button"
+                  onClick={() => { setDeadlineDate(''); setDeadlineTime('') }}
+                  className="flex items-center gap-1 text-[11px] text-[#94A3B8] hover:text-[#DC2626] transition-colors"
+                >
+                  <X size={10} />
+                  Clear
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              {/* Date picker */}
+              <div className="relative">
+                <Calendar size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+                <input
+                  type="date"
+                  value={deadlineDate}
+                  onChange={(e) => { setDeadlineDate(e.target.value); if (!e.target.value) setDeadlineTime('') }}
+                  min={todayStr}
+                  max="2100-12-31"
+                  className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+                />
+              </div>
+
+              {/* Time picker — appears after date is selected */}
+              {deadlineDate && (
+                <div className="relative">
+                  <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+                  <input
+                    type="time"
+                    value={deadlineTime}
+                    onChange={(e) => setDeadlineTime(e.target.value)}
+                    className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+                  />
+                  {!deadlineTime && (
+                    <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
+                  )}
+                </div>
+              )}
+            </div>
+
             <HolidayWarningBadge check={holidayCheck} />
           </div>
 
