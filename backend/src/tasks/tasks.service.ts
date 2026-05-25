@@ -417,11 +417,19 @@ export class TasksService {
       ...task,
       created_by: userMap.get(task.created_by_user_id) ?? null,
       assignees: task.assignees.map((a) => ({ ...a, user: userMap.get(a.user_id) ?? null })),
-      comments: (task.comments as any[]).map((c) => ({
-        ...c,
-        user: userMap.get(c.user_id) ?? null,
-        replies: (c.replies ?? []).map((r: any) => ({ ...r, user: userMap.get(r.user_id) ?? null })),
-      })),
+      comments: (task.comments as any[]).map((c) => {
+        const cu = userMap.get(c.user_id);
+        return {
+          ...c,
+          user_name: cu?.name ?? null,
+          user_email: cu?.email ?? null,
+          user: cu ?? null,
+          replies: (c.replies ?? []).map((r: any) => {
+            const ru = userMap.get(r.user_id);
+            return { ...r, user_name: ru?.name ?? null, user_email: ru?.email ?? null, user: ru ?? null };
+          }),
+        };
+      }),
     };
   }
 
@@ -683,11 +691,19 @@ export class TasksService {
     });
     const userMap = new Map(users.map((u) => [u.id, u]));
 
-    return comments.map((c) => ({
-      ...c,
-      user: userMap.get(c.user_id) ?? null,
-      replies: c.replies.map((r) => ({ ...r, user: userMap.get(r.user_id) ?? null })),
-    }));
+    return comments.map((c) => {
+      const u = userMap.get(c.user_id);
+      return {
+        ...c,
+        user_name: u?.name ?? null,
+        user_email: u?.email ?? null,
+        user: u ?? null,
+        replies: c.replies.map((r) => {
+          const ru = userMap.get(r.user_id);
+          return { ...r, user_name: ru?.name ?? null, user_email: ru?.email ?? null, user: ru ?? null };
+        }),
+      };
+    });
   }
 
   async addComment(orgId: string, userId: string, taskId: string, dto: CreateCommentDto) {
@@ -704,7 +720,7 @@ export class TasksService {
     });
     await this.logActivity(orgId, taskId, userId, 'comment_added', { comment_id: comment.id });
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true } });
-    return { ...comment, user };
+    return { ...comment, user_name: user?.name ?? null, user_email: user?.email ?? null, user: user ?? null };
   }
 
   async deleteComment(orgId: string, userId: string, commentId: string) {
