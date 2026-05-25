@@ -23,7 +23,7 @@ import {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getInitials(name: string): string {
-  if (!name) return '?'
+  if (!name) return ''
   return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
 }
 
@@ -103,8 +103,15 @@ function CommentItem({
 
   return (
     <div className="flex gap-3">
-      <div className={`w-8 h-8 rounded-full ${avatarColor(comment.user_name ?? '')} flex items-center justify-center text-white text-[10px] font-bold shrink-0 mt-0.5`}>
-        {getInitials(comment.user_name ?? '')}
+      <div
+        className={[
+          'w-8 h-8 rounded-full flex items-center justify-center shrink-0 mt-0.5',
+          comment.user_name
+            ? `${avatarColor(comment.user_name)} text-white text-[10px] font-bold`
+            : 'bg-[#E2E8F0]',
+        ].join(' ')}
+      >
+        {comment.user_name ? getInitials(comment.user_name) : <User size={14} className="text-[#94A3B8]" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
