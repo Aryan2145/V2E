@@ -53,6 +53,16 @@ export class CreateEmployeeDto {
   @IsOptional()
   date_of_joining?: string;
 
+  @ApiPropertyOptional({ description: 'ISO 8601 date string e.g. 1995-06-15' })
+  @IsISO8601()
+  @IsOptional()
+  date_of_birth?: string;
+
+  @ApiPropertyOptional({ description: 'ISO 8601 date string e.g. 2018-02-14' })
+  @IsISO8601()
+  @IsOptional()
+  marriage_date?: string;
+
   @ApiPropertyOptional({ enum: EmploymentType })
   @IsEnum(EmploymentType)
   @IsOptional()

@@ -283,6 +283,8 @@ model EmployeeProfile {
   reporting_to_user_id String?
   employee_code        String?
   date_of_joining      DateTime?
+  date_of_birth        DateTime?
+  marriage_date        DateTime?
   employment_type      EmploymentType @default(full_time)
   status               EmployeeStatus @default(active)
   created_at           DateTime       @default(now())

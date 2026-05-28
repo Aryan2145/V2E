@@ -130,6 +130,8 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
     status: employee.status,
     employee_code: employee.employee_code ?? '',
     date_of_joining: employee.date_of_joining ? employee.date_of_joining.slice(0, 10) : '',
+    date_of_birth: employee.date_of_birth ? employee.date_of_birth.slice(0, 10) : '',
+    marriage_date: employee.marriage_date ? employee.marriage_date.slice(0, 10) : '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -151,6 +153,8 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
       if (form.reporting_to_user_id) payload.reporting_to_user_id = form.reporting_to_user_id
       if (form.employee_code) payload.employee_code = form.employee_code
       if (form.date_of_joining) payload.date_of_joining = form.date_of_joining
+      if (form.date_of_birth) payload.date_of_birth = form.date_of_birth
+      if (form.marriage_date) payload.marriage_date = form.marriage_date
 
       const updated = await updateEmployee(orgId, employee.id, payload)
       onSaved(updated)
@@ -245,6 +249,28 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
                 type="date"
                 value={form.date_of_joining}
                 onChange={(e) => set('date_of_joining', e.target.value)}
+                className={selectClass}
+              />
+            </div>
+
+            {/* Date of Birth */}
+            <div>
+              <label className={labelClass}>Date of Birth</label>
+              <input
+                type="date"
+                value={form.date_of_birth}
+                onChange={(e) => set('date_of_birth', e.target.value)}
+                className={selectClass}
+              />
+            </div>
+
+            {/* Marriage Date */}
+            <div>
+              <label className={labelClass}>Marriage Date</label>
+              <input
+                type="date"
+                value={form.marriage_date}
+                onChange={(e) => set('marriage_date', e.target.value)}
                 className={selectClass}
               />
             </div>
@@ -393,6 +419,8 @@ export default function EmployeeDetailPage() {
           <InfoCell label="Date of Joining" value={formatDate(employee.date_of_joining)} />
           <InfoCell label="Employment Type" value={employmentTypeLabels[employee.employment_type] ?? employee.employment_type} />
           <InfoCell label="Status" value={<StatusBadge status={employee.status} />} />
+          {employee.date_of_birth && <InfoCell label="Date of Birth" value={formatDate(employee.date_of_birth)} />}
+          {employee.marriage_date && <InfoCell label="Marriage Date" value={formatDate(employee.marriage_date)} />}
         </div>
       </Section>
 

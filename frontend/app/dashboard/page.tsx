@@ -7,8 +7,9 @@ import { getOrganization } from '@/lib/api/organizations'
 import { getOrgIdentity } from '@/lib/api/org-identity'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
-import { getEmployees } from '@/lib/api/employees'
-import type { Organization, OrgIdentity, Department, Role, EmployeeProfile } from '@/lib/types'
+import { getEmployees, getPeopleEvents } from '@/lib/api/employees'
+import PeopleEventsCard from '@/components/dashboard/PeopleEventsCard'
+import type { Organization, OrgIdentity, Department, Role, EmployeeProfile, PeopleEventsResponse } from '@/lib/types'
 import {
   Building2,
   Briefcase,
@@ -105,6 +106,7 @@ export default function DashboardPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
+  const [peopleEvents, setPeopleEvents] = useState<PeopleEventsResponse | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -118,12 +120,14 @@ export default function DashboardPage() {
       getDepartments(orgId).catch(() => []),
       getRoles(orgId).catch(() => []),
       getEmployees(orgId).catch(() => []),
-    ]).then(([orgData, identityData, depts, rolesData, emps]) => {
+      getPeopleEvents(orgId).catch(() => null),
+    ]).then(([orgData, identityData, depts, rolesData, emps, events]) => {
       setOrg(orgData)
       setIdentity(identityData)
       setDepartments(depts)
       setRoles(rolesData)
       setEmployees(emps)
+      setPeopleEvents(events)
     }).finally(() => setLoading(false))
   }, [orgId])
 
@@ -186,6 +190,9 @@ export default function DashboardPage() {
         <StatCard label="Employees" value={employees.length} icon={<Users size={20} />} />
         <StatCard label="Active" value={activeEmployees} icon={<UserCheck size={20} />} />
       </div>
+
+      {/* People Events */}
+      {peopleEvents && <PeopleEventsCard data={peopleEvents} />}
 
       {/* Quick nav */}
       <div>

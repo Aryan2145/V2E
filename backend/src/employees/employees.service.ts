@@ -130,9 +130,9 @@ export class EmployeesService {
           ...profileData,
           organization_id: orgId,
           user_id: user.id,
-          date_of_joining: profileData.date_of_joining
-            ? new Date(profileData.date_of_joining)
-            : undefined,
+          date_of_joining: profileData.date_of_joining ? new Date(profileData.date_of_joining) : undefined,
+          date_of_birth: profileData.date_of_birth ? new Date(profileData.date_of_birth) : undefined,
+          marriage_date: profileData.marriage_date ? new Date(profileData.marriage_date) : undefined,
         },
         include: PROFILE_INCLUDE,
       });
@@ -180,9 +180,9 @@ export class EmployeesService {
       where: { id },
       data: {
         ...dto,
-        date_of_joining: dto.date_of_joining
-          ? new Date(dto.date_of_joining)
-          : undefined,
+        date_of_joining: dto.date_of_joining ? new Date(dto.date_of_joining) : undefined,
+        date_of_birth: dto.date_of_birth ? new Date(dto.date_of_birth) : undefined,
+        marriage_date: dto.marriage_date ? new Date(dto.marriage_date) : undefined,
       },
       include: PROFILE_INCLUDE,
     });
@@ -202,6 +202,124 @@ export class EmployeesService {
       data: { status },
       include: PROFILE_INCLUDE,
     });
+  }
+
+  async getPeopleEvents(orgId: string, windowDays = 30) {
+    const profiles = await this.prisma.employeeProfile.findMany({
+      where: { organization_id: orgId, status: 'active' },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const windowEnd = new Date(today);
+    windowEnd.setDate(windowEnd.getDate() + windowDays);
+
+    // Returns the next calendar occurrence of a month/day on or after today
+    function nextOccurrence(month: number, day: number): Date {
+      const thisYear = new Date(today.getFullYear(), month - 1, day);
+      if (thisYear >= today) return thisYear;
+      return new Date(today.getFullYear() + 1, month - 1, day);
+    }
+
+    function ordinal(n: number): string {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    }
+
+    function formatDate(d: Date): string {
+      return d.toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+    }
+
+    const birthdays: any[] = [];
+    const anniversaries: any[] = [];
+    const newHirings: any[] = [];
+    const workAnniversaries: any[] = [];
+
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    for (const p of profiles) {
+      const base = {
+        user_id: p.user_id,
+        name: p.user.name,
+        avatar_url: null,
+      };
+
+      // Birthdays
+      if (p.date_of_birth) {
+        const m = p.date_of_birth.getMonth() + 1;
+        const d = p.date_of_birth.getDate();
+        const next = nextOccurrence(m, d);
+        if (next <= windowEnd) {
+          const isToday = next.getTime() === today.getTime();
+          birthdays.push({
+            ...base,
+            event_date: next.toISOString().split('T')[0],
+            label: isToday ? 'Birthday Today' : `Birthday · ${formatDate(next)}`,
+          });
+        }
+      }
+
+      // Marriage anniversaries
+      if (p.marriage_date) {
+        const m = p.marriage_date.getMonth() + 1;
+        const d = p.marriage_date.getDate();
+        const next = nextOccurrence(m, d);
+        if (next <= windowEnd) {
+          const years = next.getFullYear() - p.marriage_date.getFullYear();
+          const isToday = next.getTime() === today.getTime();
+          anniversaries.push({
+            ...base,
+            event_date: next.toISOString().split('T')[0],
+            label: isToday
+              ? `${ordinal(years)} Anniversary Today`
+              : `${ordinal(years)} Anniversary · ${formatDate(next)}`,
+            years,
+          });
+        }
+      }
+
+      // New hirings — joined in the last 30 days (strictly less than 30 days ago)
+      if (p.date_of_joining && p.date_of_joining > thirtyDaysAgo && p.date_of_joining <= today) {
+        const diffDays = Math.floor((today.getTime() - p.date_of_joining.getTime()) / 86400000);
+        newHirings.push({
+          ...base,
+          event_date: p.date_of_joining.toISOString().split('T')[0],
+          label: diffDays === 0 ? 'Joined Today' : `Joined ${diffDays} day${diffDays !== 1 ? 's' : ''} ago`,
+        });
+      }
+
+      // Work anniversaries — anniversary of joining, at least 1 year
+      if (p.date_of_joining) {
+        const m = p.date_of_joining.getMonth() + 1;
+        const d = p.date_of_joining.getDate();
+        const next = nextOccurrence(m, d);
+        const years = next.getFullYear() - p.date_of_joining.getFullYear();
+        if (next <= windowEnd && years >= 1) {
+          const isToday = next.getTime() === today.getTime();
+          workAnniversaries.push({
+            ...base,
+            event_date: next.toISOString().split('T')[0],
+            label: isToday
+              ? `${ordinal(years)} Work Anniversary Today`
+              : `${ordinal(years)} Work Anniversary · ${formatDate(next)}`,
+            years,
+          });
+        }
+      }
+    }
+
+    // Sort each list by event_date ascending
+    const byDate = (a: any, b: any) => a.event_date.localeCompare(b.event_date);
+    birthdays.sort(byDate);
+    anniversaries.sort(byDate);
+    workAnniversaries.sort(byDate);
+    // New hirings: most recent first
+    newHirings.sort((a, b) => b.event_date.localeCompare(a.event_date));
+
+    return { birthdays, anniversaries, new_hirings: newHirings, work_anniversaries: workAnniversaries };
   }
 
   async getReportingTree(orgId: string) {

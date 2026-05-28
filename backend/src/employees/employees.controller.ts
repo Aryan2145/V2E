@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -38,6 +39,15 @@ export class EmployeesController {
   @ApiOperation({ summary: 'Get reporting tree for all employees' })
   getReportingTree(@Param('orgId') orgId: string) {
     return this.employeesService.getReportingTree(orgId);
+  }
+
+  @Get('people-events')
+  @ApiOperation({ summary: 'Get upcoming birthdays, anniversaries, new hirings, and work anniversaries' })
+  getPeopleEvents(
+    @Param('orgId') orgId: string,
+    @Query('window') window?: string,
+  ) {
+    return this.employeesService.getPeopleEvents(orgId, window ? parseInt(window, 10) : 30);
   }
 
   @Get(':id')

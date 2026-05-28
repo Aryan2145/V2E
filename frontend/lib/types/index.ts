@@ -203,6 +203,8 @@ export interface EmployeeProfile {
   reporting_to_user_id?: string;
   employee_code?: string;
   date_of_joining?: string;
+  date_of_birth?: string;
+  marriage_date?: string;
   employment_type: EmploymentType;
   status: EmployeeStatus;
   created_at: string;
@@ -211,6 +213,22 @@ export interface EmployeeProfile {
   role?: Role;
   department?: Department;
   reporting_to?: User;
+}
+
+export interface PeopleEvent {
+  user_id: string;
+  name: string;
+  avatar_url?: string | null;
+  event_date: string;
+  label: string;
+  years?: number;
+}
+
+export interface PeopleEventsResponse {
+  birthdays: PeopleEvent[];
+  anniversaries: PeopleEvent[];
+  new_hirings: PeopleEvent[];
+  work_anniversaries: PeopleEvent[];
 }
 
 // ─── API Utilities ─────────────────────────────────────────────────────────────

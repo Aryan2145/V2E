@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { EmployeeProfile, EmploymentType, EmployeeStatus, ApiResponse } from '../types';
+import type { EmployeeProfile, EmploymentType, EmployeeStatus, PeopleEventsResponse, ApiResponse } from '../types';
 
 // ─── Employees API ────────────────────────────────────────────────────────────
 
@@ -24,6 +24,13 @@ export async function getReportingTree(orgId: string): Promise<EmployeeProfile[]
   return data.data;
 }
 
+export async function getPeopleEvents(orgId: string, window = 30): Promise<PeopleEventsResponse> {
+  const { data } = await apiClient.get<ApiResponse<PeopleEventsResponse>>(
+    `/api/v1/org/${orgId}/employees/people-events?window=${window}`
+  );
+  return data.data;
+}
+
 export async function createEmployee(
   orgId: string,
   employeeData: {
@@ -35,6 +42,8 @@ export async function createEmployee(
     reporting_to_user_id?: string;
     employee_code?: string;
     date_of_joining?: string;
+    date_of_birth?: string;
+    marriage_date?: string;
     employment_type?: EmploymentType;
   }
 ): Promise<EmployeeProfile> {
@@ -55,6 +64,8 @@ export async function updateEmployee(
     reporting_to_user_id: string;
     employee_code: string;
     date_of_joining: string;
+    date_of_birth: string;
+    marriage_date: string;
     status: EmployeeStatus;
   }>
 ): Promise<EmployeeProfile> {
