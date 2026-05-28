@@ -137,6 +137,7 @@ model Organization {
   roles              Role[]
   employee_profiles  EmployeeProfile[]
   learning_paths     LearningPath[]
+  company_policies   CompanyPolicy[]
   announcements      Announcement[]
   announcement_reads AnnouncementRead[]
   bulletin_boards    BulletinBoard[]
@@ -296,6 +297,7 @@ model EmployeeProfile {
   department           Department               @relation(fields: [department_id], references: [id])
   reporting_to         User?                    @relation("ReportingTo", fields: [reporting_to_user_id], references: [id])
   learning_assignments LearningPathAssignment[]
+  policy_assignments   CompanyPolicyAssignment[]
 
   @@map("employee_profiles")
 }
@@ -1944,4 +1946,68 @@ model ProjectActivityLog {
 
   @@map("project_activity_logs")
 }
+
+// ─── ECS ──────────────────────────────────────────────────────────────────────
+
+enum CompanyPolicyStatus {
+  draft
+  published
+  archived
+}
+
+enum PolicyAssignmentStatus {
+  not_started
+  acknowledged
+}
+
+model CompanyPolicy {
+  id                  String              @id @default(uuid())
+  organization_id     String
+  title               String              @db.VarChar(200)
+  description         String?             @db.Text
+  status              CompanyPolicyStatus @default(draft)
+  created_by_user_id  String
+  created_at          DateTime            @default(now())
+  updated_at          DateTime            @updatedAt
+
+  organization  Organization              @relation(fields: [organization_id], references: [id])
+  items         CompanyPolicyItem[]
+  assignments   CompanyPolicyAssignment[]
+
+  @@map("company_policies")
+}
+
+model CompanyPolicyItem {
+  id            String      @id @default(uuid())
+  policy_id     String
+  title         String      @db.VarChar(200)
+  description   String?     @db.Text
+  content_type  ContentType
+  content_url   String?
+  content_body  String?     @db.Text
+  order_index   Int         @default(0)
+  created_at    DateTime    @default(now())
+  updated_at    DateTime    @updatedAt
+
+  policy CompanyPolicy @relation(fields: [policy_id], references: [id], onDelete: Cascade)
+
+  @@map("company_policy_items")
+}
+
+model CompanyPolicyAssignment {
+  id                  String                 @id @default(uuid())
+  policy_id           String
+  employee_profile_id String
+  assigned_by_user_id String
+  assigned_at         DateTime               @default(now())
+  status              PolicyAssignmentStatus @default(not_started)
+  acknowledged_at     DateTime?
+
+  policy           CompanyPolicy   @relation(fields: [policy_id], references: [id], onDelete: Cascade)
+  employee_profile EmployeeProfile @relation(fields: [employee_profile_id], references: [id])
+
+  @@unique([policy_id, employee_profile_id])
+  @@map("company_policy_assignments")
+}
+
 

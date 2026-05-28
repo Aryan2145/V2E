@@ -9,7 +9,7 @@ export default function DashboardRootLayout({
 }) {
   return (
     <MainLayout>
-      <div className="px-8 py-8 max-w-7xl mx-auto">
+      <div className="px-8 py-8">
         {children}
       </div>
     </MainLayout>

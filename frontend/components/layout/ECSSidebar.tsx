@@ -2,30 +2,18 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import {
-  BookOpen,
-  Heart,
-  GitBranch,
-  Briefcase,
-  Users,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react'
+import { FileText, ChevronLeft, ChevronRight } from 'lucide-react'
 
-interface FoundationSidebarProps {
+interface ECSSidebarProps {
   collapsed: boolean
   onToggle: () => void
 }
 
 const NAV_ITEMS = [
-  { label: 'Identity', href: '/foundation/identity', Icon: BookOpen },
-  { label: 'Culture', href: '/foundation/culture', Icon: Heart },
-  { label: 'Org Chart', href: '/foundation/org-chart', Icon: GitBranch },
-  { label: 'Roles', href: '/foundation/roles', Icon: Briefcase },
-  { label: 'Employees', href: '/foundation/employees', Icon: Users },
+  { label: 'Company Policy', href: '/dashboard/ecs/company-policy', Icon: FileText },
 ]
 
-export default function FoundationSidebar({ collapsed, onToggle }: FoundationSidebarProps) {
+export default function ECSSidebar({ collapsed, onToggle }: ECSSidebarProps) {
   const pathname = usePathname()
 
   return (
@@ -40,7 +28,7 @@ export default function FoundationSidebar({ collapsed, onToggle }: FoundationSid
       <div className="h-12 flex items-center border-b border-white/10 shrink-0 px-2">
         {!collapsed && (
           <span className="flex-1 px-2 text-xs font-semibold text-[#94A3B8] uppercase tracking-widest whitespace-nowrap">
-            Foundation
+            ECS
           </span>
         )}
         <button

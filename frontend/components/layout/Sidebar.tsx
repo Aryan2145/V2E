@@ -7,18 +7,10 @@ import {
   Building2,
   Users,
   LayoutDashboard,
-  BookOpen,
-  Heart,
-  GitBranch,
-  Briefcase,
-  UserCircle,
-  Settings,
   LogOut,
   ChevronUp,
   Check,
   Layers,
-  CheckSquare,
-  CalendarDays,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { getMyOrgs } from '@/lib/api/auth'
@@ -42,35 +34,11 @@ const superAdminNav: NavItem[] = [
   { label: 'Admins', href: '/super-admin/admins', icon: <Users size={18} /> },
 ]
 
-const orgStaffNav: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard size={18} /> },
-  { label: 'Identity', href: '/dashboard/identity', icon: <BookOpen size={18} /> },
-  { label: 'Culture', href: '/dashboard/culture', icon: <Heart size={18} /> },
-  { label: 'Org Chart', href: '/dashboard/org-chart', icon: <GitBranch size={18} /> },
-  { label: 'Roles', href: '/dashboard/roles', icon: <Briefcase size={18} /> },
-  { label: 'Employees', href: '/dashboard/employees', icon: <Users size={18} /> },
-  { label: 'Tasks', href: '/dashboard/tasks', icon: <CheckSquare size={18} /> },
-  { label: 'Projects', href: '/dashboard/projects', icon: <Briefcase size={18} /> },
-  { label: 'Holidays', href: '/dashboard/holidays', icon: <CalendarDays size={18} /> },
-  { label: 'Setup', href: '/setup/step-1-identity', icon: <Settings size={18} /> },
-]
-
-const employeeNav: NavItem[] = [
-  { label: 'Dashboard', href: '/dashboard', icon: <LayoutDashboard size={18} /> },
-  { label: 'Identity', href: '/dashboard/identity', icon: <BookOpen size={18} /> },
-  { label: 'Culture', href: '/dashboard/culture', icon: <Heart size={18} /> },
-  { label: 'Org Chart', href: '/dashboard/org-chart', icon: <GitBranch size={18} /> },
-  { label: 'My Role', href: '/dashboard/my-role', icon: <Briefcase size={18} /> },
-  { label: 'My Profile', href: '/dashboard/my-profile', icon: <UserCircle size={18} /> },
-  { label: 'Projects', href: '/dashboard/projects', icon: <Briefcase size={18} /> },
-  { label: 'Holidays', href: '/dashboard/holidays', icon: <CalendarDays size={18} /> },
-]
-
 const navByRole: Record<UserRole, NavItem[]> = {
   super_admin: superAdminNav,
-  org_admin: orgStaffNav,
-  hr_manager: orgStaffNav,
-  employee: employeeNav,
+  org_admin: superAdminNav,
+  hr_manager: superAdminNav,
+  employee: superAdminNav,
 }
 
 const roleLabels: Record<UserRole, string> = {
@@ -88,7 +56,7 @@ export default function Sidebar({ role }: SidebarProps) {
   const [orgs, setOrgs] = useState<OrgMembership[] | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
 
-  const navItems = navByRole[role] ?? orgStaffNav
+  const navItems = navByRole[role] ?? superAdminNav
 
   // Eagerly load orgs so the current org name is visible without opening the switcher
   useEffect(() => {

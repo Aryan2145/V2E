@@ -12,6 +12,7 @@ import { DepartmentsModule } from './departments/departments.module';
 import { RolesModule } from './roles/roles.module';
 import { EmployeesModule } from './employees/employees.module';
 import { LearningModule } from './learning/learning.module';
+import { EcsModule } from './ecs/ecs.module';
 import { AnnouncementsModule } from './announcements/announcements.module';
 import { BulletinModule } from './bulletin/bulletin.module';
 import { KnowledgeModule } from './knowledge/knowledge.module';
@@ -52,6 +53,7 @@ import { ProjectsModule } from './projects/projects.module';
     TicketsModule,
     HolidaysModule,
     ProjectsModule,
+    EcsModule,
   ],
 })
 export class AppModule {}

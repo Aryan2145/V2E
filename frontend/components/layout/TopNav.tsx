@@ -15,6 +15,9 @@ const NAV_ITEMS = [
   { label: 'Learning', href: '/learning' },
   { label: 'Communication', href: '/communication' },
   { label: 'Tasks', href: '/dashboard/tasks' },
+  { label: 'ECS', href: '/dashboard/ecs' },
+  { label: 'Governance', href: '/dashboard/governance' },
+  { label: 'Performance', href: '/dashboard/performance' },
 ]
 
 const ROLE_LABELS: Record<string, string> = {
