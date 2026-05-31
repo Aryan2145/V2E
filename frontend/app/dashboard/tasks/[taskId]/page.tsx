@@ -18,6 +18,7 @@ import {
   User,
   Clock,
   CheckSquare,
+  Eye,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -364,6 +365,7 @@ export default function TaskDetailPage() {
   const status = statuses.find((s) => s.id === selectedStatusId) ?? task.status
   const assignees = task.assignees?.filter((a) => !a.is_cc) ?? []
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
+  const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -377,7 +379,7 @@ export default function TaskDetailPage() {
           Back to Tasks
         </button>
         <div className="flex items-center gap-2">
-          {!isCompletedStatus ? (
+          {!isCompletedStatus && !currentUserIsCC ? (
             <button
               onClick={handleComplete}
               disabled={actionLoading === 'complete'}
@@ -386,7 +388,7 @@ export default function TaskDetailPage() {
               <CheckCircle2 size={15} />
               {actionLoading === 'complete' ? 'Completing...' : 'Complete'}
             </button>
-          ) : (
+          ) : !currentUserIsCC && (
             <button
               onClick={handleReopen}
               disabled={actionLoading === 'reopen'}
@@ -407,6 +409,14 @@ export default function TaskDetailPage() {
           )}
         </div>
       </div>
+
+      {/* CC banner */}
+      {currentUserIsCC && (
+        <div className="flex items-center gap-2 text-[13px] text-[#92400E] bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2">
+          <Eye size={14} className="shrink-0 text-[#D97706]" />
+          You&apos;re CC&apos;d on this task — you can view and comment but cannot mark it complete.
+        </div>
+      )}
 
       {/* Delete confirmation */}
       {showDeleteConfirm && (
@@ -735,6 +745,7 @@ export default function TaskDetailPage() {
                     orgId={orgId}
                     value={editAssigneesList}
                     onChange={setEditAssigneesList}
+                    currentUser={user ? { user_id: user.id, name: user.name } : undefined}
                   />
                 ) : (
                   <div className="space-y-3">

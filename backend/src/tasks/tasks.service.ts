@@ -338,6 +338,19 @@ export class TasksService {
     return this.enrichTaskList(tasks);
   }
 
+  async getMyCCTasks(orgId: string, userId: string) {
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        assignees: { some: { user_id: userId, is_cc: true } },
+      },
+      include: TASK_INCLUDE,
+      orderBy: { created_at: 'desc' },
+    });
+    return this.enrichTaskList(tasks);
+  }
+
   async getTasksAssignedByMe(orgId: string, userId: string) {
     const tasks = await this.prisma.task.findMany({
       where: { organization_id: orgId, is_deleted: false, created_by_user_id: userId },
@@ -959,20 +972,21 @@ export class TasksService {
     const eligibleUserIds = new Set<string>();
 
     if (isAdmin) {
-      // Admins always see every active employee in the org
-      allProfiles.forEach((p) => { if (p.user_id !== userId) eligibleUserIds.add(p.user_id); });
+      // Admins always see every active employee in the org (including themselves)
+      allProfiles.forEach((p) => { eligibleUserIds.add(p.user_id); });
     } else if (mode === 'hierarchy_and_dept' || mode === 'hierarchy_only') {
+      eligibleUserIds.add(userId); // always include self
       const subordinates = this.getSubordinates(allProfiles, userId);
       subordinates.forEach((id) => eligibleUserIds.add(id));
       if (mode === 'hierarchy_and_dept' && userProfile?.department_id) {
         allProfiles
-          .filter((p) => p.department_id === userProfile.department_id && p.user_id !== userId)
+          .filter((p) => p.department_id === userProfile.department_id)
           .forEach((p) => eligibleUserIds.add(p.user_id));
       }
     } else if (mode === 'dept_only') {
       if (userProfile?.department_id) {
         allProfiles
-          .filter((p) => p.department_id === userProfile.department_id && p.user_id !== userId)
+          .filter((p) => p.department_id === userProfile.department_id)
           .forEach((p) => eligibleUserIds.add(p.user_id));
       }
     } else if (mode === 'custom') {
@@ -980,8 +994,8 @@ export class TasksService {
       const includeRoles = (customRules.include_roles as string[]) ?? [];
       const allowCrossDept = customRules.allow_cross_dept ?? false;
       const allowOutsideHierarchy = customRules.allow_outside_hierarchy ?? false;
+      eligibleUserIds.add(userId); // always include self
       allProfiles.forEach((p) => {
-        if (p.user_id === userId) return;
         let include = allowCrossDept || allowOutsideHierarchy;
         if (includeDepts.includes(p.department_id)) include = true;
         const memberRole = memberRoleMap.get(p.user_id);

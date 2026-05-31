@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, X, Plus, Check, Zap, Briefcase } from 'lucide-react'
+import { Search, X, Plus, Check, Zap, Briefcase, UserPlus } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneesResponse, EligibleAssigneeUser, SelectedAssignee } from '@/lib/types/tasks'
 
@@ -144,9 +144,10 @@ interface Props {
   value: SelectedAssignee[]
   onChange: (assignees: SelectedAssignee[]) => void
   disabled?: boolean
+  currentUser?: { user_id: string; name: string }
 }
 
-export default function AssigneeSelector({ orgId, value, onChange, disabled }: Props) {
+export default function AssigneeSelector({ orgId, value, onChange, disabled, currentUser }: Props) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const [sort, setSort] = useState<SortMode>('frequency')
@@ -310,6 +311,20 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled }: P
                 <X size={14} />
               </button>
             </div>
+
+            {/* Assign to me shortcut */}
+            {currentUser && !selectedIds.has(currentUser.user_id) && (
+              <button
+                type="button"
+                onClick={() => {
+                  onChange([...value, { user_id: currentUser.user_id, name: currentUser.name, is_cc: false }])
+                }}
+                className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium text-[#2563EB] hover:bg-[#EFF6FF] border-b border-[#F1F5F9] transition-colors shrink-0"
+              >
+                <UserPlus size={13} />
+                Assign to me
+              </button>
+            )}
 
             {/* Panel body */}
             <div className="overflow-y-auto flex-1">

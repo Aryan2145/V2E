@@ -245,14 +245,16 @@ export default function CreateTaskModal({
             />
           </div>
 
-          {/* Assignees */}
+          {/* Assignees & CC */}
           <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees</label>
+            <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees & CC</label>
             <AssigneeSelector
               orgId={orgId}
               value={assignees}
               onChange={setAssignees}
+              currentUser={user ? { user_id: user.id, name: user.name } : undefined}
             />
+            <p className="text-[11px] text-[#94A3B8] mt-1">Add people · click their badge to toggle between Assignee and CC</p>
           </div>
 
           {/* Completion mode — only relevant when multiple assignees are selected */}

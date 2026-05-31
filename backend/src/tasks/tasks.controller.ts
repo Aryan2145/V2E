@@ -86,6 +86,12 @@ export class TasksController {
     return this.service.getMyTasks(orgId, req.user.id);
   }
 
+  @Get('cc')
+  @ApiOperation({ summary: 'Get tasks where I am CC\'d' })
+  getMyCCTasks(@Param('orgId') orgId: string, @Request() req: any) {
+    return this.service.getMyCCTasks(orgId, req.user.id);
+  }
+
   @Get('assigned-by-me')
   @ApiOperation({ summary: 'Get tasks I created' })
   getAssignedByMe(@Param('orgId') orgId: string, @Request() req: any) {

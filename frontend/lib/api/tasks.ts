@@ -130,6 +130,11 @@ export const tasksApi = {
     return unwrap<Task[]>(res)
   },
 
+  getMyCCTasks: async (orgId: string): Promise<Task[]> => {
+    const res = await apiClient.get(`${base(orgId)}/cc`)
+    return unwrap<Task[]>(res)
+  },
+
   getAssignedByMe: async (orgId: string): Promise<Task[]> => {
     const res = await apiClient.get(`${base(orgId)}/assigned-by-me`)
     return unwrap<Task[]>(res)

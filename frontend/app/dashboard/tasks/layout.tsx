@@ -20,6 +20,7 @@ import {
   Briefcase,
   ChevronLeft,
   ChevronRight,
+  Eye,
 } from 'lucide-react'
 
 interface NavItem {
@@ -44,6 +45,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Assigned by Me', href: '/dashboard/tasks/assigned', Icon: UserCheck },
       { label: 'Recurring', href: '/dashboard/tasks/recurring', Icon: RotateCcw },
       { label: 'Escalated', href: '/dashboard/tasks/escalated', Icon: AlertTriangle },
+      { label: "CC'd Tasks", href: '/dashboard/tasks/cc', Icon: Eye },
       { label: 'Collective', href: '/dashboard/tasks/collective', Icon: Globe },
       { label: 'Archive', href: '/dashboard/tasks/archive', Icon: Archive, adminOnly: true },
       { label: 'Reports', href: '/dashboard/tasks/reports', Icon: BarChart2, adminOnly: true },
