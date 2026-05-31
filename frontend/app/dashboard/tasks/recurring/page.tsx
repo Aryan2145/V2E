@@ -320,7 +320,7 @@ function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreate
             Cancel
           </button>
           <button
-            type="submit"
+            type="button"
             onClick={handleSubmit}
             disabled={submitting}
             className="px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"

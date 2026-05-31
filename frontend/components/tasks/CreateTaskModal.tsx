@@ -187,7 +187,9 @@ export default function CreateTaskModal({
         proof_required: proofRequired,
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
-        checklist: checklist.length > 0 ? checklist : undefined,
+        checklist_items: checklist.length > 0
+          ? checklist.map((item, idx) => ({ title: item.title, order_index: idx }))
+          : undefined,
       })
       reset()
       onTaskCreated?.(newTask)
@@ -481,7 +483,7 @@ export default function CreateTaskModal({
             Cancel
           </button>
           <button
-            type="submit"
+            type="button"
             onClick={handleSubmit}
             disabled={submitting || (holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day)}
             className="px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"

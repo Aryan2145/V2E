@@ -152,7 +152,7 @@ export const tasksApi = {
     proof_required?: boolean
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
-    checklist?: { title: string }[]
+    checklist_items?: { title: string; order_index: number }[]
   }): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}`, dto)
     return unwrap<Task>(res)
