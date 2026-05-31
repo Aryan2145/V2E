@@ -4,11 +4,10 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
 import type { HolidayMasterConfig, HolidayOnTaskAction, HolidayPriorityLevel } from '@/lib/types/holidays'
-import { CalendarDays, Building2, Users, ClipboardList, AlertTriangle, Loader2, Save } from 'lucide-react'
+import { CalendarDays, Building2, Users, ClipboardList, Loader2, Save } from 'lucide-react'
 import Link from 'next/link'
 import HolidayConfigCard from '@/components/holidays/HolidayConfigCard'
 import AccessRightsCard from '@/components/holidays/AccessRightsCard'
-import CountrySelector from '@/components/holidays/CountrySelector'
 
 export default function HolidaysOverviewPage() {
   const { user } = useAuth()
@@ -18,31 +17,19 @@ export default function HolidaysOverviewPage() {
   const [config, setConfig] = useState<HolidayMasterConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  const [pendingCount, setPendingCount] = useState(0)
-
-  const currentYear = new Date().getFullYear()
 
   useEffect(() => {
     if (!orgId) return
-    Promise.all([
-      holidaysApi.getConfig(orgId),
-      holidaysApi.getPendingNational(orgId, currentYear),
-      holidaysApi.getPendingNational(orgId, currentYear + 1),
-    ]).then(([cfg, p1, p2]) => {
-      setConfig(cfg)
-      setPendingCount(p1.length + p2.length)
-    }).finally(() => setLoading(false))
-  }, [orgId, currentYear])
+    holidaysApi.getConfig(orgId).then(setConfig).finally(() => setLoading(false))
+  }, [orgId])
 
   async function save() {
     if (!config) return
     setSaving(true)
     try {
       const updated = await holidaysApi.updateConfig(orgId, {
-        country_code: config.country_code,
         holiday_on_task_action: config.holiday_on_task_action,
         priority_level: config.priority_level,
-        auto_fetch_national_holidays: config.auto_fetch_national_holidays,
         org_manage_roles: config.org_manage_roles,
         dept_manage_roles: config.dept_manage_roles,
         individual_manage_roles: config.individual_manage_roles,
@@ -77,35 +64,8 @@ export default function HolidaysOverviewPage() {
         <p className="text-[15px] text-[#475569] mt-1">Configure how your organization handles holidays and deadline adjustments.</p>
       </div>
 
-      {pendingCount > 0 && (
-        <div className="flex items-start gap-3 px-4 py-3 rounded-[12px] bg-[#FFFBEB] border border-[#FDE68A]">
-          <AlertTriangle size={18} className="text-[#D97706] shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-sm font-semibold text-[#92400E]">
-              {pendingCount} national holiday{pendingCount !== 1 ? 's' : ''} pending review
-            </p>
-            <p className="text-xs text-[#78350F] mt-0.5">
-              Go to <Link href="/dashboard/holidays/org" className="underline">Org Calendar</Link> to review and activate them.
-            </p>
-          </div>
-        </div>
-      )}
-
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-        <h2 className="text-[18px] font-semibold text-[#0F172A] mb-4">Country & Behavior</h2>
-
-        <div className="mb-5">
-          <label className="block text-sm font-medium text-[#374151] mb-1.5">Country</label>
-          <div className="max-w-xs">
-            <CountrySelector
-              orgId={orgId}
-              value={config.country_code}
-              onChange={(cc) => setConfig((c) => c ? { ...c, country_code: cc } : c)}
-              disabled={!isAdmin}
-            />
-          </div>
-          <p className="text-xs text-[#475569] mt-1">Used to auto-fetch national holidays from Nager.Date.</p>
-        </div>
+        <h2 className="text-[18px] font-semibold text-[#0F172A] mb-4">Behavior</h2>
 
         <HolidayConfigCard
           action={config.holiday_on_task_action}
@@ -114,17 +74,6 @@ export default function HolidaysOverviewPage() {
           onPriorityChange={(p: HolidayPriorityLevel) => setConfig((c) => c ? { ...c, priority_level: p } : c)}
           disabled={!isAdmin}
         />
-
-        <label className="flex items-center gap-2 mt-4 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={config.auto_fetch_national_holidays}
-            onChange={(e) => setConfig((c) => c ? { ...c, auto_fetch_national_holidays: e.target.checked } : c)}
-            disabled={!isAdmin}
-            className="w-4 h-4 accent-[#2563EB]"
-          />
-          <span className="text-sm text-[#475569]">Auto-fetch national holidays every January 1st for review</span>
-        </label>
 
         {isAdmin && (
           <div className="mt-5">

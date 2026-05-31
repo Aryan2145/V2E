@@ -1,7 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 import { HolidayOnTaskAction, HolidayAuditAction, HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
-import { NagerService, type NagerHoliday, type NagerCountry } from './nager.service'
 import type { UpdateHolidayMasterDto } from './dto/update-holiday-master.dto'
 import type { UpdateWorkingDaysDto } from './dto/update-working-days.dto'
 import type { CreateOrgHolidayDto, UpdateOrgHolidayDto } from './dto/create-org-holiday.dto'
@@ -12,7 +11,6 @@ import type { CreateIndividualHolidayDto, UpdateIndividualHolidayDto, CreateIndi
 export class HolidaysService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly nager: NagerService,
   ) {}
 
   // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -55,11 +53,6 @@ export class HolidaysService {
         ...(dto.individual_holiday_manage_roles && { individual_holiday_manage_roles: dto.individual_holiday_manage_roles as never }),
       },
     })
-    // If country_code changed (or first set), fetch holidays as pending
-    if (dto.country_code && dto.country_code !== prev?.country_code && dto.country_code !== null) {
-      const year = new Date().getFullYear()
-      await this.fetchAndPendHolidaysForOrg(orgId, year).catch(() => { /* non-blocking */ })
-    }
     return updated
   }
 
@@ -353,100 +346,42 @@ export class HolidaysService {
     }
   }
 
-  // ─── Nager integration ────────────────────────────────────────────────────────
+  // ─── Bulk CSV import ─────────────────────────────────────────────────────────
 
-  async getAvailableCountries(): Promise<NagerCountry[]> {
-    return this.nager.getAvailableCountries()
-  }
-
-  async fetchNationalHolidaysPreview(orgId: string, year: number) {
-    const master = await this.prisma.holidayMaster.findUnique({ where: { organization_id: orgId } })
-    if (!master?.country_code) throw new NotFoundException('Country code not set. Please configure country in Holiday Settings.')
-    return this.nager.getPublicHolidays(master.country_code, year)
-  }
-
-  async importNationalHolidays(orgId: string, year: number, holidays: NagerHoliday[]) {
+  async bulkImportOrgHolidays(orgId: string, holidays: Array<{
+    name: string
+    date: string
+    type?: string
+    is_recurring_yearly?: boolean
+    description?: string
+  }>) {
     let imported = 0
+    let skipped = 0
     for (const h of holidays) {
       const date = new Date(h.date)
+      if (isNaN(date.getTime())) { skipped++; continue }
+      const year = date.getFullYear()
       const existing = await this.prisma.orgHoliday.findFirst({
         where: { organization_id: orgId, date, name: h.name },
       })
-      if (existing) continue
+      if (existing) { skipped++; continue }
+      const type = (['national', 'company', 'regional'].includes(h.type ?? '') ? h.type : 'national') as HolidayType
       await this.prisma.orgHoliday.create({
         data: {
           organization_id: orgId,
           name: h.name,
           date,
-          type: HolidayType.national,
-          source: 'nager_date',
+          type,
+          source: 'manual',
           status: HolidayStatus.active,
           year,
+          is_recurring_yearly: h.is_recurring_yearly ?? false,
+          description: h.description || null,
         },
       })
       imported++
     }
-    return { imported }
-  }
-
-  async fetchAndPendHolidaysForOrg(orgId: string, year: number) {
-    const master = await this.prisma.holidayMaster.findUnique({ where: { organization_id: orgId } })
-    if (!master?.country_code) return { created: 0 }
-
-    const holidays = await this.nager.getPublicHolidays(master.country_code, year)
-    let created = 0
-    for (const h of holidays) {
-      const date = new Date(h.date)
-      const existing = await this.prisma.orgHoliday.findFirst({
-        where: { organization_id: orgId, date, name: h.name },
-      })
-      if (existing) continue
-      await this.prisma.orgHoliday.create({
-        data: {
-          organization_id: orgId,
-          name: h.name,
-          date,
-          type: HolidayType.national,
-          source: 'nager_date',
-          status: HolidayStatus.pending_review,
-          year,
-        },
-      })
-      created++
-    }
-    return { created }
-  }
-
-  async getPendingHolidays(orgId: string, year: number) {
-    return this.prisma.orgHoliday.findMany({
-      where: { organization_id: orgId, status: HolidayStatus.pending_review, year },
-      orderBy: { date: 'asc' },
-    })
-  }
-
-  async applyPendingHolidays(orgId: string, year: number, selectedIds?: string[]) {
-    if (selectedIds && selectedIds.length > 0) {
-      await this.prisma.orgHoliday.updateMany({
-        where: { organization_id: orgId, year, status: HolidayStatus.pending_review, id: { in: selectedIds } },
-        data: { status: HolidayStatus.active },
-      })
-      await this.prisma.orgHoliday.deleteMany({
-        where: { organization_id: orgId, year, status: HolidayStatus.pending_review, id: { notIn: selectedIds } },
-      })
-    } else {
-      await this.prisma.orgHoliday.updateMany({
-        where: { organization_id: orgId, year, status: HolidayStatus.pending_review },
-        data: { status: HolidayStatus.active },
-      })
-    }
-    return { ok: true }
-  }
-
-  async dismissPendingHolidays(orgId: string, year: number) {
-    await this.prisma.orgHoliday.deleteMany({
-      where: { organization_id: orgId, year, status: HolidayStatus.pending_review },
-    })
-    return { ok: true }
+    return { imported, skipped }
   }
 
   // ─── Org working days & holidays ─────────────────────────────────────────────

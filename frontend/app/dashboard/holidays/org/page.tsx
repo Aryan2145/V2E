@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { OrgHoliday, OrgWorkingDays, NagerHoliday } from '@/lib/types/holidays'
-import { Loader2, Save, Download, RefreshCw } from 'lucide-react'
+import type { OrgHoliday, OrgWorkingDays } from '@/lib/types/holidays'
+import { Loader2, Save, Upload } from 'lucide-react'
 import WorkingDaysToggle from '@/components/holidays/WorkingDaysToggle'
-import PendingHolidayReviewer from '@/components/holidays/PendingHolidayReviewer'
 import HolidayList from '@/components/holidays/HolidayList'
 import AddHolidayForm from '@/components/holidays/AddHolidayForm'
 import HolidayCalendar from '@/components/holidays/HolidayCalendar'
+import ImportHolidaysModal from '@/components/holidays/ImportHolidaysModal'
 
 const YEARS = [new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1]
 
@@ -23,24 +23,21 @@ export default function OrgCalendarPage() {
   const [savingDays, setSavingDays] = useState(false)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
   const [holidays, setHolidays] = useState<OrgHoliday[]>([])
-  const [pending, setPending] = useState<OrgHoliday[]>([])
   const [loading, setLoading] = useState(true)
-  const [fetching, setFetching] = useState(false)
   const [calRefresh, setCalRefresh] = useState(0)
+  const [showImport, setShowImport] = useState(false)
 
   const load = useCallback(async () => {
     if (!orgId) return
     setLoading(true)
     try {
-      const [wd, hols, pend] = await Promise.all([
+      const [wd, hols] = await Promise.all([
         holidaysApi.getOrgWorkingDays(orgId),
         holidaysApi.listOrgHolidays(orgId, { year: selectedYear, status: 'active' }),
-        holidaysApi.getPendingNational(orgId, selectedYear),
       ])
       setWorkingDays(wd)
       setLocalDays(wd.working_days)
       setHolidays(hols)
-      setPending(pend)
     } finally {
       setLoading(false)
     }
@@ -57,29 +54,6 @@ export default function OrgCalendarPage() {
     } finally {
       setSavingDays(false)
     }
-  }
-
-  async function fetchFromNager() {
-    setFetching(true)
-    try {
-      const nagerHols: NagerHoliday[] = await holidaysApi.fetchNational(orgId, selectedYear)
-      await holidaysApi.importNational(orgId, selectedYear, nagerHols)
-      await load()
-      setCalRefresh((n) => n + 1)
-    } finally {
-      setFetching(false)
-    }
-  }
-
-  async function applyPending(selectedIds: string[]) {
-    await holidaysApi.applyPendingNational(orgId, selectedYear, selectedIds)
-    await load()
-    setCalRefresh((n) => n + 1)
-  }
-
-  async function dismissPending() {
-    await holidaysApi.dismissPendingNational(orgId, selectedYear)
-    setPending([])
   }
 
   async function addHoliday(data: { name: string; date: string; type: OrgHoliday['type']; is_recurring_yearly: boolean; description: string }) {
@@ -157,17 +131,6 @@ export default function OrgCalendarPage() {
               <div className="flex items-center justify-center h-16"><Loader2 size={18} className="animate-spin text-[#94A3B8]" /></div>
             ) : (
               <>
-                {pending.length > 0 && (
-                  <div className="mb-4">
-                    <PendingHolidayReviewer
-                      pending={pending}
-                      year={selectedYear}
-                      onApply={applyPending}
-                      onDismiss={dismissPending}
-                    />
-                  </div>
-                )}
-
                 <HolidayList
                   holidays={holidays}
                   onDelete={deleteHoliday}
@@ -176,16 +139,15 @@ export default function OrgCalendarPage() {
                 />
 
                 {isAdmin && (
-                  <div className="mt-4 flex items-center gap-3">
+                  <div className="mt-4 flex items-center gap-3 flex-wrap">
                     <AddHolidayForm onAdd={addHoliday} />
                     <button
                       type="button"
-                      disabled={fetching}
-                      onClick={fetchFromNager}
+                      onClick={() => setShowImport(true)}
                       className="flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] transition-colors"
                     >
-                      <RefreshCw size={14} className={fetching ? 'animate-spin' : ''} />
-                      {fetching ? 'Fetching...' : 'Fetch from Nager'}
+                      <Upload size={14} />
+                      Import CSV
                     </button>
                   </div>
                 )}
@@ -199,6 +161,14 @@ export default function OrgCalendarPage() {
           <HolidayCalendar orgId={orgId} refreshKey={calRefresh} />
         </div>
       </div>
+
+      {showImport && (
+        <ImportHolidaysModal
+          orgId={orgId}
+          onClose={() => setShowImport(false)}
+          onImported={() => { load(); setCalRefresh((n) => n + 1) }}
+        />
+      )}
     </div>
   )
 }

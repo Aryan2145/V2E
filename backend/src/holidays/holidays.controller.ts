@@ -6,7 +6,6 @@ import { HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { HolidaysService } from './holidays.service'
-import type { NagerCountry } from './nager.service'
 import { UpdateHolidayMasterDto } from './dto/update-holiday-master.dto'
 import { UpdateWorkingDaysDto } from './dto/update-working-days.dto'
 import { CreateOrgHolidayDto, UpdateOrgHolidayDto } from './dto/create-org-holiday.dto'
@@ -15,7 +14,6 @@ import {
   CreateIndividualHolidayDto, UpdateIndividualHolidayDto,
   CreateIndividualWorkingDaysDto, UpdateIndividualWorkingDaysDto,
 } from './dto/create-individual-holiday.dto'
-import { ImportNationalHolidaysDto, ApplyPendingHolidaysDto } from './dto/import-national-holidays.dto'
 
 @ApiTags('holidays')
 @ApiBearerAuth()
@@ -36,44 +34,6 @@ export class HolidaysController {
   @ApiOperation({ summary: 'Update holiday master config' })
   updateConfig(@Param('orgId') orgId: string, @Body() dto: UpdateHolidayMasterDto) {
     return this.service.updateConfig(orgId, dto)
-  }
-
-  // ─── National holidays (Nager proxy) ─────────────────────────────────────────
-
-  @Get('national/available-countries')
-  @ApiOperation({ summary: 'Get available countries from Nager.Date' })
-  getAvailableCountries(): Promise<NagerCountry[]> {
-    return this.service.getAvailableCountries()
-  }
-
-  @Get('national/fetch')
-  @ApiOperation({ summary: 'Fetch national holidays preview from Nager.Date (not saved)' })
-  fetchNational(@Param('orgId') orgId: string, @Query('year') year: string) {
-    return this.service.fetchNationalHolidaysPreview(orgId, parseInt(year) || new Date().getFullYear())
-  }
-
-  @Post('national/import')
-  @ApiOperation({ summary: 'Import national holidays as active' })
-  importNational(@Param('orgId') orgId: string, @Body() dto: ImportNationalHolidaysDto) {
-    return this.service.importNationalHolidays(orgId, dto.year, dto.holidays)
-  }
-
-  @Get('national/pending')
-  @ApiOperation({ summary: 'Get pending-review national holidays for a year' })
-  getPending(@Param('orgId') orgId: string, @Query('year') year: string) {
-    return this.service.getPendingHolidays(orgId, parseInt(year) || new Date().getFullYear())
-  }
-
-  @Post('national/apply')
-  @ApiOperation({ summary: 'Apply selected pending holidays, delete rest' })
-  applyPending(@Param('orgId') orgId: string, @Body() dto: ApplyPendingHolidaysDto) {
-    return this.service.applyPendingHolidays(orgId, dto.year, dto.holiday_ids)
-  }
-
-  @Delete('national/pending/:year')
-  @ApiOperation({ summary: 'Dismiss all pending holidays for a year' })
-  dismissPending(@Param('orgId') orgId: string, @Param('year') year: string) {
-    return this.service.dismissPendingHolidays(orgId, parseInt(year))
   }
 
   // ─── Org working days ─────────────────────────────────────────────────────────
@@ -101,6 +61,15 @@ export class HolidaysController {
     @Query('status') status?: HolidayStatus,
   ) {
     return this.service.listOrgHolidays(orgId, year ? parseInt(year) : undefined, type, status)
+  }
+
+  @Post('org/holidays/bulk-import')
+  @ApiOperation({ summary: 'Bulk import org holidays from CSV data' })
+  bulkImportOrgHolidays(
+    @Param('orgId') orgId: string,
+    @Body() dto: { holidays: Array<{ name: string; date: string; type?: string; is_recurring_yearly?: boolean; description?: string }> },
+  ) {
+    return this.service.bulkImportOrgHolidays(orgId, dto.holidays)
   }
 
   @Post('org/holidays')

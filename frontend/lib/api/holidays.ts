@@ -8,8 +8,6 @@ import type {
   IndividualWorkingDays,
   IndividualHoliday,
   HolidayAuditLog,
-  NagerCountry,
-  NagerHoliday,
   HolidayCheckResult,
   NonWorkingDate,
   HolidayEntityType,
@@ -37,40 +35,17 @@ export const holidaysApi = {
     return unwrap<HolidayMasterConfig>(res)
   },
 
-  // ─── National (Nager) ──────────────────────────────────────────────────────
+  // ─── Bulk import ───────────────────────────────────────────────────────────
 
-  getAvailableCountries: async (): Promise<NagerCountry[]> => {
-    const res = await apiClient.get('/api/v1/org/placeholder/holidays/national/available-countries')
-    return unwrap<NagerCountry[]>(res)
-  },
-
-  getAvailableCountriesForOrg: async (orgId: string): Promise<NagerCountry[]> => {
-    const res = await apiClient.get(`${base(orgId)}/national/available-countries`)
-    return unwrap<NagerCountry[]>(res)
-  },
-
-  fetchNational: async (orgId: string, year: number): Promise<NagerHoliday[]> => {
-    const res = await apiClient.get(`${base(orgId)}/national/fetch`, { params: { year } })
-    return unwrap<NagerHoliday[]>(res)
-  },
-
-  importNational: async (orgId: string, year: number, holidays: NagerHoliday[]): Promise<{ imported: number }> => {
-    const res = await apiClient.post(`${base(orgId)}/national/import`, { year, holidays })
-    return unwrap<{ imported: number }>(res)
-  },
-
-  getPendingNational: async (orgId: string, year: number): Promise<OrgHoliday[]> => {
-    const res = await apiClient.get(`${base(orgId)}/national/pending`, { params: { year } })
-    return unwrap<OrgHoliday[]>(res)
-  },
-
-  applyPendingNational: async (orgId: string, year: number, selectedIds?: string[]): Promise<{ activated: number; dismissed: number }> => {
-    const res = await apiClient.post(`${base(orgId)}/national/apply`, { year, selectedIds })
-    return unwrap<{ activated: number; dismissed: number }>(res)
-  },
-
-  dismissPendingNational: async (orgId: string, year: number): Promise<void> => {
-    await apiClient.delete(`${base(orgId)}/national/pending/${year}`)
+  bulkImportOrgHolidays: async (orgId: string, holidays: Array<{
+    name: string
+    date: string
+    type?: string
+    is_recurring_yearly?: boolean
+    description?: string
+  }>): Promise<{ imported: number; skipped: number }> => {
+    const res = await apiClient.post(`${base(orgId)}/org/holidays/bulk-import`, { holidays })
+    return unwrap<{ imported: number; skipped: number }>(res)
   },
 
   // ─── Org working days ──────────────────────────────────────────────────────
