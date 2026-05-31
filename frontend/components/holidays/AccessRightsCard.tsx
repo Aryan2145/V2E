@@ -8,16 +8,16 @@ const ROLE_LABELS: Record<string, string> = {
 }
 
 interface Props {
-  orgManageRoles: string[]
-  deptManageRoles: string[]
-  individualManageRoles: string[]
+  orgManageRoles?: string[]
+  deptManageRoles?: string[]
+  individualManageRoles?: string[]
   onOrgChange: (roles: string[]) => void
   onDeptChange: (roles: string[]) => void
   onIndividualChange: (roles: string[]) => void
   disabled?: boolean
 }
 
-function RoleMultiSelect({ label, value, onChange, disabled }: { label: string; value: string[]; onChange: (r: string[]) => void; disabled?: boolean }) {
+function RoleMultiSelect({ label, value = [], onChange, disabled }: { label: string; value?: string[]; onChange: (r: string[]) => void; disabled?: boolean }) {
   function toggle(role: string) {
     if (disabled) return
     if (value.includes(role)) onChange(value.filter((r) => r !== role))
