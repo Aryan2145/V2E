@@ -26,7 +26,7 @@ export default function HolidayCalendar({ orgId, deptId, userId, refreshKey }: P
     const to = new Date(year, month + 1, 0).toISOString().slice(0, 10)
     try {
       const res = await holidaysApi.getRange(orgId, from, to, { deptId, userId })
-      setNonWorking(res.non_working_dates)
+      setNonWorking(res?.non_working_dates ?? (Array.isArray(res) ? res : []))
     } catch {
       setNonWorking([])
     }
@@ -47,7 +47,7 @@ export default function HolidayCalendar({ orgId, deptId, userId, refreshKey }: P
   const daysInMonth = new Date(year, month + 1, 0).getDate()
 
   const nonWorkingMap = new Map<string, NonWorkingDate>()
-  for (const d of nonWorking) nonWorkingMap.set(d.date, d)
+  for (const d of (nonWorking ?? [])) nonWorkingMap.set(d.date, d)
 
   const cells: (number | null)[] = Array(firstDay).fill(null)
   for (let d = 1; d <= daysInMonth; d++) cells.push(d)
