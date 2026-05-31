@@ -8,6 +8,7 @@ import {
   GitBranch,
   Briefcase,
   Users,
+  CalendarDays,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { label: 'Org Chart', href: '/foundation/org-chart', Icon: GitBranch },
   { label: 'Roles', href: '/foundation/roles', Icon: Briefcase },
   { label: 'Employees', href: '/foundation/employees', Icon: Users },
+  { label: 'Holidays', href: '/dashboard/holidays', Icon: CalendarDays },
 ]
 
 export default function FoundationSidebar({ collapsed, onToggle }: FoundationSidebarProps) {
