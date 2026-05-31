@@ -207,7 +207,7 @@ export const tasksApi = {
   },
 
   toggleChecklist: async (orgId: string, taskId: string, itemId: string): Promise<TaskChecklistItem> => {
-    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/toggle`)
+    const res = await apiClient.patch(`${base(orgId)}/${taskId}/checklist/${itemId}`)
     return unwrap<TaskChecklistItem>(res)
   },
 
