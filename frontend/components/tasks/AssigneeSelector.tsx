@@ -77,12 +77,13 @@ function UserRow({
             Frequent
           </span>
         )}
-        {user.active_task_count > 0 && (
-          <span className="flex items-center gap-0.5 text-[10px] font-medium text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded-full">
-            <Briefcase size={9} />
-            {user.active_task_count}
-          </span>
-        )}
+        <span
+          title="Active tasks"
+          className="flex items-center gap-0.5 text-[10px] font-medium text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded-full"
+        >
+          <Briefcase size={9} />
+          {user.active_task_count}
+        </span>
         {selected && (
           <span className="w-4 h-4 flex items-center justify-center bg-[#2563EB] rounded-full shrink-0">
             <Check size={10} className="text-white" strokeWidth={3} />
