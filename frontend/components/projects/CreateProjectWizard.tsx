@@ -255,6 +255,10 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   const inputCls = 'w-full h-10 px-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors'
   const labelCls = 'block text-sm font-medium text-[#374151] mb-1.5'
 
+  const todayStr = new Date().toISOString().split('T')[0]
+  // End date must be >= today and >= startDate (whichever is later)
+  const endDateMin = startDate && startDate > todayStr ? startDate : todayStr
+
   // All IDs already in the project (creator + PM + added members)
   const takenIds = [
     ...(user?.id ? [user.id] : []),
@@ -265,7 +269,12 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   function validateStep1() {
     if (!name.trim()) { setError('Project name is required'); return false }
     if (!pmUser) { setError('Project manager is required'); return false }
-    if (startDate && endDate && endDate < startDate) { setError('End date cannot be before start date'); return false }
+    if (startDate && new Date(startDate).getFullYear() > 2100) { setError('Start date year cannot exceed 2100'); return false }
+    if (endDate) {
+      if (new Date(endDate).getFullYear() > 2100) { setError('End date year cannot exceed 2100'); return false }
+      if (endDate < todayStr) { setError('End date must be today or in the future'); return false }
+      if (startDate && endDate < startDate) { setError('End date cannot be before start date'); return false }
+    }
     if (budget !== '' && Number(budget) < 0) { setError('Budget cannot be negative'); return false }
     setError(''); return true
   }
@@ -351,11 +360,11 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Start date</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
+              <input type="date" value={startDate} max="2100-12-31" onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
             </div>
             <div>
               <label className={labelCls}>End date</label>
-              <input type="date" value={endDate} min={startDate || undefined} onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
+              <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
             </div>
           </div>
           <div>
