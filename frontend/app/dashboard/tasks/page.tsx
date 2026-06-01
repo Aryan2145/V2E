@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useMemo, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
@@ -78,6 +78,7 @@ function isThisMonth(d: string) {
 export default function TasksPage() {
   const { user } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const orgId = user?.organizationId ?? ''
 
   const [tasks, setTasks] = useState<Task[]>([])
@@ -86,7 +87,14 @@ export default function TasksPage() {
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const rawView = searchParams.get('view')
+  const viewMode: ViewMode = rawView === 'kanban' || rawView === 'calendar' ? rawView : 'list'
+  function setViewMode(mode: ViewMode) {
+    const params = new URLSearchParams(searchParams.toString())
+    if (mode === 'list') params.delete('view')
+    else params.set('view', mode)
+    router.replace(`/dashboard/tasks?${params.toString()}`)
+  }
 
   // Filters
   const [filterStatus, setFilterStatus] = useState('all')

@@ -380,7 +380,7 @@ export default function TaskDetailPage() {
       <div className="flex flex-col items-center justify-center h-64">
         <p className="font-semibold text-[#0F172A]">Task not found</p>
         <button
-          onClick={() => router.push('/dashboard/tasks')}
+          onClick={() => router.back()}
           className="mt-3 text-sm text-[#2563EB] hover:underline"
         >
           Back to Tasks
@@ -403,7 +403,7 @@ export default function TaskDetailPage() {
       {/* Back + actions row */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <button
-          onClick={() => router.push('/dashboard/tasks')}
+          onClick={() => router.back()}
           className="flex items-center gap-2 text-sm font-medium text-[#475569] hover:text-[#0F172A] transition-colors"
         >
           <ArrowLeft size={16} />
