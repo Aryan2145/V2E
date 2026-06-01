@@ -168,6 +168,7 @@ export default function CreateTaskModal({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) { setError('Title is required.'); return }
+    if (assignees.filter((a) => !a.is_cc).length === 0) { setError('At least one assignee is required. CC-only tasks are not allowed.'); return }
     if (deadlineDate) {
       if (deadlineDate < todayStr) { setError('Deadline cannot be in the past.'); return }
       if (deadlineDate > '2100-12-31') { setError('Deadline year cannot exceed 2100.'); return }

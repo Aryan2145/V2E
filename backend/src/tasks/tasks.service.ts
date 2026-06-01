@@ -175,6 +175,11 @@ export class TasksService {
     const assigneeIds = dto.assignee_user_ids ?? [];
     const ccIds = dto.cc_user_ids ?? [];
 
+    if (assigneeIds.length === 0) {
+      await this.prisma.task.delete({ where: { id: task.id } });
+      throw new BadRequestException('At least one assignee is required. CC-only tasks are not allowed.');
+    }
+
     if (assigneeIds.length > 0) {
       await this.prisma.taskAssignee.createMany({
         data: assigneeIds.map((uid) => ({
