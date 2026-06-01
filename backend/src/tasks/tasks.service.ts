@@ -454,8 +454,10 @@ export class TasksService {
   // ─── Update Task ──────────────────────────────────────────────────────────────
 
   async updateTask(orgId: string, userId: string, taskId: string, dto: UpdateTaskDto) {
-    await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
     const old = await this.findTaskOrFail(orgId, taskId);
+    if (old.created_by_user_id !== userId) {
+      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
+    }
     const changedFields: Array<{ field: string; from: unknown; to: unknown }> = [];
 
     const updateData: any = {};

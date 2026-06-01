@@ -7,6 +7,7 @@ import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskComment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
+import EditTaskModal from '@/components/tasks/EditTaskModal'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -19,6 +20,7 @@ import {
   Clock,
   CheckSquare,
   Eye,
+  Pencil,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -196,6 +198,7 @@ export default function TaskDetailPage() {
   const [reopenSecondsLeft, setReopenSecondsLeft] = useState(0)
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
+  const [showEditModal, setShowEditModal] = useState(false)
 
   useEffect(() => {
     if (!task?.reopen_expires_at) { setReopenSecondsLeft(0); return }
@@ -393,6 +396,7 @@ export default function TaskDetailPage() {
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
   const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
   const isCreator = task.created_by_user_id === user?.id
+  const canEdit = isCreator || user?.role === 'org_admin' || user?.role === 'hr_manager'
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -441,6 +445,15 @@ export default function TaskDetailPage() {
               </span>
             )
           )}
+          {canEdit && (
+            <button
+              onClick={() => setShowEditModal(true)}
+              className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#475569] border border-[#CBD5E1] bg-white rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
+            >
+              <Pencil size={15} />
+              Edit
+            </button>
+          )}
           {canDelete && !showDeleteConfirm && (
             <button
               onClick={() => setShowDeleteConfirm(true)}
@@ -459,6 +472,17 @@ export default function TaskDetailPage() {
           <Eye size={14} className="shrink-0 text-[#D97706]" />
           You&apos;re CC&apos;d on this task — you can view and comment but cannot mark it complete.
         </div>
+      )}
+
+      {showEditModal && (
+        <EditTaskModal
+          task={task}
+          categories={categories}
+          priorities={priorities}
+          statuses={statuses}
+          onClose={() => setShowEditModal(false)}
+          onSaved={(updated) => { setTask(updated); setSelectedStatusId(updated.status_id); setShowEditModal(false) }}
+        />
       )}
 
       {/* Reopen reason modal (creator only) */}
