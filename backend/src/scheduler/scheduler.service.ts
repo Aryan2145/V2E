@@ -24,169 +24,9 @@ export class SchedulerService {
     });
 
     let spawned = 0;
-
     for (const entry of entries) {
-      try {
-        if (!this.shouldEntryFireToday(entry)) continue;
-
-        // Dedup: one task per entry per day
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayEnd = new Date();
-        todayEnd.setHours(23, 59, 59, 999);
-
-        const already = await this.prisma.task.count({
-          where: {
-            organization_id: entry.organization_id,
-            recurring_template_id: entry.recurring_template_id,
-            created_at: { gte: todayStart, lte: todayEnd },
-            // Each entry stores its id in activity log metadata; use a simpler
-            // approach: allow one task per template per entry time slot
-          },
-        });
-
-        // If another entry for the same template already spawned today and
-        // produced a task, we still allow this entry to spawn (multi-entry).
-        // Use entry.id stored in activity logs for precise dedup.
-        const alreadyThisEntry = await this.prisma.taskActivityLog.count({
-          where: {
-            organization_id: entry.organization_id,
-            performed_by_user_id: 'system',
-            action: 'created',
-            created_at: { gte: todayStart, lte: todayEnd },
-            metadata: { path: ['entry_id'], equals: entry.id },
-          },
-        });
-        if (alreadyThisEntry > 0) continue;
-
-        const template = entry.template;
-
-        const status = await this.prisma.taskStatus.findFirst({
-          where: { organization_id: template.organization_id, is_default: true, is_active: true },
-          orderBy: { order_index: 'asc' },
-        });
-        if (!status) continue;
-
-        const [h, m] = entry.time.split(':').map(Number);
-        const rawDeadline = new Date();
-        rawDeadline.setHours(h, m, 0, 0);
-
-        // Holiday adjustment
-        const adjustedDeadline = await this.holidaysService.adjustDeadline(
-          rawDeadline, template.organization_id,
-        );
-        if (adjustedDeadline === null) {
-          // skip_create: org explicitly wants to skip this occurrence
-          const newCount = entry.occurrence_count + 1;
-          await this.prisma.recurringScheduleEntry.update({
-            where: { id: entry.id },
-            data: {
-              occurrence_count: { increment: 1 },
-              ...(entry.end_condition === 'after_n' &&
-                entry.end_after !== null &&
-                newCount >= entry.end_after && { is_active: false }),
-            },
-          });
-          // Log skip in a placeholder activity log (no task_id — log against template via metadata)
-          // We create a dummy task reference log using template_id as entity context
-          const holidayName = await this.holidaysService['getHolidayNameForDate'](rawDeadline, template.organization_id).catch(() => 'Holiday');
-          this.logger.log(`Recurring spawn skipped for entry ${entry.id} on ${rawDeadline.toISOString().slice(0, 10)} due to holiday: ${holidayName}`);
-          continue;
-        }
-        const deadline = adjustedDeadline;
-
-        const task = await this.prisma.task.create({
-          data: {
-            organization_id: template.organization_id,
-            title: template.title,
-            description: template.description ?? undefined,
-            category_id: template.category_id ?? undefined,
-            priority_id: template.priority_id ?? undefined,
-            status_id: status.id,
-            quadrant: template.quadrant,
-            type: 'recurring',
-            created_by_user_id: template.created_by_user_id,
-            department_id: template.department_id ?? undefined,
-            completion_mode: template.completion_mode,
-            proof_required: template.proof_required,
-            deadline,
-            recurring_template_id: template.id,
-          },
-        });
-
-        const assigneeIds = template.assignee_user_ids as string[];
-        const ccIds = template.cc_user_ids as string[];
-
-        if (assigneeIds.length > 0) {
-          await this.prisma.taskAssignee.createMany({
-            data: assigneeIds.map((uid) => ({
-              organization_id: template.organization_id,
-              task_id: task.id,
-              user_id: uid,
-              is_cc: false,
-            })),
-            skipDuplicates: true,
-          });
-        }
-        if (ccIds.length > 0) {
-          await this.prisma.taskAssignee.createMany({
-            data: ccIds.map((uid) => ({
-              organization_id: template.organization_id,
-              task_id: task.id,
-              user_id: uid,
-              is_cc: true,
-            })),
-            skipDuplicates: true,
-          });
-        }
-
-        // Increment entry occurrence count
-        const newCount = entry.occurrence_count + 1;
-        await this.prisma.recurringScheduleEntry.update({
-          where: { id: entry.id },
-          data: {
-            occurrence_count: { increment: 1 },
-            ...(entry.end_condition === 'after_n' &&
-              entry.end_after !== null &&
-              newCount >= entry.end_after && { is_active: false }),
-          },
-        });
-
-        // Check if all entries for this template are now inactive
-        const activeCount = await this.prisma.recurringScheduleEntry.count({
-          where: { recurring_template_id: template.id, is_active: true },
-        });
-        if (activeCount === 0) {
-          await this.prisma.recurringTemplate.update({
-            where: { id: template.id },
-            data: { is_active: false },
-          });
-        }
-
-        const deadlineAdjusted = adjustedDeadline.getTime() !== rawDeadline.getTime();
-        await this.prisma.taskActivityLog.create({
-          data: {
-            organization_id: template.organization_id,
-            task_id: task.id,
-            performed_by_user_id: 'system',
-            action: 'created',
-            metadata: {
-              source: 'recurring_spawn',
-              template_id: template.id,
-              entry_id: entry.id,
-              ...(deadlineAdjusted && {
-                deadline_adjusted: true,
-                original_deadline: rawDeadline.toISOString(),
-                adjusted_deadline: adjustedDeadline.toISOString(),
-              }),
-            } as never,
-          },
-        });
-
-        spawned++;
-      } catch (err) {
-        this.logger.error(`Failed to spawn from entry ${entry.id}: ${err}`);
-      }
+      const did = await this.spawnEntry(entry);
+      if (did) spawned++;
     }
 
     // Deactivate on_date entries whose end_date has passed
@@ -198,6 +38,140 @@ export class SchedulerService {
     });
 
     this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
+  }
+
+  // Spawn today's task for a specific template (on-demand, e.g. after create/resume)
+  async spawnForTemplate(orgId: string, templateId: string): Promise<{ spawned: number }> {
+    const entries = await this.prisma.recurringScheduleEntry.findMany({
+      where: { is_active: true, recurring_template_id: templateId, organization_id: orgId, template: { is_active: true } },
+      include: { template: true },
+    });
+
+    let spawned = 0;
+    for (const entry of entries) {
+      const did = await this.spawnEntry(entry);
+      if (did) spawned++;
+    }
+    return { spawned };
+  }
+
+  private async spawnEntry(entry: any): Promise<boolean> {
+    try {
+      if (!this.shouldEntryFireToday(entry)) return false;
+
+      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+
+      const alreadyThisEntry = await this.prisma.taskActivityLog.count({
+        where: {
+          organization_id: entry.organization_id,
+          performed_by_user_id: 'system',
+          action: 'created',
+          created_at: { gte: todayStart, lte: todayEnd },
+          metadata: { path: ['entry_id'], equals: entry.id },
+        },
+      });
+      if (alreadyThisEntry > 0) return false;
+
+      const template = entry.template;
+
+      const status = await this.prisma.taskStatus.findFirst({
+        where: { organization_id: template.organization_id, is_default: true, is_active: true },
+        orderBy: { order_index: 'asc' },
+      });
+      if (!status) return false;
+
+      const [h, m] = entry.time.split(':').map(Number);
+      const rawDeadline = new Date();
+      rawDeadline.setHours(h, m, 0, 0);
+
+      const adjustedDeadline = await this.holidaysService.adjustDeadline(rawDeadline, template.organization_id);
+      if (adjustedDeadline === null) {
+        const newCount = entry.occurrence_count + 1;
+        await this.prisma.recurringScheduleEntry.update({
+          where: { id: entry.id },
+          data: {
+            occurrence_count: { increment: 1 },
+            ...(entry.end_condition === 'after_n' && entry.end_after !== null && newCount >= entry.end_after && { is_active: false }),
+          },
+        });
+        const holidayName = await this.holidaysService['getHolidayNameForDate'](rawDeadline, template.organization_id).catch(() => 'Holiday');
+        this.logger.log(`Spawn skipped for entry ${entry.id} due to holiday: ${holidayName}`);
+        return false;
+      }
+
+      const task = await this.prisma.task.create({
+        data: {
+          organization_id: template.organization_id,
+          title: template.title,
+          description: template.description ?? undefined,
+          category_id: template.category_id ?? undefined,
+          priority_id: template.priority_id ?? undefined,
+          status_id: status.id,
+          quadrant: template.quadrant,
+          type: 'recurring',
+          created_by_user_id: template.created_by_user_id,
+          department_id: template.department_id ?? undefined,
+          completion_mode: template.completion_mode,
+          proof_required: template.proof_required,
+          deadline: adjustedDeadline,
+          recurring_template_id: template.id,
+        },
+      });
+
+      const assigneeIds = template.assignee_user_ids as string[];
+      const ccIds = template.cc_user_ids as string[];
+
+      if (assigneeIds.length > 0) {
+        await this.prisma.taskAssignee.createMany({
+          data: assigneeIds.map((uid) => ({ organization_id: template.organization_id, task_id: task.id, user_id: uid, is_cc: false })),
+          skipDuplicates: true,
+        });
+      }
+      if (ccIds.length > 0) {
+        await this.prisma.taskAssignee.createMany({
+          data: ccIds.map((uid) => ({ organization_id: template.organization_id, task_id: task.id, user_id: uid, is_cc: true })),
+          skipDuplicates: true,
+        });
+      }
+
+      const newCount = entry.occurrence_count + 1;
+      await this.prisma.recurringScheduleEntry.update({
+        where: { id: entry.id },
+        data: {
+          occurrence_count: { increment: 1 },
+          ...(entry.end_condition === 'after_n' && entry.end_after !== null && newCount >= entry.end_after && { is_active: false }),
+        },
+      });
+
+      const activeCount = await this.prisma.recurringScheduleEntry.count({
+        where: { recurring_template_id: template.id, is_active: true },
+      });
+      if (activeCount === 0) {
+        await this.prisma.recurringTemplate.update({ where: { id: template.id }, data: { is_active: false } });
+      }
+
+      const deadlineAdjusted = adjustedDeadline.getTime() !== rawDeadline.getTime();
+      await this.prisma.taskActivityLog.create({
+        data: {
+          organization_id: template.organization_id,
+          task_id: task.id,
+          performed_by_user_id: 'system',
+          action: 'created',
+          metadata: {
+            source: 'recurring_spawn',
+            template_id: template.id,
+            entry_id: entry.id,
+            ...(deadlineAdjusted && { deadline_adjusted: true, original_deadline: rawDeadline.toISOString(), adjusted_deadline: adjustedDeadline.toISOString() }),
+          } as never,
+        },
+      });
+
+      return true;
+    } catch (err) {
+      this.logger.error(`Failed to spawn from entry ${entry.id}: ${err}`);
+      return false;
+    }
   }
 
   // ─── Reminder Engine ──────────────────────────────────────────────────────────

@@ -278,6 +278,11 @@ export const tasksApi = {
     return unwrap<RecurringTemplate>(res)
   },
 
+  spawnTodayRecurring: async (orgId: string, id: string): Promise<{ spawned: number }> => {
+    const res = await apiClient.post(`${base(orgId)}/recurring/${id}/spawn-today`)
+    return unwrap<{ spawned: number }>(res)
+  },
+
   deleteRecurring: async (orgId: string, id: string, mode: 'stop' | 'delete-future' | 'delete-all' = 'stop'): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/recurring/${id}?mode=${mode}`)
   },

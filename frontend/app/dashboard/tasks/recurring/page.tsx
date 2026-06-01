@@ -16,7 +16,7 @@ import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
 import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
 import {
-  RotateCcw, Play, Pause, Calendar, Users, Plus, X, Trash2, Edit2, Info,
+  RotateCcw, Play, Pause, Calendar, Users, Plus, X, Trash2, Edit2, Info, Zap,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -636,14 +636,18 @@ function RecurringCard({
   onPause,
   onResume,
   onDelete,
+  onSpawnToday,
 }: {
   template: RecurringTemplate
   onEdit: () => void
   onPause: () => Promise<void>
   onResume: () => Promise<void>
   onDelete: () => void
+  onSpawnToday: () => Promise<{ spawned: number }>
 }) {
   const [toggling, setToggling] = useState(false)
+  const [spawning, setSpawning] = useState(false)
+  const [spawnMsg, setSpawnMsg] = useState<string | null>(null)
   const [showDeleteMenu, setShowDeleteMenu] = useState(false)
 
   async function handleToggle() {
@@ -653,6 +657,20 @@ function RecurringCard({
       else await onResume()
     } finally {
       setToggling(false)
+    }
+  }
+
+  async function handleSpawnToday() {
+    setSpawning(true)
+    setSpawnMsg(null)
+    try {
+      const result = await onSpawnToday()
+      setSpawnMsg(result.spawned > 0 ? `${result.spawned} task${result.spawned !== 1 ? 's' : ''} created` : 'Already spawned today')
+    } catch {
+      setSpawnMsg('Failed')
+    } finally {
+      setSpawning(false)
+      setTimeout(() => setSpawnMsg(null), 3000)
     }
   }
 
@@ -696,6 +714,18 @@ function RecurringCard({
           >
             <Edit2 size={13} />
           </button>
+          {/* Run today button */}
+          {template.is_active && (
+            <button
+              onClick={handleSpawnToday}
+              disabled={spawning}
+              title="Spawn today's task now"
+              className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-[8px] text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] disabled:opacity-60 transition-colors"
+            >
+              <Zap size={11} />
+              {spawning ? '...' : spawnMsg ?? 'Run Today'}
+            </button>
+          )}
           <button
             onClick={handleToggle}
             disabled={toggling}
@@ -893,6 +923,7 @@ export default function RecurringPage() {
               onPause={() => handlePause(t.id)}
               onResume={() => handleResume(t.id)}
               onDelete={() => handleDelete(t.id)}
+              onSpawnToday={() => tasksApi.spawnTodayRecurring(orgId, t.id).then((r) => { loadData(); return r })}
             />
           ))}
         </div>

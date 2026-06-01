@@ -6,5 +6,6 @@ import { HolidaysModule } from '../holidays/holidays.module';
 @Module({
   imports: [PrismaModule, HolidaysModule],
   providers: [SchedulerService],
+  exports: [SchedulerService],
 })
 export class SchedulerModule {}
