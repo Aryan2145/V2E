@@ -256,6 +256,18 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   const labelCls = 'block text-sm font-medium text-[#374151] mb-1.5'
 
   const todayStr = new Date().toISOString().split('T')[0]
+
+  function handleDateChange(val: string, setter: (v: string) => void) {
+    if (!val) { setter(''); return }
+    const year = parseInt(val.split('-')[0], 10)
+    if (isNaN(year) || year < 2000 || year > 2100) {
+      setter('')
+      setError(`Year must be between 2000 and 2100`)
+      return
+    }
+    setError('')
+    setter(val)
+  }
   // End date must be >= today and >= startDate (whichever is later)
   const endDateMin = startDate && startDate > todayStr ? startDate : todayStr
 
@@ -361,11 +373,11 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Start date</label>
-              <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
+              <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => handleDateChange(e.target.value, setStartDate)} className={inputCls} />
             </div>
             <div>
               <label className={labelCls}>End date</label>
-              <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
+              <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => handleDateChange(e.target.value, setEndDate)} className={inputCls} />
             </div>
           </div>
           <div>

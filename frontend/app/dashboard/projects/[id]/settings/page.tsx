@@ -218,6 +218,18 @@ export default function ProjectSettingsPage() {
   const todayStr = new Date().toISOString().split('T')[0]
   const endDateMin = startDate && startDate > todayStr ? startDate : todayStr
 
+  function handleDateChange(val: string, setter: (v: string) => void) {
+    if (!val) { setter(''); return }
+    const year = parseInt(val.split('-')[0], 10)
+    if (isNaN(year) || year < 2000 || year > 2100) {
+      setter('')
+      setError('Year must be between 2000 and 2100')
+      return
+    }
+    setError('')
+    setter(val)
+  }
+
   // IDs already in the project (used to exclude from add-member search)
   const memberIds = members.map((m) => m.user_id)
 
@@ -391,11 +403,11 @@ export default function ProjectSettingsPage() {
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelCls}>Start date</label>
-            <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
+            <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => handleDateChange(e.target.value, setStartDate)} className={inputCls} />
           </div>
           <div>
             <label className={labelCls}>End date</label>
-            <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
+            <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => handleDateChange(e.target.value, setEndDate)} className={inputCls} />
           </div>
         </div>
         <div>
