@@ -169,6 +169,7 @@ export default function CreateTaskModal({
     e.preventDefault()
     if (!title.trim()) { setError('Title is required.'); return }
     if (assignees.filter((a) => !a.is_cc).length === 0) { setError('At least one assignee is required. CC-only tasks are not allowed.'); return }
+    if (!deadlineDate) { setError('Deadline is required.'); return }
     if (deadlineDate) {
       if (deadlineDate < todayStr) { setError('Deadline cannot be in the past.'); return }
       if (deadlineDate > '2100-12-31') { setError('Deadline year cannot exceed 2100.'); return }
@@ -286,7 +287,7 @@ export default function CreateTaskModal({
           {/* Deadline */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-[#374151]">Deadline</label>
+              <label className="text-sm font-medium text-[#374151]">Deadline <span className="text-[#DC2626]">*</span></label>
               {deadlineDate && (
                 <button
                   type="button"

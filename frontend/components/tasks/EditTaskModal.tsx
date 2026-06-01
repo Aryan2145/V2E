@@ -67,6 +67,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) { setError('Title is required.'); return }
+    if (!deadlineDate) { setError('Deadline is required.'); return }
     setSubmitting(true)
     setError(null)
     try {
@@ -137,7 +138,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
           {/* Deadline */}
           <div>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-sm font-medium text-[#374151]">Deadline</label>
+              <label className="text-sm font-medium text-[#374151]">Deadline <span className="text-[#DC2626]">*</span></label>
               {deadlineDate && (
                 <button type="button" onClick={() => { setDeadlineDate(''); setDeadlineTime('') }} className="flex items-center gap-1 text-[11px] text-[#94A3B8] hover:text-[#DC2626] transition-colors">
                   <X size={10} /> Clear
