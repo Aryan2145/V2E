@@ -191,6 +191,8 @@ export default function TaskDetailPage() {
   const [editAssigneesList, setEditAssigneesList] = useState<import('@/lib/types/tasks').SelectedAssignee[]>([])
   const [savingAssignees, setSavingAssignees] = useState(false)
   const [reopenSecondsLeft, setReopenSecondsLeft] = useState(0)
+  const [showReopenModal, setShowReopenModal] = useState(false)
+  const [reopenReason, setReopenReason] = useState('')
 
   useEffect(() => {
     if (!task?.reopen_expires_at) { setReopenSecondsLeft(0); return }
@@ -253,12 +255,14 @@ export default function TaskDetailPage() {
     }
   }
 
-  async function handleReopen() {
+  async function handleReopen(reason?: string) {
     setActionLoading('reopen')
     try {
-      const updated = await tasksApi.reopenTask(orgId, taskId)
+      const updated = await tasksApi.reopenTask(orgId, taskId, reason)
       setTask(updated)
       setSelectedStatusId(updated.status_id)
+      setShowReopenModal(false)
+      setReopenReason('')
       await loadTask()
     } catch {
       // ignore
@@ -385,6 +389,7 @@ export default function TaskDetailPage() {
   const assignees = task.assignees?.filter((a) => !a.is_cc) ?? []
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
   const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
+  const isCreator = task.created_by_user_id === user?.id
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -408,9 +413,18 @@ export default function TaskDetailPage() {
               {actionLoading === 'complete' ? 'Completing...' : 'Complete'}
             </button>
           ) : !currentUserIsCC && (
-            reopenSecondsLeft > 0 ? (
+            isCreator ? (
               <button
-                onClick={handleReopen}
+                onClick={() => setShowReopenModal(true)}
+                disabled={actionLoading === 'reopen'}
+                className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
+              >
+                <RotateCcw size={15} />
+                Reopen
+              </button>
+            ) : reopenSecondsLeft > 0 ? (
+              <button
+                onClick={() => handleReopen()}
                 disabled={actionLoading === 'reopen'}
                 className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
               >
@@ -441,6 +455,38 @@ export default function TaskDetailPage() {
         <div className="flex items-center gap-2 text-[13px] text-[#92400E] bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2">
           <Eye size={14} className="shrink-0 text-[#D97706]" />
           You&apos;re CC&apos;d on this task — you can view and comment but cannot mark it complete.
+        </div>
+      )}
+
+      {/* Reopen reason modal (creator only) */}
+      {showReopenModal && (
+        <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[12px] p-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-[#D97706]">Reopen this task?</p>
+            <p className="text-xs text-[#92400E] mt-0.5">As the task creator, a reason is required.</p>
+            <textarea
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              placeholder="Reason for reopening (required)"
+              rows={2}
+              className="mt-2 w-full border border-[#FDE68A] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none bg-white focus:border-[#D97706] resize-none"
+            />
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => handleReopen(reopenReason)}
+              disabled={actionLoading === 'reopen' || !reopenReason.trim()}
+              className="px-4 py-2 text-sm font-semibold text-white bg-[#D97706] rounded-[8px] hover:bg-[#B45309] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {actionLoading === 'reopen' ? 'Reopening...' : 'Confirm Reopen'}
+            </button>
+            <button
+              onClick={() => { setShowReopenModal(false); setReopenReason('') }}
+              className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

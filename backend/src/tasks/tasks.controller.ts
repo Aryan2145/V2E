@@ -155,8 +155,8 @@ export class TasksController {
 
   @Post(':id/reopen')
   @ApiOperation({ summary: 'Reopen a completed task (within window)' })
-  reopen(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
-    return this.service.reopenTask(orgId, req.user.id, id);
+  reopen(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Body() body: { reason?: string }) {
+    return this.service.reopenTask(orgId, req.user.id, id, body?.reason);
   }
 
   @Post(':id/proof')

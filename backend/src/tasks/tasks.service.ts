@@ -614,11 +614,19 @@ export class TasksService {
 
   // ─── Reopen Task ──────────────────────────────────────────────────────────────
 
-  async reopenTask(orgId: string, userId: string, taskId: string) {
+  async reopenTask(orgId: string, userId: string, taskId: string, reason?: string) {
     const task = await this.findTaskOrFail(orgId, taskId);
 
-    if (!task.reopen_expires_at || task.reopen_expires_at < new Date()) {
-      throw new ForbiddenException('Reopen window has expired');
+    const isCreator = task.created_by_user_id === userId;
+
+    if (isCreator) {
+      if (!reason?.trim()) {
+        throw new BadRequestException('A reason is required when the task creator reopens a task.');
+      }
+    } else {
+      if (!task.reopen_expires_at || task.reopen_expires_at < new Date()) {
+        throw new ForbiddenException('Reopen window has expired. Only the task creator can reopen after this point.');
+      }
     }
 
     // Find ongoing / in-progress status
@@ -647,7 +655,7 @@ export class TasksService {
       data: { is_completed: false, completed_at: null },
     });
 
-    await this.logActivity(orgId, taskId, userId, 'reopened');
+    await this.logActivity(orgId, taskId, userId, 'reopened', reason ? { reason } : undefined);
 
     // Recalculate project progress if task is linked to a project
     const projectTaskReopened = await this.prisma.projectTask.findFirst({ where: { task_id: taskId } });

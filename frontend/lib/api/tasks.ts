@@ -182,8 +182,8 @@ export const tasksApi = {
     return unwrap<Task>(res)
   },
 
-  reopenTask: async (orgId: string, taskId: string): Promise<Task> => {
-    const res = await apiClient.post(`${base(orgId)}/${taskId}/reopen`)
+  reopenTask: async (orgId: string, taskId: string, reason?: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/reopen`, { reason })
     return unwrap<Task>(res)
   },
 
