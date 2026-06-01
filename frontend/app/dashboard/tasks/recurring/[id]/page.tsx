@@ -4,12 +4,10 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
-import { getUsers } from '@/lib/api/users'
 import type {
   RecurringTemplate, RecurringScheduleEntry, Task,
-  TaskCategory, TaskPriority, TaskStatus,
+  TaskCategory, TaskPriority, TaskStatus, EligibleAssigneeUser,
 } from '@/lib/types/tasks'
-import type { User } from '@/lib/types'
 import TaskCard from '@/components/tasks/TaskCard'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
 import {
@@ -92,7 +90,7 @@ export default function RecurringDetailPage() {
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
-  const [users, setUsers] = useState<User[]>([])
+  const [userMap, setUserMap] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(true)
 
   const [filterStatus, setFilterStatus] = useState('all')
@@ -112,8 +110,8 @@ export default function RecurringDetailPage() {
       tasksApi.getCategories(orgId).catch(() => []),
       tasksApi.getPriorities(orgId).catch(() => []),
       tasksApi.getStatuses(orgId).catch(() => []),
-      getUsers(orgId).catch(() => [] as User[]),
-    ]).then(([templates, inst, s, cats, prios, statuses, userList]) => {
+      tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 })),
+    ]).then(([templates, inst, s, cats, prios, statuses, eligible]) => {
       const found = (templates as RecurringTemplate[]).find((t) => t.id === templateId) ?? null
       setTemplate(found)
       setInstances(inst as Task[])
@@ -121,7 +119,11 @@ export default function RecurringDetailPage() {
       setCategories(cats)
       setPriorities(prios)
       setStatuses(statuses)
-      setUsers(userList as User[])
+      const map = new Map<string, string>()
+      ;(eligible as { departments: { users: EligibleAssigneeUser[] }[] }).departments.forEach((dept) =>
+        dept.users.forEach((u) => map.set(u.user_id, u.name))
+      )
+      setUserMap(map)
     }).finally(() => setLoading(false))
   }, [orgId, templateId])
 
@@ -381,8 +383,7 @@ export default function RecurringDetailPage() {
               </p>
               <div className="space-y-2">
                 {template.assignee_user_ids.map((uid) => {
-                  const u = users.find((x) => x.id === uid)
-                  const name = u?.name ?? uid.slice(0, 8)
+                  const name = userMap.get(uid) ?? uid.slice(0, 8)
                   return (
                     <div key={uid} className="flex items-center gap-2.5">
                       <div className={`w-7 h-7 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
