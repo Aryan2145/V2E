@@ -42,6 +42,13 @@ function formatDate(str: string): string {
   return new Date(str).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
+function formatCountdown(secs: number): string {
+  if (secs <= 0) return ''
+  const m = Math.floor(secs / 60)
+  const s = secs % 60
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
 function deadlineColor(deadline?: string): string {
   if (!deadline) return 'text-[#475569]'
   const d = new Date(deadline)
@@ -183,6 +190,18 @@ export default function TaskDetailPage() {
   const [editingAssignees, setEditingAssignees] = useState(false)
   const [editAssigneesList, setEditAssigneesList] = useState<import('@/lib/types/tasks').SelectedAssignee[]>([])
   const [savingAssignees, setSavingAssignees] = useState(false)
+  const [reopenSecondsLeft, setReopenSecondsLeft] = useState(0)
+
+  useEffect(() => {
+    if (!task?.reopen_expires_at) { setReopenSecondsLeft(0); return }
+    const tick = () => {
+      const secs = Math.max(0, Math.round((new Date(task.reopen_expires_at!).getTime() - Date.now()) / 1000))
+      setReopenSecondsLeft(secs)
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [task?.reopen_expires_at])
 
   const loadTask = useCallback(async () => {
     if (!orgId || !taskId) return
@@ -389,14 +408,21 @@ export default function TaskDetailPage() {
               {actionLoading === 'complete' ? 'Completing...' : 'Complete'}
             </button>
           ) : !currentUserIsCC && (
-            <button
-              onClick={handleReopen}
-              disabled={actionLoading === 'reopen'}
-              className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
-            >
-              <RotateCcw size={15} />
-              {actionLoading === 'reopen' ? 'Reopening...' : 'Reopen'}
-            </button>
+            reopenSecondsLeft > 0 ? (
+              <button
+                onClick={handleReopen}
+                disabled={actionLoading === 'reopen'}
+                className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
+              >
+                <RotateCcw size={15} />
+                {actionLoading === 'reopen' ? 'Reopening...' : `Reopen (${formatCountdown(reopenSecondsLeft)})`}
+              </button>
+            ) : (
+              <span className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#64748B] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[8px] cursor-default select-none">
+                <CheckCircle2 size={15} className="text-[#94A3B8]" />
+                Completed
+              </span>
+            )
           )}
           {canDelete && !showDeleteConfirm && (
             <button
