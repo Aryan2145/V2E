@@ -1,15 +1,225 @@
 'use client'
 
-import { useState } from 'react'
-import { Loader2, ChevronLeft, Plus, X } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Loader2, ChevronLeft, X, Search, Check } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { projectsApi } from '@/lib/api/projects'
+import { tasksApi } from '@/lib/api/tasks'
 import TemplatePicker from './TemplatePicker'
 import type { ProjectTemplate } from '@/lib/types/projects'
+import type { EligibleAssigneeUser } from '@/lib/types/tasks'
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const avatarColors = ['bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]', 'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]']
+function avatarColor(name: string): string {
+  let h = 0; for (let i = 0; i < name.length; i++) h += name.charCodeAt(i)
+  return avatarColors[h % avatarColors.length]
+}
+function getInitials(name: string): string {
+  return name.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2) || '?'
+}
+
+// ─── User search dropdown ─────────────────────────────────────────────────────
+
+function UserSearchDropdown({
+  orgId,
+  placeholder = 'Search by name…',
+  selected,
+  onSelect,
+  excludeIds = [],
+}: {
+  orgId: string
+  placeholder?: string
+  selected: EligibleAssigneeUser | null
+  onSelect: (u: EligibleAssigneeUser | null) => void
+  excludeIds?: string[]
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<EligibleAssigneeUser[]>([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const fetch = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setLoading(true)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await tasksApi.getEligibleAssignees(orgId, q || undefined, 'name')
+        const flat = data.departments.flatMap((d) => d.users).filter((u) => !excludeIds.includes(u.user_id))
+        setResults(flat)
+      } catch { setResults([]) }
+      finally { setLoading(false) }
+    }, 200)
+  }, [orgId, excludeIds.join(',')])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (open) fetch(query)
+  }, [query, open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  if (selected) {
+    return (
+      <div className="flex items-center gap-2 h-10 px-3 rounded-[8px] border border-[#CBD5E1] bg-white">
+        <div className={`w-6 h-6 rounded-full ${avatarColor(selected.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+          {getInitials(selected.name)}
+        </div>
+        <span className="text-sm text-[#0F172A] flex-1 truncate">{selected.name}</span>
+        <span className="text-xs text-[#94A3B8] truncate">{selected.role_title}</span>
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className="p-0.5 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#0F172A] transition-colors shrink-0"
+        >
+          <X size={13} />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder={placeholder}
+          className="w-full h-10 pl-9 pr-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+        />
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-48 overflow-y-auto">
+          {loading ? (
+            <div className="px-4 py-3 text-sm text-[#94A3B8]">Searching…</div>
+          ) : results.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-[#94A3B8]">No users found</div>
+          ) : results.map((u) => (
+            <button
+              key={u.user_id}
+              type="button"
+              onClick={() => { onSelect(u); setQuery(''); setOpen(false) }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#F8FAFC] transition-colors text-left"
+            >
+              <div className={`w-7 h-7 rounded-full ${avatarColor(u.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                {getInitials(u.name)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[#0F172A] truncate">{u.name}</p>
+                <p className="text-xs text-[#94A3B8] truncate">{u.role_title} · {u.department_name}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Multi-user search (for members step) ─────────────────────────────────────
+
+function MultiUserSearch({
+  orgId,
+  excludeIds,
+  onAdd,
+}: {
+  orgId: string
+  excludeIds: string[]
+  onAdd: (u: EligibleAssigneeUser) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<EligibleAssigneeUser[]>([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const fetch = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setLoading(true)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await tasksApi.getEligibleAssignees(orgId, q || undefined, 'name')
+        setResults(data.departments.flatMap((d) => d.users))
+      } catch { setResults([]) }
+      finally { setLoading(false) }
+    }, 200)
+  }, [orgId])
+
+  useEffect(() => {
+    if (open) fetch(query)
+  }, [query, open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder="Search team members to add…"
+          className="w-full h-10 pl-9 pr-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+        />
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-56 overflow-y-auto">
+          {loading ? (
+            <div className="px-4 py-3 text-sm text-[#94A3B8]">Searching…</div>
+          ) : results.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-[#94A3B8]">No users found</div>
+          ) : results.map((u) => {
+            const already = excludeIds.includes(u.user_id)
+            return (
+              <button
+                key={u.user_id}
+                type="button"
+                onClick={() => { if (!already) { onAdd(u); setQuery(''); setOpen(false) } }}
+                disabled={already}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors text-left ${already ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[#F8FAFC]'}`}
+              >
+                <div className={`w-7 h-7 rounded-full ${avatarColor(u.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                  {getInitials(u.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[#0F172A] truncate">{u.name}</p>
+                  <p className="text-xs text-[#94A3B8] truncate">{u.role_title} · {u.department_name}</p>
+                </div>
+                {already && <Check size={14} className="text-[#16A34A] shrink-0" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface WizardMember {
   user_id: string
+  name: string
+  role_title: string
   role: 'manager' | 'editor' | 'viewer'
   task_visibility: 'own_tasks_only' | 'all_member_tasks'
 }
@@ -17,6 +227,8 @@ interface WizardMember {
 interface CreateProjectWizardProps {
   templates: ProjectTemplate[]
 }
+
+// ─── Wizard ───────────────────────────────────────────────────────────────────
 
 export default function CreateProjectWizard({ templates }: CreateProjectWizardProps) {
   const { user } = useAuth()
@@ -32,29 +244,33 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   const [description, setDescription] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [pmUserId, setPmUserId] = useState(user?.id ?? '')
+  const [pmUser, setPmUser] = useState<EligibleAssigneeUser | null>(null)
   const [budget, setBudget] = useState('')
   const [currency, setCurrency] = useState('INR')
   const [templateId, setTemplateId] = useState<string | null>(null)
 
   // Step 2 fields
   const [members, setMembers] = useState<WizardMember[]>([])
-  const [newMemberInput, setNewMemberInput] = useState('')
 
   const inputCls = 'w-full h-10 px-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors'
   const labelCls = 'block text-sm font-medium text-[#374151] mb-1.5'
 
+  // All IDs already in the project (creator + PM + added members)
+  const takenIds = [
+    ...(user?.id ? [user.id] : []),
+    ...(pmUser ? [pmUser.user_id] : []),
+    ...members.map((m) => m.user_id),
+  ]
+
   function validateStep1() {
     if (!name.trim()) { setError('Project name is required'); return false }
-    if (!pmUserId.trim()) { setError('Project manager is required'); return false }
+    if (!pmUser) { setError('Project manager is required'); return false }
     setError(''); return true
   }
 
-  function addMember() {
-    const id = newMemberInput.trim()
-    if (!id || members.some((m) => m.user_id === id)) { setNewMemberInput(''); return }
-    setMembers((prev) => [...prev, { user_id: id, role: 'viewer', task_visibility: 'own_tasks_only' }])
-    setNewMemberInput('')
+  function addMember(u: EligibleAssigneeUser) {
+    if (members.some((m) => m.user_id === u.user_id)) return
+    setMembers((prev) => [...prev, { user_id: u.user_id, name: u.name, role_title: u.role_title, role: 'viewer', task_visibility: 'own_tasks_only' }])
   }
 
   function updateMember(uid: string, patch: Partial<WizardMember>) {
@@ -72,7 +288,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
       const project = await projectsApi.create(orgId, {
         name: name.trim(),
         description: description.trim() || undefined,
-        project_manager_user_id: pmUserId.trim(),
+        project_manager_user_id: pmUser!.user_id,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
         planned_budget: budget ? Number(budget) : undefined,
@@ -80,7 +296,6 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
         template_id: templateId ?? undefined,
       })
 
-      // Add additional members
       await Promise.all(
         members.map((m) =>
           projectsApi.addMember(orgId, project.id, {
@@ -106,12 +321,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
       <div className="flex items-center gap-3 mb-8">
         {[1, 2].map((s) => (
           <div key={s} className="flex items-center gap-2">
-            <div
-              className={[
-                'w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold',
-                s === step ? 'bg-[#2563EB] text-white' : s < step ? 'bg-[#DCFCE7] text-[#16A34A]' : 'bg-[#F1F5F9] text-[#94A3B8]',
-              ].join(' ')}
-            >
+            <div className={['w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold', s === step ? 'bg-[#2563EB] text-white' : s < step ? 'bg-[#DCFCE7] text-[#16A34A]' : 'bg-[#F1F5F9] text-[#94A3B8]'].join(' ')}>
               {s}
             </div>
             <span className={`text-sm font-medium ${s === step ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
@@ -123,15 +333,13 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
       </div>
 
       {error && (
-        <div className="mb-4 px-4 py-3 rounded-[8px] border border-[#FECACA] bg-[#FEF2F2] text-sm text-[#DC2626]">
-          {error}
-        </div>
+        <div className="mb-4 px-4 py-3 rounded-[8px] border border-[#FECACA] bg-[#FEF2F2] text-sm text-[#DC2626]">{error}</div>
       )}
 
       {step === 1 && (
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.08)] space-y-4">
           <div>
-            <label className={labelCls}>Project name *</label>
+            <label className={labelCls}>Project name <span className="text-[#DC2626]">*</span></label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Website Redesign Q3" className={inputCls} />
           </div>
           <div>
@@ -149,8 +357,14 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
             </div>
           </div>
           <div>
-            <label className={labelCls}>Project manager (user ID) *</label>
-            <input value={pmUserId} onChange={(e) => setPmUserId(e.target.value)} placeholder="User ID" className={inputCls} />
+            <label className={labelCls}>Project manager <span className="text-[#DC2626]">*</span></label>
+            <UserSearchDropdown
+              orgId={orgId}
+              placeholder="Search by name…"
+              selected={pmUser}
+              onSelect={setPmUser}
+              excludeIds={user?.id ? [user.id] : []}
+            />
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
@@ -172,11 +386,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
             <TemplatePicker templates={templates} selected={templateId} onSelect={setTemplateId} />
           </div>
           <div className="flex justify-end pt-2">
-            <button
-              type="button"
-              onClick={() => { if (validateStep1()) setStep(2) }}
-              className="h-10 px-6 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold transition-colors"
-            >
+            <button type="button" onClick={() => { if (validateStep1()) setStep(2) }} className="h-10 px-6 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold transition-colors">
               Next: Add Members
             </button>
           </div>
@@ -189,60 +399,80 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
             You and the project manager are automatically added. Add additional team members below.
           </p>
 
-          <div className="flex gap-2 mb-4">
-            <input
-              value={newMemberInput}
-              onChange={(e) => setNewMemberInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') addMember() }}
-              placeholder="Enter user ID"
-              className={`${inputCls} flex-1`}
-            />
-            <button type="button" onClick={addMember} className="h-10 px-4 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold transition-colors flex items-center gap-1.5">
-              <Plus size={14} /> Add
-            </button>
+          {/* Auto-added members */}
+          <div className="space-y-2 mb-4">
+            {user && (
+              <div className="flex items-center gap-3 p-3 bg-[#F8FAFC] rounded-[8px] border border-[#E2E8F0]">
+                <div className={`w-7 h-7 rounded-full ${avatarColor(user.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                  {getInitials(user.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[#0F172A] truncate">{user.name}</p>
+                  <p className="text-xs text-[#94A3B8]">You (creator)</p>
+                </div>
+                <span className="text-xs text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[6px] px-2 py-1">Owner</span>
+              </div>
+            )}
+            {pmUser && pmUser.user_id !== user?.id && (
+              <div className="flex items-center gap-3 p-3 bg-[#F8FAFC] rounded-[8px] border border-[#E2E8F0]">
+                <div className={`w-7 h-7 rounded-full ${avatarColor(pmUser.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                  {getInitials(pmUser.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[#0F172A] truncate">{pmUser.name}</p>
+                  <p className="text-xs text-[#94A3B8]">{pmUser.role_title} · Project Manager</p>
+                </div>
+                <span className="text-xs text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[6px] px-2 py-1">Manager</span>
+              </div>
+            )}
           </div>
 
-          {members.length === 0 && (
-            <p className="text-sm text-[#94A3B8] mb-4">No additional members added.</p>
+          {/* Search to add */}
+          <div className="mb-4">
+            <MultiUserSearch orgId={orgId} excludeIds={takenIds} onAdd={addMember} />
+          </div>
+
+          {/* Added members */}
+          {members.length === 0 ? (
+            <p className="text-sm text-[#94A3B8] mb-6">No additional members added.</p>
+          ) : (
+            <div className="space-y-2 mb-6">
+              {members.map((m) => (
+                <div key={m.user_id} className="flex items-center gap-3 p-3 bg-[#F8FAFC] rounded-[8px] border border-[#E2E8F0]">
+                  <div className={`w-7 h-7 rounded-full ${avatarColor(m.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                    {getInitials(m.name)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-[#0F172A] truncate">{m.name}</p>
+                    <p className="text-xs text-[#94A3B8] truncate">{m.role_title}</p>
+                  </div>
+                  <select
+                    value={m.role}
+                    onChange={(e) => updateMember(m.user_id, { role: e.target.value as 'manager' | 'editor' | 'viewer' })}
+                    className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1.5 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
+                  >
+                    <option value="manager">Manager</option>
+                    <option value="editor">Editor</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                  <select
+                    value={m.task_visibility}
+                    onChange={(e) => updateMember(m.user_id, { task_visibility: e.target.value as 'own_tasks_only' | 'all_member_tasks' })}
+                    className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1.5 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
+                  >
+                    <option value="own_tasks_only">Own tasks</option>
+                    <option value="all_member_tasks">All tasks</option>
+                  </select>
+                  <button type="button" onClick={() => removeMember(m.user_id)} className="p-1 rounded hover:bg-[#FEE2E2] text-[#DC2626] transition-colors">
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
 
-          <div className="space-y-2 mb-6">
-            {members.map((m) => (
-              <div key={m.user_id} className="flex items-center gap-3 p-3 bg-[#F8FAFC] rounded-[8px] border border-[#E2E8F0]">
-                <div className="w-7 h-7 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] flex items-center justify-center">
-                  <span className="text-[10px] font-semibold text-[#2563EB]">{m.user_id.charAt(0).toUpperCase()}</span>
-                </div>
-                <span className="text-sm text-[#0F172A] flex-1 truncate">{m.user_id}</span>
-                <select
-                  value={m.role}
-                  onChange={(e) => updateMember(m.user_id, { role: e.target.value as 'manager' | 'editor' | 'viewer' })}
-                  className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1.5 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-                >
-                  <option value="manager">Manager</option>
-                  <option value="editor">Editor</option>
-                  <option value="viewer">Viewer</option>
-                </select>
-                <select
-                  value={m.task_visibility}
-                  onChange={(e) => updateMember(m.user_id, { task_visibility: e.target.value as 'own_tasks_only' | 'all_member_tasks' })}
-                  className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1.5 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-                >
-                  <option value="own_tasks_only">Own tasks</option>
-                  <option value="all_member_tasks">All tasks</option>
-                </select>
-                <button type="button" onClick={() => removeMember(m.user_id)} className="p-1 rounded hover:bg-[#FEE2E2] text-[#DC2626] transition-colors">
-                  <X size={13} />
-                </button>
-              </div>
-            ))}
-          </div>
-
           <div className="flex justify-between">
-            <button
-              type="button"
-              onClick={() => setStep(1)}
-              className="h-10 px-4 rounded-[8px] border-2 border-[#2563EB] text-[#2563EB] text-sm font-semibold hover:bg-[#EFF6FF] transition-colors flex items-center gap-1.5"
-            >
+            <button type="button" onClick={() => setStep(1)} className="h-10 px-4 rounded-[8px] border-2 border-[#2563EB] text-[#2563EB] text-sm font-semibold hover:bg-[#EFF6FF] transition-colors flex items-center gap-1.5">
               <ChevronLeft size={16} /> Back
             </button>
             <button
