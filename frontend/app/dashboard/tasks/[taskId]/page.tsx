@@ -156,7 +156,7 @@ function ActivityItem({ log }: { log: TaskActivityLog }) {
           <span className="font-semibold">{log.performed_by_name}</span>{' '}
           <span className="text-[#475569]">{log.action.replace(/_/g, ' ')}</span>
         </p>
-        {log.metadata?.reason && (
+        {!!log.metadata?.reason && (
           <p className="text-xs text-[#475569] mt-0.5 italic">"{String(log.metadata.reason)}"</p>
         )}
         <p className="text-xs text-[#94A3B8] mt-0.5">{formatDate(log.created_at)}</p>
