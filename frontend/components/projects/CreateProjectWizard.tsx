@@ -269,6 +269,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   function validateStep1() {
     if (!name.trim()) { setError('Project name is required'); return false }
     if (!pmUser) { setError('Project manager is required'); return false }
+    if (startDate && new Date(startDate).getFullYear() < 2000) { setError('Start date cannot be before year 2000'); return false }
     if (startDate && new Date(startDate).getFullYear() > 2100) { setError('Start date year cannot exceed 2100'); return false }
     if (endDate) {
       if (new Date(endDate).getFullYear() > 2100) { setError('End date year cannot exceed 2100'); return false }
@@ -360,7 +361,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Start date</label>
-              <input type="date" value={startDate} max="2100-12-31" onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
+              <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
             </div>
             <div>
               <label className={labelCls}>End date</label>
