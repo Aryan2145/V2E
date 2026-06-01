@@ -1,13 +1,178 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { projectsApi } from '@/lib/api/projects'
+import { tasksApi } from '@/lib/api/tasks'
 import type { Project, ProjectMember } from '@/lib/types/projects'
+import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 import MemberRow from '@/components/projects/MemberRow'
-import { ChevronLeft, Plus, Loader2, Trash2 } from 'lucide-react'
+import { ChevronLeft, Plus, Loader2, Trash2, Search, X, Check } from 'lucide-react'
+
+// ─── Avatar helpers ────────────────────────────────────────────────────────────
+
+const avatarColors = ['bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]', 'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]']
+function avatarColor(name: string): string {
+  let h = 0; for (let i = 0; i < name.length; i++) h += name.charCodeAt(i)
+  return avatarColors[h % avatarColors.length]
+}
+function getInitials(name: string): string {
+  return name.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2) || '?'
+}
+
+// ─── User search (single select) ──────────────────────────────────────────────
+
+function UserSearchDropdown({ orgId, selected, onSelect, excludeIds = [] }: {
+  orgId: string
+  selected: EligibleAssigneeUser | null
+  onSelect: (u: EligibleAssigneeUser | null) => void
+  excludeIds?: string[]
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<EligibleAssigneeUser[]>([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const fetch = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setLoading(true)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await tasksApi.getEligibleAssignees(orgId, q || undefined, 'name')
+        setResults(data.departments.flatMap((d) => d.users).filter((u) => !excludeIds.includes(u.user_id)))
+      } catch { setResults([]) }
+      finally { setLoading(false) }
+    }, 200)
+  }, [orgId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { if (open) fetch(query) }, [query, open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  if (selected) {
+    return (
+      <div className="flex items-center gap-2 h-10 px-3 rounded-[8px] border border-[#CBD5E1] bg-white">
+        <div className={`w-6 h-6 rounded-full ${avatarColor(selected.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+          {getInitials(selected.name)}
+        </div>
+        <span className="text-sm text-[#0F172A] flex-1 truncate">{selected.name}</span>
+        <span className="text-xs text-[#94A3B8] truncate">{selected.role_title}</span>
+        <button type="button" onClick={() => onSelect(null)} className="p-0.5 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#0F172A] transition-colors shrink-0">
+          <X size={13} />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} onFocus={() => setOpen(true)} placeholder="Search by name…"
+          className="w-full h-10 pl-9 pr-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors" />
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-48 overflow-y-auto">
+          {loading ? <div className="px-4 py-3 text-sm text-[#94A3B8]">Searching…</div>
+            : results.length === 0 ? <div className="px-4 py-3 text-sm text-[#94A3B8]">No users found</div>
+            : results.map((u) => (
+              <button key={u.user_id} type="button" onClick={() => { onSelect(u); setQuery(''); setOpen(false) }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#F8FAFC] transition-colors text-left">
+                <div className={`w-7 h-7 rounded-full ${avatarColor(u.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                  {getInitials(u.name)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[#0F172A] truncate">{u.name}</p>
+                  <p className="text-xs text-[#94A3B8] truncate">{u.role_title} · {u.department_name}</p>
+                </div>
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Multi-user search (add member) ───────────────────────────────────────────
+
+function MultiUserSearch({ orgId, excludeIds, onAdd }: {
+  orgId: string
+  excludeIds: string[]
+  onAdd: (u: EligibleAssigneeUser) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<EligibleAssigneeUser[]>([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const fetch = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setLoading(true)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await tasksApi.getEligibleAssignees(orgId, q || undefined, 'name')
+        setResults(data.departments.flatMap((d) => d.users))
+      } catch { setResults([]) }
+      finally { setLoading(false) }
+    }, 200)
+  }, [orgId])
+
+  useEffect(() => { if (open) fetch(query) }, [query, open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} onFocus={() => setOpen(true)} placeholder="Search team members to add…"
+          className="w-full h-10 pl-9 pr-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors" />
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-56 overflow-y-auto">
+          {loading ? <div className="px-4 py-3 text-sm text-[#94A3B8]">Searching…</div>
+            : results.length === 0 ? <div className="px-4 py-3 text-sm text-[#94A3B8]">No users found</div>
+            : results.map((u) => {
+              const already = excludeIds.includes(u.user_id)
+              return (
+                <button key={u.user_id} type="button" onClick={() => { if (!already) { onAdd(u); setQuery(''); setOpen(false) } }} disabled={already}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors text-left ${already ? 'opacity-50 cursor-not-allowed' : 'hover:bg-[#F8FAFC]'}`}>
+                  <div className={`w-7 h-7 rounded-full ${avatarColor(u.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                    {getInitials(u.name)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-[#0F172A] truncate">{u.name}</p>
+                    <p className="text-xs text-[#94A3B8] truncate">{u.role_title} · {u.department_name}</p>
+                  </div>
+                  {already && <Check size={14} className="text-[#16A34A] shrink-0" />}
+                </button>
+              )
+            })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 const STATUS_OPTS = [
   { value: 'active', label: 'Active' },
@@ -35,16 +200,12 @@ export default function ProjectSettingsPage() {
   const [description, setDescription] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [pmUserId, setPmUserId] = useState('')
+  const [pmUser, setPmUser] = useState<EligibleAssigneeUser | null>(null)
   const [status, setStatus] = useState('active')
   const [statusReason, setStatusReason] = useState('')
   const [plannedBudget, setPlannedBudget] = useState('')
   const [actualSpent, setActualSpent] = useState('')
   const [currency, setCurrency] = useState('INR')
-
-  // Add member
-  const [newMemberId, setNewMemberId] = useState('')
-  const [addingMember, setAddingMember] = useState(false)
 
   // Save / delete state
   const [saving, setSaving] = useState(false)
@@ -54,38 +215,67 @@ export default function ProjectSettingsPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
+  const todayStr = new Date().toISOString().split('T')[0]
+  const endDateMin = startDate && startDate > todayStr ? startDate : todayStr
+
+  // IDs already in the project (used to exclude from add-member search)
+  const memberIds = members.map((m) => m.user_id)
+
   const load = useCallback(() => {
     if (!orgId || !id) return
     setLoading(true)
     Promise.all([
       projectsApi.get(orgId, id),
       projectsApi.listMembers(orgId, id),
-    ]).then(([proj, mems]) => {
+      tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 })),
+    ]).then(([proj, mems, eligible]) => {
       setProject(proj)
       setMembers(mems)
       setName(proj.name)
       setDescription(proj.description ?? '')
-      setStartDate(proj.start_date ?? '')
-      setEndDate(proj.end_date ?? '')
-      setPmUserId(proj.project_manager_user_id)
+      setStartDate(proj.start_date?.slice(0, 10) ?? '')
+      setEndDate(proj.end_date?.slice(0, 10) ?? '')
       setStatus(proj.status)
       setStatusReason(proj.status_reason ?? '')
       setPlannedBudget(proj.planned_budget?.toString() ?? '')
       setActualSpent(proj.actual_spent?.toString() ?? '')
       setCurrency(proj.currency)
+      // Pre-fill PM user from eligible list
+      const allUsers = eligible.departments.flatMap((d) => d.users)
+      const pm = allUsers.find((u) => u.user_id === proj.project_manager_user_id)
+      setPmUser(pm ?? { user_id: proj.project_manager_user_id, name: proj.project_manager_user_id.slice(0, 8), role_title: '', department_id: '', department_name: '', active_task_count: 0, frequency_count: 0, is_frequent: false, avatar_url: null })
     }).catch(() => setError('Failed to load project')).finally(() => setLoading(false))
   }, [orgId, id])
 
   useEffect(() => { load() }, [load])
 
+  function validate() {
+    if (!name.trim()) { setError('Project name is required'); return false }
+    if (!pmUser) { setError('Project manager is required'); return false }
+    if (startDate) {
+      const y = new Date(startDate).getFullYear()
+      if (y < 2000) { setError('Start date cannot be before year 2000'); return false }
+      if (y > 2100) { setError('Start date year cannot exceed 2100'); return false }
+    }
+    if (endDate) {
+      const y = new Date(endDate).getFullYear()
+      if (y > 2100) { setError('End date year cannot exceed 2100'); return false }
+      if (endDate < todayStr) { setError('End date must be today or in the future'); return false }
+      if (startDate && endDate < startDate) { setError('End date cannot be before start date'); return false }
+    }
+    if (plannedBudget !== '' && Number(plannedBudget) < 0) { setError('Budget cannot be negative'); return false }
+    if (actualSpent !== '' && Number(actualSpent) < 0) { setError('Actual spent cannot be negative'); return false }
+    return true
+  }
+
   async function handleSave() {
-    if (!name.trim()) { setError('Project name is required'); return }
+    if (!validate()) return
     setSaving(true); setError(''); setSuccess('')
     try {
       await projectsApi.update(orgId, id, {
         name: name.trim(),
         description: description.trim() || undefined,
-        project_manager_user_id: pmUserId.trim(),
+        project_manager_user_id: pmUser!.user_id,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
       })
@@ -117,28 +307,23 @@ export default function ProjectSettingsPage() {
     }
   }
 
-  async function handleAddMember() {
-    if (!newMemberId.trim()) return
-    setAddingMember(true)
+  async function handleAddMember(u: EligibleAssigneeUser) {
     try {
-      await projectsApi.addMember(orgId, id, { user_id: newMemberId.trim() })
-      setNewMemberId('')
+      await projectsApi.addMember(orgId, id, { user_id: u.user_id })
       load()
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to add member'
       setError(msg)
-    } finally {
-      setAddingMember(false)
     }
   }
 
-  async function handleRemoveMember(userId: string) {
-    await projectsApi.removeMember(orgId, id, userId)
+  async function handleRemoveMember(uid: string) {
+    await projectsApi.removeMember(orgId, id, uid)
     load()
   }
 
-  async function handleUpdateMember(userId: string, patch: { role?: string; task_visibility?: string }) {
-    await projectsApi.updateMember(orgId, id, userId, patch)
+  async function handleUpdateMember(uid: string, patch: { role?: string; task_visibility?: string }) {
+    await projectsApi.updateMember(orgId, id, uid, patch)
     load()
   }
 
@@ -169,9 +354,7 @@ export default function ProjectSettingsPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <p className="font-semibold text-[#0F172A]">Project not found</p>
-        <Link href="/dashboard/projects" className="mt-2 text-sm text-[#2563EB] hover:underline">
-          Back to Projects
-        </Link>
+        <Link href="/dashboard/projects" className="mt-2 text-sm text-[#2563EB] hover:underline">Back to Projects</Link>
       </div>
     )
   }
@@ -179,57 +362,45 @@ export default function ProjectSettingsPage() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <Link
-          href={`/dashboard/projects/${id}`}
-          className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors mb-3"
-        >
-          <ChevronLeft size={15} />
-          Back to Project
+        <Link href={`/dashboard/projects/${id}`} className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors mb-3">
+          <ChevronLeft size={15} /> Back to Project
         </Link>
         <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Project Settings</h1>
         <p className="mt-1 text-[15px] text-[#475569]">{project.name}</p>
       </div>
 
       {error && (
-        <div className="px-4 py-3 rounded-[8px] border border-[#FECACA] bg-[#FEF2F2] text-sm text-[#DC2626]">
-          {error}
-        </div>
+        <div className="px-4 py-3 rounded-[8px] border border-[#FECACA] bg-[#FEF2F2] text-sm text-[#DC2626]">{error}</div>
       )}
       {success && (
-        <div className="px-4 py-3 rounded-[8px] border border-[#BBF7D0] bg-[#DCFCE7] text-sm text-[#16A34A]">
-          {success}
-        </div>
+        <div className="px-4 py-3 rounded-[8px] border border-[#BBF7D0] bg-[#DCFCE7] text-sm text-[#16A34A]">{success}</div>
       )}
 
       {/* General */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.08)] space-y-4">
         <h2 className="text-base font-semibold text-[#0F172A]">General</h2>
         <div>
-          <label className={labelCls}>Project name *</label>
+          <label className={labelCls}>Project name <span className="text-[#DC2626]">*</span></label>
           <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
         </div>
         <div>
           <label className={labelCls}>Description</label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-            className="w-full px-3 py-2 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none resize-none"
-          />
+          <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3}
+            className="w-full px-3 py-2 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none resize-none" />
         </div>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelCls}>Start date</label>
-            <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
+            <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => setStartDate(e.target.value)} className={inputCls} />
           </div>
           <div>
             <label className={labelCls}>End date</label>
-            <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
+            <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
           </div>
         </div>
         <div>
-          <label className={labelCls}>Project manager (user ID)</label>
-          <input value={pmUserId} onChange={(e) => setPmUserId(e.target.value)} className={inputCls} />
+          <label className={labelCls}>Project manager <span className="text-[#DC2626]">*</span></label>
+          <UserSearchDropdown orgId={orgId} selected={pmUser} onSelect={setPmUser} />
         </div>
       </div>
 
@@ -244,13 +415,9 @@ export default function ProjectSettingsPage() {
         </div>
         {needsReason && (
           <div>
-            <label className={labelCls}>Status reason *</label>
-            <input
-              value={statusReason}
-              onChange={(e) => setStatusReason(e.target.value)}
-              placeholder="Explain why the project is being put on hold or cancelled"
-              className={inputCls}
-            />
+            <label className={labelCls}>Status reason <span className="text-[#DC2626]">*</span></label>
+            <input value={statusReason} onChange={(e) => setStatusReason(e.target.value)}
+              placeholder="Explain why the project is being put on hold or cancelled" className={inputCls} />
           </div>
         )}
       </div>
@@ -281,12 +448,8 @@ export default function ProjectSettingsPage() {
 
       {/* Save */}
       <div className="flex justify-end">
-        <button
-          type="button"
-          disabled={saving}
-          onClick={handleSave}
-          className="h-10 px-6 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold disabled:opacity-60 transition-colors flex items-center gap-2"
-        >
+        <button type="button" disabled={saving} onClick={handleSave}
+          className="h-10 px-6 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold disabled:opacity-60 transition-colors flex items-center gap-2">
           {saving && <Loader2 size={14} className="animate-spin" />}
           {saving ? 'Saving...' : 'Save Changes'}
         </button>
@@ -295,26 +458,7 @@ export default function ProjectSettingsPage() {
       {/* Members */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.08)] space-y-4">
         <h2 className="text-base font-semibold text-[#0F172A]">Members</h2>
-
-        <div className="flex gap-2">
-          <input
-            value={newMemberId}
-            onChange={(e) => setNewMemberId(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleAddMember() }}
-            placeholder="Enter user ID to add"
-            className={`${inputCls} flex-1`}
-          />
-          <button
-            type="button"
-            disabled={addingMember || !newMemberId.trim()}
-            onClick={handleAddMember}
-            className="h-10 px-4 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold disabled:opacity-60 transition-colors flex items-center gap-1.5"
-          >
-            {addingMember ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-            Add
-          </button>
-        </div>
-
+        <MultiUserSearch orgId={orgId} excludeIds={memberIds} onAdd={handleAddMember} />
         <div className="space-y-1">
           {members.map((m) => (
             <MemberRow
@@ -338,36 +482,21 @@ export default function ProjectSettingsPage() {
           Tasks in the tasks system will not be deleted.
         </p>
         {!showDelete ? (
-          <button
-            type="button"
-            onClick={() => setShowDelete(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-[8px] border border-[#FECACA] text-[#DC2626] text-sm font-medium hover:bg-[#FEF2F2] transition-colors"
-          >
-            <Trash2 size={14} />
-            Delete Project
+          <button type="button" onClick={() => setShowDelete(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-[8px] border border-[#FECACA] text-[#DC2626] text-sm font-medium hover:bg-[#FEF2F2] transition-colors">
+            <Trash2 size={14} /> Delete Project
           </button>
         ) : (
           <div className="space-y-3">
-            <input
-              value={deleteReason}
-              onChange={(e) => setDeleteReason(e.target.value)}
-              placeholder="Reason for deletion (required)"
-              className="w-full h-10 px-3 rounded-[8px] border border-[#FECACA] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#DC2626] focus:outline-none"
-            />
+            <input value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} placeholder="Reason for deletion (required)"
+              className="w-full h-10 px-3 rounded-[8px] border border-[#FECACA] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#DC2626] focus:outline-none" />
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setShowDelete(false)}
-                className="h-9 px-4 rounded-[8px] border border-[#E2E8F0] text-sm font-medium text-[#475569] hover:bg-[#F8FAFC] transition-colors"
-              >
+              <button type="button" onClick={() => setShowDelete(false)}
+                className="h-9 px-4 rounded-[8px] border border-[#E2E8F0] text-sm font-medium text-[#475569] hover:bg-[#F8FAFC] transition-colors">
                 Cancel
               </button>
-              <button
-                type="button"
-                disabled={deleting || !deleteReason.trim()}
-                onClick={handleDelete}
-                className="h-9 px-4 rounded-[8px] bg-[#DC2626] hover:bg-[#B91C1C] text-white text-sm font-semibold disabled:opacity-60 transition-colors flex items-center gap-1.5"
-              >
+              <button type="button" disabled={deleting || !deleteReason.trim()} onClick={handleDelete}
+                className="h-9 px-4 rounded-[8px] bg-[#DC2626] hover:bg-[#B91C1C] text-white text-sm font-semibold disabled:opacity-60 transition-colors flex items-center gap-1.5">
                 {deleting && <Loader2 size={13} className="animate-spin" />}
                 Confirm Delete
               </button>
