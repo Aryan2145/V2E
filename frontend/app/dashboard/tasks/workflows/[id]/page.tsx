@@ -260,6 +260,7 @@ export default function EditWorkflowPage() {
               isFirst={idx === 0}
               isLast={idx === steps.length - 1}
               nature={nature}
+              orgId={orgId}
               onSave={(updated) => handleUpdateStep(idx, updated)}
               onDelete={() => handleDeleteStep(idx)}
               onMoveUp={() => handleMoveStep(idx, -1)}

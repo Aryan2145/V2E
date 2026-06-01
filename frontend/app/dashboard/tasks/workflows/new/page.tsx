@@ -284,6 +284,7 @@ export default function NewWorkflowPage() {
               isFirst={idx === 0}
               isLast={idx === steps.length - 1}
               nature={nature}
+              orgId={orgId}
               onSave={(updated) => updateStep(idx, updated)}
               onDelete={() => deleteStep(idx)}
               onMoveUp={() => moveStep(idx, -1)}

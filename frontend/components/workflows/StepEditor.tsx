@@ -1,8 +1,115 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Trash2, Plus, X, ChevronUp, ChevronDown } from 'lucide-react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { Trash2, Plus, X, ChevronUp, ChevronDown, Search } from 'lucide-react'
+import { tasksApi } from '@/lib/api/tasks'
+import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 import type { WorkflowStep, WorkflowNature, WorkflowRecurringType, DeadlineConfig } from '@/lib/types/workflows'
+
+// ─── Avatar helpers ───────────────────────────────────────────────────────────
+
+const avatarColors = ['bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]', 'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]']
+function avatarColor(name: string): string {
+  let h = 0; for (let i = 0; i < name.length; i++) h += name.charCodeAt(i)
+  return avatarColors[h % avatarColors.length]
+}
+function getInitials(name: string): string {
+  return name.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2) || '?'
+}
+
+// ─── User search for assignee ─────────────────────────────────────────────────
+
+function AssigneeUserSearch({ orgId, value, displayName, onChange }: {
+  orgId: string
+  value: string
+  displayName: string
+  onChange: (userId: string, name: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<EligibleAssigneeUser[]>([])
+  const [open, setOpen] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const fetch = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    setLoading(true)
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await tasksApi.getEligibleAssignees(orgId, q || undefined, 'name')
+        setResults(data.departments.flatMap((d) => d.users))
+      } catch { setResults([]) }
+      finally { setLoading(false) }
+    }, 200)
+  }, [orgId])
+
+  useEffect(() => {
+    if (open) fetch(query)
+  }, [query, open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [])
+
+  if (value && displayName) {
+    const name = displayName
+    return (
+      <div className="flex items-center gap-2 h-10 px-3 rounded-[8px] border border-[#CBD5E1] bg-white">
+        <div className={`w-6 h-6 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+          {getInitials(name)}
+        </div>
+        <span className="text-sm text-[#0F172A] flex-1 truncate">{name}</span>
+        <button type="button" onClick={() => onChange('', '')} className="p-0.5 rounded hover:bg-[#F1F5F9] text-[#94A3B8] hover:text-[#0F172A] transition-colors shrink-0">
+          <X size={13} />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+          placeholder="Search by name…"
+          className="w-full h-10 pl-9 pr-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+        />
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] max-h-48 overflow-y-auto">
+          {loading ? (
+            <div className="px-4 py-3 text-sm text-[#94A3B8]">Searching…</div>
+          ) : results.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-[#94A3B8]">No users found</div>
+          ) : results.map((u) => (
+            <button
+              key={u.user_id}
+              type="button"
+              onClick={() => { onChange(u.user_id, u.name); setQuery(''); setOpen(false) }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-[#F8FAFC] transition-colors text-left"
+            >
+              <div className={`w-7 h-7 rounded-full ${avatarColor(u.name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                {getInitials(u.name)}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[#0F172A] truncate">{u.name}</p>
+                <p className="text-xs text-[#94A3B8] truncate">{u.role_title} · {u.department_name}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 const DEADLINE_TYPES = [
   { value: 'fixed_date', label: 'Fixed date' },
@@ -141,14 +248,16 @@ interface Props {
   isLast: boolean
   index: number
   nature: WorkflowNature
+  orgId: string
   onSave: (step: Partial<WorkflowStep>) => void
   onDelete: () => void
   onMoveUp: () => void
   onMoveDown: () => void
 }
 
-export default function StepEditor({ step, isFirst, isLast, index, nature, onSave, onDelete, onMoveUp, onMoveDown }: Props) {
+export default function StepEditor({ step, isFirst, isLast, index, nature, orgId, onSave, onDelete, onMoveUp, onMoveDown }: Props) {
   const [draft, setDraft] = useState<Partial<WorkflowStep>>({ ...step })
+  const [assigneeName, setAssigneeName] = useState('')
   const [checklistInput, setChecklistInput] = useState('')
 
   function update(patch: Partial<WorkflowStep>) {
@@ -241,14 +350,17 @@ export default function StepEditor({ step, isFirst, isLast, index, nature, onSav
         {/* Assignee user / role */}
         {draft.assignee_type === 'fixed_person' ? (
           <div>
-            <label className="block text-xs font-medium text-[#374151] mb-1">Assignee user ID</label>
-            <input
-              type="text"
+            <label className="block text-xs font-medium text-[#374151] mb-1">Assignee</label>
+            <AssigneeUserSearch
+              orgId={orgId}
               value={draft.assignee_user_id ?? ''}
-              onChange={(e) => update({ assignee_user_id: e.target.value })}
-              onBlur={() => onSave(draft)}
-              placeholder="User ID"
-              className={inputCls}
+              displayName={assigneeName}
+              onChange={(userId, name) => {
+                setAssigneeName(name)
+                const updated = { ...draft, assignee_user_id: userId }
+                update({ assignee_user_id: userId })
+                onSave(updated)
+              }}
             />
           </div>
         ) : (
