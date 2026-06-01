@@ -265,6 +265,8 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   function validateStep1() {
     if (!name.trim()) { setError('Project name is required'); return false }
     if (!pmUser) { setError('Project manager is required'); return false }
+    if (startDate && endDate && endDate < startDate) { setError('End date cannot be before start date'); return false }
+    if (budget !== '' && Number(budget) < 0) { setError('Budget cannot be negative'); return false }
     setError(''); return true
   }
 
@@ -353,7 +355,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
             </div>
             <div>
               <label className={labelCls}>End date</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
+              <input type="date" value={endDate} min={startDate || undefined} onChange={(e) => setEndDate(e.target.value)} className={inputCls} />
             </div>
           </div>
           <div>
