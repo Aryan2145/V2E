@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, NotFoundException } from '@nestjs/common'
 import { HolidayOnTaskAction, HolidayAuditAction, HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import type { UpdateHolidayMasterDto } from './dto/update-holiday-master.dto'

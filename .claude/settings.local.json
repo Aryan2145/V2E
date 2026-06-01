@@ -47,7 +47,22 @@
       "Bash(xargs grep -l \"Popover\\\\|Dropdown\\\\|Menu\")",
       "Bash(Find-Path \"D:\\\\RGB_Software\\\\v2e\\\\backend\" -Name \"schema.prisma\" -o -Name \"*.prisma\")",
       "Bash(Select-Object -First 5)",
-      "Bash(grep -rl \"user?\\\\\\\\.organization_id\" app/)"
+      "Bash(grep -rl \"user?\\\\\\\\.organization_id\" app/)",
+      "Bash(Get-ChildItem -Path \"D:\\\\RGB_Software\\\\v2e\\\\frontend\\\\lib\" -Recurse -Name)",
+      "Bash(Select-String \"type\")",
+      "Bash(dir *)",
+      "Bash(npx tsc *)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(Get-ChildItem -Path \"D:\\\\RGB_Software\\\\v2e\\\\backend\\\\src\" -Directory)",
+      "Bash(Select-Object -ExpandProperty Name)",
+      "Bash(git -C \"D:/RGB_Software/v2e\" status)",
+      "Bash(git -C \"D:/RGB_Software/v2e\" log --oneline -5)",
+      "Bash(git *)",
+      "Bash(npm install *)",
+      "Bash(PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"Since we are in creation stage, run prisma db push --force-reset to apply schema changes fresh. No migration needed.\" npx prisma db push --force-reset --accept-data-loss)",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\RGB_Software\\\\v2e\\\\frontend\\\\app\\\\dashboard\" -Force | Select-Object Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\){\"Directory\"}else{\"File\"}}})",
+      "PowerShell(cd D:\\\\RGB_Software\\\\v2e\\\\backend; $env:PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION=\"Since we are in creation stage, run prisma db push --force-reset to apply schema changes fresh. No migration needed.\"; npx prisma db push --force-reset 2>&1 | Select-Object -Last 15)",
+      "Bash(npx ts-node *)"
     ]
   }
 }
