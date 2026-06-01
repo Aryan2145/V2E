@@ -53,7 +53,9 @@ function deadlineClass(deadline?: string): string {
 
 function formatDeadline(deadline: string): string {
   const d = new Date(deadline)
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+  return `${date}, ${time}`
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
