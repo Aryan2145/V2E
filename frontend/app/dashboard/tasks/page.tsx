@@ -15,14 +15,26 @@ import {
 } from 'lucide-react'
 
 type ViewMode = 'list' | 'kanban' | 'calendar'
+type QuickFilter = 'today' | 'overdue' | 'week' | 'completed_month' | null
 
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, icon, color }: {
+function StatCard({ label, value, icon, color, active, onClick }: {
   label: string; value: number; icon: React.ReactNode; color: string
+  active?: boolean; onClick?: () => void
 }) {
   return (
-    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6 flex items-start gap-4">
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'bg-white border rounded-[12px] p-6 flex items-start gap-4 w-full text-left transition-all duration-150',
+        active
+          ? 'shadow-[0_2px_8px_rgba(0,0,0,0.12)]'
+          : 'border-[#E2E8F0] shadow-[0_1px_3px_rgba(0,0,0,0.08)] hover:shadow-[0_2px_8px_rgba(0,0,0,0.10)] hover:border-[#CBD5E1]',
+      ].join(' ')}
+      style={active ? { borderColor: color, boxShadow: `0 0 0 2px ${color}30, 0 2px 8px rgba(0,0,0,0.08)` } : undefined}
+    >
       <div
         className="w-10 h-10 rounded-[8px] flex items-center justify-center shrink-0"
         style={{ backgroundColor: color + '18', color }}
@@ -31,9 +43,9 @@ function StatCard({ label, value, icon, color }: {
       </div>
       <div>
         <p className="text-3xl font-bold text-[#0F172A] leading-tight tabular-nums">{value}</p>
-        <p className="text-sm text-[#475569] mt-0.5">{label}</p>
+        <p className="text-sm mt-0.5" style={{ color: active ? color : '#475569' }}>{label}</p>
       </div>
-    </div>
+    </button>
   )
 }
 
@@ -87,6 +99,7 @@ export default function TasksPage() {
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreateModal, setShowCreateModal] = useState(false)
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>(null)
   const rawView = searchParams.get('view')
   const viewMode: ViewMode = rawView === 'kanban' || rawView === 'calendar' ? rawView : 'list'
   function setViewMode(mode: ViewMode) {
@@ -139,6 +152,19 @@ export default function TasksPage() {
 
   const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all'
 
+  const quickFiltered = useMemo(() => {
+    if (!quickFilter) return filtered
+    if (quickFilter === 'today') return filtered.filter((t) => t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) && t.deadline && isToday(t.deadline))
+    if (quickFilter === 'overdue') return filtered.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed')
+    if (quickFilter === 'week') return filtered.filter((t) => t.deadline && isThisWeek(t.deadline))
+    if (quickFilter === 'completed_month') return filtered.filter((t) => t.status?.type === 'completed' && isThisMonth(t.updated_at))
+    return filtered
+  }, [filtered, quickFilter, myUserId])
+
+  function handleQuickFilter(f: Exclude<QuickFilter, null>) {
+    setQuickFilter((prev) => (prev === f ? null : f))
+  }
+
   async function handleStatusChange(taskId: string, newStatusId: string) {
     await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
     loadData()
@@ -180,11 +206,11 @@ export default function TasksPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard label="My Tasks Today" value={myTasksToday} icon={<CheckSquare size={20} />} color="#2563EB" />
-        <StatCard label="Overdue" value={overdue} icon={<AlertTriangle size={20} />} color="#DC2626" />
-        <StatCard label="Due This Week" value={dueThisWeek} icon={<Calendar size={20} />} color="#D97706" />
-        <StatCard label="Completed This Month" value={completedThisMonth} icon={<CheckCircle2 size={20} />} color="#16A34A" />
-        <StatCard label="Total Tasks" value={tasks.length} icon={<TrendingUp size={20} />} color="#0891B2" />
+        <StatCard label="My Tasks Today" value={myTasksToday} icon={<CheckSquare size={20} />} color="#2563EB" active={quickFilter === 'today'} onClick={() => handleQuickFilter('today')} />
+        <StatCard label="Overdue" value={overdue} icon={<AlertTriangle size={20} />} color="#DC2626" active={quickFilter === 'overdue'} onClick={() => handleQuickFilter('overdue')} />
+        <StatCard label="Due This Week" value={dueThisWeek} icon={<Calendar size={20} />} color="#D97706" active={quickFilter === 'week'} onClick={() => handleQuickFilter('week')} />
+        <StatCard label="Completed This Month" value={completedThisMonth} icon={<CheckCircle2 size={20} />} color="#16A34A" active={quickFilter === 'completed_month'} onClick={() => handleQuickFilter('completed_month')} />
+        <StatCard label="Total Tasks" value={tasks.length} icon={<TrendingUp size={20} />} color="#0891B2" active={quickFilter === null} onClick={() => setQuickFilter(null)} />
       </div>
 
       {/* Toolbar: filters + view toggle */}
@@ -270,14 +296,14 @@ export default function TasksPage() {
       {viewMode === 'list' && (
         <>
           <p className="text-sm text-[#475569]">
-            {filtered.length} task{filtered.length !== 1 ? 's' : ''}
-            {isFiltered && ` (filtered from ${tasks.length})`}
+            {quickFiltered.length} task{quickFiltered.length !== 1 ? 's' : ''}
+            {(isFiltered || quickFilter) && ` (filtered from ${tasks.length})`}
           </p>
-          {filtered.length === 0 ? (
-            <EmptyState filtered={isFiltered} />
+          {quickFiltered.length === 0 ? (
+            <EmptyState filtered={isFiltered || !!quickFilter} />
           ) : (
             <div className="flex flex-col gap-2">
-              {filtered.map((task) => (
+              {quickFiltered.map((task) => (
                 <TaskCard
                   key={task.id}
                   task={task}
@@ -294,7 +320,7 @@ export default function TasksPage() {
 
       {viewMode === 'kanban' && (
         <KanbanView
-          tasks={filtered}
+          tasks={quickFiltered}
           statuses={statuses}
           priorities={priorities}
           categories={categories}
@@ -305,7 +331,7 @@ export default function TasksPage() {
 
       {viewMode === 'calendar' && (
         <CalendarView
-          tasks={tasks}
+          tasks={quickFilter ? quickFiltered : tasks}
           priorities={priorities}
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />
