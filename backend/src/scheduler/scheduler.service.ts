@@ -17,31 +17,51 @@ export class SchedulerService {
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async spawnRecurringTasks() {
     this.logger.log('Recurring spawn engine starting...');
+    const now = new Date();
 
+    // Real-time orgs only — test orgs are advanced by the ReplayService on their sim clock.
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+
+    let spawned = 0;
+    for (const org of orgs) {
+      const r = await this.spawnRecurringForOrg(org.id, now);
+      spawned += r.spawned;
+    }
+
+    this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
+  }
+
+  // Org-scoped, now-injected spawn — used by the midnight cron (real now) and by
+  // ReplayService (a simulated day instant) so both paths share identical logic.
+  async spawnRecurringForOrg(orgId: string, now: Date): Promise<{ spawned: number }> {
     const entries = await this.prisma.recurringScheduleEntry.findMany({
-      where: { is_active: true, template: { is_active: true } },
+      where: { is_active: true, organization_id: orgId, template: { is_active: true } },
       include: { template: true },
     });
 
     let spawned = 0;
     for (const entry of entries) {
-      const did = await this.spawnEntry(entry);
+      const did = await this.spawnEntry(entry, false, now);
       if (did) spawned++;
     }
 
-    // Deactivate on_date entries whose end_date has passed
-    const today = new Date();
+    // Deactivate on_date entries whose end_date has passed (relative to `now`)
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
     await this.prisma.recurringScheduleEntry.updateMany({
-      where: { is_active: true, end_condition: 'on_date', end_date: { lt: today } },
+      where: { is_active: true, organization_id: orgId, end_condition: 'on_date', end_date: { lt: today } },
       data: { is_active: false },
     });
 
-    this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
+    return { spawned };
   }
 
-  // Spawn today's task for a specific template (on-demand, e.g. after create/resume)
-  async spawnForTemplate(orgId: string, templateId: string): Promise<{ spawned: number }> {
+  // Spawn today's task for a specific template (on-demand, e.g. after create/resume).
+  // `now` is the org's effective clock (real, or simulated for test orgs).
+  async spawnForTemplate(orgId: string, templateId: string, force = false, now: Date = new Date()): Promise<{ spawned: number }> {
     const entries = await this.prisma.recurringScheduleEntry.findMany({
       where: { is_active: true, recurring_template_id: templateId, organization_id: orgId, template: { is_active: true } },
       include: { template: true },
@@ -49,29 +69,30 @@ export class SchedulerService {
 
     let spawned = 0;
     for (const entry of entries) {
-      const did = await this.spawnEntry(entry);
+      const did = await this.spawnEntry(entry, force, now);
       if (did) spawned++;
     }
     return { spawned };
   }
 
-  private async spawnEntry(entry: any): Promise<boolean> {
+  private async spawnEntry(entry: any, force = false, now: Date = new Date()): Promise<boolean> {
     try {
-      if (!this.shouldEntryFireToday(entry)) return false;
+      if (!this.shouldEntryFireToday(entry, now)) return false;
 
-      const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-      const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+      const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
 
-      const alreadyThisEntry = await this.prisma.taskActivityLog.count({
-        where: {
-          organization_id: entry.organization_id,
-          performed_by_user_id: 'system',
-          action: 'created',
-          created_at: { gte: todayStart, lte: todayEnd },
-          metadata: { path: ['entry_id'], equals: entry.id },
-        },
-      });
-      if (alreadyThisEntry > 0) return false;
+      if (!force) {
+        const alreadyToday = await this.prisma.task.count({
+          where: {
+            organization_id: entry.organization_id,
+            recurring_template_id: entry.recurring_template_id,
+            is_deleted: false,
+            created_at: { gte: todayStart, lte: todayEnd },
+          },
+        });
+        if (alreadyToday > 0) return false;
+      }
 
       const template = entry.template;
 
@@ -82,7 +103,7 @@ export class SchedulerService {
       if (!status) return false;
 
       const [h, m] = entry.time.split(':').map(Number);
-      const rawDeadline = new Date();
+      const rawDeadline = new Date(now);
       rawDeadline.setHours(h, m, 0, 0);
 
       const adjustedDeadline = await this.holidaysService.adjustDeadline(rawDeadline, template.organization_id);
@@ -116,6 +137,7 @@ export class SchedulerService {
           proof_required: template.proof_required,
           deadline: adjustedDeadline,
           recurring_template_id: template.id,
+          created_at: now, // align instance date with the (possibly simulated) clock
         },
       });
 
@@ -179,13 +201,23 @@ export class SchedulerService {
   @Cron(CronExpression.EVERY_HOUR)
   async processReminders() {
     const now = new Date();
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+    for (const org of orgs) await this.processRemindersForOrg(org.id, now);
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async processRemindersForOrg(orgId: string, now: Date): Promise<number> {
     const dueReminders = await this.prisma.taskReminder.findMany({
-      where: { remind_at: { lte: now }, is_sent: false },
+      where: { organization_id: orgId, remind_at: { lte: now }, is_sent: false },
       take: 500,
     });
-    if (dueReminders.length === 0) return;
+    if (dueReminders.length === 0) return 0;
 
-    this.logger.log(`Processing ${dueReminders.length} reminders...`);
+    this.logger.log(`Processing ${dueReminders.length} reminders for org ${orgId}...`);
+    let sent = 0;
     for (const reminder of dueReminders) {
       try {
         await this.prisma.taskReminder.update({
@@ -201,10 +233,12 @@ export class SchedulerService {
             metadata: { reminder_id: reminder.id, type: reminder.type } as never,
           },
         });
+        sent++;
       } catch (err) {
         this.logger.error(`Failed to process reminder ${reminder.id}: ${err}`);
       }
     }
+    return sent;
   }
 
   // ─── Escalation Engine ────────────────────────────────────────────────────────
@@ -212,8 +246,20 @@ export class SchedulerService {
   @Cron('*/15 * * * *')
   async processEscalations() {
     const now = new Date();
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+    let escalated = 0;
+    for (const org of orgs) escalated += await this.processEscalationsForOrg(org.id, now);
+    if (escalated > 0) this.logger.log(`Escalation engine: ${escalated} escalated`);
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async processEscalationsForOrg(orgId: string, now: Date): Promise<number> {
     const overdueTasks = await this.prisma.task.findMany({
       where: {
+        organization_id: orgId,
         is_deleted: false,
         deadline: { lt: now },
         escalations: { some: { is_active: true } },
@@ -256,7 +302,7 @@ export class SchedulerService {
         this.logger.error(`Failed to escalate task ${task.id}: ${err}`);
       }
     }
-    if (escalated > 0) this.logger.log(`Escalation engine: ${escalated} escalated`);
+    return escalated;
   }
 
   // ─── Schedule helper ──────────────────────────────────────────────────────────
@@ -272,8 +318,8 @@ export class SchedulerService {
     end_date: Date | null;
     end_after: number | null;
     occurrence_count: number;
-  }): boolean {
-    const today = new Date();
+  }, now: Date = new Date()): boolean {
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
 
     const startDate = new Date(entry.start_date);

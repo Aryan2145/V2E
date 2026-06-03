@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { projectsApi } from '@/lib/api/projects'
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import TemplatePicker from './TemplatePicker'
 import type { ProjectTemplate } from '@/lib/types/projects'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
@@ -255,7 +256,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   const inputCls = 'w-full h-10 px-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors'
   const labelCls = 'block text-sm font-medium text-[#374151] mb-1.5'
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = getNow().toISOString().split('T')[0]
 
   function handleDateChange(val: string, setter: (v: string) => void) {
     if (!val) { setter(''); return }

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsEmail, IsNotEmpty, IsOptional, IsString, MinLength, ValidateIf } from 'class-validator';
 
 export class CreateOrganizationDto {
   @ApiProperty()
@@ -36,6 +36,11 @@ export class CreateOrganizationDto {
   @IsString()
   @IsOptional()
   group_id?: string;
+
+  @ApiPropertyOptional({ description: 'Mark as a test client — enables the controllable simulated clock' })
+  @IsBoolean()
+  @IsOptional()
+  is_test?: boolean;
 }
 
 export class CreateOrgWithAdminDto extends CreateOrganizationDto {

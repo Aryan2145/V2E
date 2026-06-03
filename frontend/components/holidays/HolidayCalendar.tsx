@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { holidaysApi } from '@/lib/api/holidays'
+import { getNow } from '@/lib/clock'
 import type { NonWorkingDate } from '@/lib/types/holidays'
 
 const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
@@ -16,7 +17,7 @@ interface Props {
 }
 
 export default function HolidayCalendar({ orgId, deptId, userId, refreshKey }: Props) {
-  const today = new Date()
+  const today = getNow()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
   const [nonWorking, setNonWorking] = useState<NonWorkingDate[]>([])

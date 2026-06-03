@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { projectsApi } from '@/lib/api/projects'
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import type { Project, ProjectMember } from '@/lib/types/projects'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 import MemberRow from '@/components/projects/MemberRow'
@@ -215,7 +216,7 @@ export default function ProjectSettingsPage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = getNow().toISOString().split('T')[0]
   const endDateMin = startDate && startDate > todayStr ? startDate : todayStr
 
   function handleDateChange(val: string, setter: (v: string) => void) {

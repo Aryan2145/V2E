@@ -37,6 +37,7 @@ export interface Organization {
   country?: string;
   timezone?: string;
   status: OrgStatus;
+  is_test?: boolean;
   created_at: string;
   updated_at: string;
   group?: { id: string; name: string } | null;
@@ -81,6 +82,7 @@ export interface AuthUser {
   isSuperAdmin: boolean;
   organizationId: string | null;
   role: MemberRole | null;
+  isTestOrg?: boolean;
 }
 
 export interface OrgMembership {

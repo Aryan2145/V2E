@@ -1,6 +1,7 @@
 'use client'
 
 import MainLayout from '@/components/layout/MainLayout'
+import TimeTravelBar from '@/components/dev/TimeTravelBar'
 
 export default function DashboardRootLayout({
   children,
@@ -12,6 +13,7 @@ export default function DashboardRootLayout({
       <div className="px-8 py-8">
         {children}
       </div>
+      <TimeTravelBar />
     </MainLayout>
   )
 }

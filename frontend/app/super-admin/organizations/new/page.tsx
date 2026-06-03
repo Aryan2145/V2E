@@ -25,6 +25,7 @@ const schema = z.object({
   country: z.string().optional(),
   timezone: z.string().optional(),
   group_id: z.string().optional(),
+  is_test: z.boolean().optional(),
   admin_name: z.string().optional(),
   admin_email: z.string().optional(),
   admin_password: z.string().min(8, 'Password must be at least 8 characters').optional().or(z.literal('')),
@@ -152,6 +153,7 @@ export default function NewOrganizationPage() {
         country: values.country || undefined,
         timezone: values.timezone || undefined,
         group_id: values.group_id || undefined,
+        is_test: values.is_test || undefined,
       }
 
       if (adminTab === 'existing' && selectedUserId) {
@@ -260,6 +262,21 @@ export default function NewOrganizationPage() {
                 ))}
               </select>
             </Field>
+
+            {/* Test client toggle */}
+            <label className="flex items-start gap-3 rounded-[8px] border border-[#FDE68A] bg-[#FFFBEB] px-4 py-3 cursor-pointer">
+              <input
+                type="checkbox"
+                {...register('is_test')}
+                className="mt-0.5 w-4 h-4 rounded border-[#CBD5E1] text-[#D97706] focus:ring-[#D97706]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-[#92400E]">Test client</span>
+                <span className="block text-xs text-[#B45309] mt-0.5">
+                  Enables a controllable simulated clock so this org can “time travel” for testing. Leave off for real clients.
+                </span>
+              </span>
+            </label>
           </div>
         </Card>
 

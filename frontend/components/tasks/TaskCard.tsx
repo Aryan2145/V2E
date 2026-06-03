@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { Calendar, User, GitBranch } from 'lucide-react'
+import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
 // import QuadrantBadge from './QuadrantBadge'
 
@@ -43,7 +44,7 @@ function avatarColor(name: string): string {
 function deadlineClass(deadline?: string): string {
   if (!deadline) return 'text-[#475569]'
   const d = new Date(deadline)
-  const now = new Date()
+  const now = getNow()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const dl = new Date(d.getFullYear(), d.getMonth(), d.getDate())
   if (dl < today) return 'text-[#DC2626] font-medium'

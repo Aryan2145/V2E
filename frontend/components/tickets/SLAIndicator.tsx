@@ -1,5 +1,6 @@
 'use client'
 
+import { getNow } from '@/lib/clock'
 import type { TicketStatusType } from '@/lib/types/tickets'
 
 interface SLAIndicatorProps {
@@ -13,7 +14,7 @@ export default function SLAIndicator({ sla_due_at, sla_breached, status_type, cr
   const closed = status_type === 'closed_resolved' || status_type === 'closed_unresolved'
   if (closed) return null
 
-  const now = new Date()
+  const now = getNow()
   const due = new Date(sla_due_at)
   const created = new Date(created_at)
 

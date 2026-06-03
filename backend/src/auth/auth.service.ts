@@ -60,7 +60,7 @@ export class AuthService {
     if (memberships.length === 1) {
       const m = memberships[0];
       const tokens = await this.issueFullTokens(user.id, user.email, m.organization_id, m.role, false);
-      return { ...tokens, user: this.buildUserPayload(user, m.organization_id, m.role, false) };
+      return { ...tokens, user: await this.buildUserPayload(user, m.organization_id, m.role, false) };
     }
 
     const selectionToken = this.jwtService.sign(
@@ -93,7 +93,7 @@ export class AuthService {
     if (!user || !user.is_active) throw new UnauthorizedException();
 
     const tokens = await this.issueFullTokens(user.id, user.email, dto.organizationId, member.role, false);
-    return { ...tokens, user: this.buildUserPayload(user, dto.organizationId, member.role, false) };
+    return { ...tokens, user: await this.buildUserPayload(user, dto.organizationId, member.role, false) };
   }
 
   async getMyOrgs(userId: string) {
@@ -124,7 +124,7 @@ export class AuthService {
       );
       return {
         ...tokens,
-        user: this.buildUserPayload(user, payload.organizationId ?? null, payload.role ?? null, user.is_super_admin),
+        user: await this.buildUserPayload(user, payload.organizationId ?? null, payload.role ?? null, user.is_super_admin),
       };
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
@@ -141,7 +141,7 @@ export class AuthService {
     if (!user.is_super_admin) throw new UnauthorizedException('Access denied. Super administrator credentials required.');
 
     const tokens = await this.issueFullTokens(user.id, user.email, null, null, true);
-    return { ...tokens, user: this.buildUserPayload(user, null, null, true) };
+    return { ...tokens, user: await this.buildUserPayload(user, null, null, true) };
   }
 
   async logout(userId: string) {
@@ -220,12 +220,20 @@ export class AuthService {
     return { access_token, refresh_token };
   }
 
-  private buildUserPayload(
+  private async buildUserPayload(
     user: { id: string; name: string; email: string },
     organizationId: string | null,
     role: string | null,
     isSuperAdmin: boolean,
   ) {
-    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, role };
+    let isTestOrg = false;
+    if (organizationId) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { is_test: true },
+      });
+      isTestOrg = org?.is_test ?? false;
+    }
+    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, role, isTestOrg };
   }
 }

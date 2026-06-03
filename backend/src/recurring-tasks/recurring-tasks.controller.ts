@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { RecurringTasksService } from './recurring-tasks.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
+import { ClockService } from '../clock/clock.service';
 import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
 import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
@@ -27,6 +28,7 @@ export class RecurringTasksController {
   constructor(
     private readonly service: RecurringTasksService,
     private readonly scheduler: SchedulerService,
+    private readonly clock: ClockService,
   ) {}
 
   @Get()
@@ -39,8 +41,9 @@ export class RecurringTasksController {
   @ApiOperation({ summary: 'Create a recurring task template' })
   async create(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateRecurringDto) {
     const template = await this.service.createTemplate(orgId, req.user.id, dto);
-    // Immediately spawn today's occurrence if the schedule fires today
-    this.scheduler.spawnForTemplate(orgId, template!.id).catch(() => null);
+    // Immediately spawn today's occurrence if the schedule fires today (org's effective clock)
+    const now = await this.clock.now(orgId);
+    this.scheduler.spawnForTemplate(orgId, template!.id, false, now).catch(() => null);
     return template;
   }
 
@@ -60,15 +63,17 @@ export class RecurringTasksController {
   @ApiOperation({ summary: 'Resume a paused recurring task template' })
   async resume(@Param('orgId') orgId: string, @Param('id') id: string) {
     const template = await this.service.resumeTemplate(orgId, id);
-    // Immediately spawn today's occurrence if the schedule fires today
-    this.scheduler.spawnForTemplate(orgId, id).catch(() => null);
+    // Immediately spawn today's occurrence if the schedule fires today (org's effective clock)
+    const now = await this.clock.now(orgId);
+    this.scheduler.spawnForTemplate(orgId, id, false, now).catch(() => null);
     return template;
   }
 
   @Post(':id/spawn-today')
   @ApiOperation({ summary: 'Manually trigger today\'s spawn for a recurring template' })
-  spawnToday(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.scheduler.spawnForTemplate(orgId, id);
+  async spawnToday(@Param('orgId') orgId: string, @Param('id') id: string) {
+    const now = await this.clock.now(orgId);
+    return this.scheduler.spawnForTemplate(orgId, id, true, now);
   }
 
   @Delete(':id')

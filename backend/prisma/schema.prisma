@@ -130,6 +130,12 @@ model Organization {
   created_at DateTime  @default(now())
   updated_at DateTime  @updatedAt
 
+  // ─── Simulated clock (test orgs only) ─────────────────────────────────────────
+  is_test            Boolean   @default(false) // test client → controllable clock
+  sim_epoch          DateTime?                 // the simulated instant last set
+  sim_anchor         DateTime?                 // real time when sim_epoch was set (ticking)
+  sim_replayed_until DateTime?                 // simulated time engines have replayed up to
+
   members            OrganizationMember[]
   org_identity       OrgIdentity?
   culture_standards  CultureStandard[]
@@ -181,7 +187,7 @@ model User {
   updated_at      DateTime @updatedAt
 
   organization_memberships OrganizationMember[]
-  employee_profile         EmployeeProfile?
+  employee_profiles        EmployeeProfile[]
   headed_departments       Department[]       @relation("DepartmentHead")
   reports_to_employees     EmployeeProfile[]  @relation("ReportingTo")
   announcements            Announcement[]
@@ -278,7 +284,7 @@ model Role {
 model EmployeeProfile {
   id                   String         @id @default(uuid())
   organization_id      String
-  user_id              String         @unique
+  user_id              String
   role_id              String
   department_id        String
   reporting_to_user_id String?
@@ -299,6 +305,7 @@ model EmployeeProfile {
   learning_assignments LearningPathAssignment[]
   policy_assignments   CompanyPolicyAssignment[]
 
+  @@unique([organization_id, user_id])
   @@map("employee_profiles")
 }
 

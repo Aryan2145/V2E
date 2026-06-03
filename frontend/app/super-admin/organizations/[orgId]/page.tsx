@@ -11,6 +11,7 @@ import {
   Layers,
   Shield,
   AlertTriangle,
+  FlaskConical,
 } from 'lucide-react'
 import { getOrganization, deactivateOrganization } from '@/lib/api/organizations'
 import { getRoles } from '@/lib/api/roles'
@@ -174,6 +175,11 @@ export default function OrgDetailPage() {
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-xl font-bold text-[#0F172A]">{org.name}</h2>
               <Badge status={orgStatusToBadge(org.status)} label={orgStatusLabel(org.status)} />
+              {org.is_test && (
+                <span className="inline-flex items-center gap-1 rounded-[999px] bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] text-[11px] font-semibold px-2.5 py-0.5">
+                  <FlaskConical size={11} /> TEST
+                </span>
+              )}
               {org.group && (
                 <button
                   onClick={() => router.push(`/super-admin/groups/${org.group!.id}`)}

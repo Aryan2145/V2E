@@ -4,6 +4,7 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
 import KanbanView from '@/components/tasks/KanbanView'
@@ -70,18 +71,18 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
 function isToday(d: string) {
-  const v = new Date(d), n = new Date()
+  const v = new Date(d), n = getNow()
   return v.getFullYear() === n.getFullYear() && v.getMonth() === n.getMonth() && v.getDate() === n.getDate()
 }
-function isPast(d: string) { return new Date(d) < new Date() }
+function isPast(d: string) { return new Date(d) < getNow() }
 function isThisWeek(d: string) {
-  const v = new Date(d), n = new Date()
+  const v = new Date(d), n = getNow()
   const start = new Date(n); start.setDate(n.getDate() - n.getDay()); start.setHours(0, 0, 0, 0)
   const end = new Date(start); end.setDate(start.getDate() + 7)
   return v >= start && v < end
 }
 function isThisMonth(d: string) {
-  const v = new Date(d), n = new Date()
+  const v = new Date(d), n = getNow()
   return v.getMonth() === n.getMonth() && v.getFullYear() === n.getFullYear()
 }
 

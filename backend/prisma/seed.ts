@@ -175,7 +175,7 @@ async function main() {
 
   async function upsertProfile(userId: string, data: Parameters<typeof prisma.employeeProfile.create>[0]['data']) {
     return prisma.employeeProfile.upsert({
-      where: { user_id: userId },
+      where: { organization_id_user_id: { organization_id: org.id, user_id: userId } },
       update: {},
       create: data,
     });

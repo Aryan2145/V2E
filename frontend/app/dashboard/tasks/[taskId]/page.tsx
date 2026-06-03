@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import type { Task, TaskComment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
@@ -54,7 +55,7 @@ function formatCountdown(secs: number): string {
 function deadlineColor(deadline?: string): string {
   if (!deadline) return 'text-[#475569]'
   const d = new Date(deadline)
-  const now = new Date()
+  const now = getNow()
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const dl = new Date(d.getFullYear(), d.getMonth(), d.getDate())
   if (dl < today) return 'text-[#DC2626] font-semibold'
@@ -203,7 +204,7 @@ export default function TaskDetailPage() {
   useEffect(() => {
     if (!task?.reopen_expires_at) { setReopenSecondsLeft(0); return }
     const tick = () => {
-      const secs = Math.max(0, Math.round((new Date(task.reopen_expires_at!).getTime() - Date.now()) / 1000))
+      const secs = Math.max(0, Math.round((new Date(task.reopen_expires_at!).getTime() - getNow().getTime()) / 1000))
       setReopenSecondsLeft(secs)
     }
     tick()

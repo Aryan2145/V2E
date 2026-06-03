@@ -26,6 +26,7 @@ export async function createOrganization(orgData: {
   country?: string
   timezone?: string
   status?: string
+  is_test?: boolean
 }): Promise<Organization> {
   const { data } = await apiClient.post<ApiResponse<Organization>>(
     '/api/v1/organizations',

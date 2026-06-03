@@ -805,8 +805,15 @@ export class TicketsService {
   @Cron('0 * * * *')
   async processSlaBreaches() {
     const now = new Date()
+    const orgs = await this.prisma.organization.findMany({ where: { is_test: false }, select: { id: true } })
+    for (const org of orgs) await this.processSlaForOrg(org.id, now)
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async processSlaForOrg(orgId: string, now: Date) {
     const tickets = await this.prisma.ticket.findMany({
       where: {
+        organization_id: orgId,
         sla_due_at: { lt: now },
         sla_breached: false,
         is_deleted: false,

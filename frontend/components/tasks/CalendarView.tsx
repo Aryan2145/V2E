@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority } from '@/lib/types/tasks'
 
 interface Props {
@@ -21,7 +22,7 @@ function toDateKey(date: Date): string {
 }
 
 export default function CalendarView({ tasks, priorities, onTaskClick }: Props) {
-  const today = new Date()
+  const today = getNow()
   const [year, setYear] = useState(today.getFullYear())
   const [month, setMonth] = useState(today.getMonth())
   const [selectedKey, setSelectedKey] = useState<string | null>(null)

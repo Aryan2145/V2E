@@ -25,6 +25,7 @@ import { WorkflowsModule } from './workflows/workflows.module';
 import { TicketsModule } from './tickets/tickets.module';
 import { HolidaysModule } from './holidays/holidays.module';
 import { ProjectsModule } from './projects/projects.module';
+import { ClockModule } from './clock/clock.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { ProjectsModule } from './projects/projects.module';
     ScheduleModule.forRoot(),
     PrismaModule,
     SchedulerModule,
+    ClockModule,
     AuthModule,
     GroupsModule,
     OrganizationsModule,

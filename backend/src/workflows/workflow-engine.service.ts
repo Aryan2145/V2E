@@ -434,8 +434,14 @@ export class WorkflowEngineService {
   @Cron('*/15 * * * *')
   async processOverdueSteps(): Promise<void> {
     const now = new Date()
+    const orgs = await this.prisma.organization.findMany({ where: { is_test: false }, select: { id: true } })
+    for (const org of orgs) await this.processOverdueStepsForOrg(org.id, now)
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async processOverdueStepsForOrg(orgId: string, now: Date): Promise<void> {
     const activeSteps = await this.prisma.workflowInstanceStep.findMany({
-      where: { status: 'active', scheduled_at: { lt: now } },
+      where: { organization_id: orgId, status: 'active', scheduled_at: { lt: now } },
       include: { instance: { include: { template: { include: { steps: { orderBy: { order_index: 'asc' } } } } } } },
     })
 
@@ -506,7 +512,7 @@ export class WorkflowEngineService {
           { ...branchWorkflowStep, organization_id: instance.organization_id },
           defaultStatusId,
         )
-        await this.prisma.workflowInstanceStep.update({ where: { id: branchInstanceStep.id }, data: { task_id: taskId, task_created_at: new Date() } })
+        await this.prisma.workflowInstanceStep.update({ where: { id: branchInstanceStep.id }, data: { task_id: taskId, task_created_at: now } })
         await this.prisma.workflowInstance.update({ where: { id: instance.id }, data: { current_step_id: branchInstanceStep.id } })
       }
     }
@@ -516,12 +522,19 @@ export class WorkflowEngineService {
 
   @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async processDateTriggers(): Promise<void> {
-    const today = new Date()
+    const now = new Date()
+    const orgs = await this.prisma.organization.findMany({ where: { is_test: false }, select: { id: true } })
+    for (const org of orgs) await this.processDateTriggersForOrg(org.id, now)
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async processDateTriggersForOrg(orgId: string, now: Date): Promise<void> {
+    const today = new Date(now)
     today.setHours(0, 0, 0, 0)
     const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`
 
     const triggers = await this.prisma.workflowTrigger.findMany({
-      where: { type: 'date_trigger', is_active: true },
+      where: { organization_id: orgId, type: 'date_trigger', is_active: true },
       include: { template: { select: { status: true, name: true } } },
     })
 
