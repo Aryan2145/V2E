@@ -24,7 +24,7 @@ const NAV_ITEMS = [
   { label: 'Org Chart', href: '/foundation/org-chart', Icon: GitBranch },
   { label: 'Roles', href: '/foundation/roles', Icon: Briefcase },
   { label: 'Employees', href: '/foundation/employees', Icon: Users },
-  { label: 'Holidays', href: '/dashboard/holidays', Icon: CalendarDays },
+  { label: 'Holidays', href: '/foundation/holidays', Icon: CalendarDays },
 ]
 
 export default function FoundationSidebar({ collapsed, onToggle }: FoundationSidebarProps) {

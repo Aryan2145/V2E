@@ -4,8 +4,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
 import type { HolidayMasterConfig, HolidayOnTaskAction, HolidayPriorityLevel } from '@/lib/types/holidays'
-import { CalendarDays, Building2, Users, ClipboardList, Loader2, Save } from 'lucide-react'
-import Link from 'next/link'
+import { Loader2, Save } from 'lucide-react'
 import HolidayConfigCard from '@/components/holidays/HolidayConfigCard'
 import AccessRightsCard from '@/components/holidays/AccessRightsCard'
 
@@ -49,13 +48,6 @@ export default function HolidaysOverviewPage() {
   }
 
   if (!config) return null
-
-  const SECTION_LINKS = [
-    { label: 'Org Calendar', desc: 'Manage org-wide holidays and working days', href: '/dashboard/holidays/org', icon: <CalendarDays size={20} className="text-[#2563EB]" /> },
-    { label: 'Department Calendars', desc: 'Override schedules per department', href: '/dashboard/holidays/departments', icon: <Building2 size={20} className="text-[#7C3AED]" /> },
-    { label: 'Individual Calendars', desc: 'Set custom schedules per employee', href: '/dashboard/holidays/individuals', icon: <Users size={20} className="text-[#0891B2]" />, adminOnly: true },
-    { label: 'Audit Log', desc: 'View all deadline adjustments history', href: '/dashboard/holidays/audit', icon: <ClipboardList size={20} className="text-[#D97706]" />, adminOnly: true },
-  ]
 
   return (
     <div className="space-y-6">
@@ -112,30 +104,6 @@ export default function HolidaysOverviewPage() {
           </button>
         </div>
       )}
-
-      <div>
-        <h2 className="text-[18px] font-semibold text-[#0F172A] mb-3">Sections</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {SECTION_LINKS.map((s) => {
-            if ((s as {adminOnly?: boolean}).adminOnly && !isAdmin) return null
-            return (
-              <Link
-                key={s.href}
-                href={s.href}
-                className="flex items-start gap-4 p-5 bg-white border border-[#E2E8F0] rounded-[12px] hover:border-[#2563EB]/40 hover:shadow-md transition-all shadow-[0_1px_3px_rgba(0,0,0,0.08)]"
-              >
-                <div className="p-2.5 rounded-[10px] bg-[#F8FAFC] border border-[#E2E8F0] shrink-0">
-                  {s.icon}
-                </div>
-                <div>
-                  <p className="text-sm font-semibold text-[#0F172A]">{s.label}</p>
-                  <p className="text-xs text-[#475569] mt-0.5">{s.desc}</p>
-                </div>
-              </Link>
-            )
-          })}
-        </div>
-      </div>
     </div>
   )
 }

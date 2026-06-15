@@ -12,6 +12,21 @@ const nextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      // Holidays moved into the Foundation module; keep old bookmarks working.
+      {
+        source: '/dashboard/holidays/:path*',
+        destination: '/foundation/holidays/:path*',
+        permanent: false,
+      },
+      {
+        source: '/dashboard/holidays',
+        destination: '/foundation/holidays',
+        permanent: false,
+      },
+    ];
+  },
 };
 
 export default nextConfig;
