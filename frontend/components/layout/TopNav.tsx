@@ -3,10 +3,11 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, ChevronDown, Building2, Check } from 'lucide-react'
+import { LogOut, ChevronDown, Building2, Check, Menu, X } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { getMyOrgs } from '@/lib/api/auth'
 import type { OrgMembership } from '@/lib/types'
+import NotificationBell from './NotificationBell'
 
 const NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard' },
@@ -33,9 +34,15 @@ export default function TopNav() {
   const { user, logout, switchOrg } = useAuth()
 
   const [open, setOpen] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [orgs, setOrgs] = useState<OrgMembership[] | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close the mobile nav drawer whenever the route changes
+  useEffect(() => {
+    setDrawerOpen(false)
+  }, [pathname])
 
   // Load orgs for multi-org switcher
   useEffect(() => {
@@ -88,13 +95,23 @@ export default function TopNav() {
 
   return (
     <header className="fixed top-0 left-0 right-0 h-14 bg-white border-b border-[#E2E8F0] flex items-center z-50">
-      {/* Brand */}
-      <div className="w-[200px] shrink-0 px-6">
-        <span className="text-[#0F172A] font-bold text-lg tracking-tight select-none">V2E</span>
-      </div>
+      {/* Hamburger — only below xl, where the horizontal nav is collapsed */}
+      <button
+        onClick={() => setDrawerOpen((v) => !v)}
+        aria-label="Toggle navigation menu"
+        aria-expanded={drawerOpen}
+        className="xl:hidden shrink-0 ml-2 w-11 h-11 flex items-center justify-center rounded-[8px] text-[#475569] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+      >
+        {drawerOpen ? <X size={20} /> : <Menu size={20} />}
+      </button>
 
-      {/* Nav tabs */}
-      <nav className="flex items-stretch flex-1 h-full">
+      {/* Brand */}
+      <Link href="/dashboard" className="shrink-0 px-3 sm:px-4 xl:pl-6 xl:pr-4">
+        <span className="text-[#0F172A] font-bold text-lg tracking-tight select-none">V2E</span>
+      </Link>
+
+      {/* Nav tabs — full horizontal bar only on wide desktops */}
+      <nav className="hidden xl:flex items-stretch flex-1 h-full">
         {NAV_ITEMS.map((item) => {
           const active = isActive(item.href)
           return (
@@ -102,18 +119,24 @@ export default function TopNav() {
               key={item.href}
               href={item.href}
               className={[
-                'relative px-5 flex items-center text-sm font-medium transition-colors duration-150',
+                'relative px-3 2xl:px-4 flex items-center text-[13px] 2xl:text-sm font-medium whitespace-nowrap transition-colors duration-150',
                 active ? 'text-[#2563EB]' : 'text-[#64748B] hover:text-[#0F172A]',
               ].join(' ')}
             >
               {item.label}
               {active && (
-                <span className="absolute bottom-0 left-3 right-3 h-[2px] bg-[#2563EB] rounded-t-full" />
+                <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-[#2563EB] rounded-t-full" />
               )}
             </Link>
           )
         })}
       </nav>
+
+      {/* Spacer to push the right cluster over when the nav is collapsed */}
+      <div className="flex-1 xl:hidden" />
+
+      {/* Notification bell */}
+      {user && !user.isSuperAdmin && <NotificationBell />}
 
       {/* User menu */}
       {user && (
@@ -221,6 +244,38 @@ export default function TopNav() {
             </div>
           )}
         </div>
+      )}
+
+      {/* Mobile / tablet nav drawer */}
+      {drawerOpen && (
+        <>
+          {/* Backdrop */}
+          <div
+            className="xl:hidden fixed inset-0 top-14 bg-black/30 z-40"
+            onClick={() => setDrawerOpen(false)}
+          />
+          {/* Panel */}
+          <nav className="xl:hidden absolute top-14 left-0 right-0 bg-white border-b border-[#E2E8F0] shadow-lg z-50 py-2 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
+            {NAV_ITEMS.map((item) => {
+              const active = isActive(item.href)
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setDrawerOpen(false)}
+                  className={[
+                    'flex items-center min-h-[44px] px-5 text-[15px] font-medium border-l-[3px] transition-colors',
+                    active
+                      ? 'text-[#2563EB] border-[#2563EB] bg-[#EFF6FF]'
+                      : 'text-[#1E293B] border-transparent hover:bg-[#F1F5F9]',
+                  ].join(' ')}
+                >
+                  {item.label}
+                </Link>
+              )
+            })}
+          </nav>
+        </>
       )}
     </header>
   )

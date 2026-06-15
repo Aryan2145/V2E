@@ -10,9 +10,10 @@ import TaskCard from '@/components/tasks/TaskCard'
 import KanbanView from '@/components/tasks/KanbanView'
 import CalendarView from '@/components/tasks/CalendarView'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
+import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
 import {
   Plus, CheckSquare, AlertTriangle, Calendar, CheckCircle2,
-  TrendingUp, Filter, LayoutList, Columns, CalendarDays,
+  TrendingUp, LayoutList, Columns, CalendarDays,
 } from 'lucide-react'
 
 type ViewMode = 'list' | 'kanban' | 'calendar'
@@ -29,7 +30,7 @@ function StatCard({ label, value, icon, color, active, onClick }: {
       type="button"
       onClick={onClick}
       className={[
-        'bg-white border rounded-[12px] p-6 flex items-start gap-4 w-full text-left transition-all duration-150',
+        'bg-white border rounded-[12px] p-4 sm:p-6 flex items-start gap-3 sm:gap-4 w-full text-left transition-all duration-150',
         active
           ? 'shadow-[0_2px_8px_rgba(0,0,0,0.12)]'
           : 'border-[#E2E8F0] shadow-[0_1px_3px_rgba(0,0,0,0.08)] hover:shadow-[0_2px_8px_rgba(0,0,0,0.10)] hover:border-[#CBD5E1]',
@@ -111,10 +112,7 @@ export default function TasksPage() {
   }
 
   // Filters
-  const [filterStatus, setFilterStatus] = useState('all')
-  const [filterPriority, setFilterPriority] = useState('all')
-  const [filterCategory, setFilterCategory] = useState('all')
-  // const [filterQuadrant, setFilterQuadrant] = useState<'all' | TaskQuadrant>('all')
+  const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -143,24 +141,19 @@ export default function TasksPage() {
   const completedThisMonth = useMemo(() =>
     tasks.filter((t) => t.status?.type === 'completed' && isThisMonth(t.updated_at)).length, [tasks])
 
-  const filtered = useMemo(() => tasks.filter((t) => {
-    if (filterStatus !== 'all' && t.status_id !== filterStatus) return false
-    if (filterPriority !== 'all' && t.priority_id !== filterPriority) return false
-    if (filterCategory !== 'all' && t.category_id !== filterCategory) return false
-    // if (filterQuadrant !== 'all' && t.quadrant !== filterQuadrant) return false
-    return true
-  }), [tasks, filterStatus, filterPriority, filterCategory])
-
-  const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all'
-
+  // Quick-filter (stat cards) applies first; the dropdown filters and their
+  // option counts then work within that subset.
   const quickFiltered = useMemo(() => {
-    if (!quickFilter) return filtered
-    if (quickFilter === 'today') return filtered.filter((t) => t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) && t.deadline && isToday(t.deadline))
-    if (quickFilter === 'overdue') return filtered.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed')
-    if (quickFilter === 'week') return filtered.filter((t) => t.deadline && isThisWeek(t.deadline))
-    if (quickFilter === 'completed_month') return filtered.filter((t) => t.status?.type === 'completed' && isThisMonth(t.updated_at))
-    return filtered
-  }, [filtered, quickFilter, myUserId])
+    if (!quickFilter) return tasks
+    if (quickFilter === 'today') return tasks.filter((t) => t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) && t.deadline && isToday(t.deadline))
+    if (quickFilter === 'overdue') return tasks.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed')
+    if (quickFilter === 'week') return tasks.filter((t) => t.deadline && isThisWeek(t.deadline))
+    if (quickFilter === 'completed_month') return tasks.filter((t) => t.status?.type === 'completed' && isThisMonth(t.updated_at))
+    return tasks
+  }, [tasks, quickFilter, myUserId])
+
+  const filtered = useMemo(() => applyTaskFilters(quickFiltered, filters), [quickFiltered, filters])
+  const isFiltered = isTaskFiltered(filters)
 
   function handleQuickFilter(f: Exclude<QuickFilter, null>) {
     setQuickFilter((prev) => (prev === f ? null : f))
@@ -218,56 +211,14 @@ export default function TasksPage() {
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between flex-wrap">
         {/* Filters (hidden in calendar view) */}
         {viewMode !== 'calendar' && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-2 text-sm text-[#475569]">
-              <Filter size={15} />
-              <span className="font-medium">Filter</span>
-            </div>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Statuses</option>
-              {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-            <select
-              value={filterPriority}
-              onChange={(e) => setFilterPriority(e.target.value)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Priorities</option>
-              {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Categories</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            {/* Quadrant filter — hidden */}
-            {/* <select
-              value={filterQuadrant}
-              onChange={(e) => setFilterQuadrant(e.target.value as 'all' | TaskQuadrant)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Quadrants</option>
-              <option value="Q1">Q1 — Urgent + Important</option>
-              <option value="Q2">Q2 — Not Urgent + Important</option>
-              <option value="Q3">Q3 — Urgent + Not Important</option>
-              <option value="Q4">Q4 — Not Urgent + Not Important</option>
-            </select> */}
-            {isFiltered && (
-              <button
-                onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setFilterCategory('all') }}
-                className="px-3 py-[7px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          <TaskFilterBar
+            tasks={quickFiltered}
+            statuses={statuses}
+            priorities={priorities}
+            categories={categories}
+            filters={filters}
+            onChange={setFilters}
+          />
         )}
 
         {/* View toggle */}
@@ -297,14 +248,14 @@ export default function TasksPage() {
       {viewMode === 'list' && (
         <>
           <p className="text-sm text-[#475569]">
-            {quickFiltered.length} task{quickFiltered.length !== 1 ? 's' : ''}
+            {filtered.length} task{filtered.length !== 1 ? 's' : ''}
             {(isFiltered || quickFilter) && ` (filtered from ${tasks.length})`}
           </p>
-          {quickFiltered.length === 0 ? (
+          {filtered.length === 0 ? (
             <EmptyState filtered={isFiltered || !!quickFilter} />
           ) : (
             <div className="flex flex-col gap-2">
-              {quickFiltered.map((task) => (
+              {filtered.map((task) => (
                 <TaskCard
                   key={task.id}
                   task={task}
@@ -321,7 +272,7 @@ export default function TasksPage() {
 
       {viewMode === 'kanban' && (
         <KanbanView
-          tasks={quickFiltered}
+          tasks={filtered}
           statuses={statuses}
           priorities={priorities}
           categories={categories}
@@ -332,7 +283,7 @@ export default function TasksPage() {
 
       {viewMode === 'calendar' && (
         <CalendarView
-          tasks={quickFilter ? quickFiltered : tasks}
+          tasks={quickFiltered}
           priorities={priorities}
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />

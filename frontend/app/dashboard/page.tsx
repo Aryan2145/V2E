@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
-import { getOrganization } from '@/lib/api/organizations'
+import { getMyOrganization } from '@/lib/api/organizations'
 import { getOrgIdentity } from '@/lib/api/org-identity'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
@@ -50,7 +50,7 @@ function StatCard({
   icon: React.ReactNode
 }) {
   return (
-    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6 flex items-start gap-4">
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-4 sm:p-6 flex items-start gap-3 sm:gap-4">
       <div className="w-10 h-10 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center text-[#2563EB] flex-shrink-0">
         {icon}
       </div>
@@ -115,7 +115,7 @@ export default function DashboardPage() {
       return
     }
     Promise.all([
-      getOrganization(orgId).catch(() => null),
+      getMyOrganization(orgId).catch(() => null),
       getOrgIdentity(orgId).catch(() => null),
       getDepartments(orgId).catch(() => []),
       getRoles(orgId).catch(() => []),
