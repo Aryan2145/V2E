@@ -71,8 +71,9 @@ export default function TimeTravelBar() {
       syncClock(state)
       // Full reload so all client-fetched views reflect the new simulated time.
       window.location.reload()
-    } catch {
-      setError('Failed to set clock')
+    } catch (e: any) {
+      const msg = e?.response?.data?.message ?? e?.response?.data?.error ?? 'Failed to set clock'
+      setError(Array.isArray(msg) ? msg.join(', ') : String(msg))
       setBusy(false)
     }
   }

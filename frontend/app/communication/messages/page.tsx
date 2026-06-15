@@ -51,7 +51,9 @@ export default function MessagesPage() {
     if (!user?.id) return
     const socket = io(`${SOCKET_URL}/chat`, {
       auth: { userId: user.id },
-      transports: ['websocket'],
+      // Prefer websocket, but fall back to long-polling so a transient WS
+      // failure (e.g. backend restarting in dev) degrades gracefully.
+      transports: ['websocket', 'polling'],
     })
     socketRef.current = socket
 

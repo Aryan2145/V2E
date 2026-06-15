@@ -2,7 +2,7 @@
 
 export type AnnouncementType = 'general' | 'policy' | 'event' | 'emergency';
 export type AnnouncementPriority = 'normal' | 'high' | 'urgent';
-export type CommunicationScope = 'org_wide' | 'department' | 'role_based';
+export type CommunicationScope = 'company_wide' | 'department';
 export type BoardInteractionMode = 'read_only' | 'comments_only' | 'comments_and_reactions';
 export type ConversationType = 'direct' | 'group';
 

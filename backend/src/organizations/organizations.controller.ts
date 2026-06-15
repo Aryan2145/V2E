@@ -11,6 +11,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { SuperAdmin } from '../common/decorators/super-admin.decorator';
 import {
   CreateOrgWithAdminDto,
@@ -35,6 +36,14 @@ export class OrganizationsController {
   @SuperAdmin()
   create(@Body() dto: CreateOrgWithAdminDto) {
     return this.organizationsService.create(dto);
+  }
+
+  // Member-scoped: any member of the org (not just super admins) can read their
+  // own org's basic profile for the dashboard header. Scoped by OrgScopeGuard.
+  @Get(':orgId/summary')
+  @UseGuards(OrgScopeGuard)
+  findSummary(@Param('orgId') orgId: string) {
+    return this.organizationsService.findSummary(orgId);
   }
 
   @Get(':id')

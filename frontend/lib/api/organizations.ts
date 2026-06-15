@@ -13,6 +13,15 @@ export async function getOrganization(id: string): Promise<OrgDetail> {
   return data.data;
 }
 
+// Member-scoped: returns the caller's own org basic profile (any member, not
+// just super admins). Use this for in-app pages like the dashboard header.
+export async function getMyOrganization(id: string): Promise<Organization> {
+  const { data } = await apiClient.get<ApiResponse<Organization>>(
+    `/api/v1/organizations/${id}/summary`
+  );
+  return data.data;
+}
+
 export async function createOrganization(orgData: {
   name: string
   slug: string

@@ -38,7 +38,7 @@ export default function BulletinBoardsPage() {
         name: form.name.trim(),
         description: form.description.trim(),
         interaction_mode: form.interaction_mode as any,
-        scope: 'org_wide' as any,
+        scope: 'company_wide' as any,
       } as any)
       setBoards(prev => [board, ...prev])
       setForm({ name: '', description: '', interaction_mode: 'comments_and_reactions' })

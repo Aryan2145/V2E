@@ -16,7 +16,7 @@ export default function NewAnnouncementPage() {
     body: '',
     type: 'general',
     priority: 'normal',
-    scope: 'org_wide',
+    scope: 'company_wide',
     expires_at: '',
   })
   const [saving, setSaving] = useState(false)
@@ -128,7 +128,7 @@ export default function NewAnnouncementPage() {
                   onChange={e => set('scope', e.target.value)}
                   className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB]"
                 >
-                  <option value="org_wide">Org-wide</option>
+                  <option value="company_wide">Company-wide</option>
                   <option value="department">Department</option>
                 </select>
               </div>

@@ -54,6 +54,33 @@ export class OrganizationsService {
     return { ...org, members: enrichedMembers };
   }
 
+  /**
+   * Lightweight, member-safe view of a single org. Unlike findOne (super-admin
+   * only, returns the full member roster + cross-org memberships), this returns
+   * just the public-facing org profile so any member can render their own
+   * dashboard header. Scope is enforced by OrgScopeGuard at the controller.
+   */
+  async findSummary(id: string) {
+    const org = await this.prisma.organization.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        logo_url: true,
+        industry: true,
+        country: true,
+        timezone: true,
+        status: true,
+        group: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!org) throw new NotFoundException(`Organization with id ${id} not found`);
+
+    return org;
+  }
+
   async create(dto: CreateOrgWithAdminDto) {
     const { admin_name, admin_email, admin_password, existing_user_id, ...orgData } = dto;
 

@@ -1,11 +1,15 @@
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsDateString } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { ClockService } from './clock.service';
 import { ReplayService } from './replay.service';
 
 class SetClockDto {
+  // Decorator required: the global ValidationPipe runs with whitelist:true and
+  // strips any property that has no class-validator decorator.
+  @IsDateString()
   datetime: string; // ISO string for the simulated instant
 }
 

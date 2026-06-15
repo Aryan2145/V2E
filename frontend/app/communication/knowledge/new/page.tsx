@@ -11,7 +11,7 @@ export default function NewKnowledgePostPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
   const router = useRouter()
-  const [form, setForm] = useState({ title: '', body: '', scope: 'org_wide', tagInput: '', tags: [] as string[] })
+  const [form, setForm] = useState({ title: '', body: '', scope: 'company_wide', tagInput: '', tags: [] as string[] })
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -123,7 +123,7 @@ export default function NewKnowledgePostPage() {
                 onChange={e => setForm(f => ({ ...f, scope: e.target.value }))}
                 className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB]"
               >
-                <option value="org_wide">Org-wide</option>
+                <option value="company_wide">Company-wide</option>
                 <option value="department">Department</option>
               </select>
             </div>
