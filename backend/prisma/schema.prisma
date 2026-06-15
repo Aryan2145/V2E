@@ -246,6 +246,9 @@ model Department {
   head_user_id         String?
   position_x           Float    @default(0)
   position_y           Float    @default(0)
+  // Assignee-visibility: when false, members of this dept can assign to their direct
+  // manager and below, but not above the manager. Default true = no restriction.
+  assignee_allow_upward Boolean @default(true)
   created_at           DateTime @default(now())
   updated_at           DateTime @updatedAt
 
@@ -702,13 +705,102 @@ model TaskMaster {
   reopen_window_minutes       Int      @default(10)
   escalation_levels           Int      @default(2)
   archive_view_roles          Json     @default("[\"org_admin\"]")
+  // Legacy base-mode fields — retained for rollback/reference; no longer read by the
+  // resolver (base default is now fixed Hierarchy+Department, modulated by the per-dept
+  // upward switch). See AssigneeVisibilityService.
   assignee_visibility_mode         String   @default("hierarchy_and_dept")
   assignee_custom_rules            Json?
   assignee_visibility_config_roles Json     @default("[\"org_admin\",\"hr_manager\"]")
+  // New assignee-visibility model:
+  assignee_master_override         Boolean  @default(false)
+  assignee_full_visibility_roles   Json     @default("[\"org_admin\",\"hr_manager\"]")
+  assignee_full_visibility_users   Json     @default("[]")
+  assignee_exclude_departments     Json     @default("[]")
+  assignee_exclude_roles           Json     @default("[]")
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 
   @@map("task_masters")
+}
+
+// ─── Assignee Visibility (who appears in the assign-to / CC picker) ──────────────
+
+enum AssigneeExceptionScope {
+  user
+  role
+  department
+}
+
+enum AssigneeExceptionKind {
+  widen // sees all active employees (excludes still apply)
+  narrow // sees only the hand-picked shortlist (+ self); excludes do NOT apply
+}
+
+enum BridgeDepth {
+  head_senior // target dept head + roles with level senior/lead/head
+  whole_dept // everyone in the target dept
+}
+
+// A scoped override of the base default. Most-specific wins: user > role > department.
+// References are plain ids (no FK) — the resolver skips orphans and dept deletion cleans up.
+model AssigneeVisibilityException {
+  id                  String                 @id @default(uuid())
+  organization_id     String
+  scope               AssigneeExceptionScope
+  scope_user_id       String?
+  scope_role          String?
+  scope_department_id String?
+  kind                AssigneeExceptionKind
+  created_by          String?
+  created_at          DateTime               @default(now())
+  updated_at          DateTime               @updatedAt
+
+  members AssigneeVisibilityExceptionMember[]
+
+  @@index([organization_id, scope])
+  @@map("assignee_visibility_exceptions")
+}
+
+// Hand-picked shortlist for a narrowing exception.
+model AssigneeVisibilityExceptionMember {
+  id           String                      @id @default(uuid())
+  exception_id String
+  user_id      String
+  exception    AssigneeVisibilityException @relation(fields: [exception_id], references: [id], onDelete: Cascade)
+
+  @@unique([exception_id, user_id])
+  @@index([exception_id])
+  @@map("assignee_visibility_exception_members")
+}
+
+// One-directional: members of from_department may additionally assign into to_department.
+model AssigneeCrossDeptBridge {
+  id                 String      @id @default(uuid())
+  organization_id    String
+  from_department_id String
+  to_department_id   String
+  depth              BridgeDepth @default(head_senior)
+  created_by         String?
+  created_at         DateTime    @default(now())
+
+  @@unique([organization_id, from_department_id, to_department_id])
+  @@index([organization_id, from_department_id])
+  @@map("assignee_cross_dept_bridges")
+}
+
+// Audit trail for every assignee-visibility change.
+model AssigneeVisibilityAuditLog {
+  id              String   @id @default(uuid())
+  organization_id String
+  actor_user_id   String
+  action          String
+  target          Json?
+  before          Json?
+  after           Json?
+  created_at      DateTime @default(now())
+
+  @@index([organization_id, created_at])
+  @@map("assignee_visibility_audit_logs")
 }
 
 model TaskCategory {
@@ -2015,6 +2107,64 @@ model CompanyPolicyAssignment {
 
   @@unique([policy_id, employee_profile_id])
   @@map("company_policy_assignments")
+}
+
+// ─── Notifications ──────────────────────────────────────────────────────────────
+
+enum NotificationModule {
+  tasks
+  projects
+  workflows
+  tickets
+  communication
+  system
+}
+
+model Notification {
+  id              String             @id @default(uuid())
+  organization_id String
+  user_id         String // recipient
+  module          NotificationModule
+  event_type      String // e.g. "task_assigned"
+  title           String
+  body            String             @db.Text
+  link            String? // frontend route, e.g. /dashboard/tasks/{id}
+  entity_type     String?
+  entity_id       String?
+  is_read         Boolean            @default(false)
+  created_at      DateTime           @default(now())
+
+  @@index([organization_id, user_id, is_read])
+  @@index([organization_id, user_id, created_at])
+  @@index([organization_id, user_id, event_type, entity_id])
+  @@map("notifications")
+}
+
+model NotificationMaster {
+  id                    String   @id @default(uuid())
+  organization_id       String   @unique
+  // { event_type: boolean } — absent key means enabled
+  event_toggles         Json     @default("{}")
+  // "Task still overdue" follow-up fires after this many days past deadline
+  overdue_followup_days Int      @default(2)
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  @@map("notification_masters")
+}
+
+model PushSubscription {
+  id              String   @id @default(uuid())
+  organization_id String
+  user_id         String
+  endpoint        String   @unique
+  p256dh          String
+  auth            String
+  user_agent      String?
+  created_at      DateTime @default(now())
+
+  @@index([organization_id, user_id])
+  @@map("push_subscriptions")
 }
 
 

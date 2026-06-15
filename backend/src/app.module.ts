@@ -26,6 +26,8 @@ import { TicketsModule } from './tickets/tickets.module';
 import { HolidaysModule } from './holidays/holidays.module';
 import { ProjectsModule } from './projects/projects.module';
 import { ClockModule } from './clock/clock.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { AssigneeVisibilityModule } from './assignee-visibility/assignee-visibility.module';
 
 @Module({
   imports: [
@@ -34,6 +36,8 @@ import { ClockModule } from './clock/clock.module';
     PrismaModule,
     SchedulerModule,
     ClockModule,
+    NotificationsModule,
+    AssigneeVisibilityModule,
     AuthModule,
     GroupsModule,
     OrganizationsModule,
