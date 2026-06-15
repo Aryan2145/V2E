@@ -7,11 +7,19 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { EmployeeStatus } from '@prisma/client';
+import { EmployeeStatus, EmploymentType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import {
+  BulkImportRowDto,
+  BulkImportRowResult,
+  BulkImportResult,
+} from './dto/bulk-import-employee.dto';
 import { LearningService } from '../learning/learning.service';
+import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
+
+const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 
 const USER_SELECT = {
   id: true,
@@ -34,6 +42,7 @@ export class EmployeesService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => LearningService))
     private readonly learningService: LearningService,
+    private readonly assigneeVisibility: AssigneeVisibilityService,
   ) {}
 
   async findAll(orgId: string) {
@@ -148,7 +157,210 @@ export class EmployeesService {
       createdUserId,
     );
 
+    this.assigneeVisibility.invalidate(orgId);
     return profile;
+  }
+
+  /**
+   * Bulk-create employees from parsed CSV rows. Department, role and manager are
+   * resolved by human-readable name/email (the CSV author can't know UUIDs).
+   * Each row is processed independently — one bad row never aborts the batch —
+   * and a per-row result is returned so the UI can show exactly what failed.
+   */
+  async bulkImport(orgId: string, rows: BulkImportRowDto[]): Promise<BulkImportResult> {
+    // Preload the org's departments, roles and existing members once.
+    const [departments, roles, members] = await Promise.all([
+      this.prisma.department.findMany({
+        where: { organization_id: orgId },
+        select: { id: true, name: true },
+      }),
+      this.prisma.role.findMany({
+        where: { organization_id: orgId },
+        select: { id: true, title: true, department_id: true },
+      }),
+      this.prisma.organizationMember.findMany({
+        where: { organization_id: orgId },
+        select: { user: { select: { id: true, email: true, name: true } } },
+      }),
+    ]);
+
+    const deptByName = new Map(departments.map((d) => [d.name.trim().toLowerCase(), d]));
+    // user email (lowercased) -> userId; used for duplicate detection + manager-by-email.
+    // user name (lowercased) -> [userIds]; used for manager-by-name (an array, so we can
+    // detect ambiguous names). Both maps are mutated as rows succeed so a manager defined
+    // earlier in the same file resolves for later rows.
+    const orgUserByEmail = new Map<string, string>();
+    const orgUserByName = new Map<string, string[]>();
+    for (const m of members) {
+      orgUserByEmail.set(m.user.email.toLowerCase(), m.user.id);
+      const key = m.user.name.trim().toLowerCase();
+      orgUserByName.set(key, [...(orgUserByName.get(key) ?? []), m.user.id]);
+    }
+
+    // Resolve a "reports to" cell that may be a person's name or an email.
+    const resolveManager = (raw: string): string => {
+      const v = raw.trim();
+      if (v.includes('@')) {
+        const id = orgUserByEmail.get(v.toLowerCase());
+        if (!id) throw new Error(`Manager "${raw}" is not a member of this organization`);
+        return id;
+      }
+      const ids = orgUserByName.get(v.toLowerCase());
+      if (!ids || ids.length === 0) {
+        throw new Error(`Manager "${raw}" is not a member of this organization`);
+      }
+      if (ids.length > 1) {
+        throw new Error(`Multiple people are named "${raw}" — use their email instead`);
+      }
+      return ids[0];
+    };
+
+    const parseDate = (raw: string | undefined, field: string): Date | undefined => {
+      const v = raw?.trim();
+      if (!v) return undefined;
+      const d = new Date(v);
+      if (isNaN(d.getTime())) {
+        throw new Error(`${field} "${v}" is not a valid date (use YYYY-MM-DD)`);
+      }
+      return d;
+    };
+
+    const results: BulkImportRowResult[] = [];
+    let created = 0;
+    let failed = 0;
+    let invalidateNeeded = false;
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // +1 for zero-index, +1 for the CSV header line
+      const name = row.name?.trim() ?? '';
+      const email = row.email?.trim().toLowerCase() ?? '';
+
+      try {
+        if (!name) throw new Error('Name is required');
+        if (!email) throw new Error('Email is required');
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+          throw new Error(`"${row.email}" is not a valid email`);
+        }
+
+        const deptName = row.department?.trim();
+        if (!deptName) throw new Error('Department is required');
+        const dept = deptByName.get(deptName.toLowerCase());
+        if (!dept) throw new Error(`Department "${deptName}" not found`);
+
+        const roleTitle = row.role?.trim();
+        if (!roleTitle) throw new Error('Role is required');
+        const role = roles.find(
+          (r) =>
+            r.department_id === dept.id &&
+            r.title.trim().toLowerCase() === roleTitle.toLowerCase(),
+        );
+        if (!role) {
+          throw new Error(`Role "${roleTitle}" not found in department "${deptName}"`);
+        }
+
+        let employment_type: EmploymentType = EmploymentType.full_time;
+        if (row.employment_type?.trim()) {
+          const et = row.employment_type.trim().toLowerCase().replace(/[\s-]+/g, '_');
+          if (!['full_time', 'part_time', 'contract'].includes(et)) {
+            throw new Error(
+              `employment_type "${row.employment_type}" must be full_time, part_time or contract`,
+            );
+          }
+          employment_type = et as EmploymentType;
+        }
+
+        let reporting_to_user_id: string | undefined;
+        if (row.reporting_to?.trim()) {
+          reporting_to_user_id = resolveManager(row.reporting_to);
+        }
+
+        const date_of_joining = parseDate(row.date_of_joining, 'date_of_joining');
+        const date_of_birth = parseDate(row.date_of_birth, 'date_of_birth');
+        const marriage_date = parseDate(row.marriage_date, 'marriage_date');
+
+        const password = row.password?.trim() || DEFAULT_IMPORT_PASSWORD;
+        if (password.length < 8) {
+          throw new Error('Password must be at least 8 characters');
+        }
+
+        if (orgUserByEmail.has(email)) {
+          throw new Error('A user with this email already exists in this organization');
+        }
+
+        const { profileId, userId } = await this.prisma.$transaction(async (tx) => {
+          let user = await tx.user.findUnique({ where: { email } });
+          if (user) {
+            const existing = await tx.organizationMember.findFirst({
+              where: { user_id: user.id, organization_id: orgId },
+            });
+            if (existing) {
+              throw new Error('A user with this email already exists in this organization');
+            }
+          } else {
+            const password_hash = await bcrypt.hash(password, 12);
+            user = await tx.user.create({
+              data: { name, email, password_hash, is_active: true },
+            });
+          }
+
+          await tx.organizationMember.create({
+            data: { organization_id: orgId, user_id: user.id, role: 'employee' },
+          });
+
+          const profile = await tx.employeeProfile.create({
+            data: {
+              organization_id: orgId,
+              user_id: user.id,
+              role_id: role.id,
+              department_id: dept.id,
+              reporting_to_user_id,
+              employee_code: row.employee_code?.trim() || undefined,
+              employment_type,
+              date_of_joining,
+              date_of_birth,
+              marriage_date,
+            },
+          });
+
+          return { profileId: profile.id, userId: user.id };
+        });
+
+        // Make this person resolvable as a manager for later rows in the batch.
+        orgUserByEmail.set(email, userId);
+        const nameKey = name.trim().toLowerCase();
+        orgUserByName.set(nameKey, [...(orgUserByName.get(nameKey) ?? []), userId]);
+
+        // Auto-assign published learning paths (best-effort — never fail the row).
+        try {
+          await this.learningService.autoAssignForNewEmployee(
+            profileId,
+            role.id,
+            orgId,
+            userId,
+          );
+        } catch {
+          /* learning assignment is non-critical */
+        }
+
+        results.push({ row: rowNum, name, email, status: 'created' });
+        created++;
+        invalidateNeeded = true;
+      } catch (e) {
+        results.push({
+          row: rowNum,
+          name,
+          email,
+          status: 'failed',
+          error: e instanceof Error ? e.message : 'Unknown error',
+        });
+        failed++;
+      }
+    }
+
+    // Invalidate once for the whole batch (not per row).
+    if (invalidateNeeded) this.assigneeVisibility.invalidate(orgId);
+    return { created, failed, results };
   }
 
   async update(id: string, orgId: string, dto: UpdateEmployeeDto) {
@@ -176,7 +388,7 @@ export class EmployeesService {
       }
     }
 
-    return this.prisma.employeeProfile.update({
+    const updated = await this.prisma.employeeProfile.update({
       where: { id },
       data: {
         ...dto,
@@ -186,6 +398,9 @@ export class EmployeesService {
       },
       include: PROFILE_INCLUDE,
     });
+    // Role/department/manager changes affect who appears in pickers.
+    this.assigneeVisibility.invalidate(orgId);
+    return updated;
   }
 
   async updateStatus(id: string, orgId: string, status: EmployeeStatus) {
@@ -197,11 +412,14 @@ export class EmployeesService {
       throw new NotFoundException(`Employee ${id} not found in this organization`);
     }
 
-    return this.prisma.employeeProfile.update({
+    const updated = await this.prisma.employeeProfile.update({
       where: { id },
       data: { status },
       include: PROFILE_INCLUDE,
     });
+    // Only active employees appear in pickers — status change affects the pool.
+    this.assigneeVisibility.invalidate(orgId);
+    return updated;
   }
 
   async getPeopleEvents(orgId: string, windowDays = 30) {

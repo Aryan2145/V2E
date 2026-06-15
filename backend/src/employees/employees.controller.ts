@@ -17,6 +17,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { EmployeesService } from './employees.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { BulkImportEmployeesDto } from './dto/bulk-import-employee.dto';
 
 class UpdateStatusDto {
   status: EmployeeStatus;
@@ -61,6 +62,13 @@ export class EmployeesController {
   @ApiOperation({ summary: 'Create a new employee (creates user account + profile)' })
   create(@Param('orgId') orgId: string, @Body() dto: CreateEmployeeDto) {
     return this.employeesService.create(orgId, dto);
+  }
+
+  @Post('bulk-import')
+  @Roles('org_admin', 'hr_manager')
+  @ApiOperation({ summary: 'Bulk-create employees from CSV rows (resolved by name/email)' })
+  bulkImport(@Param('orgId') orgId: string, @Body() dto: BulkImportEmployeesDto) {
+    return this.employeesService.bulkImport(orgId, dto.rows);
   }
 
   @Patch(':id')

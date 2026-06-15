@@ -1,12 +1,15 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { getEmployees } from '@/lib/api/employees'
 import { getDepartments } from '@/lib/api/departments'
-import type { EmployeeProfile, Department, EmployeeStatus } from '@/lib/types'
-import { Search, Users, ChevronRight } from 'lucide-react'
+import { getRoles } from '@/lib/api/roles'
+import type { EmployeeProfile, Department, Role, EmployeeStatus } from '@/lib/types'
+import { Search, Users, ChevronRight, UserPlus, Upload } from 'lucide-react'
+import AddEmployeeModal from '@/components/employees/AddEmployeeModal'
+import ImportEmployeesModal from '@/components/employees/ImportEmployeesModal'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -91,12 +94,23 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 export default function EmployeesPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
+  const canManage = user?.role === 'org_admin' || user?.role === 'hr_manager'
 
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [deptFilter, setDeptFilter] = useState('all')
+  const [showAdd, setShowAdd] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+
+  const reloadEmployees = useCallback(() => {
+    if (!orgId) return
+    getEmployees(orgId)
+      .then(setEmployees)
+      .catch(() => null)
+  }, [orgId])
 
   useEffect(() => {
     if (!orgId) {
@@ -106,9 +120,11 @@ export default function EmployeesPage() {
     Promise.all([
       getEmployees(orgId).catch(() => []),
       getDepartments(orgId).catch(() => []),
-    ]).then(([emps, depts]) => {
+      getRoles(orgId).catch(() => []),
+    ]).then(([emps, depts, rls]) => {
       setEmployees(emps)
       setDepartments(depts)
+      setRoles(rls)
     }).finally(() => setLoading(false))
   }, [orgId])
 
@@ -138,11 +154,31 @@ export default function EmployeesPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div>
-        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Employees</h1>
-        <p className="mt-1 text-[15px] text-[#475569]">
-          Browse and manage all employee profiles.
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Employees</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">
+            Browse and manage all employee profiles.
+          </p>
+        </div>
+        {canManage && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowImport(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+            >
+              <Upload size={16} />
+              Import
+            </button>
+            <button
+              onClick={() => setShowAdd(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
+            >
+              <UserPlus size={16} />
+              Add Employee
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -248,6 +284,31 @@ export default function EmployeesPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* Add / Import modals */}
+      {showAdd && (
+        <AddEmployeeModal
+          orgId={orgId}
+          departments={departments}
+          roles={roles}
+          employees={employees}
+          onClose={() => setShowAdd(false)}
+          onCreated={() => {
+            setShowAdd(false)
+            reloadEmployees()
+          }}
+        />
+      )}
+      {showImport && (
+        <ImportEmployeesModal
+          orgId={orgId}
+          departments={departments}
+          roles={roles}
+          employees={employees}
+          onClose={() => setShowImport(false)}
+          onImported={reloadEmployees}
+        />
       )}
     </div>
   )

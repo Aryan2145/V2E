@@ -54,6 +54,45 @@ export async function createEmployee(
   return data.data;
 }
 
+export interface BulkImportRow {
+  name?: string;
+  email?: string;
+  password?: string;
+  department?: string;
+  role?: string;
+  employment_type?: string;
+  employee_code?: string;
+  reporting_to?: string;
+  date_of_joining?: string;
+  date_of_birth?: string;
+  marriage_date?: string;
+}
+
+export interface BulkImportRowResult {
+  row: number;
+  name: string;
+  email: string;
+  status: 'created' | 'failed';
+  error?: string;
+}
+
+export interface BulkImportResult {
+  created: number;
+  failed: number;
+  results: BulkImportRowResult[];
+}
+
+export async function bulkImportEmployees(
+  orgId: string,
+  rows: BulkImportRow[]
+): Promise<BulkImportResult> {
+  const { data } = await apiClient.post<ApiResponse<BulkImportResult>>(
+    `/api/v1/org/${orgId}/employees/bulk-import`,
+    { rows }
+  );
+  return data.data;
+}
+
 export async function updateEmployee(
   orgId: string,
   id: string,
