@@ -59,8 +59,10 @@ export default function CreateTaskModal({
   const [statusId, setStatusId] = useState('')
   const [deadlineDate, setDeadlineDate] = useState('')
   const [deadlineTime, setDeadlineTime] = useState('')
+  // Convert the user's local date+time to an ISO instant so the backend stores the
+  // exact moment regardless of the server's timezone (EC2 runs UTC, local runs IST).
   const deadline = deadlineDate
-    ? deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`
+    ? new Date(deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`).toISOString()
     : ''
   const todayStr = new Date().toISOString().split('T')[0]
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')

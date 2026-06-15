@@ -22,8 +22,9 @@ import type {
   TicketStatusType,
   TicketTemplateType,
 } from '@/lib/types/tickets'
-import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare } from 'lucide-react'
-import apiClient from '@/lib/api/client'
+import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell } from 'lucide-react'
+import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
+import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -423,109 +424,6 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
           </div>
         ))}
       </div>
-    </div>
-  )
-}
-
-const VISIBILITY_MODES = [
-  { id: 'hierarchy_and_dept', title: 'Hierarchy + Department', description: 'Users below in reporting structure AND users in same department', icon: '🏢' },
-  { id: 'hierarchy_only', title: 'Hierarchy Only', description: 'Only users below the assigner in the reporting structure', icon: '📊' },
-  { id: 'dept_only', title: 'Department Only', description: 'Only users in the same department as the assigner', icon: '🏠' },
-  { id: 'custom', title: 'Custom Rules', description: 'Fully configure who appears using include/exclude rules', icon: '⚙️' },
-]
-const ALL_ROLES = ['org_admin', 'hr_manager', 'employee']
-
-function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
-  const [config, setConfig] = useState<TaskMasterConfig | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
-  const [mode, setMode] = useState('hierarchy_and_dept')
-  const [configRoles, setConfigRoles] = useState<string[]>(['org_admin', 'hr_manager'])
-  const [customRules, setCustomRules] = useState({ include_departments: [] as string[], exclude_departments: [] as string[], include_roles: [] as string[], exclude_roles: [] as string[], allow_cross_dept: false, allow_outside_hierarchy: false })
-
-  useEffect(() => {
-    setLoading(true)
-    Promise.all([
-      tasksApi.getConfig(orgId),
-      apiClient.get(`/api/v1/org/${orgId}/departments`).then((r) => r.data?.data ?? r.data ?? []).catch(() => []),
-    ]).then(([cfg, depts]) => {
-      setConfig(cfg)
-      setMode(cfg.assignee_visibility_mode ?? 'hierarchy_and_dept')
-      setConfigRoles((cfg.assignee_visibility_config_roles as string[]) ?? ['org_admin', 'hr_manager'])
-      const rules = (cfg.assignee_custom_rules as typeof customRules) ?? {}
-      setCustomRules({ include_departments: rules.include_departments ?? [], exclude_departments: rules.exclude_departments ?? [], include_roles: rules.include_roles ?? [], exclude_roles: rules.exclude_roles ?? [], allow_cross_dept: rules.allow_cross_dept ?? false, allow_outside_hierarchy: rules.allow_outside_hierarchy ?? false })
-      setDepartments(Array.isArray(depts) ? depts : [])
-    }).catch(() => null).finally(() => setLoading(false))
-  }, [orgId])
-
-  async function handleSave() {
-    setSaving(true)
-    try {
-      await tasksApi.updateAssigneeVisibility(orgId, { assignee_visibility_mode: mode, assignee_custom_rules: mode === 'custom' ? customRules as unknown as Record<string, unknown> : undefined, assignee_visibility_config_roles: configRoles })
-      setSaved(true); setTimeout(() => setSaved(false), 2000)
-    } catch { /* ignore */ } finally { setSaving(false) }
-  }
-
-  function toggleMs<T extends string>(arr: T[], value: T): T[] { return arr.includes(value) ? arr.filter((x) => x !== value) : [...arr, value] }
-
-  if (loading) return <Spinner />
-
-  return (
-    <div className="space-y-6 max-w-2xl">
-      <div>
-        <label className="block text-sm font-medium text-[#374151] mb-3">Visibility Mode</label>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {VISIBILITY_MODES.map((vm) => (
-            <button key={vm.id} type="button" onClick={() => setMode(vm.id)} className={`flex items-start gap-3 p-4 rounded-[10px] border-2 text-left transition-all ${mode === vm.id ? 'border-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] bg-white hover:border-[#CBD5E1]'}`}>
-              <span className="text-xl shrink-0">{vm.icon}</span>
-              <div>
-                <p className={`text-sm font-semibold ${mode === vm.id ? 'text-[#2563EB]' : 'text-[#0F172A]'}`}>{vm.title}</p>
-                <p className="text-xs text-[#475569] mt-0.5 leading-relaxed">{vm.description}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
-      {mode === 'custom' && (
-        <div className="border border-[#E2E8F0] rounded-[10px] p-5 space-y-5 bg-[#F8FAFC]">
-          <p className="text-sm font-semibold text-[#0F172A]">Custom Rules</p>
-          {(['include_departments', 'exclude_departments'] as const).map((key) => (
-            <div key={key}>
-              <label className="block text-xs font-medium text-[#374151] mb-2 capitalize">{key.replace('_', ' ').replace('departments', 'Departments')}</label>
-              <div className="flex flex-wrap gap-2">
-                {departments.map((d) => (
-                  <button key={d.id} type="button" onClick={() => setCustomRules({ ...customRules, [key]: toggleMs(customRules[key], d.id) })}
-                    className={`px-3 py-1 rounded-[6px] text-xs font-medium border transition-colors ${customRules[key].includes(d.id) ? (key === 'include_departments' ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-[#DC2626] text-white border-[#DC2626]') : 'bg-white text-[#475569] border-[#CBD5E1]'}`}>
-                    {d.name}
-                  </button>
-                ))}
-                {departments.length === 0 && <p className="text-xs text-[#94A3B8]">No departments configured</p>}
-              </div>
-            </div>
-          ))}
-          {[{ key: 'allow_cross_dept' as const, label: 'Allow cross-department assignees' }, { key: 'allow_outside_hierarchy' as const, label: 'Allow assignees outside reporting hierarchy' }].map(({ key, label }) => (
-            <div key={key} className="flex items-center gap-3">
-              <button type="button" onClick={() => setCustomRules({ ...customRules, [key]: !customRules[key] })} className={`relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0 ${customRules[key] ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]'}`} role="switch" aria-checked={customRules[key]}>
-                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${customRules[key] ? 'translate-x-4' : 'translate-x-0'}`} />
-              </button>
-              <span className="text-sm text-[#1E293B]">{label}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <div>
-        <label className="block text-sm font-medium text-[#374151] mb-2">Who can change these settings</label>
-        <div className="flex gap-2">
-          {ALL_ROLES.map((r) => (
-            <button key={r} type="button" onClick={() => setConfigRoles(toggleMs(configRoles, r))} className={`px-3 py-1.5 rounded-[6px] text-xs font-medium border capitalize transition-colors ${configRoles.includes(r) ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB]'}`}>{r.replace('_', ' ')}</button>
-          ))}
-        </div>
-      </div>
-      <button type="button" onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors">
-        <Save size={15} /> {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Settings'}
-      </button>
     </div>
   )
 }
@@ -1073,6 +971,144 @@ function TktTemplatesTab({ orgId }: { orgId: string }) {
   )
 }
 
+// ─── Notification Masters ─────────────────────────────────────────────────────
+
+const NOTIF_EVENT_LABELS: Record<string, string> = {
+  task_assigned: 'Task assigned (incl. CC)',
+  task_completed: 'Task completed',
+  task_reopened: 'Task reopened',
+  task_comment: 'New comment on a task',
+  task_reminder: 'Task reminder',
+  task_overdue: 'Task overdue',
+  task_overdue_followup: 'Task still overdue (follow-up)',
+  task_escalated: 'Task escalated',
+  recurring_spawned: 'Recurring task created',
+  project_created: 'Project created',
+  project_member_added: 'Added to a project',
+  milestone_completed: 'Milestone achieved',
+  workflow_triggered: 'Workflow started',
+  workflow_step_assigned: 'Workflow step assigned',
+  workflow_step_overdue: 'Workflow step overdue',
+  workflow_upstream_delay: 'Upstream step delayed',
+  workflow_completed: 'Workflow completed',
+  ticket_raised: 'Ticket raised / assigned',
+  ticket_status_changed: 'Ticket status changed',
+  ticket_sla_breached: 'Ticket SLA breached',
+  ticket_escalated: 'Ticket escalated',
+  ticket_comment: 'New comment on a ticket',
+}
+
+const NOTIF_MODULE_LABELS: Record<string, string> = {
+  tasks: 'Tasks',
+  projects: 'Projects',
+  workflows: 'Workflows',
+  tickets: 'Tickets',
+}
+
+function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onChange}
+      className={[
+        'relative w-9 h-5 rounded-full transition-colors shrink-0',
+        on ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
+      ].join(' ')}
+    >
+      <span
+        className={[
+          'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
+          on ? 'translate-x-[18px]' : 'translate-x-0.5',
+        ].join(' ')}
+      />
+    </button>
+  )
+}
+
+function NotificationsMasterTab({ orgId }: { orgId: string }) {
+  const [master, setMaster] = useState<NotificationMaster | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+
+  useEffect(() => {
+    notificationsApi.getMaster(orgId).then(setMaster).catch(() => null).finally(() => setLoading(false))
+  }, [orgId])
+
+  if (loading) return <Spinner />
+  if (!master) return <p className="text-sm text-[#475569]">Could not load notification settings.</p>
+
+  const toggles = master.event_toggles ?? {}
+  const isOn = (event: string) => toggles[event] !== false // absent ⇒ on
+
+  function flip(event: string) {
+    setMaster((prev) => prev && ({
+      ...prev,
+      event_toggles: { ...(prev.event_toggles ?? {}), [event]: !isOn(event) },
+    }))
+  }
+
+  async function handleSave() {
+    if (!master) return
+    setSaving(true)
+    try {
+      const updated = await notificationsApi.updateMaster(orgId, {
+        event_toggles: master.event_toggles,
+        overdue_followup_days: master.overdue_followup_days,
+      })
+      setMaster({ ...updated, catalog: master.catalog })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch { /* ignore */ } finally { setSaving(false) }
+  }
+
+  const catalog = master.catalog ?? {}
+  const modules = Object.keys(NOTIF_MODULE_LABELS).filter((m) => (catalog[m] ?? []).length > 0)
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      <p className="text-sm text-[#475569]">
+        Switch individual notifications on or off for everyone in this organization.
+      </p>
+
+      {modules.map((mod) => (
+        <div key={mod} className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
+          <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+            <p className="text-xs font-semibold text-[#475569] uppercase tracking-wider">{NOTIF_MODULE_LABELS[mod]}</p>
+          </div>
+          <div className="divide-y divide-[#F1F5F9]">
+            {(catalog[mod] ?? []).map((event) => (
+              <div key={event} className="flex items-center justify-between px-4 py-2.5 gap-4">
+                <span className="text-sm text-[#0F172A]">{NOTIF_EVENT_LABELS[event] ?? event}</span>
+                <Toggle on={isOn(event)} onChange={() => flip(event)} />
+              </div>
+            ))}
+            {mod === 'tasks' && (
+              <div className="flex items-center justify-between px-4 py-2.5 gap-4 bg-[#FFFBEB]/50">
+                <span className="text-sm text-[#0F172A]">Overdue follow-up after (days)</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={365}
+                  value={master.overdue_followup_days}
+                  onChange={(e) => setMaster({ ...master, overdue_followup_days: parseInt(e.target.value) || 1 })}
+                  className="w-20 border border-[#CBD5E1] rounded-[8px] px-2 py-1.5 text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white text-center"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      ))}
+
+      <button onClick={handleSave} disabled={saving}
+        className="flex items-center gap-2 px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors">
+        <Save size={15} />
+        {saving ? 'Saving...' : saved ? 'Saved!' : 'Save Notification Settings'}
+      </button>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const taskTabs: { key: TaskMasterTab; label: string; icon: React.ReactNode }[] = [
@@ -1096,7 +1132,7 @@ const ticketTabs: { key: TicketMasterTab; label: string; icon: React.ReactNode }
 export default function MastersPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const [masterSection, setMasterSection] = useState<'tasks' | 'tickets'>('tasks')
+  const [masterSection, setMasterSection] = useState<'tasks' | 'tickets' | 'notifications'>('tasks')
   const [taskTab, setTaskTab] = useState<TaskMasterTab>('config')
   const [ticketTab, setTicketTab] = useState<TicketMasterTab>('config')
 
@@ -1108,7 +1144,10 @@ export default function MastersPage() {
     )
   }
 
-  const activeTabs = masterSection === 'tasks' ? taskTabs : ticketTabs
+  const notifTabs: { key: string; label: string; icon: React.ReactNode }[] = [
+    { key: 'config', label: 'Notification Settings', icon: <Bell size={15} /> },
+  ]
+  const activeTabs = masterSection === 'tasks' ? taskTabs : masterSection === 'tickets' ? ticketTabs : notifTabs
 
   return (
     <div className="space-y-6">
@@ -1119,7 +1158,7 @@ export default function MastersPage() {
 
       {/* Top-level switcher */}
       <div className="flex gap-2 p-1 bg-[#F1F5F9] rounded-[10px] w-fit">
-        {([['tasks', 'Task Masters'], ['tickets', 'Ticket Masters']] as const).map(([key, label]) => (
+        {([['tasks', 'Task Masters'], ['tickets', 'Ticket Masters'], ['notifications', 'Notifications']] as const).map(([key, label]) => (
           <button
             key={key}
             onClick={() => setMasterSection(key)}
@@ -1139,10 +1178,13 @@ export default function MastersPage() {
           {activeTabs.map((t) => (
             <button
               key={t.key}
-              onClick={() => masterSection === 'tasks' ? setTaskTab(t.key as TaskMasterTab) : setTicketTab(t.key as TicketMasterTab)}
+              onClick={() => {
+                if (masterSection === 'tasks') setTaskTab(t.key as TaskMasterTab)
+                else if (masterSection === 'tickets') setTicketTab(t.key as TicketMasterTab)
+              }}
               className={[
                 'flex items-center gap-2 px-5 py-3.5 text-sm font-medium transition-colors whitespace-nowrap border-b-2',
-                (masterSection === 'tasks' ? taskTab : ticketTab) === t.key
+                (masterSection === 'tasks' ? taskTab : masterSection === 'tickets' ? ticketTab : 'config') === t.key
                   ? 'text-[#2563EB] border-[#2563EB]'
                   : 'text-[#475569] border-transparent hover:text-[#0F172A]',
               ].join(' ')}
@@ -1175,6 +1217,7 @@ export default function MastersPage() {
               {ticketTab === 'templates' && <TktTemplatesTab orgId={orgId} />}
             </>
           )}
+          {masterSection === 'notifications' && <NotificationsMasterTab orgId={orgId} />}
         </div>
       </div>
     </div>

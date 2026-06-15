@@ -12,6 +12,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { ProjectProgressService } from '../projects/project-progress.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -34,6 +36,8 @@ export class TasksService {
     private readonly workflowEngine: WorkflowEngineService,
     private readonly holidaysService: HolidaysService,
     private readonly projectProgressService: ProjectProgressService,
+    private readonly notifications: NotificationsService,
+    private readonly assigneeVisibility: AssigneeVisibilityService,
   ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -276,6 +280,29 @@ export class TasksService {
     // Log creation
     await this.logActivity(orgId, task.id, userId, 'created');
 
+    // Notify assignees + CC (excluding the creator)
+    const creatorName = await this.notifications.userName(userId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_assigned',
+      recipients: assigneeIds.filter((uid) => uid !== userId),
+      title: 'New task assigned',
+      body: `${creatorName} assigned you "${task.title}"`,
+      link: `/dashboard/tasks/${task.id}`,
+      entity: { type: 'task', id: task.id },
+    });
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_assigned',
+      recipients: ccIds.filter((uid) => uid !== userId),
+      title: "You're CC'd on a task",
+      body: `${creatorName} CC'd you on "${task.title}"`,
+      link: `/dashboard/tasks/${task.id}`,
+      entity: { type: 'task', id: task.id },
+    });
+
     return this.getTask(orgId, task.id);
   }
 
@@ -383,20 +410,45 @@ export class TasksService {
 
   private async enrichTaskList(tasks: any[]) {
     const allUserIds = new Set<string>();
+    const allOrgIds = new Set<string>();
     for (const task of tasks) {
+      task.organization_id && allOrgIds.add(task.organization_id);
       task.created_by_user_id && allUserIds.add(task.created_by_user_id);
       for (const a of task.assignees ?? []) allUserIds.add(a.user_id);
     }
-    const users = await this.prisma.user.findMany({
-      where: { id: { in: Array.from(allUserIds) } },
-      select: { id: true, name: true, email: true },
-    });
+    const userIds = Array.from(allUserIds);
+    // Profiles are per-org, so key them by org+user (collective view spans orgs).
+    const [users, profiles] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, name: true, email: true },
+      }),
+      this.prisma.employeeProfile.findMany({
+        where: { organization_id: { in: Array.from(allOrgIds) }, user_id: { in: userIds } },
+        select: {
+          organization_id: true,
+          user_id: true,
+          department: { select: { name: true } },
+          role: { select: { title: true } },
+        },
+      }),
+    ]);
     const userMap = new Map(users.map((u) => [u.id, u]));
+    const profileMap = new Map(profiles.map((p) => [`${p.organization_id}:${p.user_id}`, p]));
 
     return tasks.map((task) => ({
       ...task,
       created_by: userMap.get(task.created_by_user_id) ?? null,
-      assignees: (task.assignees ?? []).map((a: any) => ({ ...a, user: userMap.get(a.user_id) ?? null })),
+      assignees: (task.assignees ?? []).map((a: any) => {
+        const u = userMap.get(a.user_id);
+        const p = profileMap.get(`${task.organization_id}:${a.user_id}`);
+        return {
+          ...a,
+          user: u
+            ? { ...u, department: p?.department?.name ?? null, role_title: p?.role?.title ?? null }
+            : null,
+        };
+      }),
     }));
   }
 
@@ -600,6 +652,22 @@ export class TasksService {
 
     await this.logActivity(orgId, taskId, userId, 'completed');
 
+    // Notify creator + co-assignees (excluding whoever completed it)
+    const completerName = await this.notifications.userName(userId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_completed',
+      recipients: [
+        task.created_by_user_id,
+        ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
+      ].filter((uid) => uid !== userId),
+      title: 'Task completed',
+      body: `${completerName} completed "${task.title}"`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+
     // Advance workflow if this task belongs to a workflow step
     if (task.workflow_instance_step_id) {
       await this.workflowEngine.handleStepCompleted(task.workflow_instance_step_id);
@@ -658,6 +726,22 @@ export class TasksService {
     });
 
     await this.logActivity(orgId, taskId, userId, 'reopened', reason ? { reason } : undefined);
+
+    // Notify assignees + creator (excluding whoever reopened it)
+    const reopenerName = await this.notifications.userName(userId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_reopened',
+      recipients: [
+        task.created_by_user_id,
+        ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
+      ].filter((uid) => uid !== userId),
+      title: 'Task reopened',
+      body: `${reopenerName} reopened "${task.title}"${reason ? ` — ${reason}` : ''}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
 
     // Recalculate project progress if task is linked to a project
     const projectTaskReopened = await this.prisma.projectTask.findFirst({ where: { task_id: taskId } });
@@ -735,7 +819,7 @@ export class TasksService {
   }
 
   async addComment(orgId: string, userId: string, taskId: string, dto: CreateCommentDto) {
-    await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId);
     const comment = await this.prisma.taskComment.create({
       data: {
         organization_id: orgId,
@@ -748,6 +832,23 @@ export class TasksService {
     });
     await this.logActivity(orgId, taskId, userId, 'comment_added', { comment_id: comment.id });
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true } });
+
+    // Notify everyone on the task (assignees + CC + creator) except the commenter
+    const snippet = dto.body.length > 80 ? `${dto.body.slice(0, 80)}…` : dto.body;
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_comment',
+      recipients: [
+        task.created_by_user_id,
+        ...(task.assignees ?? []).map((a: any) => a.user_id),
+      ].filter((uid) => uid !== userId),
+      title: `New comment on "${task.title}"`,
+      body: `${user?.name ?? 'Someone'}: ${snippet}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+
     return { ...comment, user_name: user?.name ?? null, user_email: user?.email ?? null, user: user ?? null };
   }
 
@@ -789,7 +890,7 @@ export class TasksService {
   // ─── Assignees ────────────────────────────────────────────────────────────────
 
   async addAssignee(orgId: string, userId: string, taskId: string, dto: AddAssigneeDto) {
-    await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId);
     const assignee = await this.prisma.taskAssignee.upsert({
       where: { task_id_user_id: { task_id: taskId, user_id: dto.user_id } },
       create: {
@@ -801,6 +902,20 @@ export class TasksService {
       update: { is_cc: dto.is_cc ?? false },
     });
     await this.logActivity(orgId, taskId, userId, 'assigned', { user_id: dto.user_id, is_cc: dto.is_cc });
+
+    if (dto.user_id !== userId) {
+      const assignerName = await this.notifications.userName(userId);
+      await this.notifications.emit({
+        orgId,
+        module: 'tasks',
+        event_type: 'task_assigned',
+        recipients: [dto.user_id],
+        title: dto.is_cc ? "You're CC'd on a task" : 'New task assigned',
+        body: `${assignerName} ${dto.is_cc ? "CC'd you on" : 'assigned you'} "${task.title}"`,
+        link: `/dashboard/tasks/${taskId}`,
+        entity: { type: 'task', id: taskId },
+      });
+    }
     return assignee;
   }
 
@@ -821,10 +936,18 @@ export class TasksService {
 
   async getArchive(orgId: string, userId: string) {
     await this.checkTaskPermission(orgId, userId, 'archive_view_roles');
-    return this.prisma.taskArchive.findMany({
+    const items = await this.prisma.taskArchive.findMany({
       where: { organization_id: orgId },
       orderBy: { deleted_at: 'desc' },
     });
+    // Resolve the deleting users' names for display.
+    const userIds = Array.from(new Set(items.map((i) => i.deleted_by_user_id)));
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: userIds } },
+      select: { id: true, name: true, email: true },
+    });
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    return items.map((i) => ({ ...i, deleted_by: userMap.get(i.deleted_by_user_id) ?? null }));
   }
 
   // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -951,89 +1074,20 @@ export class TasksService {
     search?: string,
     sort: 'frequency' | 'workload' | 'name' = 'frequency',
   ) {
-    const [config, userMember] = await Promise.all([
-      this.getOrgConfig(orgId),
-      this.prisma.organizationMember.findUnique({
-        where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-        select: { role: true },
-      }),
+    // Membership is resolved (and cached) by AssigneeVisibilityService following the
+    // override → full-visibility → exception → base default → bridges → excludes pipeline.
+    const [{ pool }, profileMap] = await Promise.all([
+      this.assigneeVisibility.resolve(orgId, userId),
+      this.assigneeVisibility.getProfiles(orgId),
     ]);
 
-    const userProfile = await this.prisma.employeeProfile.findFirst({
-      where: { user_id: userId, organization_id: orgId },
-      select: { department_id: true },
-    });
-
-    // Get all active employee profiles in the org
-    const allProfiles = await this.prisma.employeeProfile.findMany({
-      where: { organization_id: orgId, status: 'active' },
-      include: {
-        user: { select: { id: true, name: true, is_active: true } },
-        department: { select: { id: true, name: true } },
-        role: { select: { id: true, title: true } },
-      },
-    });
-
-    const allMembers = await this.prisma.organizationMember.findMany({
-      where: { organization_id: orgId, is_active: true },
-      select: { user_id: true, role: true },
-    });
-    const memberRoleMap = new Map(allMembers.map((m) => [m.user_id, m.role]));
-
-    const customRules = (config.assignee_custom_rules as Record<string, any>) ?? {};
-    const mode = config.assignee_visibility_mode ?? 'hierarchy_and_dept';
-    const isAdmin = userMember?.role === 'org_admin' || userMember?.role === 'hr_manager';
-
-    const eligibleUserIds = new Set<string>();
-
-    if (isAdmin) {
-      // Admins always see every active employee in the org (including themselves)
-      allProfiles.forEach((p) => { eligibleUserIds.add(p.user_id); });
-    } else if (mode === 'hierarchy_and_dept' || mode === 'hierarchy_only') {
-      eligibleUserIds.add(userId); // always include self
-      const subordinates = this.getSubordinates(allProfiles, userId);
-      subordinates.forEach((id) => eligibleUserIds.add(id));
-      if (mode === 'hierarchy_and_dept' && userProfile?.department_id) {
-        allProfiles
-          .filter((p) => p.department_id === userProfile.department_id)
-          .forEach((p) => eligibleUserIds.add(p.user_id));
-      }
-    } else if (mode === 'dept_only') {
-      if (userProfile?.department_id) {
-        allProfiles
-          .filter((p) => p.department_id === userProfile.department_id)
-          .forEach((p) => eligibleUserIds.add(p.user_id));
-      }
-    } else if (mode === 'custom') {
-      const includeDepts = (customRules.include_departments as string[]) ?? [];
-      const includeRoles = (customRules.include_roles as string[]) ?? [];
-      const allowCrossDept = customRules.allow_cross_dept ?? false;
-      const allowOutsideHierarchy = customRules.allow_outside_hierarchy ?? false;
-      eligibleUserIds.add(userId); // always include self
-      allProfiles.forEach((p) => {
-        let include = allowCrossDept || allowOutsideHierarchy;
-        if (includeDepts.includes(p.department_id)) include = true;
-        const memberRole = memberRoleMap.get(p.user_id);
-        if (memberRole && includeRoles.includes(memberRole)) include = true;
-        if (include) eligibleUserIds.add(p.user_id);
-      });
-    }
-
-    const excludeDepts = (customRules.exclude_departments as string[]) ?? [];
-    const excludeRoles = (customRules.exclude_roles as string[]) ?? [];
-
-    let eligibleProfiles = allProfiles.filter((p) => {
-      if (!eligibleUserIds.has(p.user_id)) return false;
-      if (!p.user.is_active) return false;
-      if (excludeDepts.includes(p.department_id)) return false;
-      const memberRole = memberRoleMap.get(p.user_id);
-      if (memberRole && excludeRoles.includes(memberRole)) return false;
-      return true;
-    });
+    let eligibleProfiles = [...pool]
+      .map((id) => profileMap.get(id))
+      .filter((p): p is NonNullable<typeof p> => !!p);
 
     if (search?.trim()) {
       const q = search.toLowerCase();
-      eligibleProfiles = eligibleProfiles.filter((p) => p.user.name.toLowerCase().includes(q));
+      eligibleProfiles = eligibleProfiles.filter((p) => p.name.toLowerCase().includes(q));
     }
 
     // Get active task counts
@@ -1070,11 +1124,11 @@ export class TasksService {
 
     const items = eligibleProfiles.map((p) => ({
       user_id: p.user_id,
-      name: p.user.name,
+      name: p.name,
       avatar_url: null as null,
-      role_title: p.role.title,
+      role_title: p.role_title,
       department_id: p.department_id,
-      department_name: p.department.name,
+      department_name: p.department_name,
       active_task_count: activeTaskMap.get(p.user_id) ?? 0,
       frequency_count: frequencyMap.get(p.user_id) ?? 0,
       is_frequent: frequentUserIds.has(p.user_id),
@@ -1103,18 +1157,6 @@ export class TasksService {
     }
 
     return { departments: Array.from(deptMap.values()), total: sorted.length };
-  }
-
-  private getSubordinates(profiles: { user_id: string; reporting_to_user_id?: string | null }[], userId: string, visited = new Set<string>()): string[] {
-    if (visited.has(userId)) return [];
-    visited.add(userId);
-    const result: string[] = [];
-    const directReports = profiles.filter((p) => p.reporting_to_user_id === userId);
-    for (const dr of directReports) {
-      result.push(dr.user_id);
-      result.push(...this.getSubordinates(profiles, dr.user_id, visited));
-    }
-    return result;
   }
 
   // ─── Collective (cross-org) ───────────────────────────────────────────────────

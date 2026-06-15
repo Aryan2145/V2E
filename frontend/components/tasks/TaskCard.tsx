@@ -4,6 +4,7 @@ import React from 'react'
 import { Calendar, User, GitBranch } from 'lucide-react'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
+import AssigneeAvatars, { type AvatarPerson } from './AssigneeAvatars'
 // import QuadrantBadge from './QuadrantBadge'
 
 interface TaskCardProps {
@@ -15,31 +16,6 @@ interface TaskCardProps {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2)
-}
-
-const avatarColors = [
-  'bg-[#2563EB]',
-  'bg-[#7C3AED]',
-  'bg-[#059669]',
-  'bg-[#D97706]',
-  'bg-[#DC2626]',
-  'bg-[#0891B2]',
-  'bg-[#BE185D]',
-]
-
-function avatarColor(name: string): string {
-  let hash = 0
-  for (let i = 0; i < name.length; i++) hash += name.charCodeAt(i)
-  return avatarColors[hash % avatarColors.length]
-}
 
 function deadlineClass(deadline?: string): string {
   if (!deadline) return 'text-[#475569]'
@@ -66,9 +42,16 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
   const status = statuses.find((s) => s.id === task.status_id) ?? task.status
   const category = categories.find((c) => c.id === task.category_id) ?? task.category
 
-  const assignees = task.assignees?.filter((a) => !a.is_cc) ?? []
-  const visibleAssignees = assignees.slice(0, 3)
-  const extraCount = Math.max(0, assignees.length - 3)
+  // Primary assignees first, then CC — each with name/dept/role for the hover tooltip.
+  const people: AvatarPerson[] = [...(task.assignees ?? [])]
+    .sort((a, b) => Number(a.is_cc) - Number(b.is_cc))
+    .map((a) => ({
+      id: a.id,
+      name: a.user?.name ?? a.user_name ?? '?',
+      department: a.user?.department,
+      role: a.user?.role_title,
+      isCC: a.is_cc,
+    }))
 
   return (
     <div
@@ -121,23 +104,8 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
 
       {/* Assignee avatars */}
       <div className="shrink-0 flex items-center">
-        {visibleAssignees.length > 0 ? (
-          <div className="flex -space-x-2">
-            {visibleAssignees.map((a) => (
-              <div
-                key={a.id}
-                title={a.user_name}
-                className={`w-7 h-7 rounded-full ${avatarColor(a.user_name ?? '')} flex items-center justify-center text-white text-[10px] font-bold border-2 border-white`}
-              >
-                {getInitials(a.user_name ?? '')}
-              </div>
-            ))}
-            {extraCount > 0 && (
-              <div className="w-7 h-7 rounded-full bg-[#E2E8F0] flex items-center justify-center text-[#475569] text-[10px] font-bold border-2 border-white">
-                +{extraCount}
-              </div>
-            )}
-          </div>
+        {people.length > 0 ? (
+          <AssigneeAvatars people={people} max={3} />
         ) : (
           <div className="w-7 h-7 rounded-full bg-[#F1F5F9] flex items-center justify-center">
             <User size={13} className="text-[#94A3B8]" />

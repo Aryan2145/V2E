@@ -6,10 +6,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
+import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
 
 @Injectable()
 export class DepartmentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assigneeVisibility: AssigneeVisibilityService,
+  ) {}
 
   async findAll(orgId: string) {
     return this.prisma.department.findMany({
@@ -58,7 +62,7 @@ export class DepartmentsService {
   }
 
   async create(orgId: string, dto: CreateDepartmentDto) {
-    return this.prisma.department.create({
+    const created = await this.prisma.department.create({
       data: {
         ...dto,
         organization_id: orgId,
@@ -69,12 +73,14 @@ export class DepartmentsService {
         },
       },
     });
+    this.assigneeVisibility.invalidate(orgId);
+    return created;
   }
 
   async update(id: string, orgId: string, dto: UpdateDepartmentDto) {
     await this.findOne(id, orgId);
 
-    return this.prisma.department.update({
+    const updated = await this.prisma.department.update({
       where: { id },
       data: dto,
       include: {
@@ -83,6 +89,9 @@ export class DepartmentsService {
         },
       },
     });
+    // head_user / parent / upward-switch changes affect picker pools.
+    this.assigneeVisibility.invalidate(orgId);
+    return updated;
   }
 
   async updatePosition(id: string, orgId: string, x: number, y: number) {
@@ -129,8 +138,18 @@ export class DepartmentsService {
       );
     }
 
+    // Clean up assignee-visibility rows that reference this department (no FK cascade
+    // on these plain-id columns). Exception members cascade via their FK.
+    await this.prisma.assigneeCrossDeptBridge.deleteMany({
+      where: { organization_id: orgId, OR: [{ from_department_id: id }, { to_department_id: id }] },
+    });
+    await this.prisma.assigneeVisibilityException.deleteMany({
+      where: { organization_id: orgId, scope: 'department', scope_department_id: id },
+    });
+
     await this.prisma.department.delete({ where: { id } });
 
+    this.assigneeVisibility.invalidate(orgId);
     return { message: 'Department deleted successfully' };
   }
 }

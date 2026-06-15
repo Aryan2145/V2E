@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import type { Task, TaskStatus, TaskPriority, TaskCategory } from '@/lib/types/tasks'
 import QuadrantBadge from './QuadrantBadge'
+import AssigneeAvatars from './AssigneeAvatars'
 
 interface Props {
   tasks: Task[]
@@ -11,20 +12,6 @@ interface Props {
   categories: TaskCategory[]
   onStatusChange: (taskId: string, newStatusId: string) => Promise<void>
   onTaskClick: (taskId: string) => void
-}
-
-function getInitials(name: string): string {
-  return name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)
-}
-
-const avatarColors = [
-  'bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]',
-  'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]',
-]
-function avatarColor(name: string): string {
-  let h = 0
-  for (let i = 0; i < name.length; i++) h += name.charCodeAt(i)
-  return avatarColors[h % avatarColors.length]
 }
 
 function isOverdue(deadline?: string, statusType?: string): boolean {
@@ -92,7 +79,15 @@ export default function KanbanView({ tasks, statuses, priorities, categories, on
                 const priority = priorities.find((p) => p.id === task.priority_id)
                 const overdue = isOverdue(task.deadline, task.status?.type)
                 const isUpdating = updating === task.id
-                const assignees = (task.assignees ?? []).filter((a) => !a.is_cc).slice(0, 3)
+                const people = [...(task.assignees ?? [])]
+                  .sort((a, b) => Number(a.is_cc) - Number(b.is_cc))
+                  .map((a) => ({
+                    id: a.id,
+                    name: a.user?.name ?? a.user_name ?? '?',
+                    department: a.user?.department,
+                    role: a.user?.role_title,
+                    isCC: a.is_cc,
+                  }))
 
                 return (
                   <div
@@ -132,21 +127,8 @@ export default function KanbanView({ tasks, statuses, priorities, categories, on
                         </span>
                       ) : <span />}
 
-                      {assignees.length > 0 && (
-                        <div className="flex -space-x-1.5">
-                          {assignees.map((a) => {
-                            const name = a.user?.name ?? a.user_name ?? '?'
-                            return (
-                              <div
-                                key={a.id}
-                                className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold text-white ring-1 ring-white ${avatarColor(name)}`}
-                                title={name}
-                              >
-                                {getInitials(name)}
-                              </div>
-                            )
-                          })}
-                        </div>
+                      {people.length > 0 && (
+                        <AssigneeAvatars people={people} max={3} size="sm" />
                       )}
                     </div>
                   </div>

@@ -12,8 +12,9 @@ import type {
   CompletionMode,
   YearlyDate,
 } from '@/lib/types/tasks'
-import type { SelectedAssignee } from '@/lib/types/tasks'
+import type { SelectedAssignee, EligibleAssigneesResponse } from '@/lib/types/tasks'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
+import AssigneeAvatars, { type AvatarPerson } from '@/components/tasks/AssigneeAvatars'
 import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
 import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
@@ -25,15 +26,6 @@ import {
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-const avatarColors = [
-  'bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]',
-  'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]',
-]
-function avatarColor(str: string): string {
-  let h = 0; for (let i = 0; i < str.length; i++) h += str.charCodeAt(i)
-  return avatarColors[h % avatarColors.length]
-}
 
 function entryLabel(entry: RecurringScheduleEntry | ScheduleEntryDraft): string {
   const e = entry as RecurringScheduleEntry
@@ -361,6 +353,7 @@ function RecurringCard({
   onDelete,
   onSpawnToday,
   onClick,
+  userMap,
 }: {
   template: RecurringTemplate
   onEdit: () => void
@@ -369,6 +362,7 @@ function RecurringCard({
   onDelete: () => void
   onSpawnToday: () => Promise<{ spawned: number }>
   onClick: () => void
+  userMap: Map<string, { name: string; department?: string; role?: string }>
 }) {
   const [toggling, setToggling] = useState(false)
   const [spawning, setSpawning] = useState(false)
@@ -405,15 +399,24 @@ function RecurringCard({
     : null
   const totalOccurrences = entries.reduce((sum, e) => sum + (e.occurrence_count ?? 0), 0)
 
+  const toPerson = (uid: string, isCC: boolean): AvatarPerson => {
+    const u = userMap.get(uid)
+    return { id: uid, name: u?.name ?? '?', department: u?.department, role: u?.role, isCC }
+  }
+  const people: AvatarPerson[] = [
+    ...(template.assignee_user_ids ?? []).map((uid) => toPerson(uid, false)),
+    ...(template.cc_user_ids ?? []).map((uid) => toPerson(uid, true)),
+  ]
+
   return (
     <div
       onClick={onClick}
       className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 cursor-pointer hover:border-[#2563EB] hover:shadow-md transition-all duration-150 group"
     >
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap mb-1">
+      {/* Header: badges + actions on top row, title full-width below */}
+      <div className="mb-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className={[
               'inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium',
               template.is_active
@@ -428,12 +431,7 @@ function RecurringCard({
               </span>
             )}
           </div>
-          <h3 className="text-[15px] font-semibold text-[#0F172A] truncate group-hover:text-[#2563EB] transition-colors">{template.title}</h3>
-          {template.description && (
-            <p className="text-sm text-[#475569] mt-0.5 line-clamp-2">{template.description}</p>
-          )}
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
+          <div className="flex items-center gap-1 shrink-0">
           {/* Edit button */}
           <button
             onClick={(e) => { e.stopPropagation(); onEdit() }}
@@ -485,7 +483,12 @@ function RecurringCard({
               </div>
             )}
           </div>
+          </div>
         </div>
+        <h3 className="text-[15px] font-semibold text-[#0F172A] break-words group-hover:text-[#2563EB] transition-colors">{template.title}</h3>
+        {template.description && (
+          <p className="text-sm text-[#475569] mt-0.5 line-clamp-2">{template.description}</p>
+        )}
       </div>
 
       {/* Schedule info */}
@@ -520,23 +523,14 @@ function RecurringCard({
       </div>
 
       {/* Assignee avatars */}
-      {template.assignee_user_ids?.length > 0 && (
+      {people.length > 0 && (
         <div className="mt-3 flex items-center gap-2">
           <Users size={12} className="text-[#94A3B8]" />
-          <div className="flex -space-x-1.5">
-            {template.assignee_user_ids.slice(0, 5).map((uid) => (
-              <div
-                key={uid}
-                className={`w-5 h-5 rounded-full ${avatarColor(uid)} flex items-center justify-center text-white text-[8px] font-bold border-2 border-white`}
-              />
-            ))}
-            {template.assignee_user_ids.length > 5 && (
-              <div className="w-5 h-5 rounded-full bg-[#E2E8F0] flex items-center justify-center text-[#475569] text-[8px] font-bold border-2 border-white">
-                +{template.assignee_user_ids.length - 5}
-              </div>
-            )}
-          </div>
-          <span className="text-xs text-[#475569]">{template.assignee_user_ids.length} assignee{template.assignee_user_ids.length !== 1 ? 's' : ''}</span>
+          <AssigneeAvatars people={people} max={5} size="sm" />
+          <span className="text-xs text-[#475569]">
+            {template.assignee_user_ids.length} assignee{template.assignee_user_ids.length !== 1 ? 's' : ''}
+            {(template.cc_user_ids?.length ?? 0) > 0 && ` · ${template.cc_user_ids.length} CC`}
+          </span>
         </div>
       )}
     </div>
@@ -553,6 +547,7 @@ export default function RecurringPage() {
   const [templates, setTemplates] = useState<RecurringTemplate[]>([])
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
+  const [userMap, setUserMap] = useState<Map<string, { name: string; department?: string; role?: string }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null)
@@ -564,8 +559,14 @@ export default function RecurringPage() {
       tasksApi.getRecurringTemplates(orgId).catch(() => [] as RecurringTemplate[]),
       tasksApi.getCategories(orgId).catch(() => [] as TaskCategory[]),
       tasksApi.getPriorities(orgId).catch(() => [] as TaskPriority[]),
-    ]).then(([t, c, p]) => {
+      tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 } as EligibleAssigneesResponse)),
+    ]).then(([t, c, p, eligible]) => {
       setTemplates(t); setCategories(c); setPriorities(p)
+      const map = new Map<string, { name: string; department?: string; role?: string }>()
+      eligible.departments.forEach((dept) =>
+        dept.users.forEach((u) => map.set(u.user_id, { name: u.name, department: u.department_name, role: u.role_title })),
+      )
+      setUserMap(map)
     }).finally(() => setLoading(false))
   }, [orgId])
 
@@ -654,6 +655,7 @@ export default function RecurringPage() {
               onResume={() => handleResume(t.id)}
               onDelete={() => handleDelete(t.id)}
               onSpawnToday={() => tasksApi.spawnTodayRecurring(orgId, t.id).then((r) => { loadData(); return r })}
+              userMap={userMap}
             />
           ))}
         </div>

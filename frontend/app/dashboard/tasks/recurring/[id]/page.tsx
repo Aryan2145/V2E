@@ -389,7 +389,7 @@ export default function RecurringDetailPage() {
                       <div className={`w-7 h-7 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
                         {getInitials(name)}
                       </div>
-                      <span className="text-sm text-[#0F172A] truncate">{name}</span>
+                      <span className="text-sm text-[#0F172A] break-words">{name}</span>
                     </div>
                   )
                 })}

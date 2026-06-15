@@ -343,4 +343,69 @@ export const tasksApi = {
   }): Promise<void> => {
     await apiClient.patch(`${base(orgId)}/masters/assignee-visibility`, dto)
   },
+
+  // ── Assignee Visibility (admin model) ─────────────────────────────────────────
+
+  getAssigneeVisibility: async (orgId: string): Promise<import('@/lib/types/tasks').AssigneeVisibilityAdminView> => {
+    const res = await apiClient.get(`${base(orgId)}/masters/assignee-visibility`)
+    return unwrap(res)
+  },
+
+  updateAssigneeSettings: async (
+    orgId: string,
+    dto: Partial<import('@/lib/types/tasks').AssigneeVisibilitySettings>,
+  ): Promise<import('@/lib/types/tasks').AssigneeVisibilitySettings> => {
+    const res = await apiClient.put(`${base(orgId)}/masters/assignee-visibility/settings`, dto)
+    return unwrap(res)
+  },
+
+  createAssigneeException: async (
+    orgId: string,
+    dto: {
+      scope: import('@/lib/types/tasks').AssigneeExceptionScope
+      kind: import('@/lib/types/tasks').AssigneeExceptionKind
+      scope_user_id?: string
+      scope_role?: string
+      scope_department_id?: string
+      member_user_ids?: string[]
+    },
+  ): Promise<void> => {
+    await apiClient.post(`${base(orgId)}/masters/assignee-visibility/exceptions`, dto)
+  },
+
+  deleteAssigneeException: async (orgId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/masters/assignee-visibility/exceptions/${id}`)
+  },
+
+  createAssigneeBridge: async (
+    orgId: string,
+    dto: {
+      from_department_id: string
+      to_department_id: string
+      depth: import('@/lib/types/tasks').BridgeDepth
+    },
+  ): Promise<void> => {
+    await apiClient.post(`${base(orgId)}/masters/assignee-visibility/bridges`, dto)
+  },
+
+  deleteAssigneeBridge: async (orgId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/masters/assignee-visibility/bridges/${id}`)
+  },
+
+  setDepartmentUpward: async (
+    orgId: string,
+    dto: { department_id: string; allow: boolean },
+  ): Promise<void> => {
+    await apiClient.patch(`${base(orgId)}/masters/assignee-visibility/department-upward`, dto)
+  },
+
+  explainAssignee: async (
+    orgId: string,
+    userId: string,
+  ): Promise<import('@/lib/types/tasks').AssigneeExplainResult> => {
+    const res = await apiClient.get(
+      `${base(orgId)}/masters/assignee-visibility/explain?userId=${encodeURIComponent(userId)}`,
+    )
+    return unwrap(res)
+  },
 }

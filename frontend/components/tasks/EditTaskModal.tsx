@@ -18,6 +18,18 @@ interface Props {
   onSaved: (updated: Task) => void
 }
 
+// Format a stored UTC instant in the user's LOCAL date/time for the form inputs.
+// (Slicing the raw ISO string would show UTC — wrong for IST users.)
+const pad2 = (n: number) => String(n).padStart(2, '0')
+const toLocalDateStr = (iso: string) => {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+const toLocalTimeStr = (iso: string) => {
+  const d = new Date(iso)
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
 export default function EditTaskModal({ task, categories, priorities, statuses, onClose, onSaved }: Props) {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
@@ -29,11 +41,13 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   const [statusId, setStatusId] = useState(task.status_id)
   const [completionMode, setCompletionMode] = useState<CompletionMode>(task.completion_mode ?? 'any_can_complete')
   const [proofRequired, setProofRequired] = useState(task.proof_required ?? false)
-  const [deadlineDate, setDeadlineDate] = useState(() => task.deadline ? task.deadline.slice(0, 10) : '')
-  const [deadlineTime, setDeadlineTime] = useState(() => task.deadline ? task.deadline.slice(11, 16) : '')
+  const [deadlineDate, setDeadlineDate] = useState(() => task.deadline ? toLocalDateStr(task.deadline) : '')
+  const [deadlineTime, setDeadlineTime] = useState(() => task.deadline ? toLocalTimeStr(task.deadline) : '')
   const todayStr = new Date().toISOString().split('T')[0]
+  // Convert the user's local date+time to an ISO instant so the backend stores the
+  // exact moment regardless of the server's timezone (EC2 runs UTC, local runs IST).
   const deadline = deadlineDate
-    ? deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`
+    ? new Date(deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`).toISOString()
     : ''
 
   const [submitting, setSubmitting] = useState(false)

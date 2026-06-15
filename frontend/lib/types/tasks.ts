@@ -53,7 +53,7 @@ export interface TaskAssigneeUser {
   user_id: string
   user_name?: string
   user_email?: string
-  user?: { id: string; name: string; email: string }
+  user?: { id: string; name: string; email: string; department?: string | null; role_title?: string | null }
   is_completed: boolean
   completed_at?: string
   is_cc: boolean
@@ -182,6 +182,7 @@ export interface TaskArchiveItem {
   original_task_id: string
   task_snapshot: Task
   deleted_by_user_id: string
+  deleted_by?: { id: string; name: string; email: string } | null
   deletion_reason?: string
   deleted_at: string
 }
@@ -281,6 +282,78 @@ export interface EligibleAssigneeGroup {
 export interface EligibleAssigneesResponse {
   departments: EligibleAssigneeGroup[]
   total: number
+}
+
+// ─── Assignee Visibility (admin model) ──────────────────────────────────────────
+
+export type AssigneeExceptionScope = 'user' | 'role' | 'department'
+export type AssigneeExceptionKind = 'widen' | 'narrow'
+export type BridgeDepth = 'head_senior' | 'whole_dept'
+
+export interface AssigneeVisibilitySettings {
+  master_override: boolean
+  exclude_departments: string[]
+  exclude_roles: string[]
+  full_visibility_roles: string[]
+  full_visibility_users: string[]
+  config_roles: string[]
+}
+
+export interface AssigneeException {
+  id: string
+  scope: AssigneeExceptionScope
+  kind: AssigneeExceptionKind
+  scope_user_id: string | null
+  scope_user_name: string | null
+  scope_role: string | null
+  scope_department_id: string | null
+  scope_department_name: string | null
+  members: { user_id: string; name: string | null }[]
+}
+
+export interface AssigneeBridge {
+  id: string
+  from_department_id: string
+  from_department_name: string | null
+  to_department_id: string
+  to_department_name: string | null
+  depth: BridgeDepth
+  match_count: number
+}
+
+export interface AssigneeDeptUpward {
+  id: string
+  name: string
+  assignee_allow_upward: boolean
+}
+
+export interface AssigneeVisibilityAdminView {
+  settings: AssigneeVisibilitySettings
+  exceptions: AssigneeException[]
+  bridges: AssigneeBridge[]
+  departments: AssigneeDeptUpward[]
+}
+
+export interface AssigneeExplainResult {
+  user_id: string
+  total: number
+  trace: {
+    reason: string
+    exception_id?: string
+    exception_scope?: string
+    bridges_used?: { to_department_id: string; depth: string; match_count: number }[]
+    excluded_count?: number
+  }
+  users: {
+    user_id: string
+    name: string
+    department_id: string
+    department_name: string
+    role_title: string
+    role_level: string
+    member_role: string | null
+    reporting_to_user_id: string | null
+  }[]
 }
 
 export interface SelectedAssignee {

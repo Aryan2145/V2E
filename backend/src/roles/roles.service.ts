@@ -6,10 +6,14 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
 
 @Injectable()
 export class RolesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly assigneeVisibility: AssigneeVisibilityService,
+  ) {}
 
   async findAll(orgId: string, departmentId?: string) {
     return this.prisma.role.findMany({
@@ -60,7 +64,7 @@ export class RolesService {
       );
     }
 
-    return this.prisma.role.create({
+    const created = await this.prisma.role.create({
       data: {
         ...dto,
         organization_id: orgId,
@@ -73,6 +77,8 @@ export class RolesService {
         },
       },
     });
+    this.assigneeVisibility.invalidate(orgId);
+    return created;
   }
 
   async update(id: string, orgId: string, dto: UpdateRoleDto) {
@@ -90,7 +96,7 @@ export class RolesService {
       }
     }
 
-    return this.prisma.role.update({
+    const updated = await this.prisma.role.update({
       where: { id },
       data: dto as any,
       include: {
@@ -99,6 +105,9 @@ export class RolesService {
         },
       },
     });
+    // Role level / department changes affect bridge "senior" slices and excludes.
+    this.assigneeVisibility.invalidate(orgId);
+    return updated;
   }
 
   async remove(id: string, orgId: string) {
@@ -121,6 +130,7 @@ export class RolesService {
 
     await this.prisma.role.delete({ where: { id } });
 
+    this.assigneeVisibility.invalidate(orgId);
     return { message: 'Role deleted successfully' };
   }
 }
