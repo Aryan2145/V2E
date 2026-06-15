@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProjectProgressService } from './project-progress.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UpdateProjectStatusDto } from './dto/update-project-status.dto';
@@ -26,6 +27,7 @@ export class ProjectsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly progressService: ProjectProgressService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Master ──────────────────────────────────────────────────────────────────
@@ -243,6 +245,21 @@ export class ProjectsService {
 
     await this.log(orgId, project.id, userId, 'created', { name: project.name });
 
+    // Notify the PM (if different from creator)
+    if (dto.project_manager_user_id !== userId) {
+      const creatorName = await this.notifications.userName(userId);
+      await this.notifications.emit({
+        orgId,
+        module: 'projects',
+        event_type: 'project_created',
+        recipients: [dto.project_manager_user_id],
+        title: 'New project',
+        body: `${creatorName} created project "${project.name}" and made you its manager.`,
+        link: `/dashboard/projects/${project.id}`,
+        entity: { type: 'project', id: project.id },
+      });
+    }
+
     return this.findProjectOrFail(orgId, project.id);
   }
 
@@ -350,6 +367,23 @@ export class ProjectsService {
     });
 
     await this.log(orgId, projectId, userId, 'member_added', { user_id: dto.user_id, role: dto.role });
+
+    if (dto.user_id !== userId) {
+      const [adderName, project] = await Promise.all([
+        this.notifications.userName(userId),
+        this.prisma.project.findUnique({ where: { id: projectId }, select: { name: true } }),
+      ]);
+      await this.notifications.emit({
+        orgId,
+        module: 'projects',
+        event_type: 'project_member_added',
+        recipients: [dto.user_id],
+        title: 'Added to a project',
+        body: `${adderName} added you to project "${project?.name ?? ''}" as ${dto.role ?? 'viewer'}.`,
+        link: `/dashboard/projects/${projectId}`,
+        entity: { type: 'project', id: projectId },
+      });
+    }
     return member;
   }
 

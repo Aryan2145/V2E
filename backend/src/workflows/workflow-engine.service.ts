@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import { Cron, CronExpression } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
+import { NotificationsService } from '../notifications/notifications.service'
 
 @Injectable()
 export class WorkflowEngineService {
@@ -10,6 +11,7 @@ export class WorkflowEngineService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly holidaysService: HolidaysService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ── Instance naming ─────────────────────────────────────────────────────────
@@ -137,10 +139,18 @@ export class WorkflowEngineService {
       assignee_type: string
       assignee_user_id: string | null
       assignee_role: string | null
+      assigner_user_id: string
     },
   ): Promise<string> {
+    // The step's assigner always exists and is the natural owner of the work, so
+    // it's the safe fallback whenever we can't resolve the intended assignee.
+    // This guarantees we never emit '' (which neither assigned_to_user_id nor
+    // task_assignees.user_id has a FK to catch — it would create a ghost task
+    // assigned to nobody, with notifications routed to a non-existent user).
+    const fallback = step.assignee_user_id || step.assigner_user_id
+
     if (step.assignee_type === 'fixed_person') {
-      return step.assignee_user_id!
+      return step.assignee_user_id || step.assigner_user_id
     }
     // Role-based round-robin
     const role = step.assignee_role!
@@ -148,7 +158,13 @@ export class WorkflowEngineService {
       where: { organization_id: step.organization_id, role: role as never, is_active: true },
       select: { user_id: true },
     })
-    if (members.length === 0) return step.assignee_user_id ?? ''
+    if (members.length === 0) {
+      this.logger.warn(
+        `Workflow step ${step.id}: role "${role}" has no active members; ` +
+          `falling back to assigner ${fallback}.`,
+      )
+      return fallback
+    }
 
     const tracker = await this.prisma.workflowRoundRobinTracker.findUnique({
       where: {
@@ -198,7 +214,6 @@ export class WorkflowEngineService {
       organization_id: string
       title: string
       description: string | null
-      quadrant?: string | null
       priority_id: string | null
       category_id: string | null
       proof_required: boolean
@@ -213,7 +228,9 @@ export class WorkflowEngineService {
         organization_id: step.organization_id,
         title: step.title,
         description: step.description ?? undefined,
-        quadrant: (step.quadrant ?? 'do') as never,
+        // WorkflowStep has no quadrant of its own; use the app-wide default
+        // (matches Task.quadrant @default(Q2) and tasks.service).
+        quadrant: 'Q2',
         type: 'one_time',
         status_id: defaultStatusId,
         priority_id: step.priority_id ?? undefined,
@@ -244,6 +261,8 @@ export class WorkflowEngineService {
 
   // ── Notifications ────────────────────────────────────────────────────────────
 
+  // Routes all workflow notifications through the unified notification service.
+  // (The legacy workflow_notifications table is no longer written — nothing reads it.)
   private async notify(
     instanceId: string,
     orgId: string,
@@ -252,14 +271,23 @@ export class WorkflowEngineService {
     message: string,
   ): Promise<void> {
     if (userIds.length === 0) return
-    await this.prisma.workflowNotification.createMany({
-      data: userIds.map((user_id) => ({
-        organization_id: orgId,
-        workflow_instance_id: instanceId,
-        user_id,
-        type,
-        message,
-      })),
+    const eventMap: Record<string, { event: string; title: string }> = {
+      instance_completed: { event: 'workflow_completed', title: 'Workflow completed' },
+      upstream_delay: { event: 'workflow_upstream_delay', title: 'Upstream step delayed' },
+      instance_stuck: { event: 'workflow_step_overdue', title: 'Workflow step overdue' },
+      instance_triggered: { event: 'workflow_triggered', title: 'Workflow started' },
+      step_assigned: { event: 'workflow_step_assigned', title: 'Workflow step assigned to you' },
+    }
+    const mapped = eventMap[type] ?? { event: 'workflow_triggered', title: 'Workflow update' }
+    await this.notifications.emit({
+      orgId,
+      module: 'workflows',
+      event_type: mapped.event,
+      recipients: userIds,
+      title: mapped.title,
+      body: message,
+      link: '/dashboard/tasks/workflows/my',
+      entity: { type: 'workflow_instance', id: instanceId },
     })
   }
 
@@ -353,6 +381,22 @@ export class WorkflowEngineService {
         where: { id: instance.id },
         data: { current_step_id: first.id },
       })
+
+      const ownerIds = (template.owner_user_ids as string[]) ?? []
+      await this.notify(
+        instance.id,
+        template.organization_id,
+        Array.from(new Set([...ownerIds, first.assigned_to_user_id])),
+        'instance_triggered',
+        `Workflow "${template.name}" started — instance "${instanceName}". First step: "${template.steps[0].title}".`,
+      )
+      await this.notify(
+        instance.id,
+        template.organization_id,
+        [first.assigned_to_user_id],
+        'step_assigned',
+        `You're assigned step "${template.steps[0].title}" in workflow "${template.name}".`,
+      )
     }
 
     return { id: instance.id }
@@ -427,6 +471,14 @@ export class WorkflowEngineService {
       where: { id: instance.id },
       data: { current_step_id: nextStep.id },
     })
+
+    await this.notify(
+      instance.id,
+      instance.organization_id,
+      [nextStep.assigned_to_user_id],
+      'step_assigned',
+      `You're assigned step "${workflowStep.title}" in workflow "${template.name}".`,
+    )
   }
 
   // ── Cron: overdue steps ──────────────────────────────────────────────────────

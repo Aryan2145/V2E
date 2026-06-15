@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class ProjectProgressService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async recalculateProjectProgress(projectId: string): Promise<void> {
     const projectTasks = await this.prisma.projectTask.findMany({
@@ -60,6 +64,25 @@ export class ProjectProgressService {
       if (allDone && milestone.status !== 'achieved') {
         newStatus = 'achieved';
         achievedAt = new Date();
+
+        // Notify the project team that this milestone is done.
+        const proj = await this.prisma.project.findUnique({
+          where: { id: projectId },
+          select: { organization_id: true, name: true, members: { select: { user_id: true } } },
+        });
+        if (proj) {
+          await this.notifications.emit({
+            orgId: proj.organization_id,
+            module: 'projects',
+            event_type: 'milestone_completed',
+            recipients: proj.members.map((m) => m.user_id),
+            title: 'Milestone achieved',
+            body: `Milestone "${milestone.name}" in project "${proj.name}" is complete.`,
+            link: `/dashboard/projects/${projectId}`,
+            entity: { type: 'milestone', id: milestone.id },
+            dedupe: true,
+          });
+        }
       } else if (!allDone && milestone.status === 'achieved') {
         newStatus = 'in_progress';
         achievedAt = null;

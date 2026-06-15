@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, NotFoundException, BadRequestException,
 import { Cron } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
+import { NotificationsService } from '../notifications/notifications.service'
 import type { RaiseTicketDto } from './dto/raise-ticket.dto'
 import type { UpdateTicketDto } from './dto/update-ticket.dto'
 import type { AssignTicketDto } from './dto/assign-ticket.dto'
@@ -32,6 +33,7 @@ export class TicketsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly holidaysService: HolidaysService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Defaults ──────────────────────────────────────────────────────────────
@@ -97,16 +99,34 @@ export class TicketsService {
     })
   }
 
+  // Routes all ticket notifications through the unified notification service.
+  // (The legacy ticket_notifications table is no longer written — nothing reads it.)
   private async notifyUser(orgId: string, ticketId: string | null, userId: string, type: string, message: string) {
-    await this.prisma.ticketNotification.create({
-      data: { organization_id: orgId, ticket_id: ticketId, user_id: userId, type, message },
-    })
+    await this.notifyUsers(orgId, ticketId, [userId], type, message)
   }
 
   private async notifyUsers(orgId: string, ticketId: string | null, userIds: string[], type: string, message: string) {
     if (userIds.length === 0) return
-    await this.prisma.ticketNotification.createMany({
-      data: userIds.map((userId) => ({ organization_id: orgId, ticket_id: ticketId, user_id: userId, type, message })),
+    const eventMap: Record<string, { event: string; title: string }> = {
+      assigned: { event: 'ticket_raised', title: 'Ticket assigned to you' },
+      reassigned: { event: 'ticket_raised', title: 'Ticket reassigned to you' },
+      unassigned: { event: 'ticket_raised', title: 'Ticket needs assignment' },
+      status_changed: { event: 'ticket_status_changed', title: 'Ticket status updated' },
+      confirmation_requested: { event: 'ticket_status_changed', title: 'Ticket awaiting your confirmation' },
+      sla_breached: { event: 'ticket_sla_breached', title: 'Ticket SLA breached' },
+      escalated: { event: 'ticket_escalated', title: 'Ticket escalated to you' },
+      comment: { event: 'ticket_comment', title: 'New ticket comment' },
+    }
+    const mapped = eventMap[type] ?? { event: 'ticket_status_changed', title: 'Ticket update' }
+    await this.notifications.emit({
+      orgId,
+      module: 'tickets',
+      event_type: mapped.event,
+      recipients: userIds,
+      title: mapped.title,
+      body: message,
+      link: ticketId ? `/dashboard/tasks/tickets/${ticketId}` : '/dashboard/tasks/tickets',
+      entity: ticketId ? { type: 'ticket', id: ticketId } : undefined,
     })
   }
 
@@ -666,7 +686,7 @@ export class TicketsService {
   }
 
   async addComment(orgId: string, userId: string, ticketId: string, dto: AddTicketCommentDto) {
-    await this.getTicket(orgId, ticketId)
+    const ticket = await this.getTicket(orgId, ticketId)
     const comment = await this.prisma.ticketComment.create({
       data: {
         organization_id: orgId,
@@ -678,6 +698,14 @@ export class TicketsService {
       },
     })
     await this.logActivity(orgId, ticketId, userId, 'comment_added')
+
+    // Notify the other parties on the ticket (raiser + assignee, minus commenter)
+    const snippet = dto.body.length > 80 ? `${dto.body.slice(0, 80)}…` : dto.body
+    const others = [ticket.raised_by_user_id, ticket.assigned_to_user_id].filter(
+      (uid): uid is string => !!uid && uid !== userId,
+    )
+    await this.notifyUsers(orgId, ticketId, others, 'comment', `${ticket.ticket_number}: ${snippet}`)
+
     return comment
   }
 

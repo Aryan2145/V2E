@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { HolidaysService } from '../holidays/holidays.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class SchedulerService {
@@ -10,6 +11,7 @@ export class SchedulerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly holidaysService: HolidaysService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Recurring Task Spawn Engine ──────────────────────────────────────────────
@@ -189,6 +191,17 @@ export class SchedulerService {
         },
       });
 
+      await this.notifications.emit({
+        orgId: template.organization_id,
+        module: 'tasks',
+        event_type: 'recurring_spawned',
+        recipients: assigneeIds,
+        title: 'Recurring task created',
+        body: `Today's "${template.title}" is ready.`,
+        link: `/dashboard/tasks/${task.id}`,
+        entity: { type: 'task', id: task.id },
+      });
+
       return true;
     } catch (err) {
       this.logger.error(`Failed to spawn from entry ${entry.id}: ${err}`);
@@ -216,6 +229,19 @@ export class SchedulerService {
     });
     if (dueReminders.length === 0) return 0;
 
+    // Load the reminded tasks (title + assignees) for notification messages.
+    const taskIds = Array.from(new Set(dueReminders.map((r) => r.task_id)));
+    const tasks = await this.prisma.task.findMany({
+      where: { id: { in: taskIds } },
+      select: {
+        id: true,
+        title: true,
+        deadline: true,
+        assignees: { where: { is_cc: false }, select: { user_id: true } },
+      },
+    });
+    const taskMap = new Map(tasks.map((t) => [t.id, t]));
+
     this.logger.log(`Processing ${dueReminders.length} reminders for org ${orgId}...`);
     let sent = 0;
     for (const reminder of dueReminders) {
@@ -233,6 +259,23 @@ export class SchedulerService {
             metadata: { reminder_id: reminder.id, type: reminder.type } as never,
           },
         });
+
+        const task = taskMap.get(reminder.task_id);
+        if (task) {
+          const due = task.deadline
+            ? ` (due ${task.deadline.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})`
+            : '';
+          await this.notifications.emit({
+            orgId,
+            module: 'tasks',
+            event_type: 'task_reminder',
+            recipients: task.assignees.map((a) => a.user_id),
+            title: 'Task reminder',
+            body: `Reminder: "${task.title}"${due}`,
+            link: `/dashboard/tasks/${task.id}`,
+            entity: { type: 'task', id: task.id },
+          });
+        }
         sent++;
       } catch (err) {
         this.logger.error(`Failed to process reminder ${reminder.id}: ${err}`);
@@ -267,6 +310,7 @@ export class SchedulerService {
       include: {
         status: { select: { type: true } },
         escalations: { where: { is_active: true }, orderBy: { level: 'asc' } },
+        assignees: { where: { is_cc: false }, select: { user_id: true } },
       },
     });
 
@@ -296,6 +340,16 @@ export class SchedulerService {
             action: 'escalated',
             metadata: { level: untriggered.level, escalated_to: untriggered.escalate_to_user_id } as never,
           },
+        });
+        await this.notifications.emit({
+          orgId,
+          module: 'tasks',
+          event_type: 'task_escalated',
+          recipients: [untriggered.escalate_to_user_id, ...task.assignees.map((a) => a.user_id)],
+          title: `Task escalated (level ${untriggered.level})`,
+          body: `"${task.title}" is overdue and has been escalated.`,
+          link: `/dashboard/tasks/${task.id}`,
+          entity: { type: 'task', id: task.id },
         });
         escalated++;
       } catch (err) {

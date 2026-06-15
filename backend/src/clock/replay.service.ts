@@ -5,6 +5,7 @@ import { ClockService } from './clock.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { WorkflowEngineService } from '../workflows/workflow-engine.service';
 import { TicketsService } from '../tickets/tickets.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const MAX_REPLAY_DAYS = 730; // safety cap (~2 years) per catch-up
 
@@ -27,6 +28,7 @@ export class ReplayService {
     private readonly scheduler: SchedulerService,
     private readonly workflow: WorkflowEngineService,
     private readonly tickets: TicketsService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Every 5 minutes, advance every actively-simulated test org. */
@@ -80,6 +82,7 @@ export class ReplayService {
       await this.scheduler.processEscalationsForOrg(orgId, to);
       await this.workflow.processOverdueStepsForOrg(orgId, to);
       await this.tickets.processSlaForOrg(orgId, to);
+      await this.notifications.processOverdueNotificationsForOrg(orgId, to);
 
       await this.prisma.organization.update({
         where: { id: orgId },

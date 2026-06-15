@@ -253,11 +253,45 @@ export class RecurringTasksService {
 
   async getInstances(orgId: string, templateId: string) {
     await this.findTemplateOrFail(orgId, templateId);
-    return this.prisma.task.findMany({
+    const tasks = await this.prisma.task.findMany({
       where: { organization_id: orgId, recurring_template_id: templateId, is_deleted: false },
       include: { status: true, priority: true, category: true, assignees: true },
       orderBy: { created_at: 'desc' },
     });
+
+    // Enrich assignees with user name + dept/role (same shape as the task list API).
+    const userIds = Array.from(new Set(tasks.flatMap((t) => t.assignees.map((a) => a.user_id))));
+    if (userIds.length === 0) return tasks;
+    const [users, profiles] = await Promise.all([
+      this.prisma.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, name: true, email: true },
+      }),
+      this.prisma.employeeProfile.findMany({
+        where: { organization_id: orgId, user_id: { in: userIds } },
+        select: {
+          user_id: true,
+          department: { select: { name: true } },
+          role: { select: { title: true } },
+        },
+      }),
+    ]);
+    const userMap = new Map(users.map((u) => [u.id, u]));
+    const profileMap = new Map(profiles.map((p) => [p.user_id, p]));
+
+    return tasks.map((task) => ({
+      ...task,
+      assignees: task.assignees.map((a) => {
+        const u = userMap.get(a.user_id);
+        const p = profileMap.get(a.user_id);
+        return {
+          ...a,
+          user: u
+            ? { ...u, department: p?.department?.name ?? null, role_title: p?.role?.title ?? null }
+            : null,
+        };
+      }),
+    }));
   }
 
   // ─── Stats ───────────────────────────────────────────────────────────────────
