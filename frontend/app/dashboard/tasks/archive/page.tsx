@@ -233,7 +233,7 @@ export default function ArchivePage() {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-[#475569] hidden md:table-cell">
-                    {item.deleted_by_user_id.slice(0, 8)}...
+                    {item.deleted_by?.name ?? `${item.deleted_by_user_id.slice(0, 8)}…`}
                   </td>
                   <td className="px-6 py-4 text-[#475569] hidden lg:table-cell max-w-[160px]">
                     <span className="truncate block">

@@ -9,7 +9,8 @@ import TaskCard from '@/components/tasks/TaskCard'
 import KanbanView from '@/components/tasks/KanbanView'
 import CalendarView from '@/components/tasks/CalendarView'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
-import { Plus, UserCheck, Filter, LayoutList, Columns, CalendarDays } from 'lucide-react'
+import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
+import { Plus, UserCheck, LayoutList, Columns, CalendarDays } from 'lucide-react'
 
 type ViewMode = 'list' | 'kanban' | 'calendar'
 
@@ -35,9 +36,7 @@ export default function AssignedByMePage() {
     router.replace(`/dashboard/tasks/assigned?${params.toString()}`)
   }
 
-  const [filterStatus, setFilterStatus] = useState('all')
-  const [filterPriority, setFilterPriority] = useState('all')
-  const [filterCategory, setFilterCategory] = useState('all')
+  const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -54,14 +53,8 @@ export default function AssignedByMePage() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const filtered = useMemo(() => tasks.filter((t) => {
-    if (filterStatus !== 'all' && t.status_id !== filterStatus) return false
-    if (filterPriority !== 'all' && t.priority_id !== filterPriority) return false
-    if (filterCategory !== 'all' && t.category_id !== filterCategory) return false
-    return true
-  }), [tasks, filterStatus, filterPriority, filterCategory])
-
-  const isFiltered = filterStatus !== 'all' || filterPriority !== 'all' || filterCategory !== 'all'
+  const filtered = useMemo(() => applyTaskFilters(tasks, filters), [tasks, filters])
+  const isFiltered = isTaskFiltered(filters)
 
   async function handleStatusChange(taskId: string, newStatusId: string) {
     await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
@@ -103,44 +96,14 @@ export default function AssignedByMePage() {
       {/* Toolbar */}
       <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between flex-wrap">
         {viewMode !== 'calendar' && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="flex items-center gap-2 text-sm text-[#475569]">
-              <Filter size={15} />
-              <span className="font-medium">Filter</span>
-            </div>
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Statuses</option>
-              {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-            </select>
-            <select
-              value={filterPriority}
-              onChange={(e) => setFilterPriority(e.target.value)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Priorities</option>
-              {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-            >
-              <option value="all">All Categories</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-            {isFiltered && (
-              <button
-                onClick={() => { setFilterStatus('all'); setFilterPriority('all'); setFilterCategory('all') }}
-                className="px-3 py-[7px] text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-[#FEE2E2] rounded-[8px] hover:bg-[#FECACA] transition-colors"
-              >
-                Clear
-              </button>
-            )}
-          </div>
+          <TaskFilterBar
+            tasks={tasks}
+            statuses={statuses}
+            priorities={priorities}
+            categories={categories}
+            filters={filters}
+            onChange={setFilters}
+          />
         )}
 
         <div className="flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5 shrink-0 ml-auto sm:ml-0">

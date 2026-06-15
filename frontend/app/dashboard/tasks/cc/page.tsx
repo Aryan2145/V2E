@@ -1,11 +1,12 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
+import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
 import { Eye } from 'lucide-react'
 
 export default function CCTasksPage() {
@@ -18,6 +19,7 @@ export default function CCTasksPage() {
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [loading, setLoading] = useState(true)
+  const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -36,6 +38,9 @@ export default function CCTasksPage() {
   }, [orgId])
 
   useEffect(() => { loadData() }, [loadData])
+
+  const filtered = useMemo(() => applyTaskFilters(tasks, filters), [tasks, filters])
+  const isFiltered = isTaskFiltered(filters)
 
   if (!orgId) {
     return (
@@ -60,21 +65,31 @@ export default function CCTasksPage() {
         <p className="mt-1 text-[15px] text-[#475569]">Tasks you&apos;re copied on — view and comment, but not complete.</p>
       </div>
 
+      <TaskFilterBar
+        tasks={tasks}
+        statuses={statuses}
+        priorities={priorities}
+        categories={categories}
+        filters={filters}
+        onChange={setFilters}
+      />
+
       <p className="text-sm text-[#475569]">
-        {tasks.length} task{tasks.length !== 1 ? 's' : ''}
+        {filtered.length} task{filtered.length !== 1 ? 's' : ''}
+        {isFiltered && ` (filtered from ${tasks.length})`}
       </p>
 
-      {tasks.length === 0 ? (
+      {filtered.length === 0 ? (
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
           <div className="w-14 h-14 rounded-full bg-[#FFFBEB] flex items-center justify-center mb-4">
             <Eye size={24} className="text-[#D97706]" />
           </div>
-          <p className="font-semibold text-[#0F172A]">No CC&apos;d tasks</p>
-          <p className="text-sm text-[#475569] mt-1">Tasks where you&apos;re CC&apos;d will appear here.</p>
+          <p className="font-semibold text-[#0F172A]">{isFiltered ? 'No tasks match your filters' : 'No CC’d tasks'}</p>
+          <p className="text-sm text-[#475569] mt-1">{isFiltered ? 'Try adjusting your filters.' : 'Tasks where you’re CC’d will appear here.'}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {tasks.map((task) => (
+          {filtered.map((task) => (
             <TaskCard
               key={task.id}
               task={task}
