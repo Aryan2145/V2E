@@ -32,19 +32,36 @@ export default function SelectOrgPage() {
     }
   }, [user, router])
 
-  // If there are no pending orgs and no user, go to login
+  // If there are no pending orgs and no user, go to login.
+  // Guard against the moment a selection succeeds: selectOrg() sets `user`,
+  // clears pendingOrgSelection AND removes the selection_token — without these
+  // guards this effect would race the "go to dashboard" effect and bounce
+  // through the login form.
   useEffect(() => {
+    if (user || selecting) return
     if (!pendingOrgSelection) {
       const token = typeof window !== 'undefined' ? localStorage.getItem('selection_token') : null
       if (!token) router.replace('/login')
     }
-  }, [pendingOrgSelection, router])
+  }, [pendingOrgSelection, user, selecting, router])
 
   const orgs: OrgChoice[] = pendingOrgSelection ?? []
 
   const filtered = search.trim()
     ? orgs.filter((o) => o.name.toLowerCase().includes(search.toLowerCase()))
     : orgs
+
+  // While a firm is being entered (or the session is already established and the
+  // dashboard redirect is in flight), show a single clean loading screen instead
+  // of re-rendering the cards or flashing other auth pages.
+  if (selecting || user) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center gap-4">
+        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+        <p className="text-sm text-[#475569]">Entering your workspace…</p>
+      </div>
+    )
+  }
 
   async function handleSelect(orgId: string) {
     setSelecting(orgId)

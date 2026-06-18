@@ -62,4 +62,9 @@ export class UpdateTaskDto {
   @IsArray()
   @IsString({ each: true })
   cc_user_ids?: string[];
+
+  // Re-link (or unlink) this task to a quarterly goal.
+  @IsOptional()
+  @IsString()
+  goal_id?: string;
 }

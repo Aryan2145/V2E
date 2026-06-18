@@ -151,6 +151,7 @@ export class TasksService {
         completion_mode: dto.completion_mode ?? 'any_can_complete',
         proof_required: dto.proof_required ?? false,
         deadline: dto.deadline ? new Date(dto.deadline) : undefined,
+        goal_id: dto.goal_id,
       },
       include: TASK_INCLUDE,
     });
@@ -318,6 +319,7 @@ export class TasksService {
       quadrant?: string;
       type?: string;
       assignee_user_id?: string;
+      goal_id?: string;
       search?: string;
       from_date?: string;
       to_date?: string;
@@ -328,6 +330,7 @@ export class TasksService {
       is_deleted: false,
     };
 
+    if (filters.goal_id) where.goal_id = filters.goal_id;
     if (filters.status_id) where.status_id = filters.status_id;
     if (filters.priority_id) where.priority_id = filters.priority_id;
     if (filters.category_id) where.category_id = filters.category_id;
@@ -452,6 +455,22 @@ export class TasksService {
     }));
   }
 
+  /**
+   * Map of taskId → whether the task is in a "completed"-type status.
+   * Used by other modules (e.g. Meetings action items) to compute done-ness.
+   */
+  async areCompleted(orgId: string, taskIds: string[]): Promise<Record<string, boolean>> {
+    const ids = [...new Set(taskIds.filter(Boolean))];
+    if (!ids.length) return {};
+    const tasks = await this.prisma.task.findMany({
+      where: { id: { in: ids }, organization_id: orgId, is_deleted: false },
+      select: { id: true, status: { select: { type: true } } },
+    });
+    const map: Record<string, boolean> = {};
+    for (const t of tasks) map[t.id] = t.status?.type === 'completed';
+    return map;
+  }
+
   // ─── Get Single Task ──────────────────────────────────────────────────────────
 
   async getTask(orgId: string, taskId: string) {
@@ -530,6 +549,7 @@ export class TasksService {
     trackField('department_id', old.department_id, dto.department_id);
     trackField('completion_mode', old.completion_mode, dto.completion_mode);
     trackField('proof_required', old.proof_required, dto.proof_required);
+    trackField('goal_id', old.goal_id, dto.goal_id);
 
     if (dto.deadline !== undefined) {
       const newDeadline = dto.deadline ? new Date(dto.deadline) : null;

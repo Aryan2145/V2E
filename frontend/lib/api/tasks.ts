@@ -158,6 +158,7 @@ export const tasksApi = {
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
     checklist_items?: { title: string; order_index: number }[]
+    goal_id?: string
   }): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}`, dto)
     return unwrap<Task>(res)

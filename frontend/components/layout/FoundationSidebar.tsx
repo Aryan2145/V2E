@@ -9,6 +9,8 @@ import {
   Briefcase,
   Users,
   CalendarDays,
+  ShieldCheck,
+  ScrollText,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
@@ -25,6 +27,8 @@ const NAV_ITEMS = [
   { label: 'Roles', href: '/foundation/roles', Icon: Briefcase },
   { label: 'Employees', href: '/foundation/employees', Icon: Users },
   { label: 'Holidays', href: '/foundation/holidays', Icon: CalendarDays },
+  { label: 'Access Rights', href: '/foundation/access-rights', Icon: ShieldCheck },
+  { label: 'Audit Logs', href: '/foundation/audit-logs', Icon: ScrollText },
 ]
 
 export default function FoundationSidebar({ collapsed, onToggle }: FoundationSidebarProps) {

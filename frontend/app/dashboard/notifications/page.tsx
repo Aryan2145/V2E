@@ -12,11 +12,12 @@ const MODULE_COLORS: Record<string, string> = {
   projects: 'bg-[#F5F3FF] text-[#7C3AED] border-[#DDD6FE]',
   workflows: 'bg-[#ECFDF5] text-[#059669] border-[#A7F3D0]',
   tickets: 'bg-[#FFF7ED] text-[#D97706] border-[#FED7AA]',
+  meetings: 'bg-[#F0FDF4] text-[#16A34A] border-[#BBF7D0]',
   communication: 'bg-[#FDF2F8] text-[#BE185D] border-[#FBCFE8]',
   system: 'bg-[#F1F5F9] text-[#475569] border-[#E2E8F0]',
 }
 
-const MODULE_FILTERS = ['all', 'tasks', 'projects', 'workflows', 'tickets'] as const
+const MODULE_FILTERS = ['all', 'tasks', 'projects', 'workflows', 'tickets', 'meetings'] as const
 
 function formatWhen(iso: string): string {
   const d = new Date(iso)

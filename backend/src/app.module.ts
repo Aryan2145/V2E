@@ -28,6 +28,11 @@ import { ProjectsModule } from './projects/projects.module';
 import { ClockModule } from './clock/clock.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AssigneeVisibilityModule } from './assignee-visibility/assignee-visibility.module';
+import { AuditModule } from './audit/audit.module';
+import { AccessRightsModule } from './access-rights/access-rights.module';
+import { GoalsModule } from './goals/goals.module';
+import { MeetingsModule } from './meetings/meetings.module';
+import { WorkLogsModule } from './work-logs/work-logs.module';
 
 @Module({
   imports: [
@@ -38,6 +43,11 @@ import { AssigneeVisibilityModule } from './assignee-visibility/assignee-visibil
     ClockModule,
     NotificationsModule,
     AssigneeVisibilityModule,
+    AuditModule,
+    AccessRightsModule,
+    GoalsModule,
+    MeetingsModule,
+    WorkLogsModule,
     AuthModule,
     GroupsModule,
     OrganizationsModule,

@@ -9,8 +9,19 @@ import React, {
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { login as apiLogin, logout as apiLogout, getMe, switchOrg as apiSwitchOrg } from '../api/auth';
+import { login as apiLogin, logout as apiLogout, getMe, switchOrg as apiSwitchOrg, refreshToken } from '../api/auth';
 import type { AuthUser, OrgChoice } from '../types';
+
+// Decode a JWT's `exp` claim (seconds → ms). Returns null if unreadable.
+function getTokenExpiryMs(token: string): number | null {
+  try {
+    const payload = token.split('.')[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof json.exp === 'number' ? json.exp * 1000 : null;
+  } catch {
+    return null;
+  }
+}
 
 // ─── Context Shape ─────────────────────────────────────────────────────────────
 
@@ -64,6 +75,46 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     restoreSession();
   }, []);
+
+  // Proactively refresh the access token shortly before it expires, so background
+  // pollers (notifications, clock, …) never fire a request with a just-expired
+  // token — which the server would log as a 401 before the reactive interceptor
+  // silently refreshes and retries. If this proactive refresh fails, the axios
+  // interceptor's reactive refresh still covers us.
+  useEffect(() => {
+    if (!user || typeof window === 'undefined') return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
+
+    const schedule = () => {
+      if (cancelled) return;
+      const token = localStorage.getItem('access_token');
+      const exp = token ? getTokenExpiryMs(token) : null;
+      if (!exp) return;
+      // Refresh 60s before expiry, but never sooner than 5s from now.
+      const delay = Math.max(5_000, exp - Date.now() - 60_000);
+      timer = setTimeout(async () => {
+        if (cancelled) return;
+        const rt = localStorage.getItem('refresh_token');
+        if (!rt) return;
+        try {
+          const tokens = await refreshToken(rt);
+          if (tokens.access_token) localStorage.setItem('access_token', tokens.access_token);
+          if (tokens.refresh_token) localStorage.setItem('refresh_token', tokens.refresh_token);
+        } catch {
+          /* reactive interceptor will handle a later 401 if this was transient */
+        } finally {
+          if (!cancelled) schedule();
+        }
+      }, delay);
+    };
+
+    schedule();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [user]);
 
   const login = useCallback(async (email: string, password: string) => {
     const result = await apiLogin(email, password);

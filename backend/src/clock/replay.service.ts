@@ -69,6 +69,7 @@ export class ReplayService {
       while (cursor <= lastDay && daysReplayed < MAX_REPLAY_DAYS) {
         const dayInstant = endOfDay(cursor);
         await this.scheduler.spawnRecurringForOrg(orgId, dayInstant);
+        await this.scheduler.spawnDemandedLogsForOrg(orgId, dayInstant);
         await this.workflow.processDateTriggersForOrg(orgId, dayInstant);
         cursor.setDate(cursor.getDate() + 1);
         daysReplayed++;
@@ -79,6 +80,7 @@ export class ReplayService {
 
       // Deadline-based engines: run once at the final simulated instant.
       await this.scheduler.processRemindersForOrg(orgId, to);
+      await this.scheduler.processMeetingRemindersForOrg(orgId, to);
       await this.scheduler.processEscalationsForOrg(orgId, to);
       await this.workflow.processOverdueStepsForOrg(orgId, to);
       await this.tickets.processSlaForOrg(orgId, to);

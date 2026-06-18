@@ -51,13 +51,14 @@ export class TasksController {
     @Query('quadrant') quadrant?: string,
     @Query('type') type?: string,
     @Query('assignee_user_id') assignee_user_id?: string,
+    @Query('goal_id') goal_id?: string,
     @Query('search') search?: string,
     @Query('from_date') from_date?: string,
     @Query('to_date') to_date?: string,
   ) {
     return this.service.listTasks(orgId, req.user.id, {
       status_id, priority_id, category_id, quadrant, type,
-      assignee_user_id, search, from_date, to_date,
+      assignee_user_id, goal_id, search, from_date, to_date,
     });
   }
 

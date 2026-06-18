@@ -1,0 +1,246 @@
+'use client'
+
+import React, { useCallback, useEffect, useState } from 'react'
+import { Users, FileText, ChevronRight, MessageSquare } from 'lucide-react'
+import { useAuth } from '@/lib/auth/context'
+import { workLogApi } from '@/lib/api/workLogs'
+import WorkLogRemarkThread from '@/components/work-logs/WorkLogRemarkThread'
+import type { DailyUpdate, ReadableWriter, WorkLogRemark, WorkLogSubmission } from '@/lib/types/workLogs'
+
+const cardCls = 'bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)]'
+
+type SelectedLog =
+  | { kind: 'daily'; daily: DailyUpdate }
+  | { kind: 'submission'; submission: WorkLogSubmission }
+
+function prettyDate(d: string) {
+  return new Date(d).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+export default function WorkLogReviewPage() {
+  const { user } = useAuth()
+  const orgId = user?.organizationId ?? ''
+  const myId = user?.id ?? ''
+
+  const [writers, setWriters] = useState<ReadableWriter[]>([])
+  const [writerId, setWriterId] = useState<string | null>(null)
+  const [dailies, setDailies] = useState<DailyUpdate[]>([])
+  const [submissions, setSubmissions] = useState<WorkLogSubmission[]>([])
+  const [selected, setSelected] = useState<SelectedLog | null>(null)
+  const [remarks, setRemarks] = useState<WorkLogRemark[]>([])
+  const [loadingWriters, setLoadingWriters] = useState(true)
+
+  useEffect(() => {
+    if (!orgId) return
+    workLogApi.getReadableWriters(orgId).then((w) => {
+      setWriters(w)
+      setLoadingWriters(false)
+    })
+  }, [orgId])
+
+  const loadWriter = useCallback(
+    async (wid: string) => {
+      setWriterId(wid)
+      setSelected(null)
+      setRemarks([])
+      const res = await workLogApi.getWriterLogs(orgId, wid)
+      setDailies((res.daily_updates ?? []).filter(Boolean) as DailyUpdate[])
+      setSubmissions(res.standalone_submissions ?? [])
+    },
+    [orgId],
+  )
+
+  const target = selected
+    ? selected.kind === 'daily'
+      ? { type: 'daily_update', id: selected.daily.id }
+      : { type: 'submission', id: selected.submission.id }
+    : null
+
+  const loadRemarks = useCallback(async () => {
+    if (!target) return
+    const r = await workLogApi.getRemarks(orgId, target.type, target.id)
+    setRemarks(r)
+  }, [orgId, target])
+
+  useEffect(() => {
+    if (target) loadRemarks()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected])
+
+  async function addRemark(body: string, replyTo?: string) {
+    if (!target) return
+    await workLogApi.addRemark(orgId, { target_type: target.type, target_id: target.id, body, reply_to_remark_id: replyTo })
+    await loadRemarks()
+  }
+  async function deleteRemark(id: string) {
+    await workLogApi.deleteRemark(orgId, id)
+    await loadRemarks()
+  }
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-6">
+      {/* Writers */}
+      <aside className="lg:w-64 shrink-0">
+        <div className={`${cardCls} p-3`}>
+          <h3 className="text-sm font-semibold text-[#0F172A] flex items-center gap-2 px-1 mb-2">
+            <Users size={15} className="text-[#2563EB]" /> People below me
+          </h3>
+          {loadingWriters ? (
+            <p className="text-xs text-[#94A3B8] px-1 py-2">Loading…</p>
+          ) : writers.length === 0 ? (
+            <p className="text-xs text-[#475569] px-1 py-2">No one&apos;s logs are shared with you yet.</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {writers.map((w) => (
+                <li key={w.user_id}>
+                  <button
+                    type="button"
+                    onClick={() => loadWriter(w.user_id)}
+                    className={`w-full text-left px-2.5 py-2 rounded-[8px] transition-colors ${
+                      writerId === w.user_id ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
+                    }`}
+                  >
+                    <span className="block text-sm font-medium text-[#0F172A]">{w.name}</span>
+                    {w.role_title && <span className="block text-xs text-[#64748B]">{w.role_title}</span>}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </aside>
+
+      {/* Logs list */}
+      <div className="lg:w-72 shrink-0">
+        {!writerId ? (
+          <div className={`${cardCls} p-8 text-center`}>
+            <FileText size={28} className="text-[#CBD5E1] mx-auto mb-2" />
+            <p className="text-sm text-[#475569]">Pick a person to review their logs.</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className={`${cardCls} p-3`}>
+              <h4 className="text-xs font-semibold text-[#64748B] uppercase tracking-wide px-1 mb-2">Daily updates</h4>
+              {dailies.length === 0 ? (
+                <p className="text-xs text-[#94A3B8] px-1 py-1">No daily updates.</p>
+              ) : (
+                <ul className="space-y-0.5">
+                  {dailies.map((d) => (
+                    <li key={d.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelected({ kind: 'daily', daily: d })}
+                        className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-[8px] text-left transition-colors ${
+                          selected?.kind === 'daily' && selected.daily.id === d.id ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
+                        }`}
+                      >
+                        <span className="text-sm text-[#0F172A]">{prettyDate(d.log_date)}</span>
+                        {d.submitted_at && <span className="w-2 h-2 rounded-full bg-[#16A34A] shrink-0" title="Submitted" />}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {submissions.length > 0 && (
+              <div className={`${cardCls} p-3`}>
+                <h4 className="text-xs font-semibold text-[#64748B] uppercase tracking-wide px-1 mb-2">Demanded logs</h4>
+                <ul className="space-y-0.5">
+                  {submissions.map((s) => (
+                    <li key={s.id}>
+                      <button
+                        type="button"
+                        onClick={() => setSelected({ kind: 'submission', submission: s })}
+                        className={`w-full flex items-center justify-between gap-2 px-2.5 py-2 rounded-[8px] text-left transition-colors ${
+                          selected?.kind === 'submission' && selected.submission.id === s.id ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
+                        }`}
+                      >
+                        <span className="text-sm text-[#0F172A] truncate">{s.demand?.title ?? s.period_label}</span>
+                        <span
+                          className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${
+                            s.status === 'submitted'
+                              ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]'
+                              : 'bg-[#FEF9C3] text-[#CA8A04] border border-[#FDE68A]'
+                          }`}
+                        >
+                          {s.status}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Detail + remarks */}
+      <div className="flex-1 min-w-0">
+        {!selected ? (
+          <div className={`${cardCls} p-8 text-center`}>
+            <ChevronRight size={28} className="text-[#CBD5E1] mx-auto mb-2" />
+            <p className="text-sm text-[#475569]">Select a log to read it and leave remarks.</p>
+          </div>
+        ) : selected.kind === 'daily' ? (
+          <div className="space-y-5">
+            <div className={`${cardCls} p-6`}>
+              <h2 className="text-[18px] font-semibold text-[#0F172A] mb-4">{prettyDate(selected.daily.log_date)}</h2>
+              {(selected.daily.notes ?? []).length > 0 && (
+                <div className="space-y-3 mb-4">
+                  {(selected.daily.notes ?? []).map((n) => (
+                    <div key={n.id} className="border border-[#E2E8F0] rounded-[10px] p-3 bg-[#F8FAFC]">
+                      <p className="text-sm font-semibold text-[#0F172A]">{n.title}</p>
+                      {n.description && <p className="text-sm text-[#1E293B] whitespace-pre-wrap mt-0.5">{n.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Field label="Where I was stuck" value={selected.daily.stuck} />
+              <Field label="Decisions I took" value={selected.daily.decisions} />
+              <Field label="How the day was" value={selected.daily.day_summary} />
+              <Field label="Planning for tomorrow" value={selected.daily.planning_tomorrow} />
+            </div>
+
+            <div className={`${cardCls} p-6`}>
+              <h3 className="text-sm font-semibold text-[#0F172A] flex items-center gap-2 mb-2">
+                <MessageSquare size={15} className="text-[#2563EB]" /> Remarks
+              </h3>
+              <WorkLogRemarkThread remarks={remarks} currentUserId={myId} onAdd={addRemark} onDelete={deleteRemark} />
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div className={`${cardCls} p-6`}>
+              <h2 className="text-[18px] font-semibold text-[#0F172A]">{selected.submission.demand?.title}</h2>
+              <p className="text-xs text-[#64748B] mb-4">{selected.submission.period_label}</p>
+              {selected.submission.body ? (
+                <p className="text-sm text-[#1E293B] whitespace-pre-wrap">{selected.submission.body}</p>
+              ) : (
+                <p className="text-sm text-[#94A3B8]">Not yet submitted.</p>
+              )}
+            </div>
+
+            <div className={`${cardCls} p-6`}>
+              <h3 className="text-sm font-semibold text-[#0F172A] flex items-center gap-2 mb-2">
+                <MessageSquare size={15} className="text-[#2563EB]" /> Remarks
+              </h3>
+              <WorkLogRemarkThread remarks={remarks} currentUserId={myId} onAdd={addRemark} onDelete={deleteRemark} />
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, value }: { label: string; value: string | null }) {
+  if (!value) return null
+  return (
+    <div className="mb-3">
+      <p className="text-xs font-semibold text-[#64748B] uppercase tracking-wide">{label}</p>
+      <p className="text-sm text-[#1E293B] whitespace-pre-wrap mt-0.5">{value}</p>
+    </div>
+  )
+}

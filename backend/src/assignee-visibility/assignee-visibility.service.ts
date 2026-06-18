@@ -184,6 +184,18 @@ export class AssigneeVisibilityService {
     return (await this.getGraph(orgId)).profiles;
   }
 
+  /** All user IDs reporting (directly or transitively) to `userId`. Used by Work Log. */
+  async getSubordinateUserIds(orgId: string, userId: string): Promise<string[]> {
+    const g = await this.getGraph(orgId);
+    return [...this.getSubordinates(g, userId)];
+  }
+
+  /** Whether `candidateId` sits below `managerId` in the reporting hierarchy. */
+  async isSubordinate(orgId: string, managerId: string, candidateId: string): Promise<boolean> {
+    const g = await this.getGraph(orgId);
+    return this.getSubordinates(g, managerId).has(candidateId);
+  }
+
   /** How many people a bridge of the given depth would currently expose in the target dept. */
   async countBridgeTargets(
     orgId: string,

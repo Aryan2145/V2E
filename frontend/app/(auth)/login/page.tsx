@@ -43,6 +43,16 @@ export default function LoginPage() {
     }
   }
 
+  // Already authenticated (e.g. navigated here mid-redirect) — show a spinner,
+  // never the login form, so it doesn't flash before the redirect lands.
+  if (user) {
+    return (
+      <div className="w-full max-w-[420px] flex items-center justify-center py-24">
+        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
   return (
     <div className="w-full max-w-[420px]">
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-8">

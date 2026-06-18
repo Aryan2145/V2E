@@ -11,6 +11,8 @@ interface ModalProps {
   title?: string
   children: React.ReactNode
   size?: ModalSize
+  /** Close when Escape is pressed. Disable for data-entry modals to avoid losing input. */
+  closeOnEscape?: boolean
 }
 
 const sizeClasses: Record<ModalSize, string> = {
@@ -25,18 +27,19 @@ export default function Modal({
   title,
   children,
   size = 'md',
+  closeOnEscape = true,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
 
   // Close on Escape key
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen || !closeOnEscape) return
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', handleKey)
     return () => document.removeEventListener('keydown', handleKey)
-  }, [isOpen, onClose])
+  }, [isOpen, onClose, closeOnEscape])
 
   // Prevent body scroll when open
   useEffect(() => {
@@ -68,11 +71,12 @@ export default function Modal({
         ref={panelRef}
         className={[
           'relative w-full bg-white rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0]',
+          'max-h-[90vh] flex flex-col',
           sizeClasses[size],
         ].join(' ')}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0]">
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0] shrink-0">
           {title && (
             <h2
               id="modal-title"
@@ -91,7 +95,7 @@ export default function Modal({
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5">{children}</div>
+        <div className="px-6 py-5 overflow-y-auto">{children}</div>
       </div>
     </div>
   )

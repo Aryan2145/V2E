@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
 
 @Injectable()
 export class SchedulerService {
@@ -31,6 +32,7 @@ export class SchedulerService {
     for (const org of orgs) {
       const r = await this.spawnRecurringForOrg(org.id, now);
       spawned += r.spawned;
+      await this.spawnDemandedLogsForOrg(org.id, now);
     }
 
     this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
@@ -79,7 +81,7 @@ export class SchedulerService {
 
   private async spawnEntry(entry: any, force = false, now: Date = new Date()): Promise<boolean> {
     try {
-      if (!this.shouldEntryFireToday(entry, now)) return false;
+      if (!shouldEntryFireToday(entry, now)) return false;
 
       const todayStart = new Date(now); todayStart.setHours(0, 0, 0, 0);
       const todayEnd = new Date(now); todayEnd.setHours(23, 59, 59, 999);
@@ -284,6 +286,64 @@ export class SchedulerService {
     return sent;
   }
 
+  // ─── Meeting Reminder Engine (15 minutes before a scheduled meeting) ───────────
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async processMeetingReminders() {
+    const now = new Date();
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+    for (const org of orgs) await this.processMeetingRemindersForOrg(org.id, now);
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async processMeetingRemindersForOrg(orgId: string, now: Date): Promise<number> {
+    const windowEnd = new Date(now.getTime() + 15 * 60_000);
+    const due = await this.prisma.meeting.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        status: 'scheduled',
+        reminder_sent: false,
+        scheduled_start: { not: null, lte: windowEnd },
+      },
+      select: {
+        id: true,
+        title: true,
+        scheduled_start: true,
+        attendees: { where: { response: 'accepted' }, select: { user_id: true } },
+      },
+      take: 500,
+    });
+    if (due.length === 0) return 0;
+
+    let sent = 0;
+    for (const m of due) {
+      try {
+        await this.prisma.meeting.update({ where: { id: m.id }, data: { reminder_sent: true } });
+        // Only actually notify if the meeting is still upcoming (skip long-past on a clock jump).
+        if (m.scheduled_start && m.scheduled_start >= now && m.attendees.length) {
+          await this.notifications.emit({
+            orgId,
+            module: 'meetings',
+            event_type: 'meeting_reminder',
+            recipients: m.attendees.map((a) => a.user_id),
+            title: 'Meeting in 15 minutes',
+            body: `"${m.title}" starts soon`,
+            link: `/dashboard/governance/meetings/${m.id}`,
+            entity: { type: 'meeting', id: m.id },
+          });
+        }
+        sent++;
+      } catch (err) {
+        this.logger.error(`Failed to process meeting reminder ${m.id}: ${err}`);
+      }
+    }
+    return sent;
+  }
+
   // ─── Escalation Engine ────────────────────────────────────────────────────────
 
   @Cron('*/15 * * * *')
@@ -359,73 +419,99 @@ export class SchedulerService {
     return escalated;
   }
 
-  // ─── Schedule helper ──────────────────────────────────────────────────────────
+  // ─── Demanded Work Log Spawn Engine ───────────────────────────────────────────
+  // Materializes WorkLogSubmission rows from recurring WorkLogDemandSchedule entries.
+  // Daily-frequency demands fold into that day's Daily Update (no separate chase);
+  // any other frequency stands alone with its own deadline + a notification.
+  async spawnDemandedLogsForOrg(orgId: string, now: Date): Promise<{ spawned: number }> {
+    const entries = await this.prisma.workLogDemandSchedule.findMany({
+      where: { is_active: true, organization_id: orgId, demand: { is_active: true } },
+      include: { demand: true },
+    });
 
-  private shouldEntryFireToday(entry: {
-    start_date: Date;
-    schedule_type: string;
-    every: number;
-    days: unknown;
-    month_days: unknown;
-    yearly_dates: unknown;
-    end_condition: string;
-    end_date: Date | null;
-    end_after: number | null;
-    occurrence_count: number;
-  }, now: Date = new Date()): boolean {
+    let spawned = 0;
+    for (const entry of entries) {
+      if (!shouldEntryFireToday(entry, now)) continue;
+
+      const due = new Date(now);
+      due.setHours(0, 0, 0, 0);
+      const demand = entry.demand;
+
+      try {
+        // Dedupe per day via the (demand_id, due_date) unique constraint.
+        const existing = await this.prisma.workLogSubmission.findUnique({
+          where: { demand_id_due_date: { demand_id: demand.id, due_date: due } },
+        });
+        if (existing) continue;
+
+        await this.prisma.workLogSubmission.create({
+          data: {
+            organization_id: orgId,
+            demand_id: demand.id,
+            writer_user_id: demand.assignee_user_id,
+            due_date: due,
+            period_label: formatPeriodLabel(entry.schedule_type, due),
+            status: 'pending',
+          },
+        });
+
+        const newCount = entry.occurrence_count + 1;
+        await this.prisma.workLogDemandSchedule.update({
+          where: { id: entry.id },
+          data: {
+            occurrence_count: { increment: 1 },
+            ...(entry.end_condition === 'after_n' &&
+              entry.end_after !== null &&
+              newCount >= entry.end_after && { is_active: false }),
+          },
+        });
+
+        const activeCount = await this.prisma.workLogDemandSchedule.count({
+          where: { demand_id: demand.id, is_active: true },
+        });
+        if (activeCount === 0) {
+          await this.prisma.workLogDemand.update({ where: { id: demand.id }, data: { is_active: false } });
+        }
+
+        // Daily demands fold into the Daily Update; others get their own due notification.
+        if (entry.schedule_type !== 'daily') {
+          await this.notifications.emit({
+            orgId,
+            module: 'work_logs',
+            event_type: 'work_log_demand_due',
+            recipients: [demand.assignee_user_id],
+            title: 'A log is due',
+            body: `"${demand.title}" is due (${formatPeriodLabel(entry.schedule_type, due)}).`,
+            link: '/dashboard/governance/daily-update',
+            entity: { type: 'work_log_demand', id: demand.id },
+          });
+        }
+        spawned++;
+      } catch (err) {
+        this.logger.error(`Failed to spawn demanded log from entry ${entry.id}: ${err}`);
+      }
+    }
+
+    // Deactivate on_date entries whose end_date has passed.
     const today = new Date(now);
     today.setHours(0, 0, 0, 0);
+    await this.prisma.workLogDemandSchedule.updateMany({
+      where: { is_active: true, organization_id: orgId, end_condition: 'on_date', end_date: { lt: today } },
+      data: { is_active: false },
+    });
 
-    const startDate = new Date(entry.start_date);
-    startDate.setHours(0, 0, 0, 0);
-
-    if (today < startDate) return false;
-
-    if (entry.end_condition === 'on_date' && entry.end_date) {
-      const endDate = new Date(entry.end_date);
-      endDate.setHours(0, 0, 0, 0);
-      if (today > endDate) return false;
-    }
-    if (entry.end_condition === 'after_n' && entry.end_after !== null) {
-      if (entry.occurrence_count >= entry.end_after) return false;
-    }
-
-    const daysDiff = Math.floor((today.getTime() - startDate.getTime()) / 86_400_000);
-    const todayDow = today.getDay();
-    const todayDate = today.getDate();
-    const todayMonth = today.getMonth() + 1;
-
-    switch (entry.schedule_type) {
-      case 'daily':
-        return daysDiff % entry.every === 0;
-
-      case 'weekly': {
-        const weeksDiff = Math.floor(daysDiff / 7);
-        if (weeksDiff % entry.every !== 0) return false;
-        const days = entry.days as number[];
-        return Array.isArray(days) && days.includes(todayDow);
-      }
-
-      case 'monthly': {
-        const monthDays = entry.month_days as number[];
-        if (!Array.isArray(monthDays) || !monthDays.includes(todayDate)) return false;
-        const monthsDiff =
-          (today.getFullYear() - startDate.getFullYear()) * 12 +
-          (today.getMonth() - startDate.getMonth());
-        return monthsDiff % entry.every === 0;
-      }
-
-      case 'yearly': {
-        const yearlyDates = entry.yearly_dates as { month: number; day: number }[];
-        if (!Array.isArray(yearlyDates)) return false;
-        const matches = yearlyDates.some((d) => d.month === todayMonth && d.day === todayDate);
-        if (!matches) return false;
-        const yearsDiff = today.getFullYear() - startDate.getFullYear();
-        return yearsDiff % entry.every === 0;
-      }
-
-      default:
-        return false;
-    }
+    return { spawned };
   }
+}
+
+// Human label for a submission's period, derived from its frequency.
+function formatPeriodLabel(scheduleType: string, due: Date): string {
+  if (scheduleType === 'monthly') {
+    return due.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' });
+  }
+  if (scheduleType === 'yearly') {
+    return String(due.getFullYear());
+  }
+  // daily / weekly → a specific day
+  return due.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' });
 }

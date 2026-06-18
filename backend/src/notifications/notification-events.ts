@@ -23,6 +23,23 @@ export const NOTIF_EVENTS = {
     'workflow_completed',
   ],
   tickets: ['ticket_raised', 'ticket_status_changed', 'ticket_sla_breached', 'ticket_comment', 'ticket_escalated'],
+  meetings: [
+    'meeting_invited',
+    'meeting_poll_opened',
+    'meeting_response',
+    'meeting_reschedule_requested',
+    'meeting_slot_confirmed',
+    'meeting_updated',
+    'meeting_reminder',
+    'meeting_cancelled',
+  ],
+  work_logs: [
+    'work_log_demanded',
+    'work_log_demand_due',
+    'work_log_remark',
+    'work_log_remark_reply',
+    'work_log_submitted',
+  ],
   communication: [],
   system: [],
 } as const;

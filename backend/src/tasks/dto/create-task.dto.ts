@@ -83,4 +83,9 @@ export class CreateTaskDto {
   @IsArray()
   @IsString({ each: true })
   escalation_user_ids?: string[];
+
+  // Links this task as an initiative under a QUARTERLY goal.
+  @IsOptional()
+  @IsString()
+  goal_id?: string;
 }

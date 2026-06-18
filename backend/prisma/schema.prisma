@@ -202,6 +202,10 @@ model User {
   conversations            Conversation[]
   conversation_memberships ConversationMember[]
   sent_messages            Message[]          @relation("SentMessages")
+  owned_goals              Goal[]             @relation("GoalOwner")
+  audit_logs               AuditLog[]
+  organized_meetings       Meeting[]          @relation("MeetingOrganizer")
+  meeting_attendances      MeetingAttendee[]  @relation("MeetingAttendeeUser")
 
   @@unique([email])
   @@map("users")
@@ -261,6 +265,7 @@ model Department {
   announcements       Announcement[]
   bulletin_boards     BulletinBoard[]
   knowledge_posts     KnowledgePost[]
+  goals               Goal[]
 
   @@map("departments")
 }
@@ -878,12 +883,14 @@ model Task {
   deadline             DateTime?
   recurring_template_id     String?
   workflow_instance_step_id String?
+  goal_id              String?        // links a task to a QUARTERLY goal (initiative)
   created_at           DateTime       @default(now())
   updated_at           DateTime       @updatedAt
 
   category   TaskCategory?   @relation(fields: [category_id], references: [id])
   priority   TaskPriority?   @relation(fields: [priority_id], references: [id])
   status     TaskStatus      @relation(fields: [status_id], references: [id])
+  goal       Goal?           @relation(fields: [goal_id], references: [id])
   assignees  TaskAssignee[]
   checklist  TaskChecklist[]
   reminders  TaskReminder[]
@@ -891,6 +898,7 @@ model Task {
   activity_logs TaskActivityLog[]
   comments   TaskComment[]
 
+  @@index([goal_id])
   @@map("tasks")
 }
 
@@ -2118,6 +2126,8 @@ enum NotificationModule {
   tickets
   communication
   system
+  meetings
+  work_logs
 }
 
 model Notification {
@@ -2165,6 +2175,470 @@ model PushSubscription {
 
   @@index([organization_id, user_id])
   @@map("push_subscriptions")
+}
+
+// ─── Foundational Access Rights (software-wide permissions) ────────────────────
+enum PermissionAction {
+  read
+  write
+  edit
+  delete
+}
+
+// One row per (org, role, resource). org_admin is implicit-all and not stored.
+model AccessRight {
+  id                 String     @id @default(uuid())
+  organization_id    String
+  role               MemberRole // hr_manager | employee
+  resource           String     // module key, e.g. "goals", "access_rights"
+  can_read           Boolean    @default(false)
+  can_write          Boolean    @default(false)
+  can_edit           Boolean    @default(false)
+  can_delete         Boolean    @default(false)
+  updated_by_user_id String?
+  created_at         DateTime   @default(now())
+  updated_at         DateTime   @updatedAt
+
+  @@unique([organization_id, role, resource])
+  @@map("access_rights")
+}
+
+// ─── Foundational shared Audit Log (software-wide) ─────────────────────────────
+model AuditLog {
+  id              String   @id @default(uuid())
+  organization_id String
+  actor_user_id   String
+  action          String   // create | update | delete
+  resource        String   // "goal", "access_right", ...
+  entity_id       String
+  entity_label    String?  // human-readable (e.g. goal title)
+  changes         Json?    // { field: { before, after } }
+  created_at      DateTime @default(now())
+
+  actor User @relation(fields: [actor_user_id], references: [id])
+
+  @@index([organization_id, resource, created_at])
+  @@map("audit_logs")
+}
+
+// ─── Goals (3-level cascade: objective → annual → quarterly) ───────────────────
+enum GoalLevel {
+  objective
+  annual
+  quarterly
+}
+
+enum GoalPerspective {
+  financial
+  customer
+  internal_process
+  learning_growth
+}
+
+enum GoalStatus {
+  not_started
+  on_track
+  at_risk
+  achieved
+  archived
+}
+
+model Goal {
+  id                 String           @id @default(uuid())
+  organization_id    String
+  level              GoalLevel
+  parent_goal_id     String? // NULL only for objective; required for annual/quarterly
+  perspective        GoalPerspective? // NULL for objective; set on annual; copied onto quarterly
+  title              String
+  description        String?          @db.Text
+  owner_user_id      String // single accountable person (an employee's user)
+  department_id      String?
+  start_date         DateTime?
+  due_date           DateTime // REQUIRED on every level
+  status             GoalStatus       @default(not_started)
+  progress_percent   Float            @default(0) // displayed only; owned by Performance module
+  is_deleted         Boolean          @default(false)
+  deleted_at         DateTime?
+  deleted_by_user_id String?
+  deletion_reason    String?          @db.Text
+  created_by_user_id String
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  owner      User          @relation("GoalOwner", fields: [owner_user_id], references: [id])
+  department Department?   @relation(fields: [department_id], references: [id])
+  parent     Goal?         @relation("GoalHierarchy", fields: [parent_goal_id], references: [id])
+  children   Goal[]        @relation("GoalHierarchy")
+  measures   GoalMeasure[]
+  tasks      Task[]
+
+  @@index([organization_id, level])
+  @@index([parent_goal_id])
+  @@map("goals")
+}
+
+model GoalMeasure {
+  id              String   @id @default(uuid())
+  organization_id String
+  goal_id         String
+  name            String // the metric, e.g. "active hospitals"
+  target_value    String // target, e.g. "100" (string keeps units flexible)
+  current_value   String?
+  unit            String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  goal Goal @relation(fields: [goal_id], references: [id], onDelete: Cascade)
+
+  @@index([goal_id])
+  @@map("goal_measures")
+}
+
+// ─── Governance: Meetings ──────────────────────────────────────────────────────
+enum MeetingType {
+  online
+  offline
+  hybrid
+}
+
+enum MeetingMode {
+  fixed
+  poll
+}
+
+enum MeetingStatus {
+  polling
+  scheduled
+  in_progress
+  closed
+  cancelled
+}
+
+enum MeetingLinkType {
+  goal
+  project
+  task
+  ticket
+}
+
+enum MeetingAttendeeResponse {
+  pending
+  accepted
+  rejected
+  reschedule_requested
+}
+
+enum MeetingSlotSource {
+  caller
+  invitee
+  system
+}
+
+enum MeetingVote {
+  available
+  unavailable
+  maybe
+}
+
+model Meeting {
+  id                 String           @id @default(uuid())
+  organization_id    String
+  title              String
+  type               MeetingType
+  online_link        String?
+  online_password    String?
+  location           String? // free text (offline / hybrid)
+  mode               MeetingMode
+  status             MeetingStatus    @default(scheduled)
+  // linkage (single optional link; all null = ad-hoc)
+  link_type          MeetingLinkType?
+  link_entity_id     String?
+  // shared record (layer 1) — markdown
+  agenda             String?          @db.Text
+  minutes            String?          @db.Text
+  // schedule
+  scheduled_start    DateTime?
+  scheduled_end      DateTime?
+  actual_start       DateTime?
+  actual_end         DateTime?
+  reminder_sent      Boolean          @default(false)
+  // poll window (mode = poll)
+  poll_window_start  DateTime?
+  poll_window_end    DateTime?
+  poll_duration_min  Int?
+  created_by_user_id String // the caller / organizer
+  is_deleted         Boolean          @default(false)
+  deleted_at         DateTime?
+  deleted_by_user_id String?
+  deletion_reason    String?          @db.Text
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  organizer     User                 @relation("MeetingOrganizer", fields: [created_by_user_id], references: [id])
+  attendees     MeetingAttendee[]
+  slots         MeetingSlot[]
+  action_items  MeetingActionItem[]
+  decisions     MeetingDecision[]
+  private_notes MeetingPrivateNote[]
+
+  @@index([organization_id, status, scheduled_start])
+  @@map("meetings")
+}
+
+model MeetingAttendee {
+  id              String                  @id @default(uuid())
+  organization_id String
+  meeting_id      String
+  user_id         String
+  is_organizer    Boolean                 @default(false)
+  response        MeetingAttendeeResponse @default(pending)
+  reject_reason   String?                 @db.Text
+  reschedule_at   DateTime? // fixed-mode reschedule preference
+  reschedule_note String?                 @db.Text
+  attended        Boolean                 @default(false)
+  attended_in_at  DateTime?
+  attended_out_at DateTime?
+  created_at      DateTime                @default(now())
+  updated_at      DateTime                @updatedAt
+
+  meeting Meeting @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  user    User    @relation("MeetingAttendeeUser", fields: [user_id], references: [id])
+
+  @@unique([meeting_id, user_id])
+  @@map("meeting_attendees")
+}
+
+model MeetingSlot {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  meeting_id          String
+  start_at            DateTime
+  end_at              DateTime
+  source              MeetingSlotSource
+  proposed_by_user_id String?
+  system_rank         Int? // lower = better (calendar-aware suggestion)
+  is_dismissed        Boolean           @default(false)
+  is_confirmed        Boolean           @default(false)
+  created_at          DateTime          @default(now())
+
+  meeting Meeting           @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+  votes   MeetingSlotVote[]
+
+  @@index([meeting_id])
+  @@map("meeting_slots")
+}
+
+model MeetingSlotVote {
+  id              String      @id @default(uuid())
+  organization_id String
+  slot_id         String
+  meeting_id      String
+  user_id         String
+  vote            MeetingVote
+  created_at      DateTime    @default(now())
+
+  slot MeetingSlot @relation(fields: [slot_id], references: [id], onDelete: Cascade)
+
+  @@unique([slot_id, user_id])
+  @@map("meeting_slot_votes")
+}
+
+model MeetingActionItem {
+  id              String    @id @default(uuid())
+  organization_id String
+  meeting_id      String
+  text            String    @db.Text
+  owner_user_id   String?
+  due_date        DateTime?
+  linked_task_id  String? // manual link/create; nothing auto-creates
+  is_done         Boolean   @default(false)
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  meeting Meeting @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, owner_user_id])
+  @@map("meeting_action_items")
+}
+
+model MeetingDecision {
+  id                String           @id @default(uuid())
+  organization_id   String
+  meeting_id        String
+  decision          String           @db.Text
+  owner_user_id     String?
+  decided_on        DateTime
+  reason            String?          @db.Text // one-line why
+  affects_link_type MeetingLinkType?
+  affects_entity_id String?
+  created_at        DateTime         @default(now())
+  updated_at        DateTime         @updatedAt
+
+  meeting Meeting @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, decided_on])
+  @@map("meeting_decisions")
+}
+
+model MeetingPrivateNote {
+  id              String   @id @default(uuid())
+  organization_id String
+  meeting_id      String
+  user_id         String
+  body            String   @db.Text
+  updated_at      DateTime @updatedAt
+
+  meeting Meeting @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
+
+  @@unique([meeting_id, user_id])
+  @@map("meeting_private_notes")
+}
+
+// ─── Work Log (Governance) ──────────────────────────────────────────────────────
+
+// Per-person per-day log. Everyone has a Daily Update by default.
+model DailyUpdate {
+  id                String    @id @default(uuid())
+  organization_id   String
+  user_id           String // the writer
+  log_date          DateTime  @db.Date
+  stuck             String?   @db.Text // "Where I was stuck today"
+  decisions         String?   @db.Text // "Decisions I took today"
+  day_summary       String?   @db.Text // "How the overall day was"
+  planning_tomorrow String?   @db.Text // "Planning for tomorrow"
+  submitted_at      DateTime?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
+
+  notes WorkLogNote[]
+
+  @@unique([organization_id, user_id, log_date])
+  @@map("daily_updates")
+}
+
+// Multiple title+description notes per day (three pieces of work → three notes).
+model WorkLogNote {
+  id              String  @id @default(uuid())
+  organization_id String
+  daily_update_id String
+  title           String
+  description     String? @db.Text
+  order_index     Int     @default(0)
+
+  daily_update DailyUpdate @relation(fields: [daily_update_id], references: [id], onDelete: Cascade)
+
+  @@map("work_log_notes")
+}
+
+// A demanded log (assigner → assignee). kind=one_time has a deadline; kind=recurring has schedule entries.
+model WorkLogDemand {
+  id               String    @id @default(uuid())
+  organization_id  String
+  title            String
+  description      String?   @db.Text
+  assigner_user_id String
+  assignee_user_id String
+  kind             String // 'one_time' | 'recurring'
+  deadline         DateTime? // one_time only
+  is_active        Boolean   @default(true)
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  schedule_entries WorkLogDemandSchedule[]
+  submissions      WorkLogSubmission[]
+
+  @@map("work_log_demands")
+}
+
+// Mirror of RecurringScheduleEntry (recurring demands only) — reuses the recurrence enums.
+model WorkLogDemandSchedule {
+  id               String                @id @default(uuid())
+  organization_id  String
+  demand_id        String
+  schedule_type    RecurringScheduleType
+  every            Int                   @default(1)
+  days             Json                  @default("[]")
+  month_days       Json                  @default("[]")
+  yearly_dates     Json                  @default("[]")
+  time             String                @default("09:00")
+  start_date       DateTime
+  end_condition    RecurringEndCondition @default(never)
+  end_date         DateTime?
+  end_after        Int?
+  occurrence_count Int                   @default(0)
+  is_active        Boolean               @default(true)
+  order_index      Int                   @default(0)
+  created_at       DateTime              @default(now())
+  updated_at       DateTime              @updatedAt
+
+  demand WorkLogDemand @relation(fields: [demand_id], references: [id], onDelete: Cascade)
+
+  @@map("work_log_demand_schedules")
+}
+
+// One occurrence in a demand's series (also the row a daily-folded demand writes into).
+model WorkLogSubmission {
+  id              String    @id @default(uuid())
+  organization_id String
+  demand_id       String
+  writer_user_id  String
+  due_date        DateTime  @db.Date
+  period_label    String // e.g. "Fri 20 Jun" / "Jun 2026"
+  body            String?   @db.Text
+  status          String    @default("pending") // 'pending' | 'submitted'
+  submitted_at    DateTime?
+  daily_update_id String? // set when folded into a Daily Update (daily frequency)
+  created_at      DateTime  @default(now())
+
+  demand WorkLogDemand @relation(fields: [demand_id], references: [id], onDelete: Cascade)
+
+  @@unique([demand_id, due_date])
+  @@map("work_log_submissions")
+}
+
+// Remarks + threaded replies on any log (polymorphic) — modeled on TaskComment.
+model WorkLogRemark {
+  id                 String    @id @default(uuid())
+  organization_id    String
+  target_type        String // 'daily_update' | 'submission'
+  target_id          String
+  user_id            String
+  body               String    @db.Text
+  attachment_urls    Json?
+  reply_to_remark_id String?
+  is_deleted         Boolean   @default(false)
+  deleted_at         DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  reply_to_remark WorkLogRemark?  @relation("WLRemarkReplies", fields: [reply_to_remark_id], references: [id])
+  replies         WorkLogRemark[] @relation("WLRemarkReplies")
+
+  @@index([organization_id, target_type, target_id])
+  @@map("work_log_remarks")
+}
+
+// Admin access config: explicit reader → writer read grants. Writers default to everyone.
+model WorkLogReaderGrant {
+  id              String   @id @default(uuid())
+  organization_id String
+  reader_user_id  String
+  writer_user_id  String
+  created_by      String
+  created_at      DateTime @default(now())
+
+  @@unique([organization_id, reader_user_id, writer_user_id])
+  @@map("work_log_reader_grants")
+}
+
+// One row per org — Work Log access settings.
+model WorkLogSettings {
+  organization_id       String   @id
+  managers_read_reports Boolean  @default(true) // managers auto-read their (recursive) reports
+  writer_user_ids       Json     @default("[]") // empty => everyone writes; else explicit allowlist
+  updated_at            DateTime @updatedAt
+
+  @@map("work_log_settings")
 }
 
 

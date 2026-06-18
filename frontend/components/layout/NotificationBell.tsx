@@ -13,6 +13,7 @@ const MODULE_COLORS: Record<string, string> = {
   projects: 'bg-[#F5F3FF] text-[#7C3AED]',
   workflows: 'bg-[#ECFDF5] text-[#059669]',
   tickets: 'bg-[#FFF7ED] text-[#D97706]',
+  meetings: 'bg-[#F0FDF4] text-[#16A34A]',
   communication: 'bg-[#FDF2F8] text-[#BE185D]',
   system: 'bg-[#F1F5F9] text-[#475569]',
 }
