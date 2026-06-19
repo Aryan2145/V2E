@@ -27,6 +27,10 @@ interface NavItem {
 interface SidebarProps {
   role: SidebarRole
   orgId?: string
+  /** Controlled mobile drawer state — open/visible below md. Always visible from md up. */
+  mobileOpen?: boolean
+  /** Called when a nav item is tapped (close the mobile drawer). */
+  onMobileClose?: () => void
 }
 
 const superAdminNav: NavItem[] = [
@@ -42,7 +46,7 @@ const navByRole: Record<SidebarRole, NavItem[]> = {
   member: superAdminNav,
 }
 
-export default function Sidebar({ role }: SidebarProps) {
+export default function Sidebar({ role, mobileOpen = false, onMobileClose }: SidebarProps) {
   const { user, logout, switchOrg } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
@@ -88,7 +92,13 @@ export default function Sidebar({ role }: SidebarProps) {
   const currentOrgName = orgs?.find((m) => m.organization_id === user?.organizationId)?.organization?.name
 
   return (
-    <aside className="fixed left-0 top-0 h-full w-[240px] bg-[#0F172A] flex flex-col z-40">
+    <aside
+      className={[
+        'fixed left-0 top-0 h-full w-[240px] bg-[#0F172A] flex flex-col z-50',
+        'transition-transform duration-200 ease-out md:translate-x-0',
+        mobileOpen ? 'translate-x-0' : '-translate-x-full',
+      ].join(' ')}
+    >
       {/* Logo */}
       <div className="flex items-center h-16 px-6 border-b border-white/10 shrink-0">
         <span className="text-white font-bold text-xl tracking-tight select-none">V2E</span>
@@ -102,8 +112,10 @@ export default function Sidebar({ role }: SidebarProps) {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onMobileClose}
               className={[
-                'flex items-center gap-3 rounded-[8px] px-3 py-2.5 text-sm font-medium transition-colors duration-150',
+                'flex items-center gap-3 rounded-[8px] px-3 min-h-[44px] py-2 text-sm font-medium transition-colors duration-150',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-inset',
                 active
                   ? 'bg-[#2563EB] text-white'
                   : 'text-[#CBD5E1] hover:bg-[#1E293B] hover:text-[#F1F5F9]',
