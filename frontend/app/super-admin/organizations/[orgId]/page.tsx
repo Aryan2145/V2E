@@ -26,7 +26,10 @@ import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 import Modal from '@/components/ui/Modal'
+import ResponsiveTable from '@/components/ui/ResponsiveTable'
 import type { OrgDetail, OrgStatus } from '@/lib/types'
+
+type OrgMember = NonNullable<OrgDetail['members']>[number]
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -306,53 +309,61 @@ export default function OrgDetailPage() {
             <p className="text-sm text-[#94A3B8]">No members in this organization yet.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E8F0]">
-                  {['Name', 'Email', 'Role', 'Also In', 'Status'].map((col) => (
-                    <th key={col} className="py-2 pr-4 text-left text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                      {col}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((m) => (
-                  <tr key={m.id} className="border-b border-[#E2E8F0] last:border-0">
-                    <td className="py-3 pr-4 font-medium text-[#0F172A]">{m.user.name}</td>
-                    <td className="py-3 pr-4 text-[#475569]">{m.user.email}</td>
-                    <td className="py-3 pr-4">
-                      <Badge status={m.is_admin ? 'info' : 'active'} label={m.is_admin ? 'Admin' : 'Member'} />
-                    </td>
-                    <td className="py-3 pr-4">
-                      {m.also_in.length === 0 ? (
-                        <span className="text-[#94A3B8] text-xs">—</span>
-                      ) : (
-                        <div className="flex flex-wrap gap-1">
-                          {m.also_in.map((o) => (
-                            <button
-                              key={o.id}
-                              onClick={() => router.push(`/super-admin/organizations/${o.id}`)}
-                              className="inline-flex items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5 hover:bg-[#BAE6FD] transition-colors"
-                            >
-                              {o.name}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="py-3 pr-4">
-                      <Badge
-                        status={m.user.is_active ? 'active' : 'inactive'}
-                        label={m.user.is_active ? 'Active' : 'Inactive'}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveTable<OrgMember>
+            className="border-0 shadow-none rounded-none -mx-6 -mb-6 md:mx-0 md:mb-0"
+            columns={[
+              {
+                key: 'name',
+                header: 'Name',
+                primary: true,
+                render: (m) => <span className="font-medium text-[#0F172A]">{m.user.name}</span>,
+              },
+              {
+                key: 'email',
+                header: 'Email',
+                render: (m) => <span className="text-[#475569]">{m.user.email}</span>,
+              },
+              {
+                key: 'role',
+                header: 'Role',
+                render: (m) => (
+                  <Badge status={m.is_admin ? 'info' : 'active'} label={m.is_admin ? 'Admin' : 'Member'} />
+                ),
+              },
+              {
+                key: 'also_in',
+                header: 'Also In',
+                render: (m) =>
+                  m.also_in.length === 0 ? (
+                    <span className="text-[#94A3B8] text-xs">—</span>
+                  ) : (
+                    <div className="flex flex-wrap gap-1 md:justify-start justify-end">
+                      {m.also_in.map((o) => (
+                        <button
+                          key={o.id}
+                          onClick={() => router.push(`/super-admin/organizations/${o.id}`)}
+                          className="inline-flex items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5 hover:bg-[#BAE6FD] transition-colors"
+                        >
+                          {o.name}
+                        </button>
+                      ))}
+                    </div>
+                  ),
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                render: (m) => (
+                  <Badge
+                    status={m.user.is_active ? 'active' : 'inactive'}
+                    label={m.user.is_active ? 'Active' : 'Inactive'}
+                  />
+                ),
+              },
+            ]}
+            rows={members}
+            rowKey={(m) => m.id}
+          />
         )}
       </Card>
 

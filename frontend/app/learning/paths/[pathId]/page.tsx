@@ -19,6 +19,7 @@ import type { EmployeeProfile } from '@/lib/types'
 import PathStatusBadge from '@/components/learning/PathStatusBadge'
 import ItemTypeBadge from '@/components/learning/ItemTypeBadge'
 import ProgressBar from '@/components/learning/ProgressBar'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 type Tab = 'items' | 'assignments'
 
@@ -28,6 +29,46 @@ const TYPE_ICONS: Record<ContentType, any> = {
   url: Link2,
   article: BookOpen,
 }
+
+const assignmentColumns: ResponsiveColumn<any>[] = [
+  {
+    key: 'employee',
+    header: 'Employee',
+    primary: true,
+    render: (a) => (
+      <>
+        <div className="font-medium text-[#0F172A]">{a.employee_profile?.user?.name}</div>
+        <div className="text-xs text-[#64748B]">{a.employee_profile?.role?.title}</div>
+      </>
+    ),
+  },
+  {
+    key: 'progress',
+    header: 'Progress',
+    render: (a) => (
+      <ProgressBar
+        percent={a.path_progress?.progress_percent ?? 0}
+        showLabel
+        size="sm"
+        className="max-w-[160px]"
+      />
+    ),
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    render: (a) => (
+      <span className={[
+        'inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium',
+        a.status === 'completed' ? 'bg-[#DCFCE7] text-[#16A34A]' :
+          a.status === 'in_progress' ? 'bg-[#EFF6FF] text-[#2563EB]' :
+            'bg-[#F1F5F9] text-[#64748B]',
+      ].join(' ')}>
+        {a.status.replace('_', ' ')}
+      </span>
+    ),
+  },
+]
 
 export default function ManagePathPage() {
   const { pathId } = useParams<{ pathId: string }>()
@@ -356,45 +397,11 @@ export default function ManagePathPage() {
               <p className="text-xs text-[#64748B]">Publish this path and assign it to employees</p>
             </div>
           ) : (
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
-                  <tr>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">Employee</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">Progress</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#F1F5F9]">
-                  {assignments.map((a: any) => (
-                    <tr key={a.id}>
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-[#0F172A]">{a.employee_profile?.user?.name}</div>
-                        <div className="text-xs text-[#64748B]">{a.employee_profile?.role?.title}</div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <ProgressBar
-                          percent={a.path_progress?.progress_percent ?? 0}
-                          showLabel
-                          size="sm"
-                          className="max-w-[160px]"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <span className={[
-                          'inline-flex px-2.5 py-0.5 rounded-full text-xs font-medium',
-                          a.status === 'completed' ? 'bg-[#DCFCE7] text-[#16A34A]' :
-                            a.status === 'in_progress' ? 'bg-[#EFF6FF] text-[#2563EB]' :
-                              'bg-[#F1F5F9] text-[#64748B]',
-                        ].join(' ')}>
-                          {a.status.replace('_', ' ')}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ResponsiveTable
+              columns={assignmentColumns}
+              rows={assignments}
+              rowKey={(a) => a.id}
+            />
           )}
         </div>
       )}

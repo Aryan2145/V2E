@@ -64,19 +64,19 @@ export function TriggerConfigModal({ onSave, onClose }: TriggerConfigModalProps)
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-[16px] shadow-[0_24px_64px_rgba(0,0,0,0.15)] w-full max-w-md">
-        <div className="flex items-center gap-3 p-5 border-b border-[#F1F5F9]">
+      <div className="relative bg-white rounded-t-[16px] sm:rounded-[16px] shadow-[0_24px_64px_rgba(0,0,0,0.15)] w-full max-w-md max-h-[92vh] flex flex-col">
+        <div className="flex items-center gap-3 p-5 border-b border-[#F1F5F9] shrink-0">
           <h2 className="flex-1 text-[15px] font-semibold text-[#0F172A]">Add Trigger</h2>
           <button type="button" onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9]">
             <X size={16} />
           </button>
         </div>
-        <div className="p-5 flex flex-col gap-4">
+        <div className="p-5 flex flex-col gap-4 overflow-y-auto">
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Trigger type</label>
-            <select value={type} onChange={(e) => setType(e.target.value)} className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white">
+            <select value={type} onChange={(e) => setType(e.target.value)} className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-base sm:text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white">
               {Object.entries(TRIGGER_META).map(([key, meta]) => (
                 <option key={key} value={key}>{meta.label}</option>
               ))}
@@ -86,24 +86,24 @@ export function TriggerConfigModal({ onSave, onClose }: TriggerConfigModalProps)
           {type === 'date_trigger' && (
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Date</label>
-              <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white" />
+              <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-base sm:text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white" />
             </div>
           )}
 
           {(type === 'task_completed_trigger' || type === 'task_overdue_trigger') && (
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Task ID (optional)</label>
-              <input type="text" value={taskId} onChange={(e) => setTaskId(e.target.value)} placeholder="Leave blank to match any task" className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-[#2563EB] focus:outline-none bg-white" />
+              <input type="text" value={taskId} onChange={(e) => setTaskId(e.target.value)} placeholder="Leave blank to match any task" className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-base sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-[#2563EB] focus:outline-none bg-white" />
             </div>
           )}
 
-          <div className="flex gap-2.5 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors">Cancel</button>
+          <div className="flex flex-col-reverse sm:flex-row gap-2.5 pt-1">
+            <button type="button" onClick={onClose} className="w-full sm:flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors">Cancel</button>
             <button
               type="button"
               onClick={handleSave}
               disabled={loading}
-              className="flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors"
+              className="w-full sm:flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors"
             >
               {loading ? 'Adding...' : 'Add Trigger'}
             </button>

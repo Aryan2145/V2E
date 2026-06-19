@@ -6,6 +6,7 @@ import { tasksApi } from '@/lib/api/tasks'
 import type { TaskArchiveItem } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import { Archive, X } from 'lucide-react'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -184,6 +185,56 @@ export default function ArchivePage() {
     )
   }
 
+  const columns: ResponsiveColumn<TaskArchiveItem>[] = [
+    {
+      key: 'title',
+      header: 'Title',
+      primary: true,
+      render: (item) => (
+        <div className="flex items-center gap-2">
+          {/* <QuadrantBadge quadrant={item.task_snapshot.quadrant} /> */}
+          <span className="font-medium text-[#0F172A] truncate max-w-[200px]">
+            {item.task_snapshot.title}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'deleted_by',
+      header: 'Deleted By',
+      desktopHiddenBelow: 'md',
+      cellClassName: 'text-[#475569]',
+      render: (item) => item.deleted_by?.name ?? `${item.deleted_by_user_id.slice(0, 8)}…`,
+    },
+    {
+      key: 'reason',
+      header: 'Reason',
+      desktopHiddenBelow: 'lg',
+      cellClassName: 'text-[#475569] max-w-[160px]',
+      render: (item) => <span className="truncate block">{item.deletion_reason ?? '—'}</span>,
+    },
+    {
+      key: 'deleted_at',
+      header: 'Deleted At',
+      cellClassName: 'text-[#475569]',
+      render: (item) => formatDate(item.deleted_at),
+    },
+    {
+      key: 'action',
+      header: 'Action',
+      align: 'right',
+      hideOnMobile: true,
+      render: (item) => (
+        <button
+          onClick={(e) => { e.stopPropagation(); setSelected(item) }}
+          className="text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+        >
+          View
+        </button>
+      ),
+    },
+  ]
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -201,62 +252,21 @@ export default function ArchivePage() {
         </p>
       </div>
 
-      {archive.length === 0 ? (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
-          <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
-            <Archive size={24} className="text-[#94A3B8]" />
+      <ResponsiveTable
+        columns={columns}
+        rows={archive}
+        rowKey={(item) => item.id}
+        onRowClick={(item) => setSelected(item)}
+        emptyState={
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
+            <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+              <Archive size={24} className="text-[#94A3B8]" />
+            </div>
+            <p className="font-semibold text-[#0F172A]">Archive is empty</p>
+            <p className="text-sm text-[#475569] mt-1">Deleted tasks will appear here.</p>
           </div>
-          <p className="font-semibold text-[#0F172A]">Archive is empty</p>
-          <p className="text-sm text-[#475569] mt-1">Deleted tasks will appear here.</p>
-        </div>
-      ) : (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-x-auto">
-          <table className="w-full text-sm min-w-[640px]">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">Title</th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider hidden md:table-cell">Deleted By</th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider hidden lg:table-cell">Reason</th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">Deleted At</th>
-                <th className="text-right px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F1F5F9]">
-              {archive.map((item) => (
-                <tr key={item.id} className="hover:bg-[#F8FAFC] transition-colors">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      {/* <QuadrantBadge quadrant={item.task_snapshot.quadrant} /> */}
-                      <span className="font-medium text-[#0F172A] truncate max-w-[200px]">
-                        {item.task_snapshot.title}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-[#475569] hidden md:table-cell">
-                    {item.deleted_by?.name ?? `${item.deleted_by_user_id.slice(0, 8)}…`}
-                  </td>
-                  <td className="px-6 py-4 text-[#475569] hidden lg:table-cell max-w-[160px]">
-                    <span className="truncate block">
-                      {item.deletion_reason ?? '—'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-[#475569]">
-                    {formatDate(item.deleted_at)}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <button
-                      onClick={() => setSelected(item)}
-                      className="text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
-                    >
-                      View
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        }
+      />
 
       {selected && (
         <SnapshotModal item={selected} onClose={() => setSelected(null)} />

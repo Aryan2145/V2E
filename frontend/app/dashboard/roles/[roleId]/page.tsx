@@ -8,6 +8,41 @@ import { getRole } from '@/lib/api/roles'
 import Button from '@/components/ui/Button'
 import type { Role, RoleLevel } from '@/lib/types'
 import { ArrowLeft, Pencil, Briefcase } from 'lucide-react'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+
+type Kpi = NonNullable<Role['kpi']>[number]
+
+const kpiColumns: ResponsiveColumn<Kpi>[] = [
+  {
+    key: 'title',
+    header: 'Title',
+    primary: true,
+    cellClassName: '!px-0 !py-3 !pr-4 font-medium text-[#0F172A]',
+    headerClassName: '!px-0 !py-2.5 !pr-4',
+    render: (kpi) => kpi.title,
+  },
+  {
+    key: 'metric',
+    header: 'Metric',
+    cellClassName: '!px-0 !py-3 !pr-4 text-[#475569]',
+    headerClassName: '!px-0 !py-2.5 !pr-4',
+    render: (kpi) => kpi.metric,
+  },
+  {
+    key: 'target',
+    header: 'Target',
+    cellClassName: '!px-0 !py-3 !pr-4 text-[#475569]',
+    headerClassName: '!px-0 !py-2.5 !pr-4',
+    render: (kpi) => kpi.target,
+  },
+  {
+    key: 'unit',
+    header: 'Unit',
+    cellClassName: '!px-0 !py-3 text-[#475569]',
+    headerClassName: '!px-0 !py-2.5',
+    render: (kpi) => kpi.unit,
+  },
+]
 
 // ─── Level badge ──────────────────────────────────────────────────────────────
 
@@ -161,36 +196,12 @@ export default function RoleDetailPage() {
       {/* KPIs */}
       {role.kpi && role.kpi.length > 0 && (
         <Section title="Key Performance Indicators (KPI)">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E8F0]">
-                  <th className="text-left py-2.5 pr-4 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                    Title
-                  </th>
-                  <th className="text-left py-2.5 pr-4 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                    Metric
-                  </th>
-                  <th className="text-left py-2.5 pr-4 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                    Target
-                  </th>
-                  <th className="text-left py-2.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                    Unit
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#F1F5F9]">
-                {role.kpi.map((kpi, i) => (
-                  <tr key={i}>
-                    <td className="py-3 pr-4 font-medium text-[#0F172A]">{kpi.title}</td>
-                    <td className="py-3 pr-4 text-[#475569]">{kpi.metric}</td>
-                    <td className="py-3 pr-4 text-[#475569]">{kpi.target}</td>
-                    <td className="py-3 text-[#475569]">{kpi.unit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveTable
+            className="!border-0 !rounded-none !shadow-none !bg-transparent !overflow-visible"
+            columns={kpiColumns}
+            rows={role.kpi}
+            rowKey={(_kpi, i) => String(i)}
+          />
         </Section>
       )}
     </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Gavel, Search } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
@@ -8,6 +8,7 @@ import { meetingsApi } from '@/lib/api/meetings'
 import { getEmployees } from '@/lib/api/employees'
 import type { MeetingDecision } from '@/lib/types/meetings'
 import { fmtDate } from '@/components/meetings/shared'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 const inputClass = 'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]'
 
@@ -32,6 +33,41 @@ export default function DecisionLogPage() {
   useEffect(() => { const t = setTimeout(load, search ? 300 : 0); return () => clearTimeout(t) }, [load, search])
   useEffect(() => { if (orgId) getEmployees(orgId).then((emps: any[]) => setNames(new Map(emps.map((e) => [e.user_id, e.user?.name ?? 'Unknown'])))).catch(() => {}) }, [orgId])
 
+  const columns = useMemo<ResponsiveColumn<MeetingDecision>[]>(() => [
+    {
+      key: 'decision',
+      header: 'Decision',
+      primary: true,
+      render: (d) => (
+        <>
+          <p className="text-[15px] text-[#0F172A] font-medium">{d.decision}</p>
+          {d.reason && <p className="text-xs text-[#64748B] mt-0.5">{d.reason}</p>}
+        </>
+      ),
+    },
+    {
+      key: 'owner',
+      header: 'Owner',
+      render: (d) => <span className="text-sm text-[#1E293B]">{d.owner_user_id ? names.get(d.owner_user_id) ?? '—' : '—'}</span>,
+    },
+    {
+      key: 'date',
+      header: 'Date',
+      desktopHiddenBelow: 'md',
+      render: (d) => <span className="text-sm text-[#475569]">{fmtDate(d.decided_on)}</span>,
+    },
+    {
+      key: 'meeting',
+      header: 'Meeting',
+      render: (d) =>
+        d.meeting ? (
+          <button onClick={() => router.push(`/dashboard/governance/meetings/${d.meeting!.id}`)} className="text-sm text-[#2563EB] hover:underline">{d.meeting.title}</button>
+        ) : (
+          '—'
+        ),
+    },
+  ], [names, router])
+
   return (
     <div>
       <div className="mb-5">
@@ -48,37 +84,17 @@ export default function DecisionLogPage() {
         <input type="date" className={inputClass} value={to} onChange={(e) => setTo(e.target.value)} />
       </div>
 
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-        {loading ? <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
-          : decisions.length === 0 ? <div className="p-10 text-center text-sm text-[#475569]">No decisions logged.</div>
-          : (
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                  <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Decision</th>
-                  <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Owner</th>
-                  <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden md:table-cell">Date</th>
-                  <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Meeting</th>
-                </tr>
-              </thead>
-              <tbody>
-                {decisions.map((d) => (
-                  <tr key={d.id} className="border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC]">
-                    <td className="px-4 py-3">
-                      <p className="text-[15px] text-[#0F172A] font-medium">{d.decision}</p>
-                      {d.reason && <p className="text-xs text-[#64748B] mt-0.5">{d.reason}</p>}
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-sm text-[#1E293B]">{d.owner_user_id ? names.get(d.owner_user_id) ?? '—' : '—'}</td>
-                    <td className="px-4 py-3 hidden md:table-cell text-sm text-[#475569]">{fmtDate(d.decided_on)}</td>
-                    <td className="px-4 py-3">
-                      {d.meeting ? <button onClick={() => router.push(`/dashboard/governance/meetings/${d.meeting!.id}`)} className="text-sm text-[#2563EB] hover:underline">{d.meeting.title}</button> : '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-      </div>
+      <ResponsiveTable
+        columns={columns}
+        rows={decisions}
+        rowKey={(d) => d.id}
+        loading={loading}
+        emptyState={
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
+            <div className="p-10 text-center text-sm text-[#475569]">No decisions logged.</div>
+          </div>
+        }
+      />
     </div>
   )
 }

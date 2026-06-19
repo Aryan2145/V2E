@@ -87,18 +87,18 @@ export default function NotificationBell() {
       <button
         onClick={openPanel}
         title="Notifications"
-        className="relative w-9 h-9 rounded-[8px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+        className="relative w-10 h-10 rounded-[8px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
       >
         {unreadCount > 0 ? <BellRing size={18} /> : <Bell size={18} />}
         {unreadCount > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#DC2626] text-white text-[10px] font-bold flex items-center justify-center border-2 border-white">
+          <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1 rounded-full bg-[#DC2626] text-white text-[11px] font-bold flex items-center justify-center border-2 border-white tabular-nums">
             {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 top-[calc(100%+8px)] w-[380px] bg-white rounded-[10px] border border-[#E2E8F0] shadow-[0_8px_30px_rgba(0,0,0,0.12)] overflow-hidden z-50">
+        <div className="absolute right-0 top-[calc(100%+8px)] w-[calc(100vw-1.5rem)] max-w-[380px] bg-white rounded-[10px] border border-[#E2E8F0] shadow-[0_8px_30px_rgba(0,0,0,0.12)] overflow-hidden z-50">
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-[#F1F5F9]">
             <p className="text-sm font-semibold text-[#0F172A]">Notifications</p>
@@ -113,7 +113,7 @@ export default function NotificationBell() {
           </div>
 
           {/* List */}
-          <div className="max-h-[380px] overflow-y-auto">
+          <div className="max-h-[min(380px,70vh)] overflow-y-auto">
             {latest.length === 0 ? (
               <div className="py-10 text-center">
                 <Bell size={22} className="mx-auto text-[#CBD5E1] mb-2" />

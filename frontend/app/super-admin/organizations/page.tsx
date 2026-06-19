@@ -6,6 +6,7 @@ import { Building2, ArrowRight, Plus } from 'lucide-react'
 import { getOrganizations } from '@/lib/api/organizations'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 import type { Organization, OrgStatus } from '@/lib/types'
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -20,20 +21,6 @@ function orgStatusLabel(status: OrgStatus): string {
   if (status === 'active') return 'Active'
   if (status === 'inactive') return 'Inactive'
   return 'Pending Setup'
-}
-
-// ─── Skeleton row ──────────────────────────────────────────────────────────────
-
-function SkeletonRow() {
-  return (
-    <tr className="border-b border-[#E2E8F0]">
-      {[1, 2, 3, 4, 5, 6].map((i) => (
-        <td key={i} className="px-6 py-4">
-          <div className="h-4 rounded-md bg-[#E2E8F0] animate-pulse" style={{ width: `${[140, 80, 110, 80, 70, 60][i - 1]}px` }} />
-        </td>
-      ))}
-    </tr>
-  )
 }
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -54,6 +41,63 @@ export default function OrganizationsPage() {
     return () => { cancelled = true }
   }, [])
 
+  const columns: ResponsiveColumn<Organization>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      primary: true,
+      render: (org) => (
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
+            <Building2 size={16} className="text-[#2563EB]" />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="font-medium text-[#0F172A]">{org.name}</span>
+            {org.group && (
+              <span className="inline-flex self-start items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5">
+                {org.group.name}
+              </span>
+            )}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'slug',
+      header: 'Slug',
+      render: (org) => <span className="text-[#475569] font-mono text-xs">{org.slug}</span>,
+    },
+    {
+      key: 'industry',
+      header: 'Industry',
+      render: (org) => <span className="text-[#475569]">{org.industry ?? '—'}</span>,
+    },
+    {
+      key: 'country',
+      header: 'Country',
+      render: (org) => <span className="text-[#475569]">{org.country ?? '—'}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (org) => (
+        <Badge status={orgStatusToBadge(org.status)} label={orgStatusLabel(org.status)} />
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      render: (org) => (
+        <button
+          onClick={() => router.push(`/super-admin/organizations/${org.id}`)}
+          className="inline-flex items-center gap-1 min-h-[40px] sm:min-h-0 text-[#2563EB] text-sm font-medium hover:text-[#1D4ED8] transition-colors rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        >
+          View <ArrowRight size={14} />
+        </button>
+      ),
+    },
+  ]
+
   return (
     <div className="flex flex-col gap-6">
       {/* Page header */}
@@ -72,87 +116,29 @@ export default function OrganizationsPage() {
       </div>
 
       {/* Table card */}
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-              {['Name', 'Slug', 'Industry', 'Country', 'Status', 'Actions'].map((col) => (
-                <th
-                  key={col}
-                  className="px-6 py-3 text-left text-xs font-semibold text-[#475569] uppercase tracking-wider"
-                >
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading && Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} />)}
-
-            {!isLoading && error && (
-              <tr>
-                <td colSpan={6} className="px-6 py-12 text-center text-[#DC2626] text-sm">
-                  {error}
-                </td>
-              </tr>
-            )}
-
-            {!isLoading && !error && orgs.length === 0 && (
-              <tr>
-                <td colSpan={6}>
-                  <div className="flex flex-col items-center gap-3 py-16">
-                    <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center">
-                      <Building2 size={22} className="text-[#94A3B8]" />
-                    </div>
-                    <p className="text-[#475569] font-medium">No organizations yet</p>
-                    <p className="text-[#94A3B8] text-xs">Click "New Organization" to add one.</p>
-                  </div>
-                </td>
-              </tr>
-            )}
-
-            {!isLoading && !error && orgs.map((org) => (
-              <tr
-                key={org.id}
-                className="border-b border-[#E2E8F0] last:border-0 hover:bg-[#F8FAFC] transition-colors"
-              >
-                <td className="px-6 py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
-                      <Building2 size={16} className="text-[#2563EB]" />
-                    </div>
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-medium text-[#0F172A]">{org.name}</span>
-                      {org.group && (
-                        <span className="inline-flex self-start items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5">
-                          {org.group.name}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-[#475569] font-mono text-xs">{org.slug}</td>
-                <td className="px-6 py-4 text-[#475569]">{org.industry ?? '—'}</td>
-                <td className="px-6 py-4 text-[#475569]">{org.country ?? '—'}</td>
-                <td className="px-6 py-4">
-                  <Badge
-                    status={orgStatusToBadge(org.status)}
-                    label={orgStatusLabel(org.status)}
-                  />
-                </td>
-                <td className="px-6 py-4">
-                  <button
-                    onClick={() => router.push(`/super-admin/organizations/${org.id}`)}
-                    className="inline-flex items-center gap-1 text-[#2563EB] text-sm font-medium hover:text-[#1D4ED8] transition-colors"
-                  >
-                    View <ArrowRight size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {!isLoading && error ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] px-6 py-12 text-center text-[#DC2626] text-sm">
+          {error}
+        </div>
+      ) : (
+        <ResponsiveTable
+          columns={columns}
+          rows={orgs}
+          rowKey={(org) => org.id}
+          loading={isLoading}
+          emptyState={
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)]">
+              <div className="flex flex-col items-center gap-3 py-16">
+                <div className="w-12 h-12 rounded-full bg-[#F1F5F9] flex items-center justify-center">
+                  <Building2 size={22} className="text-[#94A3B8]" />
+                </div>
+                <p className="text-[#475569] font-medium">No organizations yet</p>
+                <p className="text-[#94A3B8] text-xs">Click "New Organization" to add one.</p>
+              </div>
+            </div>
+          }
+        />
+      )}
     </div>
   )
 }

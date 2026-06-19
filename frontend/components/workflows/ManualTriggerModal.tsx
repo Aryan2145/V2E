@@ -33,9 +33,9 @@ export default function ManualTriggerModal({ workflow, onConfirm, onClose }: Pro
   const stepCount = workflow.steps?.length ?? 0
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-white rounded-[16px] shadow-[0_24px_64px_rgba(0,0,0,0.15)] w-full max-w-md">
+      <div className="relative bg-white rounded-t-[16px] sm:rounded-[16px] shadow-[0_24px_64px_rgba(0,0,0,0.15)] w-full max-w-md max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center gap-3 p-5 border-b border-[#F1F5F9]">
           <div className="w-9 h-9 rounded-[10px] bg-[#EFF6FF] flex items-center justify-center">
@@ -55,7 +55,7 @@ export default function ManualTriggerModal({ workflow, onConfirm, onClose }: Pro
         </div>
 
         {/* Body */}
-        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
+        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4 overflow-y-auto">
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">
               Instance name <span className="text-[#DC2626]">*</span>
@@ -81,18 +81,18 @@ export default function ManualTriggerModal({ workflow, onConfirm, onClose }: Pro
           </div>
 
           {/* Footer */}
-          <div className="flex gap-2.5 pt-1">
+          <div className="flex flex-col-reverse sm:flex-row gap-2.5 pt-1">
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+              className="w-full sm:flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading || !name.trim()}
-              className="flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors flex items-center justify-center gap-2"
+              className="w-full sm:flex-1 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors flex items-center justify-center gap-2"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />

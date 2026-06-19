@@ -16,9 +16,49 @@ import { StatusBadge, fmtDateTime, useMeetingPermissions } from '@/components/me
 import MeetingCalendarView from '@/components/meetings/MeetingCalendarView'
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal'
 import type { PersonOption } from '@/components/meetings/MeetingAttendeeSelector'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 const selectClass =
   'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
+
+const meetingColumns: ResponsiveColumn<Meeting>[] = [
+  {
+    key: 'meeting',
+    header: 'Meeting',
+    primary: true,
+    render: (m) => (
+      <>
+        <div className="flex items-center gap-2">
+          {m.type === 'offline' ? <MapPin size={14} className="text-[#94A3B8]" /> : <Video size={14} className="text-[#94A3B8]" />}
+          <span className="font-medium text-[#0F172A] text-[15px]">{m.title}</span>
+        </div>
+        <div className="text-xs text-[#64748B] mt-0.5 flex items-center gap-2">
+          <span>{TYPE_LABEL[m.type]}</span>
+          <span className="inline-flex items-center gap-1"><Users size={11} /> {m._count?.attendees ?? 0}</span>
+          {m.mode === 'poll' && <span className="text-[#CA8A04]">poll</span>}
+        </div>
+      </>
+    ),
+  },
+  {
+    key: 'when',
+    header: 'When',
+    desktopHiddenBelow: 'md',
+    render: (m) => (
+      <span className="text-sm text-[#475569]">{m.status === 'polling' ? 'Finding a slot' : fmtDateTime(m.scheduled_start)}</span>
+    ),
+  },
+  {
+    key: 'organizer',
+    header: 'Organizer',
+    render: (m) => <span className="text-sm text-[#1E293B]">{m.organizer?.name ?? '—'}</span>,
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    render: (m) => <StatusBadge status={m.status} />,
+  },
+]
 
 export default function MeetingsPage() {
   const { user } = useAuth()
@@ -130,49 +170,27 @@ export default function MeetingsPage() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
-      ) : view === 'calendar' ? (
-        <MeetingCalendarView meetings={filtered} onSelect={(id) => router.push(`/dashboard/governance/meetings/${id}`)} />
-      ) : filtered.length === 0 ? (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-12 text-center">
-          <div className="w-14 h-14 rounded-[16px] bg-[#EFF6FF] flex items-center justify-center text-[#2563EB] mx-auto mb-3"><CalendarDays size={26} /></div>
-          <h3 className="text-[18px] font-semibold text-[#0F172A]">No meetings</h3>
-          <p className="text-sm text-[#475569] mt-1">Create one to get started.</p>
-        </div>
+      {view === 'calendar' ? (
+        loading ? (
+          <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
+        ) : (
+          <MeetingCalendarView meetings={filtered} onSelect={(id) => router.push(`/dashboard/governance/meetings/${id}`)} />
+        )
       ) : (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Meeting</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden md:table-cell">When</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Organizer</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((m) => (
-                <tr key={m.id} onClick={() => router.push(`/dashboard/governance/meetings/${m.id}`)} className="border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC] cursor-pointer">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {m.type === 'offline' ? <MapPin size={14} className="text-[#94A3B8]" /> : <Video size={14} className="text-[#94A3B8]" />}
-                      <span className="font-medium text-[#0F172A] text-[15px]">{m.title}</span>
-                    </div>
-                    <div className="text-xs text-[#64748B] mt-0.5 flex items-center gap-2">
-                      <span>{TYPE_LABEL[m.type]}</span>
-                      <span className="inline-flex items-center gap-1"><Users size={11} /> {m._count?.attendees ?? 0}</span>
-                      {m.mode === 'poll' && <span className="text-[#CA8A04]">poll</span>}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell text-sm text-[#475569]">{m.status === 'polling' ? 'Finding a slot' : fmtDateTime(m.scheduled_start)}</td>
-                  <td className="px-4 py-3 hidden sm:table-cell text-sm text-[#1E293B]">{m.organizer?.name ?? '—'}</td>
-                  <td className="px-4 py-3"><StatusBadge status={m.status} /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ResponsiveTable
+          columns={meetingColumns}
+          rows={filtered}
+          rowKey={(m) => m.id}
+          loading={loading}
+          onRowClick={(m) => router.push(`/dashboard/governance/meetings/${m.id}`)}
+          emptyState={
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-12 text-center">
+              <div className="w-14 h-14 rounded-[16px] bg-[#EFF6FF] flex items-center justify-center text-[#2563EB] mx-auto mb-3"><CalendarDays size={26} /></div>
+              <h3 className="text-[18px] font-semibold text-[#0F172A]">No meetings</h3>
+              <p className="text-sm text-[#475569] mt-1">Create one to get started.</p>
+            </div>
+          }
+        />
       )}
 
       <CreateMeetingModal isOpen={createOpen} onClose={() => setCreateOpen(false)} orgId={orgId} people={people} onCreated={() => load()} />

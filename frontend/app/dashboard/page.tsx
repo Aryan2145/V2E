@@ -76,7 +76,7 @@ function QuickNavCard({ label, description, href, icon, iconBg }: QuickNavCardPr
   return (
     <Link
       href={href}
-      className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 flex items-start gap-4 hover:border-[#2563EB] hover:shadow-md transition-all duration-150 group"
+      className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 flex items-start gap-4 hover:border-[#2563EB] hover:shadow-md active:scale-[0.99] active:border-[#2563EB] transition-all duration-150 group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1"
     >
       <div
         className={`w-10 h-10 rounded-[8px] flex items-center justify-center flex-shrink-0 ${iconBg}`}
@@ -89,7 +89,7 @@ function QuickNavCard({ label, description, href, icon, iconBg }: QuickNavCardPr
       </div>
       <ChevronRight
         size={16}
-        className="text-[#CBD5E1] group-hover:text-[#2563EB] transition-colors mt-0.5 flex-shrink-0"
+        className="text-[#CBD5E1] group-hover:text-[#2563EB] group-active:text-[#2563EB] transition-colors mt-0.5 flex-shrink-0"
       />
     </Link>
   )

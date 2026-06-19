@@ -25,6 +25,7 @@ import {
   useGoalPermissions,
 } from './shared'
 import CreateGoalModal from './CreateGoalModal'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 const PERSPECTIVES: GoalPerspective[] = ['financial', 'customer', 'internal_process', 'learning_growth']
 const STATUSES: GoalStatus[] = ['not_started', 'on_track', 'at_risk', 'achieved', 'archived']
@@ -91,6 +92,68 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
 
   const isFiltered = !!(search || perspective || owner || status)
 
+  const columns = useMemo<ResponsiveColumn<Goal>[]>(() => {
+    const cols: ResponsiveColumn<Goal>[] = [
+      {
+        key: 'goal',
+        header: 'Goal',
+        primary: true,
+        render: (g) => (
+          <>
+            <div className="font-medium text-[#0F172A] text-[15px]">{g.title}</div>
+            {g._count?.children ? (
+              <div className="text-xs text-[#64748B] mt-0.5">{g._count.children} child goal(s)</div>
+            ) : null}
+          </>
+        ),
+      },
+    ]
+    if (showPerspective) {
+      cols.push({
+        key: 'perspective',
+        header: 'Perspective',
+        desktopHiddenBelow: 'md',
+        render: (g) => <PerspectiveBadge perspective={g.perspective} />,
+      })
+    }
+    cols.push(
+      {
+        key: 'owner',
+        header: 'Owner',
+        cellClassName: 'text-sm text-[#1E293B]',
+        render: (g) => g.owner?.name ?? '—',
+      },
+      {
+        key: 'due',
+        header: 'Due',
+        desktopHiddenBelow: 'lg',
+        cellClassName: 'text-sm text-[#475569]',
+        render: (g) => formatDate(g.due_date),
+      },
+      {
+        key: 'status',
+        header: 'Status',
+        render: (g) => <GoalStatusBadge status={g.status} />,
+      },
+      {
+        key: 'progress',
+        header: 'Progress',
+        desktopHiddenBelow: 'md',
+        headerClassName: 'w-44',
+        render: (g) => <ProgressBar value={g.progress_percent} />,
+      },
+      {
+        key: 'chevron',
+        header: '',
+        hideOnMobile: true,
+        cellClassName: 'text-[#CBD5E1] w-8',
+        headerClassName: 'w-8',
+        render: () => <ChevronRight size={16} />,
+      },
+    )
+    return cols
+  }, [showPerspective])
+
   return (
     <div>
       {/* Header */}
@@ -153,85 +216,40 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-        {loading ? (
-          <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
-        ) : filtered.length === 0 ? (
-          <EmptyState
-            icon={<Target size={26} />}
-            title={isFiltered ? 'No goals match your filters' : `No ${meta.plural.toLowerCase()} yet`}
-            subtitle={
-              isFiltered
-                ? 'Try clearing a filter.'
-                : level === 'objective'
-                  ? 'Start by creating an objective — your top-level strategic goal.'
-                  : level === 'annual'
-                    ? 'Open an objective and add an annual goal under it.'
-                    : 'Open an annual goal and add a quarterly goal under it.'
-            }
-            action={
-              level === 'objective' && perms.write && !isFiltered ? (
-                <button
-                  onClick={() => setCreateOpen(true)}
-                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"
-                >
-                  <Plus size={16} /> New Objective
-                </button>
-              ) : undefined
-            }
-          />
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Goal</th>
-                {showPerspective && (
-                  <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden md:table-cell">
-                    Perspective
-                  </th>
-                )}
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Owner</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden lg:table-cell">Due</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Status</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 w-44 hidden md:table-cell">Progress</th>
-                <th className="px-2 py-3 w-8" />
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((g) => (
-                <tr
-                  key={g.id}
-                  onClick={() => router.push(`/goals/${g.id}`)}
-                  className="border-b border-[#F1F5F9] last:border-0 hover:bg-[#F8FAFC] cursor-pointer"
-                >
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-[#0F172A] text-[15px]">{g.title}</div>
-                    {g._count?.children ? (
-                      <div className="text-xs text-[#64748B] mt-0.5">{g._count.children} child goal(s)</div>
-                    ) : null}
-                  </td>
-                  {showPerspective && (
-                    <td className="px-4 py-3 hidden md:table-cell">
-                      <PerspectiveBadge perspective={g.perspective} />
-                    </td>
-                  )}
-                  <td className="px-4 py-3 hidden sm:table-cell text-sm text-[#1E293B]">{g.owner?.name ?? '—'}</td>
-                  <td className="px-4 py-3 hidden lg:table-cell text-sm text-[#475569]">{formatDate(g.due_date)}</td>
-                  <td className="px-4 py-3">
-                    <GoalStatusBadge status={g.status} />
-                  </td>
-                  <td className="px-4 py-3 hidden md:table-cell">
-                    <ProgressBar value={g.progress_percent} />
-                  </td>
-                  <td className="px-2 py-3 text-[#CBD5E1]">
-                    <ChevronRight size={16} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <ResponsiveTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(g) => g.id}
+        loading={loading}
+        onRowClick={(g) => router.push(`/goals/${g.id}`)}
+        emptyState={
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
+            <EmptyState
+              icon={<Target size={26} />}
+              title={isFiltered ? 'No goals match your filters' : `No ${meta.plural.toLowerCase()} yet`}
+              subtitle={
+                isFiltered
+                  ? 'Try clearing a filter.'
+                  : level === 'objective'
+                    ? 'Start by creating an objective — your top-level strategic goal.'
+                    : level === 'annual'
+                      ? 'Open an objective and add an annual goal under it.'
+                      : 'Open an annual goal and add a quarterly goal under it.'
+              }
+              action={
+                level === 'objective' && perms.write && !isFiltered ? (
+                  <button
+                    onClick={() => setCreateOpen(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"
+                  >
+                    <Plus size={16} /> New Objective
+                  </button>
+                ) : undefined
+              }
+            />
+          </div>
+        }
+      />
 
       {level === 'objective' && (
         <CreateGoalModal

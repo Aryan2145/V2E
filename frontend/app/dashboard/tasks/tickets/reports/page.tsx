@@ -14,6 +14,10 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { Download, Clock, Tag, BarChart2, AlertTriangle, Star, Activity } from 'lucide-react'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+
+// Flatten the ResponsiveTable card so it blends into the tab content panel.
+const FLAT_TABLE = 'border-0 shadow-none rounded-none'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -93,29 +97,39 @@ function ResolutionTimeTab({
             )} />
           </div>
 
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E2E8F0]">
-                {['User ID', 'Tickets Resolved', 'Avg Resolution Time'].map((h) => (
-                  <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((d) => (
-                <tr key={d.user_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                  <td className="py-2.5 px-3 font-mono text-xs text-[#475569]">{d.user_id}</td>
-                  <td className="py-2.5 px-3 text-[#0F172A] tabular-nums">{d.ticket_count}</td>
-                  <td className="py-2.5 px-3 text-[#0F172A] tabular-nums font-medium">{d.avg_days.toFixed(1)} days</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={resolutionColumns}
+            rows={sorted}
+            rowKey={(d) => d.user_id}
+          />
         </>
       )}
     </div>
   )
 }
+
+const resolutionColumns: ResponsiveColumn<TicketReportResolutionTime>[] = [
+  {
+    key: 'user_id',
+    header: 'User ID',
+    primary: true,
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (d) => d.user_id,
+  },
+  {
+    key: 'ticket_count',
+    header: 'Tickets Resolved',
+    cellClassName: 'text-[#0F172A] tabular-nums',
+    render: (d) => d.ticket_count,
+  },
+  {
+    key: 'avg_days',
+    header: 'Avg Resolution Time',
+    cellClassName: 'text-[#0F172A] tabular-nums font-medium',
+    render: (d) => `${d.avg_days.toFixed(1)} days`,
+  },
+]
 
 // ─── Breakdown (type/category/priority/status) ────────────────────────────────
 
@@ -218,32 +232,48 @@ function SlaTab({ orgId, from, to }: { orgId: string; from: string; to: string }
               ['Ticket #', 'Title', 'SLA Due', 'Created At'],
             )} />
           </div>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E2E8F0]">
-                {['Ticket #', 'Title', 'SLA Due', 'Status'].map((h) => (
-                  <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.tickets.map((t) => (
-                <tr key={t.id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                  <td className="py-2.5 px-3 font-mono text-xs text-[#475569]">{t.ticket_number}</td>
-                  <td className="py-2.5 px-3 text-[#0F172A] font-medium">{t.title}</td>
-                  <td className="py-2.5 px-3 text-[#DC2626] tabular-nums">{new Date(t.sla_due_at).toLocaleDateString('en-IN')}</td>
-                  <td className="py-2.5 px-3">
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FEE2E2] text-[#DC2626]">Breached</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={slaColumns}
+            rows={data.tickets}
+            rowKey={(t) => t.id}
+          />
         </>
       )}
     </div>
   )
 }
+
+type SlaTicketRow = TicketReportSlaBreaches['tickets'][number]
+
+const slaColumns: ResponsiveColumn<SlaTicketRow>[] = [
+  {
+    key: 'ticket_number',
+    header: 'Ticket #',
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (t) => t.ticket_number,
+  },
+  {
+    key: 'title',
+    header: 'Title',
+    primary: true,
+    cellClassName: 'text-[#0F172A] font-medium',
+    render: (t) => t.title,
+  },
+  {
+    key: 'sla_due',
+    header: 'SLA Due',
+    cellClassName: 'text-[#DC2626] tabular-nums',
+    render: (t) => new Date(t.sla_due_at).toLocaleDateString('en-IN'),
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    render: () => (
+      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#FEE2E2] text-[#DC2626]">Breached</span>
+    ),
+  },
+]
 
 // ─── Ratings ─────────────────────────────────────────────────────────────────
 
@@ -295,31 +325,53 @@ function RatingsTab({ orgId, from, to }: { orgId: string; from: string; to: stri
             )} />
           </div>
 
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E2E8F0]">
-                {['Ticket #', 'Title', 'Rating', 'Comment', 'Rated At'].map((h) => (
-                  <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.tickets.map((t) => (
-                <tr key={t.ticket_number} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                  <td className="py-2.5 px-3 font-mono text-xs text-[#475569]">{t.ticket_number}</td>
-                  <td className="py-2.5 px-3 text-[#0F172A] font-medium">{t.title}</td>
-                  <td className="py-2.5 px-3 text-[#D97706] font-semibold">{'★'.repeat(t.rating)}</td>
-                  <td className="py-2.5 px-3 text-[#475569] max-w-[180px] truncate">{t.rating_comment ?? '—'}</td>
-                  <td className="py-2.5 px-3 text-[#475569] tabular-nums">{new Date(t.rated_at).toLocaleDateString('en-IN')}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={ratingsColumns}
+            rows={data.tickets}
+            rowKey={(t) => t.ticket_number}
+          />
         </>
       )}
     </div>
   )
 }
+
+type RatingTicketRow = TicketReportRatings['tickets'][number]
+
+const ratingsColumns: ResponsiveColumn<RatingTicketRow>[] = [
+  {
+    key: 'ticket_number',
+    header: 'Ticket #',
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (t) => t.ticket_number,
+  },
+  {
+    key: 'title',
+    header: 'Title',
+    primary: true,
+    cellClassName: 'text-[#0F172A] font-medium',
+    render: (t) => t.title,
+  },
+  {
+    key: 'rating',
+    header: 'Rating',
+    cellClassName: 'text-[#D97706] font-semibold',
+    render: (t) => '★'.repeat(t.rating),
+  },
+  {
+    key: 'comment',
+    header: 'Comment',
+    cellClassName: 'text-[#475569] max-w-[180px] truncate',
+    render: (t) => t.rating_comment ?? '—',
+  },
+  {
+    key: 'rated_at',
+    header: 'Rated At',
+    cellClassName: 'text-[#475569] tabular-nums',
+    render: (t) => new Date(t.rated_at).toLocaleDateString('en-IN'),
+  },
+]
 
 // ─── Shared micro-components ──────────────────────────────────────────────────
 

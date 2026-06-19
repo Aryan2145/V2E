@@ -61,7 +61,7 @@ export default function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"
@@ -70,8 +70,8 @@ export default function Modal({
       <div
         ref={panelRef}
         className={[
-          'relative w-full bg-white rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0]',
-          'max-h-[90vh] flex flex-col',
+          'relative w-full bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0]',
+          'max-h-[92vh] flex flex-col',
           sizeClasses[size],
         ].join(' ')}
       >

@@ -7,6 +7,7 @@ import { getRoles } from '@/lib/api/roles'
 import { getDepartments } from '@/lib/api/departments'
 import type { Role, Department, RoleLevel } from '@/lib/types'
 import { Search, Briefcase, ChevronRight } from 'lucide-react'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 // ─── Level badge ──────────────────────────────────────────────────────────────
 
@@ -93,6 +94,49 @@ export default function RolesPage() {
     })
   }, [roles, deptFilter, search])
 
+  const columns: ResponsiveColumn<Role>[] = [
+    {
+      key: 'title',
+      header: 'Title',
+      primary: true,
+      cellClassName: 'px-6 py-4 font-medium text-[#0F172A]',
+      headerClassName: 'px-6 py-3.5',
+      render: (role) => role.title,
+    },
+    {
+      key: 'department',
+      header: 'Department',
+      desktopHiddenBelow: 'md',
+      cellClassName: 'px-6 py-4 text-[#475569]',
+      headerClassName: 'px-6 py-3.5',
+      render: (role) => deptMap[role.department_id] ?? role.department?.name ?? '—',
+    },
+    {
+      key: 'level',
+      header: 'Level',
+      cellClassName: 'px-6 py-4',
+      headerClassName: 'px-6 py-3.5',
+      render: (role) => <LevelBadge level={role.level} />,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      cellClassName: 'px-6 py-4',
+      headerClassName: 'px-6 py-3.5',
+      render: (role) => (
+        <Link
+          href={`/settings/organization/roles/${role.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors"
+        >
+          View
+          <ChevronRight size={13} />
+        </Link>
+      ),
+    },
+  ]
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -149,57 +193,13 @@ export default function RolesPage() {
       </p>
 
       {/* Table */}
-      {filtered.length === 0 ? (
-        <EmptyState filtered={search !== '' || deptFilter !== 'all'} />
-      ) : (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                  Title
-                </th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider hidden sm:table-cell">
-                  Department
-                </th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                  Level
-                </th>
-                <th className="text-right px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F1F5F9]">
-              {filtered.map((role) => (
-                <tr
-                  key={role.id}
-                  className="hover:bg-[#F8FAFC] transition-colors duration-100 cursor-pointer"
-                  onClick={() => window.location.href = `/settings/organization/roles/${role.id}`}
-                >
-                  <td className="px-6 py-4 font-medium text-[#0F172A]">{role.title}</td>
-                  <td className="px-6 py-4 text-[#475569] hidden sm:table-cell">
-                    {deptMap[role.department_id] ?? role.department?.name ?? '—'}
-                  </td>
-                  <td className="px-6 py-4">
-                    <LevelBadge level={role.level} />
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <Link
-                      href={`/settings/organization/roles/${role.id}`}
-                      onClick={(e) => e.stopPropagation()}
-                      className="inline-flex items-center gap-1 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors"
-                    >
-                      View
-                      <ChevronRight size={13} />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <ResponsiveTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(role) => role.id}
+        onRowClick={(role) => { window.location.href = `/settings/organization/roles/${role.id}` }}
+        emptyState={<EmptyState filtered={search !== '' || deptFilter !== 'all'} />}
+      />
     </div>
   )
 }

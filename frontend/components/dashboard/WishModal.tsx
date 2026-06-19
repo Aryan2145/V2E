@@ -83,14 +83,14 @@ export default function WishModal({ open, onClose, recipient, eventType }: WishM
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-6">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal */}
-      <div className="relative bg-white rounded-[16px] shadow-xl w-full max-w-md border border-[#E2E8F0] overflow-hidden">
+      <div className="relative bg-white rounded-t-[16px] sm:rounded-[16px] shadow-xl w-full max-w-md border border-[#E2E8F0] overflow-hidden max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0] shrink-0">
           <h2 className="text-[16px] font-semibold text-[#0F172A]">Send a wish</h2>
           <button
             onClick={onClose}
@@ -100,7 +100,7 @@ export default function WishModal({ open, onClose, recipient, eventType }: WishM
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 overflow-y-auto">
           {/* Recipient */}
           <div className="flex items-center gap-3">
             <div
@@ -123,7 +123,7 @@ export default function WishModal({ open, onClose, recipient, eventType }: WishM
               rows={4}
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2.5 text-sm text-[#0F172A] placeholder-[#94A3B8] resize-none focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2.5 text-base sm:text-sm text-[#0F172A] placeholder-[#94A3B8] resize-none focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
             />
           </div>
 
@@ -131,17 +131,17 @@ export default function WishModal({ open, onClose, recipient, eventType }: WishM
         </div>
 
         {/* Footer */}
-        <div className="px-5 pb-5 flex items-center justify-end gap-3">
+        <div className="px-5 pb-5 pt-1 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2 sm:gap-3 shrink-0">
           <button
             onClick={onClose}
-            className="px-4 py-2 text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+            className="w-full sm:w-auto px-4 py-2 text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSend}
             disabled={sending || !message.trim() || sent}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-semibold bg-[#2563EB] text-white rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 text-sm font-semibold bg-[#2563EB] text-white rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
           >
             {sent ? (
               'Sent!'

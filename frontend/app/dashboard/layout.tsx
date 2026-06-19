@@ -16,7 +16,7 @@ export default function DashboardRootLayout({
 
   return (
     <MainLayout>
-      <div className={`px-4 sm:px-6 lg:px-8 py-6 lg:py-8 ${hasClockBar ? 'pb-28' : ''}`}>
+      <div className={`px-4 sm:px-6 lg:px-8 py-6 lg:py-8 ${hasClockBar ? 'pb-44 sm:pb-28' : ''}`}>
         {children}
       </div>
       <TimeTravelBar />

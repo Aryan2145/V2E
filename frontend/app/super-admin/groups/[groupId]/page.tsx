@@ -7,7 +7,15 @@ import { getGroup, addOrgToGroup, removeOrgFromGroup } from '@/lib/api/groups'
 import { getOrganizations } from '@/lib/api/organizations'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
+import ResponsiveTable from '@/components/ui/ResponsiveTable'
 import type { OrganizationGroup, Organization } from '@/lib/types'
+
+interface GroupUser {
+  user_id: string
+  name: string
+  email: string
+  orgs: { id: string; name: string }[]
+}
 
 export default function GroupDetailPage() {
   const { groupId } = useParams<{ groupId: string }>()
@@ -204,7 +212,7 @@ export default function GroupDetailPage() {
 
 function GroupUsersTable({ groupId }: { groupId: string }) {
   const router = useRouter()
-  const [users, setUsers] = useState<any[]>([])
+  const [users, setUsers] = useState<GroupUser[]>([])
   const [isLoading, setIsLoading] = useState(true)
 
   useEffect(() => {
@@ -218,50 +226,44 @@ function GroupUsersTable({ groupId }: { groupId: string }) {
     return () => { cancelled = true }
   }, [groupId])
 
-  if (isLoading) {
-    return (
-      <div className="flex flex-col gap-2">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-10 rounded-[8px] bg-[#F1F5F9] animate-pulse" />
-        ))}
-      </div>
-    )
-  }
-
-  if (users.length === 0) {
-    return <p className="text-sm text-[#94A3B8] text-center py-4">No users yet.</p>
-  }
-
   return (
-    <table className="w-full text-sm">
-      <thead>
-        <tr className="border-b border-[#E2E8F0]">
-          {['Name', 'Email', 'Member of'].map((col) => (
-            <th key={col} className="py-2 pr-4 text-left text-xs font-semibold text-[#475569] uppercase tracking-wider">{col}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {users.map((u) => (
-          <tr key={u.user_id} className="border-b border-[#E2E8F0] last:border-0">
-            <td className="py-3 pr-4 font-medium text-[#0F172A]">{u.name}</td>
-            <td className="py-3 pr-4 text-[#475569]">{u.email}</td>
-            <td className="py-3 pr-4">
-              <div className="flex flex-wrap gap-1">
-                {u.orgs.map((org: { id: string; name: string }) => (
-                  <button
-                    key={org.id}
-                    onClick={() => router.push(`/super-admin/organizations/${org.id}`)}
-                    className="inline-flex items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5 hover:bg-[#BAE6FD] transition-colors"
-                  >
-                    {org.name}
-                  </button>
-                ))}
-              </div>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ResponsiveTable<GroupUser>
+      className="border-0 shadow-none rounded-none -mx-6 -mb-6 md:mx-0 md:mb-0"
+      loading={isLoading}
+      skeletonRows={3}
+      columns={[
+        {
+          key: 'name',
+          header: 'Name',
+          primary: true,
+          render: (u) => <span className="font-medium text-[#0F172A]">{u.name}</span>,
+        },
+        {
+          key: 'email',
+          header: 'Email',
+          render: (u) => <span className="text-[#475569]">{u.email}</span>,
+        },
+        {
+          key: 'member_of',
+          header: 'Member of',
+          render: (u) => (
+            <div className="flex flex-wrap gap-1 md:justify-start justify-end">
+              {u.orgs.map((org) => (
+                <button
+                  key={org.id}
+                  onClick={() => router.push(`/super-admin/organizations/${org.id}`)}
+                  className="inline-flex items-center rounded-[999px] bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD] text-[11px] font-medium px-2 py-0.5 hover:bg-[#BAE6FD] transition-colors"
+                >
+                  {org.name}
+                </button>
+              ))}
+            </div>
+          ),
+        },
+      ]}
+      rows={users}
+      rowKey={(u) => u.user_id}
+      emptyState={<p className="text-sm text-[#94A3B8] text-center py-4">No users yet.</p>}
+    />
   )
 }

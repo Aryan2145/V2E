@@ -105,10 +105,10 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <div className="relative w-full max-w-2xl bg-white rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[90vh] flex flex-col">
+      <div className="relative w-full max-w-2xl bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0] shrink-0">
           <h2 className="text-[22px] font-semibold text-[#0F172A]">Edit Task</h2>
@@ -130,7 +130,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
+              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
             />
           </div>
 
@@ -168,7 +168,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
                   onChange={(e) => setDeadlineDate(e.target.value)}
                   min={todayStr}
                   max="2100-12-31"
-                  className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
+                  className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-base sm:text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
                 />
               </div>
               {deadlineDate && (
@@ -178,7 +178,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
                     type="time"
                     value={deadlineTime}
                     onChange={(e) => setDeadlineTime(e.target.value)}
-                    className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
+                    className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-base sm:text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
                   />
                 </div>
               )}
@@ -193,7 +193,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={3}
-              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white resize-none"
+              className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white resize-none"
             />
           </div>
 
@@ -201,21 +201,21 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
-              <select value={priorityId} onChange={(e) => setPriorityId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
+              <select value={priorityId} onChange={(e) => setPriorityId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
                 <option value="">No priority</option>
                 {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Category</label>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
                 <option value="">No category</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Status</label>
-              <select value={statusId} onChange={(e) => setStatusId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
+              <select value={statusId} onChange={(e) => setStatusId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
                 {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
               </select>
             </div>
@@ -237,15 +237,15 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
         </form>
 
         {/* Footer */}
-        <div className="shrink-0 flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
-          <button type="button" onClick={onClose} className="px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors">
+        <div className="shrink-0 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
+          <button type="button" onClick={onClose} className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors">
             Cancel
           </button>
           <button
             type="button"
             onClick={handleSubmit}
             disabled={submitting}
-            className="px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
           >
             {submitting ? 'Saving...' : 'Save Changes'}
           </button>

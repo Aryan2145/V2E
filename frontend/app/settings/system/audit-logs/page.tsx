@@ -1,10 +1,11 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ScrollText, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { auditApi, type AuditFilters } from '@/lib/api/audit'
 import type { AuditEntry } from '@/lib/types/goals'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 const selectClass =
   'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
@@ -59,6 +60,90 @@ export default function AuditLogsPage() {
     return () => clearTimeout(t)
   }, [load, search])
 
+  const columns = useMemo<ResponsiveColumn<AuditEntry>[]>(() => {
+    const renderChanges = (e: AuditEntry) => {
+      const hasChanges = e.changes && Object.keys(e.changes).length > 0
+      if (!hasChanges || expanded !== e.id) return null
+      return (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {Object.entries(e.changes!).map(([field, ch]) => (
+            <div key={field} className="text-sm flex items-center gap-2 flex-wrap">
+              <span className="font-medium text-[#374151] capitalize">{field.replace(/_/g, ' ')}:</span>
+              <span className="text-[#DC2626] line-through">{String(ch.before ?? '—')}</span>
+              <span className="text-[#94A3B8]">→</span>
+              <span className="text-[#16A34A]">{String(ch.after ?? '—')}</span>
+            </div>
+          ))}
+        </div>
+      )
+    }
+    return [
+      {
+        key: 'expand',
+        header: '',
+        headerClassName: 'w-8 px-2',
+        cellClassName: 'w-8 px-2 text-[#CBD5E1] align-top',
+        hideOnMobile: true,
+        render: (e) => {
+          const hasChanges = e.changes && Object.keys(e.changes).length > 0
+          if (!hasChanges) return null
+          return expanded === e.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />
+        },
+      },
+      {
+        key: 'when',
+        header: 'When',
+        primary: true,
+        cellClassName: 'align-top',
+        render: (e) => (
+          <div>
+            <span className="text-sm text-[#475569] whitespace-nowrap">{fmt(e.created_at)}</span>
+            {renderChanges(e)}
+          </div>
+        ),
+      },
+      {
+        key: 'actor',
+        header: 'Actor',
+        cellClassName: 'align-top',
+        render: (e) => <span className="text-sm text-[#0F172A]">{e.actor?.name ?? '—'}</span>,
+      },
+      {
+        key: 'action',
+        header: 'Action',
+        cellClassName: 'align-top',
+        render: (e) => {
+          const am = ACTION_META[e.action] ?? { label: e.action, bg: '#F1F5F9', text: '#475569' }
+          return (
+            <span
+              className="text-[12px] font-medium rounded-full px-2.5 py-0.5"
+              style={{ backgroundColor: am.bg, color: am.text }}
+            >
+              {am.label}
+            </span>
+          )
+        },
+      },
+      {
+        key: 'module',
+        header: 'Module',
+        cellClassName: 'align-top capitalize',
+        render: (e) => <span className="text-sm text-[#475569]">{e.resource.replace('_', ' ')}</span>,
+      },
+      {
+        key: 'entity',
+        header: 'Entity',
+        cellClassName: 'align-top',
+        render: (e) => <span className="text-sm text-[#0F172A]">{e.entity_label ?? e.entity_id}</span>,
+      },
+    ]
+  }, [expanded])
+
+  const toggleRow = useCallback((e: AuditEntry) => {
+    const hasChanges = e.changes && Object.keys(e.changes).length > 0
+    if (hasChanges) setExpanded((cur) => (cur === e.id ? null : e.id))
+  }, [])
+
   if (denied)
     return (
       <div className="py-16 text-center">
@@ -106,76 +191,18 @@ export default function AuditLogsPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-        {loading ? (
-          <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
-        ) : items.length === 0 ? (
-          <div className="p-10 text-center text-sm text-[#475569]">No audit entries.</div>
-        ) : (
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <th className="w-8 px-2 py-3" />
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">When</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Actor</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Action</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3 hidden sm:table-cell">Module</th>
-                <th className="text-left text-xs font-semibold text-[#475569] uppercase tracking-wider px-4 py-3">Entity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((e) => {
-                const am = ACTION_META[e.action] ?? { label: e.action, bg: '#F1F5F9', text: '#475569' }
-                const hasChanges = e.changes && Object.keys(e.changes).length > 0
-                const open = expanded === e.id
-                return (
-                  <Fragment key={e.id}>
-                    <tr
-                      className={`border-b border-[#F1F5F9] ${hasChanges ? 'cursor-pointer hover:bg-[#F8FAFC]' : ''}`}
-                      onClick={() => hasChanges && setExpanded(open ? null : e.id)}
-                    >
-                      <td className="px-2 py-3 text-[#CBD5E1]">
-                        {hasChanges ? open ? <ChevronDown size={15} /> : <ChevronRight size={15} /> : null}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-[#475569] whitespace-nowrap">{fmt(e.created_at)}</td>
-                      <td className="px-4 py-3 text-sm text-[#0F172A]">{e.actor?.name ?? '—'}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className="text-[12px] font-medium rounded-full px-2.5 py-0.5"
-                          style={{ backgroundColor: am.bg, color: am.text }}
-                        >
-                          {am.label}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-[#475569] hidden sm:table-cell capitalize">
-                        {e.resource.replace('_', ' ')}
-                      </td>
-                      <td className="px-4 py-3 text-sm text-[#0F172A]">{e.entity_label ?? e.entity_id}</td>
-                    </tr>
-                    {open && hasChanges && (
-                      <tr className="border-b border-[#F1F5F9] bg-[#F8FAFC]">
-                        <td />
-                        <td colSpan={5} className="px-4 py-3">
-                          <div className="flex flex-col gap-1.5">
-                            {Object.entries(e.changes!).map(([field, ch]) => (
-                              <div key={field} className="text-sm flex items-center gap-2 flex-wrap">
-                                <span className="font-medium text-[#374151] capitalize">{field.replace(/_/g, ' ')}:</span>
-                                <span className="text-[#DC2626] line-through">{String(ch.before ?? '—')}</span>
-                                <span className="text-[#94A3B8]">→</span>
-                                <span className="text-[#16A34A]">{String(ch.after ?? '—')}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                )
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <ResponsiveTable
+        columns={columns}
+        rows={items}
+        rowKey={(e) => e.id}
+        loading={loading}
+        onRowClick={toggleRow}
+        emptyState={
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
+            <div className="p-10 text-center text-sm text-[#475569]">No audit entries.</div>
+          </div>
+        }
+      />
     </div>
   )
 }

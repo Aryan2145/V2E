@@ -16,6 +16,7 @@ import {
 import { getEmployees } from '@/lib/api/employees'
 import type { CompanyPolicy, CompanyPolicyItem, CompanyPolicyAssignment, PolicyContentType, PolicyStatus } from '@/lib/types/company-policy'
 import type { EmployeeProfile } from '@/lib/types'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,40 @@ function TypeBadge({ type }: { type: PolicyContentType }) {
     </span>
   )
 }
+
+const assignmentColumns: ResponsiveColumn<CompanyPolicyAssignment>[] = [
+  {
+    key: 'employee',
+    header: 'Employee',
+    primary: true,
+    render: (a) => (
+      <>
+        <p className="font-medium text-[#0F172A]">{a.employee_profile?.user.name ?? '—'}</p>
+        <p className="text-xs text-[#64748B]">{a.employee_profile?.user.email ?? ''}</p>
+      </>
+    ),
+  },
+  {
+    key: 'role',
+    header: 'Role',
+    render: (a) => <span className="text-[#475569]">{a.employee_profile?.role?.title ?? '—'}</span>,
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    render: (a) => {
+      const cfg = ASSIGN_STATUS[a.status] ?? ASSIGN_STATUS.not_started
+      return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cfg.bg} ${cfg.text}`}>{cfg.label}</span>
+    },
+  },
+  {
+    key: 'assigned_on',
+    header: 'Assigned On',
+    render: (a) => (
+      <span className="text-[#475569] text-xs">{new Date(a.assigned_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+    ),
+  },
+]
 
 // ─── Item Modal ───────────────────────────────────────────────────────────────
 
@@ -480,35 +515,11 @@ export default function ManagePolicyPage() {
               </p>
             </div>
           ) : (
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                    {['Employee', 'Role', 'Status', 'Assigned On'].map((h) => (
-                      <th key={h} className="text-left px-4 py-3 text-xs font-semibold text-[#475569] uppercase tracking-wider">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#F1F5F9]">
-                  {assignments.map((a) => {
-                    const cfg = ASSIGN_STATUS[a.status] ?? ASSIGN_STATUS.not_started
-                    return (
-                      <tr key={a.id}>
-                        <td className="px-4 py-3">
-                          <p className="font-medium text-[#0F172A]">{a.employee_profile?.user.name ?? '—'}</p>
-                          <p className="text-xs text-[#64748B]">{a.employee_profile?.user.email ?? ''}</p>
-                        </td>
-                        <td className="px-4 py-3 text-[#475569]">{a.employee_profile?.role?.title ?? '—'}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cfg.bg} ${cfg.text}`}>{cfg.label}</span>
-                        </td>
-                        <td className="px-4 py-3 text-[#475569] text-xs">{new Date(a.assigned_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <ResponsiveTable
+              columns={assignmentColumns}
+              rows={assignments}
+              rowKey={(a) => a.id}
+            />
           )}
         </div>
       )}

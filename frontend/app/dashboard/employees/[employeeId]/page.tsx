@@ -12,6 +12,41 @@ import Button from '@/components/ui/Button'
 import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissionsPanel'
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
 import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X } from 'lucide-react'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+
+type Kpi = NonNullable<Role['kpi']>[number]
+
+const kpiColumns: ResponsiveColumn<Kpi>[] = [
+  {
+    key: 'title',
+    header: 'Title',
+    primary: true,
+    cellClassName: '!px-0 !py-3 !pr-4 font-medium text-[#0F172A]',
+    headerClassName: '!px-0 !py-2.5 !pr-4',
+    render: (kpi) => kpi.title,
+  },
+  {
+    key: 'metric',
+    header: 'Metric',
+    cellClassName: '!px-0 !py-3 !pr-4 text-[#475569]',
+    headerClassName: '!px-0 !py-2.5 !pr-4',
+    render: (kpi) => kpi.metric,
+  },
+  {
+    key: 'target',
+    header: 'Target',
+    cellClassName: '!px-0 !py-3 !pr-4 text-[#475569]',
+    headerClassName: '!px-0 !py-2.5 !pr-4',
+    render: (kpi) => kpi.target,
+  },
+  {
+    key: 'unit',
+    header: 'Unit',
+    cellClassName: '!px-0 !py-3 text-[#475569]',
+    headerClassName: '!px-0 !py-2.5',
+    render: (kpi) => kpi.unit,
+  },
+]
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -483,27 +518,12 @@ export default function EmployeeDetailPage() {
 
       {employee.role?.kpi && employee.role.kpi.length > 0 && (
         <Section title="Key Performance Indicators">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E8F0]">
-                  {['Title', 'Metric', 'Target', 'Unit'].map((h) => (
-                    <th key={h} className="text-left py-2.5 pr-4 text-xs font-semibold text-[#475569] uppercase tracking-wider">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#F1F5F9]">
-                {employee.role.kpi.map((kpi, i) => (
-                  <tr key={i}>
-                    <td className="py-3 pr-4 font-medium text-[#0F172A]">{kpi.title}</td>
-                    <td className="py-3 pr-4 text-[#475569]">{kpi.metric}</td>
-                    <td className="py-3 pr-4 text-[#475569]">{kpi.target}</td>
-                    <td className="py-3 text-[#475569]">{kpi.unit}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveTable
+            className="!border-0 !rounded-none !shadow-none !bg-transparent !overflow-visible"
+            columns={kpiColumns}
+            rows={employee.role.kpi}
+            rowKey={(_kpi, i) => String(i)}
+          />
         </Section>
       )}
 

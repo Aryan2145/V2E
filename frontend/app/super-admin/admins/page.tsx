@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import apiClient from '@/lib/api/client'
 import { ShieldCheck, Plus, Trash2, PowerOff, Power, X, Eye, EyeOff, Loader2 } from 'lucide-react'
+import ResponsiveTable from '@/components/ui/ResponsiveTable'
 
 interface AdminUser {
   id: string
@@ -237,78 +238,94 @@ export default function AdminsPage() {
             <p className="text-sm text-[#94A3B8]">No admin users found.</p>
           </div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
-              <tr>
-                {['Name', 'Email', 'Status', 'Added', 'Actions'].map((h) => (
-                  <th key={h} className="px-5 py-3 text-left text-xs font-semibold text-[#475569] whitespace-nowrap">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#E2E8F0]">
-              {admins.map((admin) => {
-                const isSelf = admin.id === currentUserId
-                const busy = actionId === admin.id
-                return (
-                  <tr key={admin.id} className="hover:bg-[#F8FAFC] transition-colors">
-                    <td className="px-5 py-3.5">
-                      <div className="flex items-center gap-2.5">
-                        <div className="w-8 h-8 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] flex items-center justify-center shrink-0">
-                          <span className="text-xs font-semibold text-[#2563EB]">
-                            {admin.name.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                        <div>
-                          <p className="font-medium text-[#0F172A]">{admin.name}</p>
-                          {isSelf && <p className="text-[11px] text-[#94A3B8]">You</p>}
-                        </div>
+          <ResponsiveTable<AdminUser>
+            className="border-0 shadow-none rounded-none"
+            columns={[
+              {
+                key: 'name',
+                header: 'Name',
+                primary: true,
+                render: (admin) => {
+                  const isSelf = admin.id === currentUserId
+                  return (
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-full bg-[#EFF6FF] border border-[#BFDBFE] flex items-center justify-center shrink-0">
+                        <span className="text-xs font-semibold text-[#2563EB]">
+                          {admin.name.charAt(0).toUpperCase()}
+                        </span>
                       </div>
-                    </td>
-                    <td className="px-5 py-3.5 text-[#475569]">{admin.email}</td>
-                    <td className="px-5 py-3.5">
-                      <span className={[
-                        'text-[11px] font-medium px-2.5 py-0.5 rounded-full border',
-                        admin.is_active
-                          ? 'bg-[#DCFCE7] text-[#16A34A] border-[#BBF7D0]'
-                          : 'bg-[#FEE2E2] text-[#DC2626] border-[#FECACA]',
-                      ].join(' ')}>
-                        {admin.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3.5 text-[#94A3B8] text-xs whitespace-nowrap">
-                      {new Date(admin.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                    </td>
-                    <td className="px-5 py-3.5">
-                      {isSelf ? (
-                        <span className="text-xs text-[#CBD5E1]">—</span>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => handleToggle(admin)}
-                            title={admin.is_active ? 'Deactivate' : 'Activate'}
-                            className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] disabled:opacity-40 transition-colors"
-                          >
-                            {busy ? <Loader2 size={14} className="animate-spin" /> : admin.is_active ? <PowerOff size={14} /> : <Power size={14} />}
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => handleRevoke(admin)}
-                            title="Remove admin access"
-                            className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#DC2626] disabled:opacity-40 transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                      <div>
+                        <p className="font-medium text-[#0F172A]">{admin.name}</p>
+                        {isSelf && <p className="text-[11px] text-[#94A3B8]">You</p>}
+                      </div>
+                    </div>
+                  )
+                },
+              },
+              {
+                key: 'email',
+                header: 'Email',
+                render: (admin) => <span className="text-[#475569]">{admin.email}</span>,
+              },
+              {
+                key: 'status',
+                header: 'Status',
+                render: (admin) => (
+                  <span className={[
+                    'text-[11px] font-medium px-2.5 py-0.5 rounded-full border',
+                    admin.is_active
+                      ? 'bg-[#DCFCE7] text-[#16A34A] border-[#BBF7D0]'
+                      : 'bg-[#FEE2E2] text-[#DC2626] border-[#FECACA]',
+                  ].join(' ')}>
+                    {admin.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                ),
+              },
+              {
+                key: 'added',
+                header: 'Added',
+                render: (admin) => (
+                  <span className="text-[#94A3B8] text-xs whitespace-nowrap">
+                    {new Date(admin.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                  </span>
+                ),
+              },
+              {
+                key: 'actions',
+                header: 'Actions',
+                render: (admin) => {
+                  const isSelf = admin.id === currentUserId
+                  const busy = actionId === admin.id
+                  return isSelf ? (
+                    <span className="text-xs text-[#CBD5E1]">—</span>
+                  ) : (
+                    <div className="flex items-center gap-1 md:justify-start justify-end">
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleToggle(admin)}
+                        title={admin.is_active ? 'Deactivate' : 'Activate'}
+                        className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] disabled:opacity-40 transition-colors"
+                      >
+                        {busy ? <Loader2 size={14} className="animate-spin" /> : admin.is_active ? <PowerOff size={14} /> : <Power size={14} />}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => handleRevoke(admin)}
+                        title="Remove admin access"
+                        className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#DC2626] disabled:opacity-40 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  )
+                },
+              },
+            ]}
+            rows={admins}
+            rowKey={(admin) => admin.id}
+          />
         )}
       </div>
 

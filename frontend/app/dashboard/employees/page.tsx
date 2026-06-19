@@ -10,6 +10,7 @@ import type { EmployeeProfile, Department, Role, EmployeeStatus } from '@/lib/ty
 import { Search, Users, ChevronRight, UserPlus, Upload } from 'lucide-react'
 import AddEmployeeModal from '@/components/employees/AddEmployeeModal'
 import ImportEmployeesModal from '@/components/employees/ImportEmployeesModal'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,69 @@ export default function EmployeesPage() {
 
   const isFiltered = search !== '' || deptFilter !== 'all'
 
+  const columns: ResponsiveColumn<EmployeeProfile>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      primary: true,
+      cellClassName: 'px-6 py-4',
+      headerClassName: 'px-6 py-3.5',
+      render: (emp) => {
+        const name = emp.user?.name ?? 'Unknown'
+        const email = emp.user?.email ?? ''
+        return (
+          <div className="flex items-center gap-3">
+            <Avatar name={name} />
+            <div className="min-w-0">
+              <p className="font-medium text-[#0F172A] truncate">{name}</p>
+              <p className="text-xs text-[#475569] truncate">{email}</p>
+            </div>
+          </div>
+        )
+      },
+    },
+    {
+      key: 'role',
+      header: 'Role',
+      desktopHiddenBelow: 'md',
+      cellClassName: 'px-6 py-4 text-[#475569]',
+      headerClassName: 'px-6 py-3.5',
+      render: (emp) => emp.role?.title ?? '—',
+    },
+    {
+      key: 'department',
+      header: 'Department',
+      desktopHiddenBelow: 'lg',
+      cellClassName: 'px-6 py-4 text-[#475569]',
+      headerClassName: 'px-6 py-3.5',
+      render: (emp) => emp.department?.name ?? '—',
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      cellClassName: 'px-6 py-4',
+      headerClassName: 'px-6 py-3.5',
+      render: (emp) => <StatusBadge status={emp.status} />,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      cellClassName: 'px-6 py-4',
+      headerClassName: 'px-6 py-3.5',
+      render: (emp) => (
+        <Link
+          href={`/settings/organization/employees/${emp.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="inline-flex items-center gap-1 min-h-[40px] sm:min-h-0 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        >
+          View
+          <ChevronRight size={13} />
+        </Link>
+      ),
+    },
+  ]
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -216,75 +280,13 @@ export default function EmployeesPage() {
       </p>
 
       {/* Table */}
-      {filtered.length === 0 ? (
-        <EmptyState filtered={isFiltered} />
-      ) : (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-[#E2E8F0] bg-[#F8FAFC]">
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                  Name
-                </th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider hidden md:table-cell">
-                  Role
-                </th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider hidden lg:table-cell">
-                  Department
-                </th>
-                <th className="text-left px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="text-right px-6 py-3.5 text-xs font-semibold text-[#475569] uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-[#F1F5F9]">
-              {filtered.map((emp) => {
-                const name = emp.user?.name ?? 'Unknown'
-                const email = emp.user?.email ?? ''
-                return (
-                  <tr
-                    key={emp.id}
-                    className="hover:bg-[#F8FAFC] transition-colors duration-100 cursor-pointer"
-                    onClick={() => window.location.href = `/settings/organization/employees/${emp.id}`}
-                  >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <Avatar name={name} />
-                        <div className="min-w-0">
-                          <p className="font-medium text-[#0F172A] truncate">{name}</p>
-                          <p className="text-xs text-[#475569] truncate">{email}</p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-[#475569] hidden md:table-cell">
-                      {emp.role?.title ?? '—'}
-                    </td>
-                    <td className="px-6 py-4 text-[#475569] hidden lg:table-cell">
-                      {emp.department?.name ?? '—'}
-                    </td>
-                    <td className="px-6 py-4">
-                      <StatusBadge status={emp.status} />
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <Link
-                        href={`/settings/organization/employees/${emp.id}`}
-                        onClick={(e) => e.stopPropagation()}
-                        className="inline-flex items-center gap-1 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors"
-                      >
-                        View
-                        <ChevronRight size={13} />
-                      </Link>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <ResponsiveTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(emp) => emp.id}
+        onRowClick={(emp) => { window.location.href = `/settings/organization/employees/${emp.id}` }}
+        emptyState={<EmptyState filtered={isFiltered} />}
+      />
 
       {/* Add / Import modals */}
       {showAdd && (

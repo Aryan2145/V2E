@@ -9,6 +9,10 @@ import {
   PieChart, Pie, Cell,
 } from 'recharts'
 import { Download, Users, Building2, Tag, CheckCircle2, RotateCcw, BarChart2, AlertTriangle } from 'lucide-react'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+
+// Flatten the ResponsiveTable card so it blends into the section card it lives in.
+const FLAT_TABLE = 'border-0 shadow-none rounded-none'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -133,44 +137,68 @@ function UserPerformanceSection({ data }: { data: TaskReportData }) {
             </ResponsiveContainer>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E8F0]">
-                  {['Name', 'Email', 'Total', 'Completed', 'Overdue', 'Rate'].map((h) => (
-                    <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((u) => {
-                  const rate = u.total > 0 ? Math.round((u.completed / u.total) * 100) : 0
-                  return (
-                    <tr key={u.user_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                      <td className="py-2.5 px-3 font-medium text-[#0F172A]">{u.user?.name ?? 'Unknown'}</td>
-                      <td className="py-2.5 px-3 text-[#475569]">{u.user?.email ?? '—'}</td>
-                      <td className="py-2.5 px-3 text-[#0F172A] tabular-nums">{u.total}</td>
-                      <td className="py-2.5 px-3 text-[#16A34A] font-medium tabular-nums">{u.completed}</td>
-                      <td className="py-2.5 px-3 text-[#DC2626] font-medium tabular-nums">{u.overdue}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
-                            <div className="h-full bg-[#16A34A] rounded-full" style={{ width: `${rate}%` }} />
-                          </div>
-                          <span className="text-xs font-semibold text-[#475569] w-8 shrink-0">{rate}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={userPerfColumns}
+            rows={rows}
+            rowKey={(u) => u.user_id}
+          />
         </div>
       )}
     </div>
   )
 }
+
+type UserPerfRow = TaskReportData['user_performance'][number]
+
+const userPerfColumns: ResponsiveColumn<UserPerfRow>[] = [
+  {
+    key: 'name',
+    header: 'Name',
+    primary: true,
+    cellClassName: 'font-medium text-[#0F172A]',
+    render: (u) => u.user?.name ?? 'Unknown',
+  },
+  {
+    key: 'email',
+    header: 'Email',
+    cellClassName: 'text-[#475569]',
+    render: (u) => u.user?.email ?? '—',
+  },
+  {
+    key: 'total',
+    header: 'Total',
+    cellClassName: 'text-[#0F172A] tabular-nums',
+    render: (u) => u.total,
+  },
+  {
+    key: 'completed',
+    header: 'Completed',
+    cellClassName: 'text-[#16A34A] font-medium tabular-nums',
+    render: (u) => u.completed,
+  },
+  {
+    key: 'overdue',
+    header: 'Overdue',
+    cellClassName: 'text-[#DC2626] font-medium tabular-nums',
+    render: (u) => u.overdue,
+  },
+  {
+    key: 'rate',
+    header: 'Rate',
+    render: (u) => {
+      const rate = u.total > 0 ? Math.round((u.completed / u.total) * 100) : 0
+      return (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+            <div className="h-full bg-[#16A34A] rounded-full" style={{ width: `${rate}%` }} />
+          </div>
+          <span className="text-xs font-semibold text-[#475569] w-8 shrink-0">{rate}%</span>
+        </div>
+      )
+    },
+  },
+]
 
 // ─── Department Performance ───────────────────────────────────────────────────
 
@@ -220,43 +248,62 @@ function DeptPerformanceSection({ data }: { data: TaskReportData }) {
             </ResponsiveContainer>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E8F0]">
-                  {['Department', 'Total', 'Completed', 'Overdue', 'Rate'].map((h) => (
-                    <th key={h} className="text-left py-2.5 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((d) => {
-                  const rate = d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0
-                  return (
-                    <tr key={d.department_id} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                      <td className="py-2.5 px-3 font-medium text-[#0F172A]">{d.department?.name ?? 'No Department'}</td>
-                      <td className="py-2.5 px-3 text-[#0F172A] tabular-nums">{d.total}</td>
-                      <td className="py-2.5 px-3 text-[#16A34A] font-medium tabular-nums">{d.completed}</td>
-                      <td className="py-2.5 px-3 text-[#DC2626] font-medium tabular-nums">{d.overdue}</td>
-                      <td className="py-2.5 px-3">
-                        <div className="flex items-center gap-2">
-                          <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
-                            <div className="h-full bg-[#16A34A] rounded-full" style={{ width: `${rate}%` }} />
-                          </div>
-                          <span className="text-xs font-semibold text-[#475569] w-8 shrink-0">{rate}%</span>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={deptPerfColumns}
+            rows={rows}
+            rowKey={(d) => d.department_id ?? 'none'}
+          />
         </div>
       )}
     </div>
   )
 }
+
+type DeptPerfRow = TaskReportData['department_performance'][number]
+
+const deptPerfColumns: ResponsiveColumn<DeptPerfRow>[] = [
+  {
+    key: 'department',
+    header: 'Department',
+    primary: true,
+    cellClassName: 'font-medium text-[#0F172A]',
+    render: (d) => d.department?.name ?? 'No Department',
+  },
+  {
+    key: 'total',
+    header: 'Total',
+    cellClassName: 'text-[#0F172A] tabular-nums',
+    render: (d) => d.total,
+  },
+  {
+    key: 'completed',
+    header: 'Completed',
+    cellClassName: 'text-[#16A34A] font-medium tabular-nums',
+    render: (d) => d.completed,
+  },
+  {
+    key: 'overdue',
+    header: 'Overdue',
+    cellClassName: 'text-[#DC2626] font-medium tabular-nums',
+    render: (d) => d.overdue,
+  },
+  {
+    key: 'rate',
+    header: 'Rate',
+    render: (d) => {
+      const rate = d.total > 0 ? Math.round((d.completed / d.total) * 100) : 0
+      return (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-1.5 bg-[#F1F5F9] rounded-full overflow-hidden">
+            <div className="h-full bg-[#16A34A] rounded-full" style={{ width: `${rate}%` }} />
+          </div>
+          <span className="text-xs font-semibold text-[#475569] w-8 shrink-0">{rate}%</span>
+        </div>
+      )
+    },
+  },
+]
 
 // ─── Breakdown Pie ─────────────────────────────────────────────────────────────
 
@@ -306,37 +353,40 @@ function BreakdownSection({
             </ResponsiveContainer>
           </div>
 
-          <div className="flex-1 min-w-0 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[#E2E8F0]">
-                  {['Label', 'Total', 'Completed', 'Overdue', 'Rate', 'Share'].map((h) => (
-                    <th key={h} className="text-left py-2 px-3 text-xs font-semibold text-[#64748B] uppercase tracking-wider whitespace-nowrap">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => {
-                  const rate = r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0
-                  const share = grandTotal > 0 ? Math.round((r.total / grandTotal) * 100) : 0
-                  return (
-                    <tr key={r.label} className="border-b border-[#F1F5F9] hover:bg-[#F8FAFC]">
-                      <td className="py-2 px-3">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
-                          <span className="font-medium text-[#0F172A] truncate">{r.label}</span>
-                        </div>
-                      </td>
-                      <td className="py-2 px-3 text-[#0F172A] tabular-nums">{r.total}</td>
-                      <td className="py-2 px-3 text-[#16A34A] font-medium tabular-nums">{r.completed}</td>
-                      <td className="py-2 px-3 text-[#DC2626] font-medium tabular-nums">{r.overdue}</td>
-                      <td className="py-2 px-3 text-[#475569] tabular-nums">{rate}%</td>
-                      <td className="py-2 px-3 text-[#475569] tabular-nums">{share}%</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+          <div className="flex-1 min-w-0">
+            <ResponsiveTable
+              className={FLAT_TABLE}
+              columns={[
+                {
+                  key: 'label',
+                  header: 'Label',
+                  primary: true,
+                  render: (r) => (
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: r.color }} />
+                      <span className="font-medium text-[#0F172A] truncate">{r.label}</span>
+                    </div>
+                  ),
+                },
+                { key: 'total', header: 'Total', cellClassName: 'text-[#0F172A] tabular-nums', render: (r) => r.total },
+                { key: 'completed', header: 'Completed', cellClassName: 'text-[#16A34A] font-medium tabular-nums', render: (r) => r.completed },
+                { key: 'overdue', header: 'Overdue', cellClassName: 'text-[#DC2626] font-medium tabular-nums', render: (r) => r.overdue },
+                {
+                  key: 'rate',
+                  header: 'Rate',
+                  cellClassName: 'text-[#475569] tabular-nums',
+                  render: (r) => `${r.total > 0 ? Math.round((r.completed / r.total) * 100) : 0}%`,
+                },
+                {
+                  key: 'share',
+                  header: 'Share',
+                  cellClassName: 'text-[#475569] tabular-nums',
+                  render: (r) => `${grandTotal > 0 ? Math.round((r.total / grandTotal) * 100) : 0}%`,
+                },
+              ]}
+              rows={rows}
+              rowKey={(r) => r.label}
+            />
           </div>
         </div>
       )}

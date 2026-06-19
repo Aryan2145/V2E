@@ -157,7 +157,7 @@ export default function TopNav() {
           aria-label="Settings"
           title="Settings"
           className={[
-            'shrink-0 w-9 h-9 flex items-center justify-center rounded-[8px] transition-colors',
+            'shrink-0 w-10 h-10 flex items-center justify-center rounded-[8px] transition-colors',
             isActive('/settings')
               ? 'text-[#2563EB] bg-[#EFF6FF]'
               : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]',

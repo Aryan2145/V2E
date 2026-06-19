@@ -97,7 +97,7 @@ export default function TimeTravelBar() {
   })
 
   const inputCls = 'px-2.5 py-1.5 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none'
-  const arrowCls = 'w-8 h-8 flex items-center justify-center rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] hover:bg-[#FFFBEB] transition-colors'
+  const arrowCls = 'w-11 h-11 sm:w-8 sm:h-8 flex items-center justify-center rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] hover:bg-[#FFFBEB] transition-colors'
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 border-t-2 border-[#D97706] bg-[#FEF3C7] shadow-[0_-2px_12px_rgba(0,0,0,0.10)]">
@@ -129,8 +129,8 @@ export default function TimeTravelBar() {
             <ChevronRight size={16} />
           </button>
           <div className="flex items-center gap-1 ml-1">
-            <button type="button" onClick={() => nudgeHours(-1)} className="px-2 h-8 rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] text-xs font-semibold hover:bg-[#FFFBEB]">−1h</button>
-            <button type="button" onClick={() => nudgeHours(1)} className="px-2 h-8 rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] text-xs font-semibold hover:bg-[#FFFBEB]">+1h</button>
+            <button type="button" onClick={() => nudgeHours(-1)} className="px-2 h-11 sm:h-8 rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] text-xs font-semibold hover:bg-[#FFFBEB]">−1h</button>
+            <button type="button" onClick={() => nudgeHours(1)} className="px-2 h-11 sm:h-8 rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] text-xs font-semibold hover:bg-[#FFFBEB]">+1h</button>
           </div>
         </div>
 
