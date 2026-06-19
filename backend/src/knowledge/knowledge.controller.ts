@@ -11,17 +11,19 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { KnowledgeService } from './knowledge.service';
 import { CreateKnowledgePostDto } from './dto/create-knowledge-post.dto';
 import { CreateKnowledgeCommentDto } from './dto/create-comment.dto';
 
 @ApiTags('knowledge')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/knowledge')
 export class KnowledgeController {
   constructor(private readonly service: KnowledgeService) {}
@@ -67,7 +69,7 @@ export class KnowledgeController {
     @Request() req: any,
     @Body() dto: Partial<CreateKnowledgePostDto>,
   ) {
-    return this.service.update(postId, orgId, req.user.id, req.user.role, dto);
+    return this.service.update(postId, orgId, req.user.id, !!req.user.is_admin, dto);
   }
 
   @Delete(':postId')
@@ -77,11 +79,11 @@ export class KnowledgeController {
     @Param('postId') postId: string,
     @Request() req: any,
   ) {
-    return this.service.remove(postId, orgId, req.user.id, req.user.role);
+    return this.service.remove(postId, orgId, req.user.id, !!req.user.is_admin);
   }
 
   @Post(':postId/pin')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.knowledge.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Toggle pin on a knowledge post' })
   togglePin(@Param('orgId') orgId: string, @Param('postId') postId: string) {
     return this.service.togglePin(postId, orgId);
@@ -105,7 +107,7 @@ export class KnowledgeController {
     @Param('commentId') commentId: string,
     @Request() req: any,
   ) {
-    return this.service.deleteComment(commentId, orgId, req.user.id, req.user.role);
+    return this.service.deleteComment(commentId, orgId, req.user.id, !!req.user.is_admin);
   }
 
   @Post(':postId/react')

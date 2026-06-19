@@ -1,4 +1,4 @@
-import { PrismaClient, MemberRole, RoleLevel, EmploymentType, BehaviorType } from '@prisma/client';
+import { PrismaClient, RoleLevel, EmploymentType, BehaviorType } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as bcrypt from 'bcryptjs';
 
@@ -46,7 +46,7 @@ async function main() {
   async function upsertMember(
     name: string,
     email: string,
-    role: MemberRole,
+    isAdmin = false,
   ) {
     let user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
@@ -59,16 +59,16 @@ async function main() {
     });
     if (!existing) {
       await prisma.organizationMember.create({
-        data: { organization_id: org.id, user_id: user.id, role },
+        data: { organization_id: org.id, user_id: user.id, is_admin: isAdmin },
       });
     }
     return user;
   }
 
-  const orgAdminUser = await upsertMember('Raj Mehta', 'admin@acme.com', MemberRole.org_admin);
+  const orgAdminUser = await upsertMember('Raj Mehta', 'admin@acme.com', true);
   console.log('✅ Org Admin created:', orgAdminUser.email);
 
-  const hrManagerUser = await upsertMember('Priya Sharma', 'hr@acme.com', MemberRole.hr_manager);
+  const hrManagerUser = await upsertMember('Priya Sharma', 'hr@acme.com', false);
   console.log('✅ HR Manager created:', hrManagerUser.email);
 
   // Org Identity
@@ -182,19 +182,19 @@ async function main() {
   }
 
   // Employees
-  const ceoUser = await upsertMember('Vikram Singh', 'ceo@acme.com', MemberRole.employee);
+  const ceoUser = await upsertMember('Vikram Singh', 'ceo@acme.com');
   await upsertProfile(ceoUser.id, { organization_id: org.id, user_id: ceoUser.id, role_id: ceoRole.id, department_id: ceoOffice.id, employee_code: 'EMP001', employment_type: EmploymentType.full_time, date_of_joining: new Date('2020-01-01') });
 
-  const hrUser = await upsertMember('Priya Sharma', 'priya@acme.com', MemberRole.employee);
+  const hrUser = await upsertMember('Priya Sharma', 'priya@acme.com');
   await upsertProfile(hrUser.id, { organization_id: org.id, user_id: hrUser.id, role_id: hrHeadRole.id, department_id: hrDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP002', employment_type: EmploymentType.full_time, date_of_joining: new Date('2020-03-15') });
 
-  const salesUser = await upsertMember('Arjun Nair', 'arjun@acme.com', MemberRole.employee);
+  const salesUser = await upsertMember('Arjun Nair', 'arjun@acme.com');
   await upsertProfile(salesUser.id, { organization_id: org.id, user_id: salesUser.id, role_id: salesRole.id, department_id: salesDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP003', employment_type: EmploymentType.full_time, date_of_joining: new Date('2021-06-01') });
 
-  const pmUser = await upsertMember('Meera Iyer', 'meera@acme.com', MemberRole.employee);
+  const pmUser = await upsertMember('Meera Iyer', 'meera@acme.com');
   await upsertProfile(pmUser.id, { organization_id: org.id, user_id: pmUser.id, role_id: productRole.id, department_id: productDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP004', employment_type: EmploymentType.full_time, date_of_joining: new Date('2021-09-10') });
 
-  const devUser = await upsertMember('Rahul Dev', 'rahul@acme.com', MemberRole.employee);
+  const devUser = await upsertMember('Rahul Dev', 'rahul@acme.com');
   await upsertProfile(devUser.id, { organization_id: org.id, user_id: devUser.id, role_id: devRole.id, department_id: techDept.id, reporting_to_user_id: ceoUser.id, employee_code: 'EMP005', employment_type: EmploymentType.full_time, date_of_joining: new Date('2022-02-14') });
 
   // Update dept heads

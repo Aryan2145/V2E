@@ -58,3 +58,39 @@ export async function updateOrganization(
 export async function deactivateOrganization(id: string): Promise<void> {
   await apiClient.delete(`/api/v1/organizations/${id}/deactivate`);
 }
+
+// ─── Module entitlements (vendor ceiling — superadmin only) ────────────────────
+
+export type EntitlementState = 'full' | 'preview' | 'off';
+
+export interface ModuleEntitlement {
+  module_key: string;
+  label: string;
+  state: EntitlementState;
+}
+
+// Member-safe: the entitlement state map for the caller's own org (drives nav/feature gating).
+export async function getMyEntitlements(orgId: string): Promise<Record<string, EntitlementState>> {
+  const { data } = await apiClient.get<ApiResponse<{ entitlements?: Record<string, EntitlementState> }>>(
+    `/api/v1/organizations/${orgId}/summary`
+  );
+  return data.data.entitlements ?? {};
+}
+
+export async function getEntitlements(orgId: string): Promise<{ modules: ModuleEntitlement[] }> {
+  const { data } = await apiClient.get<ApiResponse<{ modules: ModuleEntitlement[] }>>(
+    `/api/v1/organizations/${orgId}/entitlements`
+  );
+  return data.data;
+}
+
+export async function setEntitlements(
+  orgId: string,
+  entries: { module_key: string; state: EntitlementState }[]
+): Promise<{ modules: ModuleEntitlement[] }> {
+  const { data } = await apiClient.put<ApiResponse<{ modules: ModuleEntitlement[] }>>(
+    `/api/v1/organizations/${orgId}/entitlements`,
+    { entries }
+  );
+  return data.data;
+}

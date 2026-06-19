@@ -1,13 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsEmail,
-  IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
-import { MemberRole } from '@prisma/client';
 
 export class CreateUserDto {
   @ApiProperty()
@@ -26,10 +25,10 @@ export class CreateUserDto {
   @MinLength(8)
   password: string;
 
-  @ApiPropertyOptional({ enum: MemberRole })
-  @IsEnum(MemberRole)
+  @ApiPropertyOptional({ description: 'Grant platform-admin rights in the organization' })
+  @IsBoolean()
   @IsOptional()
-  role?: MemberRole;
+  is_admin?: boolean;
 
   @ApiPropertyOptional()
   @IsString()

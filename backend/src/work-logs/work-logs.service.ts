@@ -4,11 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { MemberRole, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ClockService } from '../clock/clock.service';
 import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
+import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import {
   CreateDemandDto,
   CreateReaderGrantDto,
@@ -20,13 +21,11 @@ import {
 
 export interface Actor {
   id: string;
-  role: MemberRole | null;
+  is_admin: boolean;
   isSuperAdmin: boolean;
 }
 
 const LINK = '/dashboard/governance';
-// Roles that administer Work Log access and can read/demand across the whole org.
-const ADMIN_ROLES: (MemberRole | null)[] = ['org_admin', 'hr_manager'];
 
 @Injectable()
 export class WorkLogsService {
@@ -35,10 +34,11 @@ export class WorkLogsService {
     private readonly notifications: NotificationsService,
     private readonly clock: ClockService,
     private readonly visibility: AssigneeVisibilityService,
+    private readonly subjects: SubjectEligibilityService,
   ) {}
 
   private isAdmin(actor: Actor): boolean {
-    return actor.isSuperAdmin || ADMIN_ROLES.includes(actor.role);
+    return actor.isSuperAdmin || actor.is_admin;
   }
 
   // Local-midnight bounds for a calendar day, consistent with the scheduler's
@@ -356,6 +356,9 @@ export class WorkLogsService {
 
   private async assertCanDemand(orgId: string, actor: Actor, assigneeId: string): Promise<void> {
     if (assigneeId === actor.id) throw new BadRequestException('You cannot demand a log from yourself');
+    // Subject eligibility (fail loud): the target must be allowed to be asked for a
+    // work log at all — independent of the hierarchy check below.
+    await this.subjects.assertEligible(orgId, 'work_logs.subject.demandable', assigneeId);
     if (this.isAdmin(actor)) return;
     const allowed = await this.visibility.isSubordinate(orgId, actor.id, assigneeId);
     if (!allowed) throw new ForbiddenException('You can only demand logs from people below you');

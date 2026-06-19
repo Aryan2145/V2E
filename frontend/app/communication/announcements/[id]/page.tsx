@@ -18,7 +18,7 @@ export default function AnnouncementDetailPage() {
   const { id } = useParams<{ id: string }>()
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isHR = !!user?.is_admin
   const [ann, setAnn] = useState<Announcement | null>(null)
   const [readStatus, setReadStatus] = useState<{ total_employees: number; read_count: number; reads: any[] } | null>(null)
   const [loading, setLoading] = useState(true)

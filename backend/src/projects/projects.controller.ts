@@ -4,6 +4,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { ProjectsService } from './projects.service';
+import { principalFromUser } from '../access-rights/permissions.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UpdateProjectStatusDto } from './dto/update-project-status.dto';
@@ -35,12 +36,12 @@ export class ProjectsController {
 
   @Get()
   list(@Param('orgId') orgId: string, @Request() req: any) {
-    return this.service.listProjects(orgId, req.user.id);
+    return this.service.listProjects(orgId, principalFromUser(req.user));
   }
 
   @Get('my')
   listMy(@Param('orgId') orgId: string, @Request() req: any) {
-    return this.service.listMyProjects(orgId, req.user.id);
+    return this.service.listMyProjects(orgId, principalFromUser(req.user));
   }
 
   @Get('managing')

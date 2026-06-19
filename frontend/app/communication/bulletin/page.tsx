@@ -16,8 +16,8 @@ const MODE_LABEL: Record<string, string> = {
 export default function BulletinBoardsPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
-  const isAdmin = user?.role === 'org_admin'
+  const isHR = !!user?.is_admin
+  const isAdmin = !!user?.is_admin
   const [boards, setBoards] = useState<BulletinBoard[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)

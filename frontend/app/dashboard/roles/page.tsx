@@ -175,7 +175,7 @@ export default function RolesPage() {
                 <tr
                   key={role.id}
                   className="hover:bg-[#F8FAFC] transition-colors duration-100 cursor-pointer"
-                  onClick={() => window.location.href = `/dashboard/roles/${role.id}`}
+                  onClick={() => window.location.href = `/settings/organization/roles/${role.id}`}
                 >
                   <td className="px-6 py-4 font-medium text-[#0F172A]">{role.title}</td>
                   <td className="px-6 py-4 text-[#475569] hidden sm:table-cell">
@@ -186,7 +186,7 @@ export default function RolesPage() {
                   </td>
                   <td className="px-6 py-4 text-right">
                     <Link
-                      href={`/dashboard/roles/${role.id}`}
+                      href={`/settings/organization/roles/${role.id}`}
                       onClick={(e) => e.stopPropagation()}
                       className="inline-flex items-center gap-1 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors"
                     >

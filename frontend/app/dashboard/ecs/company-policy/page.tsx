@@ -57,7 +57,7 @@ function PolicyCard({ policy }: { policy: CompanyPolicy }) {
 export default function CompanyPolicyPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isAdminOrHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   const [policies, setPolicies] = useState<CompanyPolicy[]>([])
   const [loading, setLoading] = useState(true)

@@ -12,7 +12,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
@@ -36,14 +36,14 @@ export class DepartmentsController {
   }
 
   @Post()
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Create a new department' })
   create(@Param('orgId') orgId: string, @Body() dto: CreateDepartmentDto) {
     return this.departmentsService.create(orgId, dto);
   }
 
   @Patch(':id')
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Update a department' })
   update(
     @Param('orgId') orgId: string,
@@ -54,7 +54,7 @@ export class DepartmentsController {
   }
 
   @Patch(':id/position')
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Update department canvas position' })
   @ApiBody({ type: UpdatePositionDto })
   updatePosition(
@@ -66,7 +66,7 @@ export class DepartmentsController {
   }
 
   @Delete(':id')
-  @Roles('org_admin')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Delete a department' })
   remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.departmentsService.remove(id, orgId);

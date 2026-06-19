@@ -11,7 +11,7 @@ export default function LearningPage() {
   useEffect(() => {
     if (isLoading) return
     if (!user) return
-    const isHR = user.role === 'org_admin' || user.role === 'hr_manager'
+    const isHR = !!user.is_admin
     router.replace(isHR ? '/learning/paths' : '/learning/my')
   }, [user, isLoading, router])
 

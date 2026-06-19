@@ -6,17 +6,8 @@ import { Building2, ArrowRight, LogOut } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import type { OrgChoice } from '@/lib/types'
 
-const ROLE_LABELS: Record<string, string> = {
-  org_admin: 'Org Admin',
-  hr_manager: 'HR Manager',
-  employee: 'Employee',
-}
-
-const ROLE_COLORS: Record<string, string> = {
-  org_admin: 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]',
-  hr_manager: 'bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD]',
-  employee: 'bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]',
-}
+const ADMIN_BADGE = 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]'
+const MEMBER_BADGE = 'bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]'
 
 export default function SelectOrgPage() {
   const { pendingOrgSelection, selectOrg, logout, user } = useAuth()
@@ -130,8 +121,8 @@ export default function SelectOrgPage() {
                 <div className="flex-1 min-w-0">
                   <p className="text-[15px] font-semibold text-[#0F172A] truncate">{org.name}</p>
                   <div className="mt-1 flex items-center gap-2 flex-wrap">
-                    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${ROLE_COLORS[org.role] ?? ROLE_COLORS.employee}`}>
-                      {ROLE_LABELS[org.role] ?? org.role}
+                    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[12px] font-medium ${org.is_admin ? ADMIN_BADGE : MEMBER_BADGE}`}>
+                      {org.is_admin ? 'Administrator' : 'Member'}
                     </span>
                     <span className="text-[13px] text-[#94A3B8]">
                       Since {new Date(org.joined_at).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}

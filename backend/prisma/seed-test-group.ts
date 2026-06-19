@@ -319,7 +319,8 @@ async function main() {
         where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
       });
       if (!existingMember) {
-        await prisma.organizationMember.create({ data: { organization_id: orgId, user_id: userId, role: (a.member ?? 'employee') as never } });
+        const memberRole = a.member ?? 'employee';
+        await prisma.organizationMember.create({ data: { organization_id: orgId, user_id: userId, is_admin: memberRole === 'org_admin' } });
       }
 
       // profile (one per org+user)

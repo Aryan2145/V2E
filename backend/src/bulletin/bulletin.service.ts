@@ -122,10 +122,10 @@ export class BulletinService {
     });
   }
 
-  async deletePost(postId: string, boardId: string, orgId: string, userId: string, userRole: string) {
+  async deletePost(postId: string, boardId: string, orgId: string, userId: string, isAdmin: boolean) {
     const post = await this.prisma.bulletinPost.findFirst({ where: { id: postId, bulletin_board_id: boardId } });
     if (!post) throw new NotFoundException(`Post ${postId} not found`);
-    if (post.created_by_user_id !== userId && !['org_admin', 'hr_manager'].includes(userRole)) {
+    if (post.created_by_user_id !== userId && !isAdmin) {
       throw new ForbiddenException('Not allowed');
     }
     return this.prisma.bulletinPost.delete({ where: { id: postId } });
@@ -154,10 +154,10 @@ export class BulletinService {
     });
   }
 
-  async deleteComment(commentId: string, orgId: string, userId: string, userRole: string) {
+  async deleteComment(commentId: string, orgId: string, userId: string, isAdmin: boolean) {
     const comment = await this.prisma.bulletinComment.findFirst({ where: { id: commentId, organization_id: orgId } });
     if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
-    if (comment.created_by_user_id !== userId && !['org_admin', 'hr_manager'].includes(userRole)) {
+    if (comment.created_by_user_id !== userId && !isAdmin) {
       throw new ForbiddenException('Not allowed');
     }
     return this.prisma.bulletinComment.delete({ where: { id: commentId } });

@@ -29,14 +29,13 @@ export default function WorkflowsPage() {
   const { user } = useAuth()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
-  const role = user?.role
 
   const [workflows, setWorkflows] = useState<WorkflowTemplate[]>([])
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
   const [triggerTarget, setTriggerTarget] = useState<WorkflowTemplate | null>(null)
 
-  const isAdminOrHR = role === 'org_admin' || role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   const load = useCallback(async () => {
     if (!orgId) return

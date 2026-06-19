@@ -22,8 +22,7 @@ const PROJECT_TABS: ProjectTab[] = [
 export default function ProjectsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { user } = useAuth()
-  const role = user?.role
-  const isAdminOrHR = role === 'org_admin' || role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   function isActive(href: string): boolean {
     if (href === '/dashboard/projects') return pathname === '/dashboard/projects'

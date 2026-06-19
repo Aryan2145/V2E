@@ -14,8 +14,9 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { TasksService } from './tasks.service';
+import { principalFromUser } from '../access-rights/permissions.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -56,7 +57,7 @@ export class TasksController {
     @Query('from_date') from_date?: string,
     @Query('to_date') to_date?: string,
   ) {
-    return this.service.listTasks(orgId, req.user.id, {
+    return this.service.listTasks(orgId, principalFromUser(req.user), {
       status_id, priority_id, category_id, quadrant, type,
       assignee_user_id, goal_id, search, from_date, to_date,
     });
@@ -106,7 +107,7 @@ export class TasksController {
   }
 
   @Get('reports')
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Get task analytics and reports' })
   getReports(
     @Param('orgId') orgId: string,

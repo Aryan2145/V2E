@@ -2,14 +2,13 @@
 
 import React from 'react'
 import { useAuth } from '@/lib/auth/context'
-import type { UserRole } from '@/lib/types'
-import Sidebar from './Sidebar'
+import Sidebar, { type SidebarRole } from './Sidebar'
 
 interface DashboardLayoutProps {
   children: React.ReactNode
   title: string
   subtitle?: string
-  sidebarRole?: UserRole
+  sidebarRole?: SidebarRole
 }
 
 export default function DashboardLayout({
@@ -20,8 +19,8 @@ export default function DashboardLayout({
 }: DashboardLayoutProps) {
   const { user } = useAuth()
 
-  const role: UserRole = sidebarRole ?? (
-    user?.isSuperAdmin ? 'super_admin' : user?.role ?? 'employee'
+  const role: SidebarRole = sidebarRole ?? (
+    user?.isSuperAdmin ? 'super_admin' : user?.is_admin ? 'admin' : 'member'
   )
 
   return (

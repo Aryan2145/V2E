@@ -12,9 +12,10 @@ import {
 import { PermissionsService } from '../../access-rights/permissions.service';
 
 /**
- * Enforces foundational Access Rights declared via @RequirePermission.
- * Apply after JwtAuthGuard and OrgScopeGuard. Fails loud — on any deny or
- * ambiguity it throws, never silently widening access.
+ * Enforces permissions declared via @RequirePermission, resolved through the
+ * four-layer model (`hasEffective`): entitlement ∩ (jobRole ∪ grants − revokes),
+ * with admin leaves gated by is_admin. Apply after JwtAuthGuard and OrgScopeGuard.
+ * Fails loud — on any deny it throws, never silently widening.
  */
 @Injectable()
 export class PermissionsGuard implements CanActivate {
@@ -35,10 +36,14 @@ export class PermissionsGuard implements CanActivate {
     const orgId = request.params.orgId;
     if (!user) throw new ForbiddenException('Not authenticated');
 
-    const allowed = await this.permissions.hasPermission(
+    const allowed = await this.permissions.hasEffective(
       orgId,
-      user.role ?? null,
-      !!user.isSuperAdmin,
+      {
+        userId: user.id,
+        jobRoleId: user.job_role_id ?? null,
+        isAdmin: !!user.is_admin,
+        isSuperAdmin: !!user.isSuperAdmin,
+      },
       required.resource,
       required.action,
     );

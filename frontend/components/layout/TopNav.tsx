@@ -3,30 +3,25 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, ChevronDown, Building2, Check, Menu, X } from 'lucide-react'
+import { LogOut, ChevronDown, Building2, Check, Menu, X, Settings } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
+import { useEntitlements } from '@/lib/auth/use-entitlements'
 import { getMyOrgs } from '@/lib/api/auth'
 import type { OrgMembership } from '@/lib/types'
 import NotificationBell from './NotificationBell'
 
-const NAV_ITEMS = [
+// `module` maps a nav item to its entitlement key. Items with no module are always
+// shown (Dashboard). An `off` module is hidden; `preview` is shown with a badge.
+const NAV_ITEMS: { label: string; href: string; module?: string }[] = [
   { label: 'Dashboard', href: '/dashboard' },
-  { label: 'Foundation', href: '/foundation' },
-  { label: 'Goals', href: '/goals' },
-  { label: 'Learning', href: '/learning' },
-  { label: 'Communication', href: '/communication' },
-  { label: 'Tasks', href: '/dashboard/tasks' },
-  { label: 'ECS', href: '/dashboard/ecs' },
-  { label: 'Governance', href: '/dashboard/governance' },
-  { label: 'Performance', href: '/dashboard/performance' },
+  { label: 'Goals', href: '/goals', module: 'goals' },
+  { label: 'Learning', href: '/learning', module: 'learning' },
+  { label: 'Communication', href: '/communication', module: 'communication' },
+  { label: 'Tasks', href: '/dashboard/tasks', module: 'tasks' },
+  { label: 'ECS', href: '/dashboard/ecs', module: 'ecs' },
+  { label: 'Governance', href: '/dashboard/governance', module: 'governance' },
+  { label: 'Performance', href: '/dashboard/performance', module: 'performance' },
 ]
-
-const ROLE_LABELS: Record<string, string> = {
-  org_admin: 'Org Admin',
-  hr_manager: 'HR Manager',
-  employee: 'Employee',
-  super_admin: 'Super Admin',
-}
 
 export default function TopNav() {
   const pathname = usePathname()
@@ -37,6 +32,7 @@ export default function TopNav() {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [orgs, setOrgs] = useState<OrgMembership[] | null>(null)
   const [switching, setSwitching] = useState<string | null>(null)
+  const { entitlements } = useEntitlements()
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close the mobile nav drawer whenever the route changes
@@ -50,6 +46,12 @@ export default function TopNav() {
       getMyOrgs().then(setOrgs).catch(() => setOrgs([]))
     }
   }, [user?.organizationId])
+
+  // Until entitlements load, show everything (avoids a flash of missing tabs).
+  const visibleNav = NAV_ITEMS.filter(
+    (item) => !item.module || !entitlements || entitlements[item.module] !== 'off',
+  )
+  const isPreview = (module?: string) => !!module && entitlements?.[module] === 'preview'
 
   // Close on outside click
   useEffect(() => {
@@ -73,12 +75,17 @@ export default function TopNav() {
 
   const roleLabel = user?.isSuperAdmin
     ? 'Super Admin'
-    : user?.role
-      ? (ROLE_LABELS[user.role] ?? user.role.replace(/_/g, ' '))
-      : ''
+    : user?.is_admin
+      ? 'Administrator'
+      : 'Member'
 
   const currentOrg = orgs?.find((m) => m.organization_id === user?.organizationId)
   const otherOrgs = orgs?.filter((m) => m.organization_id !== user?.organizationId) ?? []
+
+  // Settings (gear) is shown to anyone who owns at least the Organization Setup module.
+  // System Configuration inside it is separately gated server-side + in the Settings sidebar.
+  const canAccessSettings =
+    !!user && !user.isSuperAdmin && (user.is_admin)
 
   async function handleSwitch(orgId: string) {
     setSwitching(orgId)
@@ -112,18 +119,23 @@ export default function TopNav() {
 
       {/* Nav tabs — full horizontal bar only on wide desktops */}
       <nav className="hidden xl:flex items-stretch flex-1 h-full">
-        {NAV_ITEMS.map((item) => {
+        {visibleNav.map((item) => {
           const active = isActive(item.href)
           return (
             <Link
               key={item.href}
               href={item.href}
               className={[
-                'relative px-3 2xl:px-4 flex items-center text-[13px] 2xl:text-sm font-medium whitespace-nowrap transition-colors duration-150',
+                'relative px-3 2xl:px-4 flex items-center gap-1.5 text-[13px] 2xl:text-sm font-medium whitespace-nowrap transition-colors duration-150',
                 active ? 'text-[#2563EB]' : 'text-[#64748B] hover:text-[#0F172A]',
               ].join(' ')}
             >
               {item.label}
+              {isPreview(item.module) && (
+                <span className="rounded-[999px] bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] text-[10px] font-semibold px-1.5 py-px leading-none">
+                  Preview
+                </span>
+              )}
               {active && (
                 <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-[#2563EB] rounded-t-full" />
               )}
@@ -137,6 +149,23 @@ export default function TopNav() {
 
       {/* Notification bell */}
       {user && !user.isSuperAdmin && <NotificationBell />}
+
+      {/* Settings gear — persistent on every page, separate from the top nav */}
+      {canAccessSettings && (
+        <Link
+          href="/settings"
+          aria-label="Settings"
+          title="Settings"
+          className={[
+            'shrink-0 w-9 h-9 flex items-center justify-center rounded-[8px] transition-colors',
+            isActive('/settings')
+              ? 'text-[#2563EB] bg-[#EFF6FF]'
+              : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]',
+          ].join(' ')}
+        >
+          <Settings size={19} />
+        </Link>
+      )}
 
       {/* User menu */}
       {user && (
@@ -185,16 +214,34 @@ export default function TopNav() {
                         <span className="text-xs text-[#64748B]">Loading…</span>
                       </div>
                     ) : currentOrg ? (
-                      <div className="flex items-center gap-2.5 py-1">
-                        <div className="w-6 h-6 rounded-[5px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
-                          <Building2 size={13} className="text-[#2563EB]" />
+                      canAccessSettings ? (
+                        <Link
+                          href="/settings/organization/company"
+                          onClick={() => setOpen(false)}
+                          title="Open organization settings"
+                          className="flex items-center gap-2.5 py-1.5 -mx-1 px-1 rounded-[6px] hover:bg-[#F8FAFC] transition-colors"
+                        >
+                          <div className="w-6 h-6 rounded-[5px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
+                            <Building2 size={13} className="text-[#2563EB]" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-[#0F172A] truncate">{currentOrg.organization.name}</p>
+                            <p className="text-xs text-[#64748B]">{currentOrg.is_admin ? 'Administrator' : 'Member'}</p>
+                          </div>
+                          <Settings size={14} className="text-[#94A3B8] shrink-0" />
+                        </Link>
+                      ) : (
+                        <div className="flex items-center gap-2.5 py-1">
+                          <div className="w-6 h-6 rounded-[5px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
+                            <Building2 size={13} className="text-[#2563EB]" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-[#0F172A] truncate">{currentOrg.organization.name}</p>
+                            <p className="text-xs text-[#64748B]">{currentOrg.is_admin ? 'Administrator' : 'Member'}</p>
+                          </div>
+                          <Check size={14} className="text-[#2563EB] shrink-0" />
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-[#0F172A] truncate">{currentOrg.organization.name}</p>
-                          <p className="text-xs text-[#64748B]">{ROLE_LABELS[currentOrg.role] ?? currentOrg.role}</p>
-                        </div>
-                        <Check size={14} className="text-[#2563EB] shrink-0" />
-                      </div>
+                      )
                     ) : null}
                   </div>
 
@@ -218,7 +265,7 @@ export default function TopNav() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-[#0F172A] truncate">{m.organization.name}</p>
-                              <p className="text-xs text-[#64748B]">{ROLE_LABELS[m.role] ?? m.role}</p>
+                              <p className="text-xs text-[#64748B]">{m.is_admin ? 'Administrator' : 'Member'}</p>
                             </div>
                             {isLoading && (
                               <div className="w-3.5 h-3.5 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin shrink-0" />
@@ -229,6 +276,20 @@ export default function TopNav() {
                     </div>
                   )}
                 </>
+              )}
+
+              {/* Settings */}
+              {canAccessSettings && (
+                <div className="border-t border-[#F1F5F9] p-2">
+                  <Link
+                    href="/settings"
+                    onClick={() => setOpen(false)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-[6px] text-sm text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+                  >
+                    <Settings size={14} />
+                    Settings
+                  </Link>
+                </div>
               )}
 
               {/* Sign out */}
@@ -256,7 +317,7 @@ export default function TopNav() {
           />
           {/* Panel */}
           <nav className="xl:hidden absolute top-14 left-0 right-0 bg-white border-b border-[#E2E8F0] shadow-lg z-50 py-2 max-h-[calc(100vh-3.5rem)] overflow-y-auto">
-            {NAV_ITEMS.map((item) => {
+            {visibleNav.map((item) => {
               const active = isActive(item.href)
               return (
                 <Link
@@ -264,13 +325,18 @@ export default function TopNav() {
                   href={item.href}
                   onClick={() => setDrawerOpen(false)}
                   className={[
-                    'flex items-center min-h-[44px] px-5 text-[15px] font-medium border-l-[3px] transition-colors',
+                    'flex items-center gap-2 min-h-[44px] px-5 text-[15px] font-medium border-l-[3px] transition-colors',
                     active
                       ? 'text-[#2563EB] border-[#2563EB] bg-[#EFF6FF]'
                       : 'text-[#1E293B] border-transparent hover:bg-[#F1F5F9]',
                   ].join(' ')}
                 >
                   {item.label}
+                  {isPreview(item.module) && (
+                    <span className="rounded-[999px] bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] text-[10px] font-semibold px-1.5 py-px leading-none">
+                      Preview
+                    </span>
+                  )}
                 </Link>
               )
             })}

@@ -12,26 +12,25 @@ interface HolidayTab {
 }
 
 const HOLIDAY_TABS: HolidayTab[] = [
-  { label: 'Overview', href: '/foundation/holidays' },
-  { label: 'Org Calendar', href: '/foundation/holidays/org' },
-  { label: 'Departments', href: '/foundation/holidays/departments' },
-  { label: 'Individuals', href: '/foundation/holidays/individuals', adminOnly: true },
-  { label: 'Audit Log', href: '/foundation/holidays/audit', adminOnly: true },
+  { label: 'Overview', href: '/settings/organization/holidays' },
+  { label: 'Org Calendar', href: '/settings/organization/holidays/org' },
+  { label: 'Departments', href: '/settings/organization/holidays/departments' },
+  { label: 'Individuals', href: '/settings/organization/holidays/individuals', adminOnly: true },
+  { label: 'Audit Log', href: '/settings/organization/holidays/audit', adminOnly: true },
 ]
 
 /**
- * Holidays lives inside the Foundation module so the Foundation sidebar stays
- * persistent (no menu swap). Sub-sections render as in-page tabs — the same
- * pattern used by the Tasks → Projects module.
+ * Holidays lives inside the Settings → Organization Setup module so the Settings
+ * sidebar stays persistent (no menu swap). Sub-sections render as in-page tabs —
+ * the same pattern used by the Tasks → Projects module.
  */
 export default function HolidaysLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { user } = useAuth()
-  const role = user?.role
-  const isAdminOrHR = role === 'org_admin' || role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   function isActive(href: string): boolean {
-    if (href === '/foundation/holidays') return pathname === '/foundation/holidays'
+    if (href === '/settings/organization/holidays') return pathname === '/settings/organization/holidays'
     return pathname.startsWith(href)
   }
 

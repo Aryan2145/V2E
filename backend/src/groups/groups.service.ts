@@ -77,12 +77,12 @@ export class GroupsService {
     });
 
     // Deduplicate by user_id, collecting all orgs per user
-    const userMap = new Map<string, { id: string; name: string; email: string; orgs: { id: string; name: string; role: string }[] }>();
+    const userMap = new Map<string, { id: string; name: string; email: string; orgs: { id: string; name: string; is_admin: boolean }[] }>();
     for (const m of members) {
       if (!userMap.has(m.user_id)) {
         userMap.set(m.user_id, { ...m.user, orgs: [] });
       }
-      userMap.get(m.user_id)!.orgs.push({ id: m.organization.id, name: m.organization.name, role: m.role });
+      userMap.get(m.user_id)!.orgs.push({ id: m.organization.id, name: m.organization.name, is_admin: m.is_admin });
     }
     return Array.from(userMap.values());
   }

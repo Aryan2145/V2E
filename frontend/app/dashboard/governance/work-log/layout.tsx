@@ -22,7 +22,7 @@ const TABS: WorkLogTab[] = [
 export default function WorkLogLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { user } = useAuth()
-  const isAdminOrHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   function isActive(href: string): boolean {
     return pathname === href || pathname.startsWith(`${href}/`)

@@ -131,7 +131,7 @@ export class EmployeesService {
       }
 
       await tx.organizationMember.create({
-        data: { organization_id: orgId, user_id: user.id, role: 'employee' },
+        data: { organization_id: orgId, user_id: user.id, is_admin: false },
       });
 
       const profile = await tx.employeeProfile.create({
@@ -305,7 +305,7 @@ export class EmployeesService {
           }
 
           await tx.organizationMember.create({
-            data: { organization_id: orgId, user_id: user.id, role: 'employee' },
+            data: { organization_id: orgId, user_id: user.id, is_admin: false },
           });
 
           const profile = await tx.employeeProfile.create({

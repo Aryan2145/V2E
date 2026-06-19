@@ -196,6 +196,18 @@ export class AssigneeVisibilityService {
     return this.getSubordinates(g, managerId).has(candidateId);
   }
 
+  /** All active user ids in a department. Used by data-scope (`department` scope). */
+  async getDepartmentMemberIds(orgId: string, deptId: string): Promise<string[]> {
+    const g = await this.getGraph(orgId);
+    return [...(g.deptMembers.get(deptId) ?? [])];
+  }
+
+  /** The actor's own department id (null when they have no active profile). */
+  async getActorDepartmentId(orgId: string, userId: string): Promise<string | null> {
+    const g = await this.getGraph(orgId);
+    return g.deptOf.get(userId) ?? null;
+  }
+
   /** How many people a bridge of the given depth would currently expose in the target dept. */
   async countBridgeTargets(
     orgId: string,
@@ -310,7 +322,7 @@ export class AssigneeVisibilityService {
       }),
       this.prisma.organizationMember.findMany({
         where: { organization_id: orgId, is_active: true },
-        select: { user_id: true, role: true },
+        select: { user_id: true, is_admin: true },
       }),
       this.prisma.assigneeCrossDeptBridge.findMany({ where: { organization_id: orgId } }),
       this.prisma.assigneeVisibilityException.findMany({
@@ -319,7 +331,10 @@ export class AssigneeVisibilityService {
       }),
     ]);
 
-    const memberRoleOf = new Map<string, string>(members.map((m) => [m.user_id, m.role]));
+    // MemberRole was removed; collapse to an admin/member pseudo-role so the legacy
+    // role-keyed visibility configs (full_visibility_roles, exclude_roles, role
+    // exceptions) still target admins. Non-admins all map to 'employee'.
+    const memberRoleOf = new Map<string, string>(members.map((m) => [m.user_id, m.is_admin ? 'org_admin' : 'employee']));
     const profileMap = new Map<string, ProfileLite>();
     const deptOf = new Map<string, string>();
     const directManagerOf = new Map<string, string | null>();
@@ -409,14 +424,14 @@ export class AssigneeVisibilityService {
 
   // ─── Admin: edit config / exceptions / bridges / upward switch ───────────────────
 
-  /** Throws unless the actor's member role is in the org's config_roles list. */
+  /** Throws unless the actor may edit visibility config (employee-inclusive config → any member; else admin). */
   async assertCanEdit(orgId: string, userId: string): Promise<void> {
     const roles = await this.getConfigRoles(orgId);
     const member = await this.prisma.organizationMember.findUnique({
       where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-      select: { role: true },
+      select: { is_admin: true },
     });
-    if (!member || !roles.includes(member.role)) {
+    if (!member || !(roles.includes('employee') || member.is_admin)) {
       throw new ForbiddenException(
         'You do not have permission to edit assignee visibility settings',
       );

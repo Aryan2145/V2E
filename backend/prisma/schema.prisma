@@ -12,11 +12,6 @@ enum OrgStatus {
   pending_setup
 }
 
-enum MemberRole {
-  org_admin
-  hr_manager
-  employee
-}
 
 enum BehaviorType {
   expected_behavior
@@ -156,6 +151,7 @@ model Organization {
   conversations      Conversation[]
   conversation_members ConversationMember[]
   messages           Message[]
+  module_entitlements OrgModuleEntitlement[]
 
   @@map("organizations")
 }
@@ -164,7 +160,7 @@ model OrganizationMember {
   id              String     @id @default(uuid())
   organization_id String
   user_id         String
-  role            MemberRole
+  is_admin        Boolean    @default(false) // platform-admin flag — governs admin leaves ONLY, never feature access
   is_active       Boolean    @default(true)
   joined_at       DateTime   @default(now())
 
@@ -206,6 +202,8 @@ model User {
   audit_logs               AuditLog[]
   organized_meetings       Meeting[]          @relation("MeetingOrganizer")
   meeting_attendances      MeetingAttendee[]  @relation("MeetingAttendeeUser")
+  permission_overrides     UserPermissionOverride[]
+  subject_overrides        UserSubjectOverride[]
 
   @@unique([email])
   @@map("users")
@@ -285,6 +283,7 @@ model Role {
   organization      Organization      @relation(fields: [organization_id], references: [id])
   department        Department        @relation(fields: [department_id], references: [id])
   employee_profiles EmployeeProfile[]
+  permissions       RolePermission[]
 
   @@map("roles")
 }
@@ -2177,7 +2176,7 @@ model PushSubscription {
   @@map("push_subscriptions")
 }
 
-// ─── Foundational Access Rights (software-wide permissions) ────────────────────
+// ─── Permission actions (used by RolePermission / UserPermissionOverride) ──────
 enum PermissionAction {
   read
   write
@@ -2185,22 +2184,125 @@ enum PermissionAction {
   delete
 }
 
-// One row per (org, role, resource). org_admin is implicit-all and not stored.
-model AccessRight {
-  id                 String     @id @default(uuid())
-  organization_id    String
-  role               MemberRole // hr_manager | employee
-  resource           String     // module key, e.g. "goals", "access_rights"
-  can_read           Boolean    @default(false)
-  can_write          Boolean    @default(false)
-  can_edit           Boolean    @default(false)
-  can_delete         Boolean    @default(false)
-  updated_by_user_id String?
-  created_at         DateTime   @default(now())
-  updated_at         DateTime   @updatedAt
+// ─── Restructured permission model (four intersecting layers) ──────────────────
+// effective = org_entitlement ∩ ( jobRole_permissions ∪ user_grants − user_revokes )
+// Admin leaves are governed by OrganizationMember.is_admin, not by these tables.
 
-  @@unique([organization_id, role, resource])
-  @@map("access_rights")
+enum OverrideEffect {
+  grant  // force allow / force eligible
+  revoke // force deny / force ineligible
+}
+
+enum EntitlementState {
+  full
+  preview // read-only sandbox (capped to read in resolution)
+  off
+}
+
+// Row-level data scope — WHICH records a granted action may touch (visibility layer).
+// Attached per (role/user, leaf, action). null ⇒ own (fail-closed-narrow).
+//   own        — records the actor is a core participant of
+//   team       — actor + their recursive reporting subtree
+//   department — all members of the actor's own department
+//   org        — every record in the org
+enum DataScope {
+  own
+  team
+  department
+  org
+}
+
+// Layer 2 — functional baseline: feature permissions per JOB-TITLE role (Role.id).
+// One row per (org, job_role, feature leaf, action). Missing ⇒ not allowed.
+model RolePermission {
+  id                 String           @id @default(uuid())
+  organization_id    String
+  job_role_id        String // FK Role.id (per-department job title)
+  feature_key        String // leaf key, e.g. "tasks.assignment.reassign"
+  action             PermissionAction
+  allowed            Boolean          @default(false)
+  scope              DataScope? // row-level data scope for this action (content leaves); null ⇒ own
+  updated_by_user_id String?
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  job_role Role @relation(fields: [job_role_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, job_role_id, feature_key, action])
+  @@index([organization_id, job_role_id])
+  @@map("role_permissions")
+}
+
+// Layer 3 — per-user actor deltas. One decision per (user, leaf, action); user wins over role.
+model UserPermissionOverride {
+  id                 String           @id @default(uuid())
+  organization_id    String
+  user_id            String
+  feature_key        String
+  action             PermissionAction
+  effect             OverrideEffect
+  scope              DataScope? // per-user data-scope override for this action (widens/narrows the role baseline)
+  reason             String?
+  updated_by_user_id String?
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, user_id, feature_key, action])
+  @@index([organization_id, user_id])
+  @@map("user_permission_overrides")
+}
+
+// Subject eligibility — org default per subject-leaf (default ON preserves today's behavior).
+model SubjectEligibilityPolicy {
+  id                 String   @id @default(uuid())
+  organization_id    String
+  subject_key        String // e.g. "tasks.subject.assignable"
+  default_eligible   Boolean  @default(true)
+  updated_by_user_id String?
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@unique([organization_id, subject_key])
+  @@map("subject_eligibility_policies")
+}
+
+// Subject eligibility — per-user delta (grant=force eligible, revoke=force ineligible).
+model UserSubjectOverride {
+  id                 String         @id @default(uuid())
+  organization_id    String
+  user_id            String
+  subject_key        String
+  effect             OverrideEffect
+  reason             String? // surfaced as the fail-loud tooltip / validation reason
+  updated_by_user_id String?
+  created_at         DateTime       @default(now())
+  updated_at         DateTime       @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, user_id, subject_key])
+  @@index([organization_id, subject_key])
+  @@index([organization_id, user_id])
+  @@map("user_subject_overrides")
+}
+
+// Layer 1 — vendor entitlement ceiling, set only from the superadmin portal.
+// Missing row ⇒ off (fail-closed). No in-org actor (incl. org_admin) can exceed it.
+model OrgModuleEntitlement {
+  id                 String           @id @default(uuid())
+  organization_id    String
+  module_key         String // top-level module, e.g. "tasks","goals","governance"
+  state              EntitlementState @default(off)
+  updated_by_user_id String? // a super admin
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+
+  @@unique([organization_id, module_key])
+  @@map("org_module_entitlements")
 }
 
 // ─── Foundational shared Audit Log (software-wide) ─────────────────────────────

@@ -180,11 +180,15 @@ export class MessagingService {
     });
   }
 
-  async deleteMessage(msgId: string, convId: string, userId: string, orgId: string, userRole: string) {
+  async deleteMessage(msgId: string, convId: string, userId: string, orgId: string) {
     const msg = await this.prisma.message.findFirst({ where: { id: msgId, conversation_id: convId } });
     if (!msg) throw new NotFoundException('Message not found');
-    if (msg.sender_user_id !== userId && !['org_admin'].includes(userRole)) {
-      throw new ForbiddenException('Not allowed');
+    if (msg.sender_user_id !== userId) {
+      const member = await this.prisma.organizationMember.findUnique({
+        where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
+        select: { is_admin: true },
+      });
+      if (!member?.is_admin) throw new ForbiddenException('Not allowed');
     }
     return this.prisma.message.update({
       where: { id: msgId },

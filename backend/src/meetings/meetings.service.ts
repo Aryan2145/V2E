@@ -4,13 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { MemberRole, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ClockService } from '../clock/clock.service';
 import { TasksService } from '../tasks/tasks.service';
-import { PermissionsService } from '../access-rights/permissions.service';
+import { PermissionsService, principalFromUser } from '../access-rights/permissions.service';
+import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
+import { ScopeService } from '../access-rights/scope.service';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 import {
   UpdateMeetingDto,
@@ -32,7 +34,8 @@ import {
 
 export interface Actor {
   id: string;
-  role: MemberRole | null;
+  job_role_id: string | null;
+  is_admin: boolean;
   isSuperAdmin: boolean;
 }
 
@@ -57,7 +60,11 @@ export class MeetingsService {
     private readonly clock: ClockService,
     private readonly tasks: TasksService,
     private readonly permissions: PermissionsService,
-  ) {}
+    private readonly subjects: SubjectEligibilityService,
+    private readonly scope: ScopeService,
+  ) {
+    this.scope.registerWiredList(MEETING);
+  }
 
   // ─── Create ─────────────────────────────────────────────────────────────────
   async create(orgId: string, actor: Actor, dto: CreateMeetingDto) {
@@ -65,6 +72,8 @@ export class MeetingsService {
       // offline/hybrid should have a location, but keep it soft (free text, optional)
     }
     const attendeeIds = [...new Set((dto.attendee_user_ids ?? []).filter((id) => id !== actor.id))];
+    // Subject eligibility (fail loud): everyone invited must be allowed to be a meeting subject.
+    await this.subjects.assertAllEligible(orgId, 'meetings.subject.invitable', attendeeIds);
 
     const data: Prisma.MeetingCreateInput = {
       organization_id: orgId,
@@ -197,6 +206,8 @@ export class MeetingsService {
   // ─── List + detail ────────────────────────────────────────────────────────────
   async list(orgId: string, actor: Actor, filters: Record<string, string | undefined>) {
     const where: Prisma.MeetingWhereInput = { organization_id: orgId, is_deleted: false };
+    const scopeWhere = await this.scope.listWhere(orgId, principalFromUser(actor), MEETING);
+    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere as Prisma.MeetingWhereInput];
     if (filters.status) where.status = filters.status as any;
     if (filters.type) where.type = filters.type as any;
     if (filters.mode) where.mode = filters.mode as any;
@@ -742,7 +753,12 @@ export class MeetingsService {
 
   private async canManage(orgId: string, organizerId: string, actor: Actor): Promise<boolean> {
     if (actor.id === organizerId) return true;
-    return this.permissions.hasPermission(orgId, actor.role, actor.isSuperAdmin, MEETING, 'edit');
+    return this.permissions.hasEffective(
+      orgId,
+      { userId: actor.id, jobRoleId: actor.job_role_id, isAdmin: actor.is_admin, isSuperAdmin: actor.isSuperAdmin },
+      MEETING,
+      'edit',
+    );
   }
 
   private async requireManage(orgId: string, meeting: { created_by_user_id: string }, actor: Actor) {
@@ -757,6 +773,12 @@ export class MeetingsService {
   }
 
   private async syncAttendees(orgId: string, meetingId: string, userIds: string[], organizerId: string) {
+    // Fail loud: newly added attendees must be eligible meeting subjects.
+    await this.subjects.assertAllEligible(
+      orgId,
+      'meetings.subject.invitable',
+      userIds.filter((u) => u !== organizerId),
+    );
     const wanted = new Set(userIds.concat(organizerId));
     const existing = await this.prisma.meetingAttendee.findMany({ where: { meeting_id: meetingId } });
     const existingIds = new Set(existing.map((a) => a.user_id));

@@ -362,7 +362,7 @@ export default function TaskDetailPage() {
   }
 
   const isCompletedStatus = task?.status?.type === 'completed'
-  const canDelete = user?.role === 'org_admin' || user?.role === 'hr_manager' || task?.created_by_user_id === user?.id
+  const canDelete = user?.is_admin || task?.created_by_user_id === user?.id
 
   if (!orgId) {
     return (
@@ -397,7 +397,7 @@ export default function TaskDetailPage() {
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
   const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
   const isCreator = task.created_by_user_id === user?.id
-  const canEdit = isCreator || user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const canEdit = isCreator || user?.is_admin
 
   return (
     <div className="space-y-6 max-w-7xl">

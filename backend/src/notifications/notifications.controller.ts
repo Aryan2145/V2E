@@ -23,6 +23,7 @@ import { NOTIF_EVENTS } from './notification-events';
 interface AuthUser {
   id: string;
   role: string | null;
+  is_admin?: boolean;
   organizationId: string;
   isSuperAdmin?: boolean;
 }
@@ -105,7 +106,7 @@ export class NotificationsController {
   @Put('master')
   @ApiOperation({ summary: 'Update notification master config (org admin only)' })
   updateMaster(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Body() dto: UpdateMasterDto) {
-    if (user.role !== 'org_admin' && !user.isSuperAdmin) {
+    if (!user.is_admin && !user.isSuperAdmin) {
       throw new ForbiddenException('Only org admins can update notification settings');
     }
     return this.service.updateMaster(orgId, dto);

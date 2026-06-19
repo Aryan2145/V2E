@@ -11,7 +11,7 @@ import AccessRightsCard from '@/components/holidays/AccessRightsCard'
 export default function HolidaysOverviewPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isAdmin = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdmin = !!user?.is_admin
 
   const [config, setConfig] = useState<HolidayMasterConfig | null>(null)
   const [loading, setLoading] = useState(true)

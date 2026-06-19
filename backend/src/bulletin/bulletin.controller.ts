@@ -10,10 +10,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { BulletinService } from './bulletin.service';
 import { CreateBoardDto } from './dto/create-board.dto';
 import { CreateBulletinPostDto } from './dto/create-post.dto';
@@ -21,7 +24,7 @@ import { CreateBulletinCommentDto } from './dto/create-comment.dto';
 
 @ApiTags('bulletin')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/bulletin')
 export class BulletinController {
   constructor(private readonly service: BulletinService) {}
@@ -41,7 +44,7 @@ export class BulletinController {
   }
 
   @Post('boards')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.bulletin.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a bulletin board' })
   createBoard(
     @Param('orgId') orgId: string,
@@ -52,7 +55,7 @@ export class BulletinController {
   }
 
   @Patch('boards/:boardId')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.bulletin.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a bulletin board' })
   updateBoard(
     @Param('orgId') orgId: string,
@@ -63,7 +66,7 @@ export class BulletinController {
   }
 
   @Delete('boards/:boardId')
-  @Roles('org_admin')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Deactivate a bulletin board' })
   deleteBoard(@Param('orgId') orgId: string, @Param('boardId') boardId: string) {
     return this.service.deleteBoard(boardId, orgId);
@@ -118,11 +121,11 @@ export class BulletinController {
     @Param('postId') postId: string,
     @Request() req: any,
   ) {
-    return this.service.deletePost(postId, boardId, orgId, req.user.id, req.user.role);
+    return this.service.deletePost(postId, boardId, orgId, req.user.id, !!req.user.is_admin);
   }
 
   @Post('boards/:boardId/posts/:postId/pin')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.bulletin.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Toggle pin on a post' })
   togglePin(
     @Param('orgId') orgId: string,
@@ -152,7 +155,7 @@ export class BulletinController {
     @Param('commentId') commentId: string,
     @Request() req: any,
   ) {
-    return this.service.deleteComment(commentId, orgId, req.user.id, req.user.role);
+    return this.service.deleteComment(commentId, orgId, req.user.id, !!req.user.is_admin);
   }
 
   // ─── Reactions ─────────────────────────────────────────────────────────────

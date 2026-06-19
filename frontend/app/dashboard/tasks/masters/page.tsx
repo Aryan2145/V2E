@@ -455,9 +455,9 @@ function TktConfigTab({ orgId }: { orgId: string }) {
   if (!config) return <p className="text-sm text-[#475569]">Could not load configuration.</p>
 
   const modeOptions: { value: TicketReassignmentMode; label: string; desc: string }[] = [
-    { value: 'both', label: 'Both', desc: 'Assignee and admins/managers can reassign' },
+    { value: 'both', label: 'Both', desc: 'Assignee and administrators can reassign' },
     { value: 'assignee_only', label: 'Assignee Only', desc: 'Only the current assignee can reassign' },
-    { value: 'admin_manager_only', label: 'Admin / HR Manager Only', desc: 'Only org_admin and hr_manager can reassign' },
+    { value: 'admin_manager_only', label: 'Administrators Only', desc: 'Only administrators can reassign' },
   ]
 
   return (

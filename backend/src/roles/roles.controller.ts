@@ -13,7 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -42,14 +42,14 @@ export class RolesController {
   }
 
   @Post()
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Create a new role' })
   create(@Param('orgId') orgId: string, @Body() dto: CreateRoleDto) {
     return this.rolesService.create(orgId, dto);
   }
 
   @Patch(':id')
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Update a role' })
   update(
     @Param('orgId') orgId: string,
@@ -60,7 +60,7 @@ export class RolesController {
   }
 
   @Delete(':id')
-  @Roles('org_admin')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Delete a role' })
   remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.rolesService.remove(id, orgId);

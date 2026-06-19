@@ -91,7 +91,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('deleteMessage')
   async handleDeleteMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { convId: string; orgId: string; msgId: string; userRole: string },
+    @MessageBody() payload: { convId: string; orgId: string; msgId: string },
   ) {
     const userId = client.data.userId as string;
     if (!userId) return;
@@ -100,7 +100,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       payload.convId,
       userId,
       payload.orgId,
-      payload.userRole,
     );
     this.server.to(`conv:${payload.convId}`).emit('messageDeleted', { msgId: payload.msgId });
   }

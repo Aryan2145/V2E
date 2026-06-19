@@ -4,10 +4,12 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
+import { usePermissions } from '@/lib/auth/use-permissions'
 import { getEmployee, getEmployees, updateEmployee } from '@/lib/api/employees'
 import { getRoles } from '@/lib/api/roles'
 import { getDepartments } from '@/lib/api/departments'
 import Button from '@/components/ui/Button'
+import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissionsPanel'
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
 import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X } from 'lucide-react'
 
@@ -95,7 +97,7 @@ function ReportingChain({ emp, allEmployees }: { emp: EmployeeProfile; allEmploy
               {i < chain.length - 1 && <div className="w-px h-4 bg-[#E2E8F0] mt-1" />}
             </div>
             <div className="pt-1">
-              <Link href={`/dashboard/employees/${mgr.id}`} className="text-sm font-semibold text-[#0F172A] hover:text-[#2563EB] transition-colors">
+              <Link href={`/settings/organization/employees/${mgr.id}`} className="text-sm font-semibold text-[#0F172A] hover:text-[#2563EB] transition-colors">
                 {name}
               </Link>
               <p className="text-xs text-[#475569]">{mgr.role?.title ?? 'N/A'}</p>
@@ -316,6 +318,7 @@ export default function EmployeeDetailPage() {
   const employeeId = params?.employeeId as string
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
+  const { isAdmin } = usePermissions()
 
   const [employee, setEmployee] = useState<EmployeeProfile | null>(null)
   const [allEmployees, setAllEmployees] = useState<EmployeeProfile[]>([])
@@ -340,7 +343,7 @@ export default function EmployeeDetailPage() {
     }).finally(() => setLoading(false))
   }, [orgId, employeeId])
 
-  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isHR = !!user?.is_admin
 
   if (loading) {
     return (
@@ -355,7 +358,7 @@ export default function EmployeeDetailPage() {
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <Users size={36} className="text-[#94A3B8] mb-3" />
         <p className="text-lg font-semibold text-[#0F172A]">Employee not found</p>
-        <Link href="/dashboard/employees" className="mt-4">
+        <Link href="/settings/organization/employees" className="mt-4">
           <Button variant="secondary" size="sm"><ArrowLeft size={14} /> Back to employees</Button>
         </Link>
       </div>
@@ -373,7 +376,7 @@ export default function EmployeeDetailPage() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <Link href="/dashboard/employees" className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors">
+      <Link href="/settings/organization/employees" className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors">
         <ArrowLeft size={15} />
         All Employees
       </Link>
@@ -454,7 +457,7 @@ export default function EmployeeDetailPage() {
               )}
             </div>
             {jdPreview && <p className="text-sm text-[#475569] leading-relaxed">{jdPreview}</p>}
-            <Link href={`/dashboard/roles/${employee.role_id}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors">
+            <Link href={`/settings/organization/roles/${employee.role_id}`} className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors">
               View full role
               <ChevronDown size={12} className="-rotate-90" />
             </Link>
@@ -502,6 +505,11 @@ export default function EmployeeDetailPage() {
             </table>
           </div>
         </Section>
+      )}
+
+      {/* Access & Permissions — admin only */}
+      {isAdmin && employee.user_id && (
+        <EmployeePermissionsPanel orgId={orgId} userId={employee.user_id} />
       )}
 
       {/* Edit Modal */}

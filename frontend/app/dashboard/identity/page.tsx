@@ -48,7 +48,7 @@ function EmptyState({ canEdit }: { canEdit: boolean }) {
 export default function IdentityPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const canEdit = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const canEdit = !!user?.is_admin
 
   const [identity, setIdentity] = useState<OrgIdentity | null>(null)
   const [loading, setLoading] = useState(true)

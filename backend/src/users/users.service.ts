@@ -40,7 +40,7 @@ export class UsersService {
     return members.map((m) => ({
       id: m.id,
       user_id: m.user_id,
-      role: m.role,
+      is_admin: m.is_admin,
       user: { id: m.user.id, name: m.user.name, email: m.user.email },
     }));
   }
@@ -55,7 +55,7 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto) {
-    const { password, organization_id, role, ...rest } = dto;
+    const { password, organization_id, is_admin, ...rest } = dto;
 
     let user = await this.prisma.user.findUnique({ where: { email: rest.email } });
 
@@ -74,7 +74,7 @@ export class UsersService {
     }
 
     const member = await this.prisma.organizationMember.create({
-      data: { organization_id: organization_id!, user_id: user.id, role: (role ?? 'employee') as any },
+      data: { organization_id: organization_id!, user_id: user.id, is_admin: is_admin ?? false },
       include: { user: { select: USER_SELECT } },
     });
 
@@ -84,7 +84,7 @@ export class UsersService {
   async update(id: string, orgId: string, dto: UpdateUserDto) {
     await this.findOne(id, orgId);
 
-    const { password, role, ...rest } = dto;
+    const { password, is_admin, ...rest } = dto;
     const userUpdateData: Record<string, unknown> = { ...rest };
     if (password) {
       userUpdateData.password_hash = await bcrypt.hash(password, 12);
@@ -92,10 +92,10 @@ export class UsersService {
 
     await this.prisma.user.update({ where: { id }, data: userUpdateData });
 
-    if (role) {
+    if (is_admin !== undefined) {
       await this.prisma.organizationMember.updateMany({
         where: { user_id: id, organization_id: orgId },
-        data: { role: role as any },
+        data: { is_admin },
       });
     }
 
@@ -121,7 +121,7 @@ export class UsersService {
       id: member.user.id,
       name: member.user.name,
       email: member.user.email,
-      role: member.role,
+      is_admin: member.is_admin,
       is_active: member.is_active && member.user.is_active,
       organization_id: orgId,
       created_at: member.user.created_at,

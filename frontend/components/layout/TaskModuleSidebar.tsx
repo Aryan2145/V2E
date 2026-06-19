@@ -98,7 +98,7 @@ export default function TaskModuleSidebar() {
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'
   })
 
-  const isAdminOrHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   function toggleCollapsed() {
     setCollapsed((c) => {

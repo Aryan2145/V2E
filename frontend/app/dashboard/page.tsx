@@ -201,35 +201,35 @@ export default function DashboardPage() {
           <QuickNavCard
             label="Identity"
             description="Company philosophy, vision, mission, purpose and values."
-            href="/dashboard/identity"
+            href="/settings/organization/company"
             icon={<BookOpen size={18} className="text-[#2563EB]" />}
             iconBg="bg-[#EFF6FF]"
           />
           <QuickNavCard
             label="Culture"
             description="Expected and unacceptable behaviors that define your culture."
-            href="/dashboard/culture"
+            href="/settings/organization/culture"
             icon={<Heart size={18} className="text-[#DC2626]" />}
             iconBg="bg-[#FEE2E2]"
           />
           <QuickNavCard
             label="Org Chart"
             description="Visual hierarchy of departments and their relationships."
-            href="/dashboard/org-chart"
+            href="/settings/organization/structure"
             icon={<Network size={18} className="text-[#16A34A]" />}
             iconBg="bg-[#DCFCE7]"
           />
           <QuickNavCard
             label="Roles"
             description="Job descriptions, KRAs and KPIs for each role."
-            href="/dashboard/roles"
+            href="/settings/organization/roles"
             icon={<Briefcase size={18} className="text-[#CA8A04]" />}
             iconBg="bg-[#FEF9C3]"
           />
           <QuickNavCard
             label="Employees"
             description="Directory of all employees with profiles and reporting chains."
-            href="/dashboard/employees"
+            href="/settings/organization/employees"
             icon={<Users size={18} className="text-[#7C3AED]" />}
             iconBg="bg-[#F3E8FF]"
           />

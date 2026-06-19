@@ -11,17 +11,19 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { AnnouncementsService } from './announcements.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { UpdateAnnouncementDto } from './dto/update-announcement.dto';
 
 @ApiTags('announcements')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/announcements')
 export class AnnouncementsController {
   constructor(private readonly service: AnnouncementsService) {}
@@ -50,7 +52,7 @@ export class AnnouncementsController {
   }
 
   @Post()
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.announcements.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create an announcement' })
   create(
     @Param('orgId') orgId: string,
@@ -61,7 +63,7 @@ export class AnnouncementsController {
   }
 
   @Patch(':id')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.announcements.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update an announcement' })
   update(
     @Param('orgId') orgId: string,
@@ -69,18 +71,18 @@ export class AnnouncementsController {
     @Request() req: any,
     @Body() dto: UpdateAnnouncementDto,
   ) {
-    return this.service.update(id, orgId, req.user.id, req.user.role, dto);
+    return this.service.update(id, orgId, req.user.id, !!req.user.is_admin, dto);
   }
 
   @Post(':id/publish')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.announcements.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Publish an announcement' })
   publish(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.publish(id, orgId);
   }
 
   @Post(':id/pin')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.announcements.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Toggle pin on announcement' })
   togglePin(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.togglePin(id, orgId);
@@ -97,14 +99,14 @@ export class AnnouncementsController {
   }
 
   @Get(':id/read-status')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.announcements.manage', PermissionAction.read)
   @ApiOperation({ summary: 'Get read receipt status' })
   getReadStatus(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.getReadStatus(id, orgId);
   }
 
   @Delete(':id')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('communication.announcements.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Delete an announcement' })
   remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.remove(id, orgId);

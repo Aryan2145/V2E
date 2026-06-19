@@ -1,5 +1,5 @@
 import apiClient from './client';
-import type { User, UserRole, ApiResponse } from '../types';
+import type { User, ApiResponse } from '../types';
 
 // ─── Users API ────────────────────────────────────────────────────────────────
 
@@ -16,7 +16,7 @@ export async function createUser(
     name: string;
     email: string;
     password: string;
-    role?: UserRole;
+    is_admin?: boolean;
   }
 ): Promise<User> {
   const { data } = await apiClient.post<ApiResponse<User>>(

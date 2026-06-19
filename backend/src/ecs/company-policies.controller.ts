@@ -1,9 +1,12 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { CompanyPoliciesService } from './company-policies.service';
 import { CreatePolicyDto } from './dto/create-policy.dto';
@@ -14,7 +17,7 @@ import { AssignPolicyDto } from './dto/assign-policy.dto';
 
 @ApiTags('ecs-policies')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/ecs/policies')
 export class CompanyPoliciesController {
   constructor(private readonly service: CompanyPoliciesService) {}
@@ -32,7 +35,7 @@ export class CompanyPoliciesController {
   }
 
   @Post()
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a company policy' })
   create(
     @Param('orgId') orgId: string,
@@ -43,7 +46,7 @@ export class CompanyPoliciesController {
   }
 
   @Patch(':id')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a company policy' })
   update(
     @Param('orgId') orgId: string,
@@ -54,28 +57,28 @@ export class CompanyPoliciesController {
   }
 
   @Post(':id/publish')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Publish a company policy' })
   publish(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.publish(id, orgId);
   }
 
   @Post(':id/archive')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Archive a company policy' })
   archive(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.archive(id, orgId);
   }
 
   @Delete(':id')
-  @Roles('org_admin')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Delete a company policy' })
   delete(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.delete(id, orgId);
   }
 
   @Post(':id/items')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Add an item to a policy' })
   addItem(
     @Param('orgId') orgId: string,
@@ -86,7 +89,7 @@ export class CompanyPoliciesController {
   }
 
   @Patch(':id/items/:itemId')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a policy item' })
   updateItem(
     @Param('orgId') orgId: string,
@@ -98,7 +101,7 @@ export class CompanyPoliciesController {
   }
 
   @Delete(':id/items/:itemId')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Delete a policy item' })
   deleteItem(
     @Param('orgId') orgId: string,
@@ -109,7 +112,7 @@ export class CompanyPoliciesController {
   }
 
   @Post(':id/assign')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('ecs.policy.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Assign policy to employees' })
   assign(
     @Param('orgId') orgId: string,

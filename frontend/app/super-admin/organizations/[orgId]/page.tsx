@@ -13,7 +13,14 @@ import {
   AlertTriangle,
   FlaskConical,
 } from 'lucide-react'
-import { getOrganization, deactivateOrganization } from '@/lib/api/organizations'
+import {
+  getOrganization,
+  deactivateOrganization,
+  getEntitlements,
+  setEntitlements,
+  type ModuleEntitlement,
+  type EntitlementState,
+} from '@/lib/api/organizations'
 import { getRoles } from '@/lib/api/roles'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -35,16 +42,6 @@ function orgStatusLabel(status: OrgStatus) {
   return 'Pending Setup'
 }
 
-function roleBadgeStatus(role: string): 'active' | 'inactive' | 'pending' | 'info' {
-  if (role === 'org_admin') return 'info'
-  if (role === 'hr_manager') return 'pending'
-  if (role === 'employee') return 'active'
-  return 'inactive'
-}
-
-function roleBadgeLabel(role: string) {
-  return role.replace('_', ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
 
 // ─── Info row ──────────────────────────────────────────────────────────────────
 
@@ -73,6 +70,96 @@ function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string
         <p className="text-xs text-[#475569]">{label}</p>
       </div>
     </div>
+  )
+}
+
+// ─── Entitlements card ───────────────────────────────────────────────────────
+
+const ENT_OPTIONS: { value: EntitlementState; label: string; on: string; off: string }[] = [
+  { value: 'full', label: 'Full', on: 'bg-[#16A34A] text-white border-[#16A34A]', off: 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]' },
+  { value: 'preview', label: 'Preview', on: 'bg-[#D97706] text-white border-[#D97706]', off: 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]' },
+  { value: 'off', label: 'Off', on: 'bg-[#DC2626] text-white border-[#DC2626]', off: 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]' },
+]
+
+function EntitlementsCard({ orgId }: { orgId: string }) {
+  const [modules, setModules] = useState<ModuleEntitlement[]>([])
+  const [edits, setEdits] = useState<Record<string, EntitlementState>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!orgId) return
+    let cancelled = false
+    getEntitlements(orgId)
+      .then((res) => {
+        if (cancelled) return
+        setModules(res.modules)
+        setEdits(Object.fromEntries(res.modules.map((m) => [m.module_key, m.state])))
+      })
+      .catch(() => { if (!cancelled) setError('Failed to load entitlements.') })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [orgId])
+
+  const dirty = modules.some((m) => edits[m.module_key] !== m.state)
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const entries = modules.map((m) => ({ module_key: m.module_key, state: edits[m.module_key] }))
+      const res = await setEntitlements(orgId, entries)
+      setModules(res.modules)
+      setEdits(Object.fromEntries(res.modules.map((m) => [m.module_key, m.state])))
+    } catch (err: any) {
+      setError(err?.response?.data?.message ?? 'Failed to save entitlements.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card title="Module Entitlements">
+      <p className="text-sm text-[#475569] -mt-1 mb-4">
+        Which modules this organization has purchased. This is a hard ceiling — no role, admin, or
+        override inside the org can exceed it. <strong>Preview</strong> grants read-only access.
+      </p>
+      {loading ? (
+        <div className="h-32 rounded-[8px] bg-[#F1F5F9] animate-pulse" />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {modules.map((m) => (
+            <div key={m.module_key} className="flex items-center justify-between gap-4 py-2 border-b border-[#F1F5F9] last:border-0">
+              <span className="text-[15px] font-medium text-[#0F172A]">{m.label}</span>
+              <div className="inline-flex rounded-[8px] overflow-hidden border border-[#E2E8F0]">
+                {ENT_OPTIONS.map((opt) => {
+                  const active = edits[m.module_key] === opt.value
+                  return (
+                    <button
+                      key={opt.value}
+                      onClick={() => setEdits((p) => ({ ...p, [m.module_key]: opt.value }))}
+                      className={[
+                        'px-3.5 py-1.5 text-sm font-medium border-r last:border-r-0 border-[#E2E8F0] transition-colors',
+                        active ? opt.on : opt.off,
+                      ].join(' ')}
+                    >
+                      {opt.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+          {error && <p className="text-sm text-[#DC2626] mt-2">{error}</p>}
+          <div className="flex justify-end pt-3">
+            <Button variant="primary" onClick={save} isLoading={saving} disabled={!dirty || saving}>
+              Save entitlements
+            </Button>
+          </div>
+        </div>
+      )}
+    </Card>
   )
 }
 
@@ -208,6 +295,9 @@ export default function OrgDetailPage() {
         <StatCard icon={<Shield size={18} />} label="Roles" value={roleCount} />
       </div>
 
+      {/* Module entitlements */}
+      <EntitlementsCard orgId={orgId} />
+
       {/* Members table */}
       <Card title="Members">
         {members.length === 0 ? (
@@ -233,7 +323,7 @@ export default function OrgDetailPage() {
                     <td className="py-3 pr-4 font-medium text-[#0F172A]">{m.user.name}</td>
                     <td className="py-3 pr-4 text-[#475569]">{m.user.email}</td>
                     <td className="py-3 pr-4">
-                      <Badge status={roleBadgeStatus(m.role) as any} label={roleBadgeLabel(m.role)} />
+                      <Badge status={m.is_admin ? 'info' : 'active'} label={m.is_admin ? 'Admin' : 'Member'} />
                     </td>
                     <td className="py-3 pr-4">
                       {m.also_in.length === 0 ? (

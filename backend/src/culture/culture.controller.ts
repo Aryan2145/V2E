@@ -14,11 +14,10 @@ import {
   ApiParam,
   ApiTags,
 } from '@nestjs/swagger';
-import { MemberRole } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { CultureService } from './culture.service';
 import { CreateCultureStandardDto } from './dto/create-culture-standard.dto';
 import { UpdateCultureStandardDto } from './dto/update-culture-standard.dto';
@@ -39,7 +38,7 @@ export class CultureController {
 
   @Post()
   @UseGuards(JwtAuthGuard, OrgScopeGuard, RolesGuard)
-  @Roles(MemberRole.org_admin, MemberRole.hr_manager)
+  @RequireAdmin()
   @ApiOperation({ summary: 'Create a culture standard' })
   @ApiParam({ name: 'orgId', type: String })
   create(
@@ -51,7 +50,7 @@ export class CultureController {
 
   @Patch(':id')
   @UseGuards(JwtAuthGuard, OrgScopeGuard, RolesGuard)
-  @Roles(MemberRole.org_admin, MemberRole.hr_manager)
+  @RequireAdmin()
   @ApiOperation({ summary: 'Update a culture standard' })
   @ApiParam({ name: 'orgId', type: String })
   @ApiParam({ name: 'id', type: String })
@@ -65,7 +64,7 @@ export class CultureController {
 
   @Delete(':id')
   @UseGuards(JwtAuthGuard, OrgScopeGuard, RolesGuard)
-  @Roles(MemberRole.org_admin, MemberRole.hr_manager)
+  @RequireAdmin()
   @ApiOperation({ summary: 'Delete a culture standard' })
   @ApiParam({ name: 'orgId', type: String })
   @ApiParam({ name: 'id', type: String })

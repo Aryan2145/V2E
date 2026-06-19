@@ -23,7 +23,7 @@ const TYPE_LABEL: Record<string, string> = {
 export default function AnnouncementsPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isHR = !!user?.is_admin
   const [items, setItems] = useState<Announcement[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<{ type?: string; priority?: string }>({})

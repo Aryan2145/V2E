@@ -12,7 +12,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
@@ -26,7 +26,7 @@ export class UsersController {
 
   @Get()
   @UseGuards(OrgScopeGuard)
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   findAll(@Param('orgId') orgId: string) {
     return this.usersService.findAll(orgId);
   }
@@ -39,7 +39,7 @@ export class UsersController {
   }
 
   @Post()
-  @Roles('org_admin')
+  @RequireAdmin()
   create(
     @Param('orgId') orgId: string,
     @Body() dto: CreateUserDto,
@@ -49,13 +49,13 @@ export class UsersController {
 
   @Get(':id')
   @UseGuards(OrgScopeGuard)
-  @Roles('org_admin', 'hr_manager')
+  @RequireAdmin()
   findOne(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.usersService.findOne(id, orgId);
   }
 
   @Patch(':id')
-  @Roles('org_admin')
+  @RequireAdmin()
   update(
     @Param('orgId') orgId: string,
     @Param('id') id: string,
@@ -65,7 +65,7 @@ export class UsersController {
   }
 
   @Delete(':id/deactivate')
-  @Roles('org_admin')
+  @RequireAdmin()
   deactivate(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.usersService.deactivate(id, orgId);
   }

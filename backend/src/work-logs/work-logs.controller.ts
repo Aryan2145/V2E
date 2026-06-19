@@ -24,7 +24,7 @@ import {
 } from './dto/work-log.dto';
 
 function actorOf(req: any): Actor {
-  return { id: req.user.id, role: req.user.role ?? null, isSuperAdmin: !!req.user.isSuperAdmin };
+  return { id: req.user.id, is_admin: !!req.user.is_admin, isSuperAdmin: !!req.user.isSuperAdmin };
 }
 
 @ApiTags('work-logs')

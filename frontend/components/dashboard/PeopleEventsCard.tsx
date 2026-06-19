@@ -174,7 +174,7 @@ export default function PeopleEventsCard({ data }: PeopleEventsCardProps) {
             </div>
           </div>
           <Link
-            href="/dashboard/employees"
+            href="/settings/organization/employees"
             className="flex items-center gap-1 text-[12px] font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
           >
             View all

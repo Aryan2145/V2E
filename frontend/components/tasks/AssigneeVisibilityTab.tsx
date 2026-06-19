@@ -24,9 +24,11 @@ import type {
   AssigneeExplainResult,
 } from '@/lib/types/tasks'
 
-const MEMBER_ROLES = ['org_admin', 'hr_manager', 'employee'] as const
+// Permissions collapsed to Administrators (is_admin) vs Members. 'org_admin'/'employee'
+// are the value strings the backend still matches; legacy 'hr_manager' is inert.
+const MEMBER_ROLES = ['org_admin', 'employee'] as const
 const roleLabel = (r: string) =>
-  ({ org_admin: 'Org Admin', hr_manager: 'HR Manager', employee: 'Employee' }[r] ?? r)
+  ({ org_admin: 'Administrators', employee: 'Members', hr_manager: 'HR Manager (legacy)' }[r] ?? r)
 
 interface Person {
   user_id: string

@@ -169,7 +169,7 @@ export class MeetingsReportsService {
       if (filters.to_date) (where.scheduled_start as any).lte = new Date(filters.to_date);
     }
 
-    const adminAll = actor.isSuperAdmin || actor.role === 'org_admin';
+    const adminAll = actor.isSuperAdmin || actor.is_admin;
     const organizerScope: string[] | null = adminAll ? null : await this.scopeUserIds(orgId, actor);
     if (organizerScope && organizerScope.length === 0) {
       // not a head and no scope → only meetings they take part in
@@ -184,10 +184,6 @@ export class MeetingsReportsService {
     }
     if (filters.department) {
       const ids = await this.userIdsInDepartments(orgId, [filters.department]);
-      where.created_by_user_id = { in: ids.length ? ids : ['__none__'] };
-    }
-    if (filters.role) {
-      const ids = await this.userIdsWithRole(orgId, filters.role);
       where.created_by_user_id = { in: ids.length ? ids : ['__none__'] };
     }
     return where;
@@ -212,13 +208,6 @@ export class MeetingsReportsService {
     return profiles.map((p) => p.user_id);
   }
 
-  private async userIdsWithRole(orgId: string, role: string): Promise<string[]> {
-    const members = await this.prisma.organizationMember.findMany({
-      where: { organization_id: orgId, role: role as any },
-      select: { user_id: true },
-    });
-    return members.map((m) => m.user_id);
-  }
 }
 
 function round(n: number): number {

@@ -94,7 +94,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 export default function EmployeesPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const canManage = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const canManage = !!user?.is_admin
 
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
@@ -248,7 +248,7 @@ export default function EmployeesPage() {
                   <tr
                     key={emp.id}
                     className="hover:bg-[#F8FAFC] transition-colors duration-100 cursor-pointer"
-                    onClick={() => window.location.href = `/dashboard/employees/${emp.id}`}
+                    onClick={() => window.location.href = `/settings/organization/employees/${emp.id}`}
                   >
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
@@ -270,7 +270,7 @@ export default function EmployeesPage() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <Link
-                        href={`/dashboard/employees/${emp.id}`}
+                        href={`/settings/organization/employees/${emp.id}`}
                         onClick={(e) => e.stopPropagation()}
                         className="inline-flex items-center gap-1 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors"
                       >

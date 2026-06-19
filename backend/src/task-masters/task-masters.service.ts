@@ -73,9 +73,10 @@ export class TaskMastersService {
     const configRoles = config.assignee_visibility_config_roles as string[];
     const member = await this.prisma.organizationMember.findUnique({
       where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-      select: { role: true },
+      select: { is_admin: true },
     });
-    if (!member || !Array.isArray(configRoles) || !configRoles.includes(member.role)) {
+    // MemberRole-collapse translation: employee-inclusive config → any member; else admin only.
+    if (!member || !Array.isArray(configRoles) || !(configRoles.includes('employee') || member.is_admin)) {
       throw new Error('You do not have permission to update assignee visibility settings');
     }
     return this.prisma.taskMaster.update({
@@ -115,7 +116,7 @@ export class TaskMastersService {
       const roleRestricted = Array.isArray(roles) && roles.length > 0;
       if (!deptRestricted && !roleRestricted) return true;
       if (deptRestricted && employeeProfile?.department_id && depts.includes(employeeProfile.department_id)) return true;
-      if (roleRestricted && roles.includes(member.role)) return true;
+      if (roleRestricted && (roles.includes('employee') || member.is_admin)) return true;
       return false;
     });
   }

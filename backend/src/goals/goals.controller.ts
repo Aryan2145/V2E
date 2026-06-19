@@ -17,6 +17,7 @@ import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { GoalsService } from './goals.service';
+import { principalFromUser } from '../access-rights/permissions.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto, DeleteGoalDto } from './dto/update-goal.dto';
 
@@ -34,6 +35,7 @@ export class GoalsController {
   @ApiOperation({ summary: 'List goals with filters' })
   list(
     @Param('orgId') orgId: string,
+    @Request() req: any,
     @Query('level') level?: GoalLevel,
     @Query('perspective') perspective?: GoalPerspective,
     @Query('owner_user_id') owner_user_id?: string,
@@ -43,7 +45,7 @@ export class GoalsController {
     @Query('to_date') to_date?: string,
     @Query('search') search?: string,
   ) {
-    return this.service.list(orgId, {
+    return this.service.list(orgId, principalFromUser(req.user), {
       level,
       perspective,
       owner_user_id,

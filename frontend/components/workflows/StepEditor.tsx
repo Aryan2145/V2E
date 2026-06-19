@@ -372,9 +372,8 @@ export default function StepEditor({ step, isFirst, isLast, index, nature, orgId
               className={inputCls}
             >
               <option value="">Select role</option>
-              <option value="org_admin">Admin</option>
-              <option value="hr_manager">HR Manager</option>
-              <option value="employee">Employee</option>
+              <option value="org_admin">Administrators</option>
+              <option value="employee">Any member</option>
             </select>
           </div>
         )}

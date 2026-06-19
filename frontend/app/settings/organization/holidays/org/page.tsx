@@ -16,7 +16,7 @@ const YEARS = [new Date().getFullYear() - 1, new Date().getFullYear(), new Date(
 export default function OrgCalendarPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isAdmin = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdmin = !!user?.is_admin
 
   const [workingDays, setWorkingDays] = useState<OrgWorkingDays | null>(null)
   const [localDays, setLocalDays] = useState<number[]>([1, 2, 3, 4, 5])

@@ -1,13 +1,49 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
+import { Lock } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
+import { useEntitlements } from '@/lib/auth/use-entitlements'
 import TopNav from './TopNav'
+
+// Route prefix → entitlement module (longest match wins). Mirrors the top nav.
+const ROUTE_MODULES: { prefix: string; module: string; label: string }[] = [
+  { prefix: '/dashboard/tasks', module: 'tasks', label: 'Tasks' },
+  { prefix: '/dashboard/ecs', module: 'ecs', label: 'ECS' },
+  { prefix: '/dashboard/governance', module: 'governance', label: 'Governance' },
+  { prefix: '/dashboard/performance', module: 'performance', label: 'Performance' },
+  { prefix: '/goals', module: 'goals', label: 'Goals' },
+  { prefix: '/learning', module: 'learning', label: 'Learning' },
+  { prefix: '/communication', module: 'communication', label: 'Communication' },
+]
+
+function moduleForPath(pathname: string) {
+  return ROUTE_MODULES.filter(
+    (r) => pathname === r.prefix || pathname.startsWith(r.prefix + '/'),
+  ).sort((a, b) => b.prefix.length - a.prefix.length)[0]
+}
+
+function ModuleDisabled({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center text-center gap-3 py-24 px-6">
+      <div className="w-14 h-14 rounded-[16px] bg-[#FEE2E2] flex items-center justify-center text-[#DC2626]">
+        <Lock size={24} />
+      </div>
+      <h2 className="text-[18px] font-semibold text-[#0F172A]">{label} isn’t enabled</h2>
+      <p className="text-sm text-[#475569] max-w-sm">
+        The {label} module is not part of your organization’s plan. Contact your administrator if you
+        think this is a mistake.
+      </p>
+    </div>
+  )
+}
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
+  const pathname = usePathname()
+  const { loading: entLoading, state } = useEntitlements()
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
@@ -25,10 +61,14 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
 
   if (!isAuthenticated) return null
 
+  const current = moduleForPath(pathname)
+  // Block a module route only once we know its entitlement is `off`.
+  const blocked = current && !entLoading && state(current.module) === 'off'
+
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <TopNav />
-      <div className="pt-14">{children}</div>
+      <div className="pt-14">{blocked ? <ModuleDisabled label={current!.label} /> : children}</div>
     </div>
   )
 }

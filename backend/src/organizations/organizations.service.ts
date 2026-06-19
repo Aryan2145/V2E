@@ -6,9 +6,17 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { EntitlementState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
+import { PERMISSION_REGISTRY, ENTITLEMENT_MODULE_KEYS } from '../access-rights/permission-registry';
+
+const ENTITLEMENT_MODULES = PERMISSION_REGISTRY.filter((m) => m.entitlementControlled).map((m) => ({
+  key: m.key,
+  label: m.label,
+}));
 
 @Injectable()
 export class OrganizationsService {
@@ -78,7 +86,63 @@ export class OrganizationsService {
 
     if (!org) throw new NotFoundException(`Organization with id ${id} not found`);
 
-    return org;
+    return { ...org, entitlements: await this.entitlementMap(id) };
+  }
+
+  // ─── Module entitlements (vendor ceiling — superadmin only) ───────────────────
+
+  /** Full entitlement list for the superadmin portal: every controlled module + its state. */
+  async getEntitlements(orgId: string) {
+    const rows = await this.prisma.orgModuleEntitlement.findMany({
+      where: { organization_id: orgId },
+    });
+    const byKey = new Map(rows.map((r) => [r.module_key, r.state]));
+    return {
+      modules: ENTITLEMENT_MODULES.map((m) => ({
+        module_key: m.key,
+        label: m.label,
+        state: byKey.get(m.key) ?? EntitlementState.off,
+      })),
+    };
+  }
+
+  /** Member-safe map module_key → state, used to drive in-app nav/feature gating. */
+  async entitlementMap(orgId: string): Promise<Record<string, EntitlementState>> {
+    const rows = await this.prisma.orgModuleEntitlement.findMany({
+      where: { organization_id: orgId },
+    });
+    const map: Record<string, EntitlementState> = {};
+    for (const key of ENTITLEMENT_MODULE_KEYS) map[key] = EntitlementState.off;
+    for (const r of rows) map[r.module_key] = r.state;
+    return map;
+  }
+
+  async setEntitlements(orgId: string, actorId: string, dto: UpdateEntitlementsDto) {
+    const valid = new Set(ENTITLEMENT_MODULE_KEYS);
+    for (const e of dto.entries) {
+      if (!valid.has(e.module_key)) {
+        throw new BadRequestException(`Unknown module "${e.module_key}"`);
+      }
+    }
+    for (const e of dto.entries) {
+      await this.prisma.orgModuleEntitlement.upsert({
+        where: { organization_id_module_key: { organization_id: orgId, module_key: e.module_key } },
+        create: { organization_id: orgId, module_key: e.module_key, state: e.state, updated_by_user_id: actorId },
+        update: { state: e.state, updated_by_user_id: actorId },
+      });
+    }
+    return this.getEntitlements(orgId);
+  }
+
+  /** Seed all controlled modules to `full` for an org (new orgs + backfill). Idempotent. */
+  async seedEntitlements(orgId: string, state: EntitlementState = EntitlementState.full) {
+    for (const key of ENTITLEMENT_MODULE_KEYS) {
+      await this.prisma.orgModuleEntitlement.upsert({
+        where: { organization_id_module_key: { organization_id: orgId, module_key: key } },
+        create: { organization_id: orgId, module_key: key, state },
+        update: {},
+      });
+    }
   }
 
   async create(dto: CreateOrgWithAdminDto) {
@@ -124,7 +188,18 @@ export class OrganizationsService {
       }
 
       const member = await tx.organizationMember.create({
-        data: { organization_id: organization.id, user_id: adminUser.id, role: 'org_admin', is_active: true },
+        // The provisioning admin is the org's first platform administrator.
+        data: { organization_id: organization.id, user_id: adminUser.id, is_admin: true, is_active: true },
+      });
+
+      // Entitle all modules at `full` by default; the vendor can downgrade later.
+      await tx.orgModuleEntitlement.createMany({
+        data: ENTITLEMENT_MODULE_KEYS.map((module_key) => ({
+          organization_id: organization.id,
+          module_key,
+          state: EntitlementState.full,
+        })),
+        skipDuplicates: true,
       });
 
       return {
@@ -133,7 +208,7 @@ export class OrganizationsService {
           id: adminUser.id,
           name: adminUser.name,
           email: adminUser.email,
-          role: member.role,
+          is_admin: member.is_admin,
           organization_id: organization.id,
           is_active: adminUser.is_active,
           created_at: adminUser.created_at,

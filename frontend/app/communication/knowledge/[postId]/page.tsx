@@ -14,7 +14,7 @@ export default function KnowledgePostPage() {
   const { postId } = useParams<{ postId: string }>()
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isHR = !!user?.is_admin
   const [post, setPost] = useState<KnowledgePost | null>(null)
   const [loading, setLoading] = useState(true)
   const [comment, setComment] = useState('')

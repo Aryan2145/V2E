@@ -7,6 +7,9 @@ import {
 import { GoalLevel, GoalPerspective, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
+import { ScopeService } from '../access-rights/scope.service';
+import { Principal } from '../access-rights/permissions.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 
@@ -30,13 +33,24 @@ export interface GoalListFilters {
 
 @Injectable()
 export class GoalsService {
+  private static readonly GOALS_LEAF = 'goals';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-  ) {}
+    private readonly subjects: SubjectEligibilityService,
+    private readonly scope: ScopeService,
+  ) {
+    this.scope.registerWiredList(GoalsService.GOALS_LEAF);
+  }
 
   // ─── Create ───────────────────────────────────────────────────────────────
   async create(orgId: string, userId: string, dto: CreateGoalDto) {
+    // Subject eligibility (fail loud): the chosen owner must be allowed to own a goal.
+    if (dto.owner_user_id) {
+      await this.subjects.assertEligible(orgId, 'goals.subject.ownable', dto.owner_user_id);
+    }
+
     const dueDate = this.parseDate(dto.due_date, 'due_date');
     const startDate = dto.start_date ? this.parseDate(dto.start_date, 'start_date') : null;
 
@@ -119,8 +133,10 @@ export class GoalsService {
   }
 
   // ─── List ─────────────────────────────────────────────────────────────────
-  async list(orgId: string, filters: GoalListFilters = {}) {
+  async list(orgId: string, principal: Principal, filters: GoalListFilters = {}) {
     const where: Prisma.GoalWhereInput = { organization_id: orgId, is_deleted: false };
+    const scopeWhere = await this.scope.listWhere(orgId, principal, GoalsService.GOALS_LEAF);
+    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere as Prisma.GoalWhereInput];
     if (filters.level) where.level = filters.level;
     if (filters.perspective) where.perspective = filters.perspective;
     if (filters.owner_user_id) where.owner_user_id = filters.owner_user_id;
@@ -266,6 +282,9 @@ export class GoalsService {
     if (dto.title !== undefined) data.title = dto.title.trim();
     if (dto.description !== undefined) data.description = dto.description;
     if (dto.owner_user_id !== undefined) {
+      if (dto.owner_user_id) {
+        await this.subjects.assertEligible(orgId, 'goals.subject.ownable', dto.owner_user_id);
+      }
       data.owner = { connect: { id: dto.owner_user_id } };
     }
     if (dto.department_id !== undefined) {

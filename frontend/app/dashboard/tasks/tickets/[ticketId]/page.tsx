@@ -37,7 +37,6 @@ export default function TicketDetailPage() {
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
   const userId = user?.id ?? ''
-  const userRole = user?.role ?? ''
 
   const [ticket, setTicket] = useState<Ticket | null>(null)
   const [comments, setComments] = useState<TicketComment[]>([])
@@ -106,7 +105,7 @@ export default function TicketDetailPage() {
 
   const isRaiser = ticket.raised_by_user_id === userId
   const isAssignee = ticket.assigned_to_user_id === userId
-  const isAdminOrHR = ['org_admin', 'hr_manager'].includes(userRole)
+  const isAdminOrHR = !!user?.is_admin
   const isClosed = ticket.status?.type === 'closed_resolved' || ticket.status?.type === 'closed_unresolved'
 
   const showConfirmBanner =

@@ -72,9 +72,9 @@ export class KnowledgeService {
     });
   }
 
-  async update(id: string, orgId: string, userId: string, userRole: string, dto: Partial<CreateKnowledgePostDto>) {
+  async update(id: string, orgId: string, userId: string, isAdmin: boolean, dto: Partial<CreateKnowledgePostDto>) {
     const post = await this.findOneRaw(id, orgId);
-    if (post.created_by_user_id !== userId && !['org_admin', 'hr_manager'].includes(userRole)) {
+    if (post.created_by_user_id !== userId && !isAdmin) {
       throw new ForbiddenException('Not allowed');
     }
     return this.prisma.knowledgePost.update({
@@ -84,9 +84,9 @@ export class KnowledgeService {
     });
   }
 
-  async remove(id: string, orgId: string, userId: string, userRole: string) {
+  async remove(id: string, orgId: string, userId: string, isAdmin: boolean) {
     const post = await this.findOneRaw(id, orgId);
-    if (post.created_by_user_id !== userId && !['org_admin', 'hr_manager'].includes(userRole)) {
+    if (post.created_by_user_id !== userId && !isAdmin) {
       throw new ForbiddenException('Not allowed');
     }
     return this.prisma.knowledgePost.delete({ where: { id } });
@@ -110,10 +110,10 @@ export class KnowledgeService {
     });
   }
 
-  async deleteComment(commentId: string, orgId: string, userId: string, userRole: string) {
+  async deleteComment(commentId: string, orgId: string, userId: string, isAdmin: boolean) {
     const comment = await this.prisma.knowledgeComment.findFirst({ where: { id: commentId, organization_id: orgId } });
     if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
-    if (comment.created_by_user_id !== userId && !['org_admin', 'hr_manager'].includes(userRole)) {
+    if (comment.created_by_user_id !== userId && !isAdmin) {
       throw new ForbiddenException('Not allowed');
     }
     return this.prisma.knowledgeComment.delete({ where: { id: commentId } });

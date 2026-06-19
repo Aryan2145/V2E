@@ -6,6 +6,8 @@ import {
   Param,
   Patch,
   Post,
+  Put,
+  Request,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -17,6 +19,7 @@ import {
   CreateOrgWithAdminDto,
 } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
 import { OrganizationsService } from './organizations.service';
 
 @ApiTags('organizations')
@@ -62,5 +65,23 @@ export class OrganizationsController {
   @SuperAdmin()
   deactivate(@Param('id') id: string) {
     return this.organizationsService.deactivate(id);
+  }
+
+  // ─── Module entitlements (vendor ceiling — superadmin only) ───────────────────
+
+  @Get(':id/entitlements')
+  @SuperAdmin()
+  getEntitlements(@Param('id') id: string) {
+    return this.organizationsService.getEntitlements(id);
+  }
+
+  @Put(':id/entitlements')
+  @SuperAdmin()
+  setEntitlements(
+    @Param('id') id: string,
+    @Request() req: any,
+    @Body() dto: UpdateEntitlementsDto,
+  ) {
+    return this.organizationsService.setEntitlements(id, req.user.id, dto);
   }
 }

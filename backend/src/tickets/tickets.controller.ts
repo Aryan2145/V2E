@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { OrgScopeGuard } from '../common/guards/org-scope.guard'
 import { CurrentUser } from '../common/decorators/current-user.decorator'
+import { principalFromUser } from '../access-rights/permissions.service'
 import { TicketsService } from './tickets.service'
 import { RaiseTicketDto } from './dto/raise-ticket.dto'
 import { UpdateTicketDto } from './dto/update-ticket.dto'
@@ -16,6 +17,9 @@ import { DeleteTicketDto } from './dto/delete-ticket.dto'
 interface AuthUser {
   id: string
   role: string
+  is_admin?: boolean
+  isSuperAdmin?: boolean
+  job_role_id?: string | null
   organizationId: string
 }
 
@@ -32,6 +36,7 @@ export class TicketsController {
   @Get()
   list(
     @Param('orgId') orgId: string,
+    @CurrentUser() user: AuthUser,
     @Query('typeId') typeId?: string,
     @Query('categoryId') categoryId?: string,
     @Query('priorityId') priorityId?: string,
@@ -43,7 +48,7 @@ export class TicketsController {
     @Query('to') to?: string,
     @Query('search') search?: string,
   ) {
-    return this.ticketsService.listTickets(orgId, {
+    return this.ticketsService.listTickets(orgId, principalFromUser(user), {
       typeId,
       categoryId,
       priorityId,
@@ -64,18 +69,17 @@ export class TicketsController {
 
   @Get('my')
   listMy(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
-    return this.ticketsService.listTickets(orgId, { raisedBy: user.id })
+    return this.ticketsService.listTickets(orgId, principalFromUser(user), { raisedBy: user.id })
   }
 
   @Get('assigned')
   listAssigned(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
-    return this.ticketsService.listTickets(orgId, { assignedTo: user.id })
+    return this.ticketsService.listTickets(orgId, principalFromUser(user), { assignedTo: user.id })
   }
 
   @Get('archive')
   listArchive(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
-    const isAdminOrHR = ['org_admin', 'hr_manager'].includes(user.role)
-    return this.ticketsService.listArchive(orgId, isAdminOrHR ? undefined : user.id)
+    return this.ticketsService.listArchive(orgId, user.is_admin ? undefined : user.id)
   }
 
   @Get('notifications')
@@ -105,7 +109,7 @@ export class TicketsController {
 
   @Post(':id/assign')
   assign(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AssignTicketDto) {
-    return this.ticketsService.assignTicket(orgId, user.id, user.role, id, dto)
+    return this.ticketsService.assignTicket(orgId, user.id, !!user.is_admin, id, dto)
   }
 
   @Post(':id/accept')

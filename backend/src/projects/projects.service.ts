@@ -2,6 +2,9 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { PrismaService } from '../prisma/prisma.service';
 import { ProjectProgressService } from './project-progress.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
+import { ScopeService } from '../access-rights/scope.service';
+import { Principal } from '../access-rights/permissions.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { UpdateProjectStatusDto } from './dto/update-project-status.dto';
@@ -24,11 +27,17 @@ const PROJECT_INCLUDE = {
 
 @Injectable()
 export class ProjectsService {
+  private static readonly PROJECTS_LEAF = 'projects.project.manage';
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly progressService: ProjectProgressService,
     private readonly notifications: NotificationsService,
-  ) {}
+    private readonly subjects: SubjectEligibilityService,
+    private readonly scope: ScopeService,
+  ) {
+    this.scope.registerWiredList(ProjectsService.PROJECTS_LEAF);
+  }
 
   // ─── Master ──────────────────────────────────────────────────────────────────
 
@@ -140,14 +149,16 @@ export class ProjectsService {
 
   // ─── Projects CRUD ──────────────────────────────────────────────────────────
 
-  async listProjects(orgId: string, userId: string) {
-    const memberships = await this.prisma.projectMember.findMany({
-      where: { user_id: userId },
-      select: { project_id: true },
-    });
-    const projectIds = memberships.map((m) => m.project_id);
+  async listProjects(orgId: string, principal: Principal) {
+    // Row-level data scope: own == projects the actor participates in (creator /
+    // manager / member); team/department/org widen it via granted scope.
+    const scopeWhere = await this.scope.listWhere(orgId, principal, ProjectsService.PROJECTS_LEAF);
     return this.prisma.project.findMany({
-      where: { organization_id: orgId, id: { in: projectIds }, is_deleted: false },
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        ...(Object.keys(scopeWhere).length ? { AND: [scopeWhere as any] } : {}),
+      },
       include: {
         members: true,
         milestones: { orderBy: { order_index: 'asc' } },
@@ -157,8 +168,8 @@ export class ProjectsService {
     });
   }
 
-  async listMyProjects(orgId: string, userId: string) {
-    return this.listProjects(orgId, userId);
+  async listMyProjects(orgId: string, principal: Principal) {
+    return this.listProjects(orgId, principal);
   }
 
   async listManagingProjects(orgId: string, userId: string) {
@@ -187,11 +198,12 @@ export class ProjectsService {
     const master = await this.ensureMaster(orgId);
     const member = await this.prisma.organizationMember.findUnique({
       where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-      select: { role: true },
+      select: { is_admin: true },
     });
     if (!member) throw new ForbiddenException('Not a member of this organization');
     const allowedRoles = master.project_creation_roles as string[];
-    if (!allowedRoles.includes(member.role)) {
+    // MemberRole-collapse translation: employee-inclusive config → any member; else admin only.
+    if (!(Array.isArray(allowedRoles) && (allowedRoles.includes('employee') || member.is_admin))) {
       throw new ForbiddenException('Your role is not permitted to create projects');
     }
 
@@ -349,6 +361,8 @@ export class ProjectsService {
   async addMember(orgId: string, projectId: string, userId: string, dto: AddProjectMemberDto) {
     await this.findProjectOrFail(orgId, projectId);
     await this.requireManagerOrEditor(projectId, userId);
+    // Subject eligibility (fail loud): the added user must be allowed to be a project member.
+    await this.subjects.assertEligible(orgId, 'projects.subject.member', dto.user_id);
 
     const member = await this.prisma.projectMember.upsert({
       where: { project_id_user_id: { project_id: projectId, user_id: dto.user_id } },

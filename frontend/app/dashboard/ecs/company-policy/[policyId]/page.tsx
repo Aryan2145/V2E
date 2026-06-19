@@ -281,7 +281,7 @@ export default function ManagePolicyPage() {
   const { user } = useAuth()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
-  const isAdminOrHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isAdminOrHR = !!user?.is_admin
 
   const [policy, setPolicy] = useState<CompanyPolicy | null>(null)
   const [loading, setLoading] = useState(true)

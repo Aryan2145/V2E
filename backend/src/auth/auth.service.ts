@@ -31,13 +31,13 @@ export class AuthService {
       data: { name: dto.name, email: dto.email, password_hash },
     });
 
-    if (dto.organization_id && dto.role) {
+    if (dto.organization_id) {
       await this.prisma.organizationMember.create({
-        data: { organization_id: dto.organization_id, user_id: user.id, role: dto.role as any },
+        data: { organization_id: dto.organization_id, user_id: user.id, is_admin: dto.is_admin ?? false },
       });
     }
 
-    return this.issueFullTokens(user.id, user.email, dto.organization_id ?? null, (dto.role as any) ?? null, false);
+    return this.issueFullTokens(user.id, user.email, dto.organization_id ?? null, false);
   }
 
   async login(dto: LoginDto) {
@@ -59,8 +59,8 @@ export class AuthService {
 
     if (memberships.length === 1) {
       const m = memberships[0];
-      const tokens = await this.issueFullTokens(user.id, user.email, m.organization_id, m.role, false);
-      return { ...tokens, user: await this.buildUserPayload(user, m.organization_id, m.role, false) };
+      const tokens = await this.issueFullTokens(user.id, user.email, m.organization_id, false);
+      return { ...tokens, user: await this.buildUserPayload(user, m.organization_id, m.is_admin, false) };
     }
 
     const selectionToken = this.jwtService.sign(
@@ -77,7 +77,7 @@ export class AuthService {
         name: m.organization.name,
         slug: m.organization.slug,
         logo_url: m.organization.logo_url,
-        role: m.role,
+        is_admin: m.is_admin,
         joined_at: m.joined_at,
       })),
     };
@@ -92,8 +92,8 @@ export class AuthService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.is_active) throw new UnauthorizedException();
 
-    const tokens = await this.issueFullTokens(user.id, user.email, dto.organizationId, member.role, false);
-    return { ...tokens, user: await this.buildUserPayload(user, dto.organizationId, member.role, false) };
+    const tokens = await this.issueFullTokens(user.id, user.email, dto.organizationId, false);
+    return { ...tokens, user: await this.buildUserPayload(user, dto.organizationId, member.is_admin, false) };
   }
 
   async getMyOrgs(userId: string) {
@@ -115,16 +115,19 @@ export class AuthService {
       if (!user || !user.is_active || user.refresh_token !== refreshToken) {
         throw new UnauthorizedException('Invalid refresh token');
       }
-      const tokens = await this.issueFullTokens(
-        user.id,
-        user.email,
-        payload.organizationId ?? null,
-        payload.role ?? null,
-        user.is_super_admin,
-      );
+      const organizationId = payload.organizationId ?? null;
+      let isAdmin = false;
+      if (organizationId) {
+        const member = await this.prisma.organizationMember.findFirst({
+          where: { user_id: user.id, organization_id: organizationId, is_active: true },
+          select: { is_admin: true },
+        });
+        isAdmin = member?.is_admin ?? false;
+      }
+      const tokens = await this.issueFullTokens(user.id, user.email, organizationId, user.is_super_admin);
       return {
         ...tokens,
-        user: await this.buildUserPayload(user, payload.organizationId ?? null, payload.role ?? null, user.is_super_admin),
+        user: await this.buildUserPayload(user, organizationId, isAdmin, user.is_super_admin),
       };
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
@@ -140,8 +143,8 @@ export class AuthService {
 
     if (!user.is_super_admin) throw new UnauthorizedException('Access denied. Super administrator credentials required.');
 
-    const tokens = await this.issueFullTokens(user.id, user.email, null, null, true);
-    return { ...tokens, user: await this.buildUserPayload(user, null, null, true) };
+    const tokens = await this.issueFullTokens(user.id, user.email, null, true);
+    return { ...tokens, user: await this.buildUserPayload(user, null, false, true) };
   }
 
   async logout(userId: string) {
@@ -198,12 +201,10 @@ export class AuthService {
     userId: string,
     email: string,
     organizationId: string | null,
-    role: string | null,
     isSuperAdmin: boolean,
   ) {
     const payload: Record<string, any> = { sub: userId, email, isSuperAdmin };
     if (organizationId) payload.organizationId = organizationId;
-    if (role) payload.role = role;
 
     const access_token = this.jwtService.sign(payload, {
       secret: this.configService.get<string>('JWT_SECRET')!,
@@ -223,7 +224,7 @@ export class AuthService {
   private async buildUserPayload(
     user: { id: string; name: string; email: string },
     organizationId: string | null,
-    role: string | null,
+    isAdmin: boolean,
     isSuperAdmin: boolean,
   ) {
     let isTestOrg = false;
@@ -234,6 +235,6 @@ export class AuthService {
       });
       isTestOrg = org?.is_test ?? false;
     }
-    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, role, isTestOrg };
+    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, is_admin: isAdmin, isTestOrg };
   }
 }

@@ -53,7 +53,7 @@ export default function RoleDetailPage() {
   const roleId = params?.roleId as string
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const canEdit = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const canEdit = !!user?.is_admin
 
   const [role, setRole] = useState<Role | null>(null)
   const [loading, setLoading] = useState(true)
@@ -96,7 +96,7 @@ export default function RoleDetailPage() {
     <div className="space-y-6 max-w-4xl">
       {/* Back link */}
       <Link
-        href="/dashboard/roles"
+        href="/settings/organization/roles"
         className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors"
       >
         <ArrowLeft size={15} />

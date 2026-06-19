@@ -14,7 +14,9 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { getMyOrgs } from '@/lib/api/auth'
-import type { UserRole, OrgMembership } from '@/lib/types'
+import type { OrgMembership } from '@/lib/types'
+
+export type SidebarRole = 'super_admin' | 'admin' | 'member'
 
 interface NavItem {
   label: string
@@ -23,7 +25,7 @@ interface NavItem {
 }
 
 interface SidebarProps {
-  role: UserRole
+  role: SidebarRole
   orgId?: string
 }
 
@@ -34,18 +36,10 @@ const superAdminNav: NavItem[] = [
   { label: 'Admins', href: '/super-admin/admins', icon: <Users size={18} /> },
 ]
 
-const navByRole: Record<UserRole, NavItem[]> = {
+const navByRole: Record<SidebarRole, NavItem[]> = {
   super_admin: superAdminNav,
-  org_admin: superAdminNav,
-  hr_manager: superAdminNav,
-  employee: superAdminNav,
-}
-
-const roleLabels: Record<UserRole, string> = {
-  super_admin: 'Super Admin',
-  org_admin: 'Org Admin',
-  hr_manager: 'HR Manager',
-  employee: 'Employee',
+  admin: superAdminNav,
+  member: superAdminNav,
 }
 
 export default function Sidebar({ role }: SidebarProps) {
@@ -169,7 +163,7 @@ export default function Sidebar({ role }: SidebarProps) {
                       </div>
                       <div className="flex-1 min-w-0 text-left">
                         <p className="text-[12px] text-[#CBD5E1] font-medium truncate">{m.organization.name}</p>
-                        <p className="text-[11px] text-[#64748B] capitalize">{roleLabels[m.role] ?? m.role}</p>
+                        <p className="text-[11px] text-[#64748B] capitalize">{m.is_admin ? 'Administrator' : 'Member'}</p>
                       </div>
                       {isCurrent && !isLoading && <Check size={12} className="text-[#2563EB] shrink-0" />}
                       {isLoading && <div className="w-3 h-3 border border-[#2563EB] border-t-transparent rounded-full animate-spin shrink-0" />}
@@ -190,7 +184,7 @@ export default function Sidebar({ role }: SidebarProps) {
               {user.name}
             </p>
             <span className="inline-flex self-start items-center rounded-[999px] bg-[#1E293B] text-[#94A3B8] text-[11px] font-medium px-2 py-0.5">
-              {roleLabels[role]}
+              {role === 'super_admin' ? 'Super Admin' : role === 'admin' ? 'Administrator' : 'Member'}
             </span>
           </div>
         )}

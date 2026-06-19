@@ -1,10 +1,11 @@
 'use client'
 
-const ROLES = ['org_admin', 'hr_manager', 'employee']
+// Permissions collapsed to Administrators (is_admin) vs Members; the value strings
+// are what the backend still reads ('employee' present ⇒ everyone, else admins only).
+const ROLES = ['org_admin', 'employee']
 const ROLE_LABELS: Record<string, string> = {
-  org_admin: 'Org Admin',
-  hr_manager: 'HR Manager',
-  employee: 'Employee',
+  org_admin: 'Administrators',
+  employee: 'Members',
 }
 
 interface Props {

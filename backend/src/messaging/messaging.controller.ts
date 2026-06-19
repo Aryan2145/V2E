@@ -126,7 +126,7 @@ export class MessagingController {
     @Param('msgId') msgId: string,
     @Request() req: any,
   ) {
-    return this.service.deleteMessage(msgId, convId, req.user.id, orgId, req.user.role);
+    return this.service.deleteMessage(msgId, convId, req.user.id, orgId);
   }
 
   @Post('conversations/:convId/read')

@@ -152,10 +152,11 @@ export class WorkflowEngineService {
     if (step.assignee_type === 'fixed_person') {
       return step.assignee_user_id || step.assigner_user_id
     }
-    // Role-based round-robin
+    // Role-based round-robin. MemberRole was removed; a legacy `assignee_role` of
+    // org_admin now targets admins, anything else targets any active member.
     const role = step.assignee_role!
     const members = await this.prisma.organizationMember.findMany({
-      where: { organization_id: step.organization_id, role: role as never, is_active: true },
+      where: { organization_id: step.organization_id, is_active: true, ...(role === 'org_admin' ? { is_admin: true } : {}) },
       select: { user_id: true },
     })
     if (members.length === 0) {

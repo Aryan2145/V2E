@@ -14,6 +14,9 @@ import { HolidaysService } from '../holidays/holidays.service';
 import { ProjectProgressService } from '../projects/project-progress.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
+import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
+import { ScopeService } from '../access-rights/scope.service';
+import { Principal } from '../access-rights/permissions.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -38,7 +41,16 @@ export class TasksService {
     private readonly projectProgressService: ProjectProgressService,
     private readonly notifications: NotificationsService,
     private readonly assigneeVisibility: AssigneeVisibilityService,
-  ) {}
+    private readonly subjects: SubjectEligibilityService,
+    private readonly scope: ScopeService,
+  ) {
+    this.scope.registerWiredList(TasksService.TASK_LEAF);
+  }
+
+  /** The subject leaf governing "can be assigned a task". */
+  private static readonly TASK_SUBJECT = 'tasks.subject.assignable';
+  /** The content leaf governing task row-level scope. */
+  private static readonly TASK_LEAF = 'tasks.task.manage';
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -51,12 +63,15 @@ export class TasksService {
       this.getOrgConfig(orgId),
       this.prisma.organizationMember.findUnique({
         where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-        select: { role: true },
+        select: { is_admin: true },
       }),
     ]);
     if (!member) throw new ForbiddenException('Not a member of this organization');
     const allowedRoles = config[field] as string[];
-    if (!Array.isArray(allowedRoles) || !allowedRoles.includes(member.role)) {
+    // MemberRole-collapse translation: an "employee"-inclusive config stays open to
+    // every member; otherwise the action is restricted to platform admins.
+    const allowed = Array.isArray(allowedRoles) && (allowedRoles.includes('employee') || member.is_admin);
+    if (!allowed) {
       throw new ForbiddenException(`Your role is not permitted to perform this action`);
     }
   }
@@ -126,6 +141,10 @@ export class TasksService {
   async createTask(orgId: string, userId: string, dto: CreateTaskDto) {
     await this.checkTaskPermission(orgId, userId, 'task_creation_roles');
     const config = await this.getOrgConfig(orgId);
+
+    // Subject eligibility (fail loud, before any writes): every assignee must be
+    // eligible to be assigned a task — even if they have no Tasks actor access.
+    await this.subjects.assertAllEligible(orgId, TasksService.TASK_SUBJECT, dto.assignee_user_ids ?? []);
 
     // Resolve status
     let statusId = dto.status_id;
@@ -311,7 +330,7 @@ export class TasksService {
 
   async listTasks(
     orgId: string,
-    userId: string,
+    principal: Principal,
     filters: {
       status_id?: string;
       priority_id?: string;
@@ -329,6 +348,11 @@ export class TasksService {
       organization_id: orgId,
       is_deleted: false,
     };
+
+    // Row-level data scope (own/team/department/org) — AND'd so it never clobbers
+    // the search OR or assignee filter below.
+    const scopeWhere = await this.scope.listWhere(orgId, principal, TasksService.TASK_LEAF);
+    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere];
 
     if (filters.goal_id) where.goal_id = filters.goal_id;
     if (filters.status_id) where.status_id = filters.status_id;
@@ -911,6 +935,10 @@ export class TasksService {
 
   async addAssignee(orgId: string, userId: string, taskId: string, dto: AddAssigneeDto) {
     const task = await this.findTaskOrFail(orgId, taskId);
+    // A real assignee (not a CC) must be eligible to be assigned a task. Fail loud.
+    if (!dto.is_cc) {
+      await this.subjects.assertEligible(orgId, TasksService.TASK_SUBJECT, dto.user_id);
+    }
     const assignee = await this.prisma.taskAssignee.upsert({
       where: { task_id_user_id: { task_id: taskId, user_id: dto.user_id } },
       create: {
@@ -1202,7 +1230,7 @@ export class TasksService {
         });
         return {
           organization: m.organization,
-          role: m.role,
+          is_admin: m.is_admin,
           tasks: await this.enrichTaskList(tasks),
         };
       }),

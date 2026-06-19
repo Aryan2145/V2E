@@ -10,10 +10,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { LearningService } from './learning.service';
 import { CreateLearningPathDto } from './dto/create-learning-path.dto';
 import { UpdateLearningPathDto } from './dto/update-learning-path.dto';
@@ -25,7 +28,7 @@ import { ReorderItemsDto } from './dto/reorder-items.dto';
 
 @ApiTags('learning')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/learning')
 export class LearningController {
   constructor(private readonly learningService: LearningService) {}
@@ -48,7 +51,7 @@ export class LearningController {
   }
 
   @Post('paths')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a new learning path' })
   createPath(
     @Param('orgId') orgId: string,
@@ -59,7 +62,7 @@ export class LearningController {
   }
 
   @Patch('paths/:pathId')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a learning path' })
   updatePath(
     @Param('orgId') orgId: string,
@@ -70,7 +73,7 @@ export class LearningController {
   }
 
   @Post('paths/:pathId/publish')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Publish a learning path (triggers auto-assignment)' })
   publishPath(
     @Param('orgId') orgId: string,
@@ -81,7 +84,7 @@ export class LearningController {
   }
 
   @Post('paths/:pathId/archive')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Archive a learning path' })
   archivePath(
     @Param('orgId') orgId: string,
@@ -91,7 +94,7 @@ export class LearningController {
   }
 
   @Delete('paths/:pathId')
-  @Roles('org_admin')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Delete a learning path' })
   deletePath(
     @Param('orgId') orgId: string,
@@ -103,7 +106,7 @@ export class LearningController {
   // ─── Items ──────────────────────────────────────────────────────────────────
 
   @Post('paths/:pathId/items')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Add a learning item to a path' })
   addItem(
     @Param('orgId') orgId: string,
@@ -114,7 +117,7 @@ export class LearningController {
   }
 
   @Patch('paths/:pathId/items/:itemId')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a learning item' })
   updateItem(
     @Param('orgId') orgId: string,
@@ -126,7 +129,7 @@ export class LearningController {
   }
 
   @Delete('paths/:pathId/items/:itemId')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Delete a learning item' })
   deleteItem(
     @Param('orgId') orgId: string,
@@ -137,7 +140,7 @@ export class LearningController {
   }
 
   @Patch('paths/:pathId/items/reorder')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Reorder items in a learning path' })
   reorderItems(
     @Param('orgId') orgId: string,
@@ -150,7 +153,7 @@ export class LearningController {
   // ─── Assignments ─────────────────────────────────────────────────────────────
 
   @Post('paths/:pathId/assign')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Assign a learning path to employees' })
   assignPath(
     @Param('orgId') orgId: string,
@@ -162,7 +165,7 @@ export class LearningController {
   }
 
   @Get('paths/:pathId/assignments')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.read)
   @ApiOperation({ summary: 'Get all assignments for a learning path' })
   getAssignments(
     @Param('orgId') orgId: string,
@@ -174,7 +177,7 @@ export class LearningController {
   // ─── Progress Dashboard (HR) ─────────────────────────────────────────────────
 
   @Get('progress')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('learning.path.manage', PermissionAction.read)
   @ApiOperation({ summary: 'Get org-wide learning progress summary' })
   getOrgProgress(@Param('orgId') orgId: string) {
     return this.learningService.getOrgProgress(orgId);

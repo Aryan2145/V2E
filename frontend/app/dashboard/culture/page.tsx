@@ -104,7 +104,7 @@ function EmptyState({ canEdit }: { canEdit: boolean }) {
 export default function CulturePage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
-  const canEdit = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const canEdit = !!user?.is_admin
 
   const [standards, setStandards] = useState<CultureStandard[]>([])
   const [loading, setLoading] = useState(true)

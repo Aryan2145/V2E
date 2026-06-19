@@ -33,7 +33,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname()
 
   useEffect(() => {
-    if (!isLoading && (!user || (user.role !== 'org_admin' && user.role !== 'hr_manager'))) {
+    if (!isLoading && (!user || (!user.is_admin))) {
       router.replace('/login')
     }
   }, [user, isLoading, router])
@@ -59,7 +59,7 @@ export default function SetupLayout({ children }: { children: React.ReactNode })
     )
   }
 
-  if (!user || (user.role !== 'org_admin' && user.role !== 'hr_manager')) {
+  if (!user || (!user.is_admin)) {
     return null
   }
 

@@ -25,7 +25,7 @@ const EMP_NAV: NavItem[] = [
 export default function LearningAdminSidebar({ collapsed, onToggle }: LearningAdminSidebarProps) {
   const pathname = usePathname()
   const { user } = useAuth()
-  const isHR = user?.role === 'org_admin' || user?.role === 'hr_manager'
+  const isHR = !!user?.is_admin
   const navItems = isHR ? HR_NAV : EMP_NAV
 
   return (

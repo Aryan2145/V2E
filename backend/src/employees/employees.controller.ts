@@ -9,11 +9,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { EmployeeStatus } from '@prisma/client';
+import { EmployeeStatus, PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequireAdmin } from '../common/decorators/require-admin.decorator';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { EmployeesService } from './employees.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
@@ -25,7 +27,7 @@ class UpdateStatusDto {
 
 @ApiTags('employees')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/employees')
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
@@ -58,21 +60,21 @@ export class EmployeesController {
   }
 
   @Post()
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a new employee (creates user account + profile)' })
   create(@Param('orgId') orgId: string, @Body() dto: CreateEmployeeDto) {
     return this.employeesService.create(orgId, dto);
   }
 
   @Post('bulk-import')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Bulk-create employees from CSV rows (resolved by name/email)' })
   bulkImport(@Param('orgId') orgId: string, @Body() dto: BulkImportEmployeesDto) {
     return this.employeesService.bulkImport(orgId, dto.rows);
   }
 
   @Patch(':id')
-  @Roles('org_admin', 'hr_manager')
+  @RequirePermission('employees.profile.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update employee profile fields' })
   update(
     @Param('orgId') orgId: string,
@@ -83,7 +85,7 @@ export class EmployeesController {
   }
 
   @Patch(':id/status')
-  @Roles('org_admin')
+  @RequireAdmin()
   @ApiOperation({ summary: 'Update employee status (active/inactive/on_leave)' })
   @ApiBody({ type: UpdateStatusDto })
   updateStatus(

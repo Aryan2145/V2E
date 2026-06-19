@@ -2,11 +2,6 @@
 
 export type OrgStatus = 'active' | 'inactive' | 'pending_setup';
 
-export type MemberRole = 'org_admin' | 'hr_manager' | 'employee';
-
-// kept for sidebar/nav display logic that needs the super_admin variant
-export type UserRole = MemberRole | 'super_admin';
-
 export type BehaviorType = 'expected_behavior' | 'unacceptable_behavior';
 
 export type RoleLevel = 'junior' | 'mid' | 'senior' | 'lead' | 'head';
@@ -47,7 +42,7 @@ export interface Organization {
 export interface OrgDetailMember {
   id: string;
   user_id: string;
-  role: MemberRole;
+  is_admin: boolean;
   is_active: boolean;
   joined_at: string;
   user: {
@@ -69,7 +64,7 @@ export interface User {
   organization_id?: string;
   name: string;
   email: string;
-  role: MemberRole;
+  is_admin: boolean;
   is_active: boolean;
   created_at: string;
   updated_at: string;
@@ -81,7 +76,7 @@ export interface AuthUser {
   email: string;
   isSuperAdmin: boolean;
   organizationId: string | null;
-  role: MemberRole | null;
+  is_admin: boolean;
   isTestOrg?: boolean;
 }
 
@@ -89,7 +84,7 @@ export interface OrgMembership {
   id: string;
   organization_id: string;
   user_id: string;
-  role: MemberRole;
+  is_admin: boolean;
   is_active: boolean;
   joined_at: string;
   organization: {
@@ -106,7 +101,7 @@ export interface OrgChoice {
   name: string;
   slug: string;
   logo_url?: string | null;
-  role: MemberRole;
+  is_admin: boolean;
   joined_at: string;
 }
 

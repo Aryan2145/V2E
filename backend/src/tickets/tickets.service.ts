@@ -3,6 +3,9 @@ import { Cron } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
 import { NotificationsService } from '../notifications/notifications.service'
+import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service'
+import { ScopeService } from '../access-rights/scope.service'
+import { Principal } from '../access-rights/permissions.service'
 import type { RaiseTicketDto } from './dto/raise-ticket.dto'
 import type { UpdateTicketDto } from './dto/update-ticket.dto'
 import type { AssignTicketDto } from './dto/assign-ticket.dto'
@@ -30,11 +33,17 @@ const TICKET_INCLUDE = {
 export class TicketsService {
   private readonly logger = new Logger(TicketsService.name)
 
+  private static readonly TICKETS_LEAF = 'tickets.ticket.manage'
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly holidaysService: HolidaysService,
     private readonly notifications: NotificationsService,
-  ) {}
+    private readonly subjects: SubjectEligibilityService,
+    private readonly scope: ScopeService,
+  ) {
+    this.scope.registerWiredList(TicketsService.TICKETS_LEAF)
+  }
 
   // ─── Defaults ──────────────────────────────────────────────────────────────
 
@@ -191,8 +200,10 @@ export class TicketsService {
     scopeId: string,
     role: string,
   ): Promise<string | null> {
+    // NOTE: MemberRole was removed; legacy `auto_assign_role` configs are reinterpreted
+    // as "admins" when they named org_admin, otherwise as any active member.
     const members = await this.prisma.organizationMember.findMany({
-      where: { organization_id: orgId, role: role as never, is_active: true },
+      where: { organization_id: orgId, is_active: true, ...(role === 'org_admin' ? { is_admin: true } : {}) },
       select: { user_id: true },
       orderBy: { joined_at: 'asc' },
     })
@@ -224,7 +235,7 @@ export class TicketsService {
 
   private async getAdminUserIds(orgId: string): Promise<string[]> {
     const members = await this.prisma.organizationMember.findMany({
-      where: { organization_id: orgId, role: { in: ['org_admin', 'hr_manager'] as never[] }, is_active: true },
+      where: { organization_id: orgId, is_admin: true, is_active: true },
       select: { user_id: true },
     })
     return members.map((m) => m.user_id)
@@ -434,6 +445,7 @@ export class TicketsService {
 
   async listTickets(
     orgId: string,
+    principal: Principal,
     filters: {
       typeId?: string
       categoryId?: string
@@ -472,6 +484,8 @@ export class TicketsService {
           }
         : {}),
     }
+    const scopeWhere = await this.scope.listWhere(orgId, principal, TicketsService.TICKETS_LEAF)
+    if (Object.keys(scopeWhere).length) (where as Record<string, unknown>).AND = [scopeWhere]
     return this.prisma.ticket.findMany({
       where,
       include: TICKET_INCLUDE,
@@ -499,15 +513,19 @@ export class TicketsService {
     return updated
   }
 
-  async assignTicket(orgId: string, userId: string, userRole: string, ticketId: string, dto: AssignTicketDto) {
+  async assignTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: AssignTicketDto) {
     const ticket = await this.getTicket(orgId, ticketId)
     const master = await this.prisma.ticketMaster.findUnique({ where: { organization_id: orgId } })
     const mode = master?.reassignment_mode ?? 'both'
 
-    const isAdmin = ['org_admin', 'hr_manager'].includes(userRole)
     const isAssignee = ticket.assigned_to_user_id === userId
     if (mode === 'assignee_only' && !isAssignee) throw new ForbiddenException('Only the assignee can reassign this ticket')
     if (mode === 'admin_manager_only' && !isAdmin) throw new ForbiddenException('Only admins can reassign this ticket')
+
+    // Subject eligibility (fail loud): the new assignee must be allowed to be assigned a ticket.
+    if (dto.assigned_to_user_id) {
+      await this.subjects.assertEligible(orgId, 'tickets.subject.assignable', dto.assigned_to_user_id)
+    }
 
     const wasAssigned = !!ticket.assigned_to_user_id
     const assignedStatus = await this.getStatusByType(orgId, 'assigned')
