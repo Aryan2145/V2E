@@ -9,22 +9,32 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { IsNumber } from 'class-validator';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
-import { RequireAdmin } from '../common/decorators/require-admin.decorator';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { DepartmentsService } from './departments.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 
+// Managing the department structure is gated by a delegable access right
+// (org admins hold it implicitly — see ADMIN_IMPLIED_FEATURE_LEAVES).
+const STRUCTURE = 'settings.organization.structure';
+
 class UpdatePositionDto {
+  @IsNumber()
   x: number;
+
+  @IsNumber()
   y: number;
 }
 
 @ApiTags('departments')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/departments')
 export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
@@ -36,14 +46,14 @@ export class DepartmentsController {
   }
 
   @Post()
-  @RequireAdmin()
+  @RequirePermission(STRUCTURE, PermissionAction.write)
   @ApiOperation({ summary: 'Create a new department' })
   create(@Param('orgId') orgId: string, @Body() dto: CreateDepartmentDto) {
     return this.departmentsService.create(orgId, dto);
   }
 
   @Patch(':id')
-  @RequireAdmin()
+  @RequirePermission(STRUCTURE, PermissionAction.edit)
   @ApiOperation({ summary: 'Update a department' })
   update(
     @Param('orgId') orgId: string,
@@ -54,7 +64,7 @@ export class DepartmentsController {
   }
 
   @Patch(':id/position')
-  @RequireAdmin()
+  @RequirePermission(STRUCTURE, PermissionAction.edit)
   @ApiOperation({ summary: 'Update department canvas position' })
   @ApiBody({ type: UpdatePositionDto })
   updatePosition(
@@ -66,7 +76,7 @@ export class DepartmentsController {
   }
 
   @Delete(':id')
-  @RequireAdmin()
+  @RequirePermission(STRUCTURE, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete a department' })
   remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.departmentsService.remove(id, orgId);

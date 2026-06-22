@@ -1,10 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { getOrgIdentity } from '@/lib/api/org-identity'
 import Button from '@/components/ui/Button'
+import IdentityFormDrawer from '@/components/identity/IdentityFormDrawer'
 import type { OrgIdentity } from '@/lib/types'
 import { Building2, Pencil, Target, Rocket, Heart } from 'lucide-react'
 
@@ -47,7 +47,7 @@ function PillarCard({
 
 // ─── Empty state (unchanged) ──────────────────────────────────────────────────
 
-function EmptyState({ canEdit }: { canEdit: boolean }) {
+function EmptyState({ canEdit, onEdit }: { canEdit: boolean; onEdit: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="w-16 h-16 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
@@ -58,9 +58,9 @@ function EmptyState({ canEdit }: { canEdit: boolean }) {
         Define your organization&apos;s vision, mission, purpose and values.
       </p>
       {canEdit && (
-        <Link href="/setup/step-1-identity" className="mt-5">
-          <Button>Define identity</Button>
-        </Link>
+        <Button className="mt-5" onClick={onEdit}>
+          Define identity
+        </Button>
       )}
     </div>
   )
@@ -75,6 +75,7 @@ export default function IdentityPage() {
 
   const [identity, setIdentity] = useState<OrgIdentity | null>(null)
   const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(false)
 
   useEffect(() => {
     if (!orgId) {
@@ -113,17 +114,20 @@ export default function IdentityPage() {
           </p>
         </div>
         {canEdit && hasContent && (
-          <Link href="/setup/step-1-identity" className="shrink-0">
-            <Button variant="secondary" size="sm">
-              <Pencil size={14} />
-              <span className="hidden sm:inline">Edit</span>
-            </Button>
-          </Link>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="shrink-0"
+            onClick={() => setEditing(true)}
+          >
+            <Pencil size={14} />
+            <span className="hidden sm:inline">Edit</span>
+          </Button>
         )}
       </div>
 
       {!hasContent ? (
-        <EmptyState canEdit={canEdit} />
+        <EmptyState canEdit={canEdit} onEdit={() => setEditing(true)} />
       ) : (
         <>
           {/* VISION — hero */}
@@ -201,6 +205,19 @@ export default function IdentityPage() {
             </div>
           )}
         </>
+      )}
+
+      {canEdit && (
+        <IdentityFormDrawer
+          open={editing}
+          orgId={orgId}
+          initial={identity}
+          onClose={() => setEditing(false)}
+          onSaved={(saved) => {
+            setIdentity(saved)
+            setEditing(false)
+          }}
+        />
       )}
     </div>
   )

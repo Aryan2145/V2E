@@ -9,6 +9,7 @@ import ReactFlow, {
   Handle,
   MiniMap,
   Position,
+  PanOnScrollMode,
   useEdgesState,
   useNodesState,
   type Connection,
@@ -18,10 +19,12 @@ import ReactFlow, {
   useReactFlow,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Plus, X, ArrowRight, Users } from 'lucide-react'
+import { Plus, X, ArrowRight, ArrowLeft, Users } from 'lucide-react'
 import { getDepartments, createDepartment, updateDepartmentPosition } from '@/lib/api/departments'
+import { placeUnderParent } from '@/lib/org-chart-layout'
 import { getUsers } from '@/lib/api/users'
 import { useAuth } from '@/lib/auth/context'
+import { useSetupMode, SECTION_SETTINGS_ROUTE } from '@/components/setup-wizard/SetupModeContext'
 import Button from '@/components/ui/Button'
 import type { Department, User } from '@/lib/types'
 
@@ -102,13 +105,14 @@ function AddDeptPanel({ departments, users, orgId, onClose, onAdded }: AddPanelP
     setSaving(true)
     setError(null)
     try {
+      const { x, y } = placeUnderParent(departments, parentId || undefined)
       await createDepartment(orgId, {
         name: name.trim(),
         description: description.trim() || undefined,
         parent_department_id: parentId || undefined,
         head_user_id: headUserId || undefined,
-        position_x: 100 + Math.random() * 300,
-        position_y: 100 + Math.random() * 200,
+        position_x: x,
+        position_y: y,
       })
       onAdded()
       onClose()
@@ -238,6 +242,13 @@ function OrgChartFlow({ orgId, departments, users, onRefresh }: FlowProps) {
         onNodeDragStop={onNodeDragStop}
         nodeTypes={nodeTypes}
         fitView
+        minZoom={0.2}
+        maxZoom={2}
+        panOnScroll
+        panOnScrollMode={PanOnScrollMode.Free}
+        zoomOnScroll={false}
+        zoomOnPinch
+        zoomActivationKeyCode={['Control', 'Meta']}
         style={{ width: '100%', height: '100%' }}
         className="bg-[#F8FAFC] rounded-[12px] border border-[#E2E8F0]"
       >
@@ -278,6 +289,8 @@ function OrgChartFlow({ orgId, departments, users, onRefresh }: FlowProps) {
 export default function Step3OrgChartPage() {
   const { user } = useAuth()
   const router = useRouter()
+  const mode = useSetupMode()
+  const isEdit = mode === 'edit'
   const orgId = user?.organizationId ?? ''
 
   const [departments, setDepartments] = useState<Department[]>([])
@@ -308,8 +321,10 @@ export default function Step3OrgChartPage() {
     <div className="flex flex-col gap-6 h-full">
       {/* Page header */}
       <div>
-        <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 3 of 5</p>
-        <h1 className="text-[26px] font-bold text-[#0F172A]">Organization Structure</h1>
+        {!isEdit && (
+          <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 3 of 5</p>
+        )}
+        <h1 className="text-[26px] font-bold text-[#0F172A]">Department Structure</h1>
         <p className="text-sm text-[#475569] mt-1">
           Build your org chart by adding departments and connecting reporting relationships.
         </p>
@@ -332,13 +347,22 @@ export default function Step3OrgChartPage() {
 
       {/* Navigation */}
       <div className="flex gap-3">
-        <Button variant="secondary" onClick={() => router.push('/setup/step-2-culture')}>
-          Back
-        </Button>
-        <Button variant="primary" onClick={() => router.push('/setup/step-4-roles')}>
-          Continue
-          <ArrowRight size={15} />
-        </Button>
+        {isEdit ? (
+          <Button variant="secondary" onClick={() => router.push(SECTION_SETTINGS_ROUTE[3])}>
+            <ArrowLeft size={15} />
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={() => router.push('/setup/step-2-culture')}>
+              Back
+            </Button>
+            <Button variant="primary" onClick={() => router.push('/setup/step-4-roles')}>
+              Continue
+              <ArrowRight size={15} />
+            </Button>
+          </>
+        )}
       </div>
     </div>
   )

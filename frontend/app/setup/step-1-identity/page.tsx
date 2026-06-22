@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation'
 import { useForm, useFieldArray } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Plus, Trash2, Save, ArrowRight } from 'lucide-react'
+import { Plus, Trash2, ArrowRight, ArrowLeft, Check } from 'lucide-react'
 import { getOrgIdentity, upsertOrgIdentity } from '@/lib/api/org-identity'
 import { useAuth } from '@/lib/auth/context'
+import { useSetupMode, SECTION_SETTINGS_ROUTE } from '@/components/setup-wizard/SetupModeContext'
 import Button from '@/components/ui/Button'
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
@@ -57,6 +58,8 @@ function SectionHeading({ label, description }: { label: string; description?: s
 export default function Step1IdentityPage() {
   const { user } = useAuth()
   const router = useRouter()
+  const mode = useSetupMode()
+  const isEdit = mode === 'edit'
   const orgId = user?.organizationId ?? ''
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const autoSaveRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -117,9 +120,16 @@ export default function Step1IdentityPage() {
     if (!orgId) return
     try {
       await upsertOrgIdentity(orgId, data)
+      if (isEdit) {
+        // Edit mode: stay on the page and confirm. No forced next-step.
+        setSaveStatus('saved')
+        setTimeout(() => setSaveStatus('idle'), 2500)
+        return
+      }
       router.push('/setup/step-2-culture')
     } catch (err) {
       console.error(err)
+      setSaveStatus('error')
     }
   }
 
@@ -128,7 +138,9 @@ export default function Step1IdentityPage() {
       {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 1 of 5</p>
+          {!isEdit && (
+            <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 1 of 5</p>
+          )}
           <h1 className="text-[26px] font-bold text-[#0F172A]">Company Identity</h1>
           <p className="text-sm text-[#475569] mt-1">
             Define the foundational philosophy, vision, mission, and values that guide your organization.
@@ -257,10 +269,31 @@ export default function Step1IdentityPage() {
 
         {/* Actions */}
         <div className="flex items-center gap-3">
-          <Button type="submit" variant="primary" isLoading={isSubmitting}>
-            Save & Continue
-            <ArrowRight size={15} />
-          </Button>
+          {isEdit ? (
+            <>
+              <Button type="submit" variant="primary" isLoading={isSubmitting}>
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => router.push(SECTION_SETTINGS_ROUTE[1])}
+              >
+                <ArrowLeft size={15} />
+                Done
+              </Button>
+              {saveStatus === 'saved' && (
+                <span className="inline-flex items-center gap-1 text-sm font-medium text-[#16A34A]">
+                  <Check size={15} /> Saved
+                </span>
+              )}
+            </>
+          ) : (
+            <Button type="submit" variant="primary" isLoading={isSubmitting}>
+              Save &amp; Continue
+              <ArrowRight size={15} />
+            </Button>
+          )}
         </div>
       </form>
     </div>

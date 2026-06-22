@@ -145,6 +145,7 @@ export interface Department {
   description?: string;
   parent_department_id?: string;
   head_user_id?: string;
+  color?: string | null;
   position_x: number;
   position_y: number;
   created_at: string;

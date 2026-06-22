@@ -19,11 +19,15 @@ export interface SetupStep {
 export interface SetupProgress {
   steps: SetupStep[];
   completionPercent: number;
+  /** True once every step has data saved at least once — i.e. setup is complete. */
+  isComplete: boolean;
 }
 
 // ─── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useSetupProgress(orgId: string): SetupProgress & { isLoading: boolean } {
+  // Note: per-step `completed` is data-derived (the step's data exists), so the
+  // overall `isComplete` flag below is exactly "all 5 steps saved at least once".
   const [steps, setSteps] = useState<SetupStep[]>([
     { id: 'identity', label: 'Organisation Identity', completed: false, href: `/org/${orgId}/identity` },
     { id: 'culture', label: 'Culture Standards', completed: false, href: `/org/${orgId}/culture` },
@@ -34,7 +38,10 @@ export function useSetupProgress(orgId: string): SetupProgress & { isLoading: bo
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!orgId) return;
+    if (!orgId) {
+      setIsLoading(false);
+      return;
+    }
 
     async function fetchProgress() {
       setIsLoading(true);
@@ -92,6 +99,7 @@ export function useSetupProgress(orgId: string): SetupProgress & { isLoading: bo
   const completionPercent = steps.length > 0
     ? Math.round((completedCount / steps.length) * 100)
     : 0;
+  const isComplete = steps.length > 0 && completedCount === steps.length;
 
-  return { steps, completionPercent, isLoading };
+  return { steps, completionPercent, isComplete, isLoading };
 }

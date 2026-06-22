@@ -1,6 +1,7 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff, Loader2 } from 'lucide-react'
 import { createEmployee } from '@/lib/api/employees'
 import { useToast } from '@/components/ui/Toast'
@@ -34,9 +35,21 @@ export default function AddEmployeeModal({
   onCreated,
 }: Props) {
   const { addToast } = useToast()
+  const [mounted, setMounted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+
+  // Portal to <body> so the overlay isn't constrained by the dashboard layout's
+  // stacking context, and lock background scroll while open.
+  useEffect(() => setMounted(true), [])
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [])
 
   const [form, setForm] = useState({
     name: '',
@@ -104,8 +117,10 @@ export default function AddEmployeeModal({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
+  if (!mounted) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-[12px] rounded-t-[16px] shadow-xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
@@ -304,6 +319,7 @@ export default function AddEmployeeModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

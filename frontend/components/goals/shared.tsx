@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { accessRightsApi } from '@/lib/api/access-rights'
+import { getMyPermissions } from '@/lib/api/permissions'
 import {
   PERSPECTIVE_META,
   STATUS_META,
@@ -111,10 +111,9 @@ export function useGoalPermissions(orgId: string): { perms: GoalPerms; loading: 
       setLoading(false)
       return
     }
-    accessRightsApi
-      .getMine(orgId)
+    getMyPermissions(orgId)
       .then((res) => {
-        if (active) setPerms(res.resources?.goals ?? FALLBACK)
+        if (active) setPerms(res.leaves?.goals ?? FALLBACK)
       })
       .catch(() => active && setPerms(FALLBACK))
       .finally(() => active && setLoading(false))

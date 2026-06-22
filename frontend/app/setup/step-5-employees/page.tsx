@@ -5,11 +5,12 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Eye, EyeOff, CheckCircle2, Users } from 'lucide-react'
+import { Eye, EyeOff, CheckCircle2, Users, ArrowLeft } from 'lucide-react'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import { getEmployees, createEmployee } from '@/lib/api/employees'
 import { useAuth } from '@/lib/auth/context'
+import { useSetupMode, SECTION_SETTINGS_ROUTE } from '@/components/setup-wizard/SetupModeContext'
 import Button from '@/components/ui/Button'
 import type { Department, Role, EmployeeProfile } from '@/lib/types'
 
@@ -97,6 +98,8 @@ function ReportingTree({ employees }: { employees: EmployeeProfile[] }) {
 export default function Step5EmployeesPage() {
   const { user } = useAuth()
   const router = useRouter()
+  const mode = useSetupMode()
+  const isEdit = mode === 'edit'
   const orgId = user?.organizationId ?? ''
 
   const [departments, setDepartments] = useState<Department[]>([])
@@ -181,7 +184,9 @@ export default function Step5EmployeesPage() {
     <div className="flex flex-col gap-6">
       {/* Page header */}
       <div>
-        <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 5 of 5</p>
+        {!isEdit && (
+          <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 5 of 5</p>
+        )}
         <h1 className="text-[26px] font-bold text-[#0F172A]">Employee Profiles</h1>
         <p className="text-sm text-[#475569] mt-1">
           Add employees, assign them to roles and departments, and build your reporting hierarchy.
@@ -334,13 +339,22 @@ export default function Step5EmployeesPage() {
 
       {/* Navigation */}
       <div className="flex gap-3 pt-2">
-        <Button variant="secondary" onClick={() => router.push('/setup/step-4-roles')}>
-          Back
-        </Button>
-        <Button variant="primary" onClick={() => router.push('/dashboard')}>
-          Complete Setup
-          <CheckCircle2 size={15} />
-        </Button>
+        {isEdit ? (
+          <Button variant="secondary" onClick={() => router.push(SECTION_SETTINGS_ROUTE[5])}>
+            <ArrowLeft size={15} />
+            Done
+          </Button>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={() => router.push('/setup/step-4-roles')}>
+              Back
+            </Button>
+            <Button variant="primary" onClick={() => router.push('/dashboard')}>
+              Complete Setup
+              <CheckCircle2 size={15} />
+            </Button>
+          </>
+        )}
       </div>
     </div>
   )

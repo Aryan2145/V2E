@@ -1,29 +1,38 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Plus, Trash2, Pencil, ArrowRight, ArrowLeft, X, Check } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Plus, Trash2, Pencil, X, Check } from 'lucide-react'
 import {
   getCultureStandards,
   createCultureStandard,
   updateCultureStandard,
   deleteCultureStandard,
 } from '@/lib/api/culture'
-import { useAuth } from '@/lib/auth/context'
-import { useSetupMode, SECTION_SETTINGS_ROUTE } from '@/components/setup-wizard/SetupModeContext'
 import Button from '@/components/ui/Button'
 import type { CultureStandard, BehaviorType } from '@/lib/types'
 
-// ─── Inline add / edit form ────────────────────────────────────────────────────
+interface CultureManagerDrawerProps {
+  open: boolean
+  orgId: string
+  onClose: () => void
+  /** Called after any add/edit/delete so the read view behind the drawer refreshes. */
+  onChanged: () => void
+}
 
-interface InlineFormProps {
+// ─── Inline add / edit form (mirrors setup step-2) ──────────────────────────────
+
+function InlineForm({
+  type,
+  initial,
+  onSave,
+  onCancel,
+}: {
   type: BehaviorType
   initial?: { title: string; description: string }
   onSave: (title: string, description: string) => Promise<void>
   onCancel: () => void
-}
-
-function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
+}) {
   const [title, setTitle] = useState(initial?.title ?? '')
   const [description, setDescription] = useState(initial?.description ?? '')
   const [saving, setSaving] = useState(false)
@@ -31,25 +40,26 @@ function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
 
   const isExpected = type === 'expected_behavior'
   const accentBorder = isExpected ? 'focus:border-[#16A34A]' : 'focus:border-[#DC2626]'
-
   const inputCls = `w-full rounded-[8px] border border-[#CBD5E1] bg-white px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 ${accentBorder} transition-colors`
   const textareaCls = `w-full rounded-[8px] border border-[#CBD5E1] bg-white px-3 py-2.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 ${accentBorder} transition-colors resize-none`
 
   const handleSave = async () => {
-    if (!title.trim()) { setError('Title is required'); return }
-    if (!description.trim()) { setError('Description is required'); return }
+    if (!title.trim()) {
+      setError('Title is required')
+      return
+    }
+    if (!description.trim()) {
+      setError('Description is required')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
       await onSave(title.trim(), description.trim())
     } catch (err: unknown) {
-      // Surface the server's validation message (class-validator returns an array)
-      // so the user sees the real reason instead of a generic failure.
-      const raw = (err as { response?: { data?: { message?: string | string[] } } })
-        ?.response?.data?.message
-      setError(
-        Array.isArray(raw) ? raw[0] : raw ?? 'Failed to save. Please try again.',
-      )
+      const raw = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
+        ?.message
+      setError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to save. Please try again.')
     } finally {
       setSaving(false)
     }
@@ -107,15 +117,15 @@ function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
   )
 }
 
-// ─── Culture card ──────────────────────────────────────────────────────────────
-
-interface CultureCardProps {
+function CultureCard({
+  standard,
+  onEdit,
+  onDelete,
+}: {
   standard: CultureStandard
   onEdit: () => void
   onDelete: () => void
-}
-
-function CultureCard({ standard, onEdit, onDelete }: CultureCardProps) {
+}) {
   return (
     <div className="group bg-white border border-[#E2E8F0] rounded-[10px] p-4 flex gap-3 transition-shadow hover:shadow-sm">
       <div className="flex-1 min-w-0">
@@ -144,17 +154,19 @@ function CultureCard({ standard, onEdit, onDelete }: CultureCardProps) {
   )
 }
 
-// ─── Column panel ──────────────────────────────────────────────────────────────
-
-interface ColumnProps {
+function Column({
+  title,
+  type,
+  items,
+  orgId,
+  onRefresh,
+}: {
   title: string
   type: BehaviorType
   items: CultureStandard[]
   orgId: string
   onRefresh: () => void
-}
-
-function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
+}) {
   const isExpected = type === 'expected_behavior'
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -164,18 +176,16 @@ function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
   const headerText = isExpected ? 'text-[#16A34A]' : 'text-[#DC2626]'
   const dotColor = isExpected ? 'bg-[#16A34A]' : 'bg-[#DC2626]'
 
-  const handleAdd = async (title: string, description: string) => {
-    await createCultureStandard(orgId, { title, description, type })
+  const handleAdd = async (t: string, d: string) => {
+    await createCultureStandard(orgId, { title: t, description: d, type })
     setShowForm(false)
     onRefresh()
   }
-
-  const handleEdit = async (id: string, title: string, description: string) => {
-    await updateCultureStandard(orgId, id, { title, description })
+  const handleEdit = async (id: string, t: string, d: string) => {
+    await updateCultureStandard(orgId, id, { title: t, description: d })
     setEditingId(null)
     onRefresh()
   }
-
   const handleDelete = async (id: string) => {
     await deleteCultureStandard(orgId, id)
     setConfirmDeleteId(null)
@@ -184,15 +194,13 @@ function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
-      {/* Header */}
       <div className={`rounded-t-[12px] border border-b-0 px-4 py-3 flex items-center gap-2 ${headerBg}`}>
         <div className={`w-2 h-2 rounded-full ${dotColor}`} />
         <h3 className={`font-bold text-sm ${headerText}`}>{title}</h3>
         <span className="ml-auto text-xs text-[#94A3B8]">{items.length}</span>
       </div>
 
-      {/* Cards area */}
-      <div className="border border-[#E2E8F0] rounded-b-[12px] bg-[#FAFAFA] p-3 flex flex-col gap-2 min-h-[200px]">
+      <div className="border border-[#E2E8F0] rounded-b-[12px] bg-[#FAFAFA] p-3 flex flex-col gap-2 min-h-[160px]">
         {items.length === 0 && !showForm && (
           <div className="flex flex-col items-center gap-1 py-8">
             <p className="text-xs text-[#CBD5E1] text-center">No standards added yet.</p>
@@ -212,7 +220,7 @@ function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
             <div key={item.id}>
               {confirmDeleteId === item.id ? (
                 <div className="bg-[#FEF2F2] border border-[#FECACA] rounded-[10px] p-3 flex items-center justify-between gap-3">
-                  <p className="text-xs text-[#7F1D1D]">Delete "{item.title}"?</p>
+                  <p className="text-xs text-[#7F1D1D]">Delete &quot;{item.title}&quot;?</p>
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleDelete(item.id)}
@@ -236,24 +244,17 @@ function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
                 />
               )}
             </div>
-          )
+          ),
         )}
 
-        {showForm && (
-          <InlineForm
-            type={type}
-            onSave={handleAdd}
-            onCancel={() => setShowForm(false)}
-          />
-        )}
+        {showForm && <InlineForm type={type} onSave={handleAdd} onCancel={() => setShowForm(false)} />}
 
         {!showForm && (
           <button
             onClick={() => setShowForm(true)}
             className="inline-flex items-center gap-1.5 self-start text-sm font-medium text-[#475569] hover:text-[#0F172A] mt-1 transition-colors"
           >
-            <Plus size={15} />
-            Add Standard
+            <Plus size={15} /> Add Standard
           </button>
         )}
       </div>
@@ -261,94 +262,105 @@ function CultureColumn({ title, type, items, orgId, onRefresh }: ColumnProps) {
   )
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
-
-export default function Step2CulturePage() {
-  const { user } = useAuth()
-  const router = useRouter()
-  const mode = useSetupMode()
-  const isEdit = mode === 'edit'
-  const orgId = user?.organizationId ?? ''
+/**
+ * Manage culture standards (expected / unacceptable behaviors) from a right-hand
+ * drawer — so admins edit in place in Settings instead of being sent to the setup
+ * wizard. Each standard is created/updated/deleted individually; the parent read
+ * view refreshes via onChanged.
+ */
+export default function CultureManagerDrawer({
+  open,
+  orgId,
+  onClose,
+  onChanged,
+}: CultureManagerDrawerProps) {
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   const [standards, setStandards] = useState<CultureStandard[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [loading, setLoading] = useState(true)
 
-  const loadStandards = async () => {
+  const load = useCallback(async () => {
     if (!orgId) return
+    setLoading(true)
     try {
-      const data = await getCultureStandards(orgId)
-      setStandards(data)
+      setStandards(await getCultureStandards(orgId))
     } catch {
-      // ignore
+      setStandards([])
     } finally {
-      setIsLoading(false)
+      setLoading(false)
     }
-  }
-
-  useEffect(() => {
-    loadStandards()
   }, [orgId])
+
+  // Reload whenever the drawer opens.
+  useEffect(() => {
+    if (open) load()
+  }, [open, load])
+
+  const handleRefresh = () => {
+    load()
+    onChanged()
+  }
 
   const expected = standards.filter((s) => s.type === 'expected_behavior')
   const unacceptable = standards.filter((s) => s.type === 'unacceptable_behavior')
 
-  return (
-    <div className="flex flex-col gap-6">
-      {/* Page header */}
-      <div>
-        {!isEdit && (
-          <p className="text-xs font-semibold text-[#2563EB] uppercase tracking-wider mb-1">Step 2 of 5</p>
-        )}
-        <h1 className="text-[26px] font-bold text-[#0F172A]">Culture & Behavioral Standards</h1>
-        <p className="text-sm text-[#475569] mt-1">
-          Define what behavior looks like in your organization — both what you champion and what you don't tolerate.
-        </p>
-      </div>
+  if (!mounted) return null
 
-      {isLoading ? (
-        <div className="flex gap-4">
-          {[1, 2].map((i) => (
-            <div key={i} className="flex-1 h-48 rounded-[12px] bg-[#E2E8F0] animate-pulse" />
-          ))}
-        </div>
-      ) : (
-        <div className="flex gap-4">
-          <CultureColumn
-            title="Expected Behaviors"
-            type="expected_behavior"
-            items={expected}
-            orgId={orgId}
-            onRefresh={loadStandards}
-          />
-          <CultureColumn
-            title="Unacceptable Behaviors"
-            type="unacceptable_behavior"
-            items={unacceptable}
-            orgId={orgId}
-            onRefresh={loadStandards}
-          />
-        </div>
-      )}
+  return createPortal(
+    <>
+      {open && <div className="fixed inset-0 bg-black/20 z-[60]" onClick={onClose} />}
 
-      {/* Navigation */}
-      <div className="flex gap-3 pt-2">
-        {isEdit ? (
-          <Button variant="secondary" onClick={() => router.push(SECTION_SETTINGS_ROUTE[2])}>
-            <ArrowLeft size={15} />
+      <div
+        className={`fixed inset-y-0 right-0 z-[70] w-full max-w-2xl bg-white border-l border-[#E2E8F0] shadow-[-8px_0_32px_rgba(0,0,0,0.08)] flex flex-col transition-transform duration-300 ease-in-out ${
+          open ? 'translate-x-0' : 'translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
+          <h3 className="font-semibold text-[#0F172A]">Manage Culture Standards</h3>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          {loading ? (
+            <div className="flex gap-4">
+              {[1, 2].map((i) => (
+                <div key={i} className="flex-1 h-48 rounded-[12px] bg-[#E2E8F0] animate-pulse" />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col sm:flex-row gap-4">
+              <Column
+                title="Expected Behaviors"
+                type="expected_behavior"
+                items={expected}
+                orgId={orgId}
+                onRefresh={handleRefresh}
+              />
+              <Column
+                title="Unacceptable Behaviors"
+                type="unacceptable_behavior"
+                items={unacceptable}
+                orgId={orgId}
+                onRefresh={handleRefresh}
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="px-5 py-4 border-t border-[#E2E8F0] flex gap-3">
+          <Button variant="primary" onClick={onClose}>
             Done
           </Button>
-        ) : (
-          <>
-            <Button variant="secondary" onClick={() => router.push('/setup/step-1-identity')}>
-              Back
-            </Button>
-            <Button variant="primary" onClick={() => router.push('/setup/step-3-org-chart')}>
-              Continue
-              <ArrowRight size={15} />
-            </Button>
-          </>
-        )}
+        </div>
       </div>
-    </div>
+    </>,
+    document.body,
   )
 }

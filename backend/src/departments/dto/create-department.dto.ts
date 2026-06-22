@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsHexColor,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -27,6 +28,11 @@ export class CreateDepartmentDto {
   @IsUUID()
   @IsOptional()
   head_user_id?: string;
+
+  @ApiPropertyOptional({ description: 'Hex color override for the org-chart node; null/omitted = inherit branch hue' })
+  @IsOptional()
+  @IsHexColor()
+  color?: string | null;
 
   @ApiPropertyOptional({ default: 0 })
   @IsNumber()

@@ -1,10 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import Link from 'next/link'
+import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { getCultureStandards } from '@/lib/api/culture'
 import Button from '@/components/ui/Button'
+import CultureManagerDrawer from '@/components/culture/CultureManagerDrawer'
 import type { CultureStandard } from '@/lib/types'
 import { CheckCircle2, XCircle, Pencil, Heart } from 'lucide-react'
 
@@ -80,7 +80,7 @@ function Column({
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ canEdit }: { canEdit: boolean }) {
+function EmptyState({ canEdit, onEdit }: { canEdit: boolean; onEdit: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
       <div className="w-16 h-16 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
@@ -91,9 +91,9 @@ function EmptyState({ canEdit }: { canEdit: boolean }) {
         Define the behaviors your organization expects and prohibits.
       </p>
       {canEdit && (
-        <Link href="/setup/step-2-culture" className="mt-5">
-          <Button>Define culture</Button>
-        </Link>
+        <Button className="mt-5" onClick={onEdit}>
+          Define culture
+        </Button>
       )}
     </div>
   )
@@ -108,8 +108,9 @@ export default function CulturePage() {
 
   const [standards, setStandards] = useState<CultureStandard[]>([])
   const [loading, setLoading] = useState(true)
+  const [editing, setEditing] = useState(false)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     if (!orgId) {
       setLoading(false)
       return
@@ -119,6 +120,10 @@ export default function CulturePage() {
       .catch(() => setStandards([]))
       .finally(() => setLoading(false))
   }, [orgId])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   const expected = standards.filter((s) => s.type === 'expected_behavior')
   const unacceptable = standards.filter((s) => s.type === 'unacceptable_behavior')
@@ -142,17 +147,15 @@ export default function CulturePage() {
           </p>
         </div>
         {canEdit && standards.length > 0 && (
-          <Link href="/setup/step-2-culture">
-            <Button variant="secondary" size="sm">
-              <Pencil size={14} />
-              Edit
-            </Button>
-          </Link>
+          <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>
+            <Pencil size={14} />
+            Edit
+          </Button>
         )}
       </div>
 
       {standards.length === 0 ? (
-        <EmptyState canEdit={canEdit} />
+        <EmptyState canEdit={canEdit} onEdit={() => setEditing(true)} />
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Column
@@ -172,6 +175,15 @@ export default function CulturePage() {
             type="unacceptable"
           />
         </div>
+      )}
+
+      {canEdit && (
+        <CultureManagerDrawer
+          open={editing}
+          orgId={orgId}
+          onClose={() => setEditing(false)}
+          onChanged={load}
+        />
       )}
     </div>
   )

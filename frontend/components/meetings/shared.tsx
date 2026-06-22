@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { accessRightsApi } from '@/lib/api/access-rights'
+import { getMyPermissions } from '@/lib/api/permissions'
 import {
   MEETING_STATUS_META,
   RESPONSE_META,
@@ -26,9 +26,8 @@ export function useMeetingPermissions(orgId: string): { perms: MeetingPerms; loa
       setLoading(false)
       return
     }
-    accessRightsApi
-      .getMine(orgId)
-      .then((res) => active && setPerms(res.resources?.meetings ?? FALLBACK))
+    getMyPermissions(orgId)
+      .then((res) => active && setPerms(res.leaves?.meetings ?? FALLBACK))
       .catch(() => active && setPerms(FALLBACK))
       .finally(() => active && setLoading(false))
     return () => {

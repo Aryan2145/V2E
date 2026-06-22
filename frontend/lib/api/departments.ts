@@ -41,7 +41,7 @@ export async function updateDepartmentPosition(
 ): Promise<Department> {
   const { data } = await apiClient.patch<ApiResponse<Department>>(
     `/api/v1/org/${orgId}/departments/${id}/position`,
-    { position_x: x, position_y: y }
+    { x, y }
   );
   return data.data;
 }

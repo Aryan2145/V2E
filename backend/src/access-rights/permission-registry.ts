@@ -237,6 +237,29 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
     ],
   },
   {
+    // Organization setup config (HR-owned). Not a sold module, so not under the
+    // entitlement ceiling. Governed by feature permissions; org admins hold it
+    // implicitly (see ADMIN_IMPLIED_FEATURE_LEAVES in permissions.service.ts) and
+    // it can be delegated to non-admins via the Access Rights UI.
+    key: 'organization',
+    label: 'Organization',
+    entitlementControlled: false,
+    subModules: [
+      {
+        key: 'organization.structure',
+        label: 'Department structure',
+        features: [
+          feature(
+            'settings.organization.structure',
+            'Manage department structure',
+            A_ALL,
+            'Create, edit, arrange, and delete departments in the org chart',
+          ),
+        ],
+      },
+    ],
+  },
+  {
     // Platform administration — never under the entitlement ceiling, governed by is_admin.
     key: 'admin',
     label: 'Administration',

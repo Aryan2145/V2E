@@ -1,6 +1,7 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   X,
   Download,
@@ -153,6 +154,18 @@ export default function ImportEmployeesModal({
 }: Props) {
   const { addToast } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [mounted, setMounted] = useState(false)
+  // Portal to <body> so the overlay isn't constrained by the dashboard layout's
+  // stacking context, and lock background scroll while open.
+  useEffect(() => setMounted(true), [])
+  useEffect(() => {
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [])
 
   const [fileName, setFileName] = useState('')
   const [rows, setRows] = useState<BulkImportRow[]>([])
@@ -428,8 +441,10 @@ export default function ImportEmployeesModal({
 
   const failedRows = result?.results.filter((r) => r.status === 'failed') ?? []
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
+  if (!mounted) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-[12px] rounded-t-[16px] shadow-xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
@@ -600,6 +615,7 @@ export default function ImportEmployeesModal({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

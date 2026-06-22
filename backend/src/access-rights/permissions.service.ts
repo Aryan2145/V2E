@@ -9,7 +9,7 @@ import {
   kindOf,
   moduleOf,
 } from './permission-registry';
-import { DEFAULT_SCOPE, SCOPABLE_LEAVES, isContentLeaf, rowScopeOf } from './scope-registry';
+import { DEFAULT_SCOPE, SCOPABLE_LEAVES, rowScopeOf } from './scope-registry';
 
 /** Scope ordering, narrowest → widest. */
 const SCOPE_RANK: Record<DataScope, number> = {
@@ -105,9 +105,10 @@ export class PermissionsService {
       if (!this.ceilingAllows(state, action)) return false;
     }
 
-    // is_admin ⇒ org-scope content READ (a visibility ceiling). Mutations on content
-    // remain feature-gated like everyone else — is_admin never grants content writes.
-    if (principal.isAdmin && action === 'read' && isContentLeaf(leafKey)) return true;
+    // Org admins are full administrators within their org: every enabled feature
+    // (bounded by the entitlement ceiling checked above) is theirs in full —
+    // read, write, edit and delete. (Vendor super admins are handled separately.)
+    if (principal.isAdmin) return true;
 
     // Layer 2 + 3 — JobRole baseline overridden by the user's explicit delta.
     const override = await this.prisma.userPermissionOverride.findUnique({
@@ -181,7 +182,7 @@ export class PermissionsService {
       result[leaf.key] = this.permsFromActions(leaf.actions, (action) => {
         if (principal.isSuperAdmin) return false; // metadata-only: no content/feature
         if (!this.ceilingAllows(state, action)) return false;
-        if (principal.isAdmin && action === 'read' && isContentLeaf(leaf.key)) return true;
+        if (principal.isAdmin) return true; // org admin ⇒ full within the entitlement ceiling
         const ov = overrideEffect.get(`${leaf.key}:${action}`);
         if (ov) return ov === 'grant';
         return baseAllow.get(`${leaf.key}:${action}`) ?? false;
@@ -209,7 +210,7 @@ export class PermissionsService {
     if (rowScopeOf(leafKey) !== 'scopable') return null; // self_scoped / org_default / non-content
     if (principal.isSuperAdmin) return null; // vendor never reads content
     if (!(await this.hasEffective(orgId, principal, leafKey, action))) return null;
-    if (principal.isAdmin && action === 'read') return DataScope.org;
+    if (principal.isAdmin) return DataScope.org;
 
     const [override, base] = await Promise.all([
       this.prisma.userPermissionOverride.findUnique({
@@ -273,7 +274,7 @@ export class PermissionsService {
       const perAction: Partial<Record<PermissionAction, DataScope>> = {};
       for (const action of actionsFor(leaf)) {
         if (!this.ceilingAllows(state, action)) continue;
-        if (principal.isAdmin && action === 'read') {
+        if (principal.isAdmin) {
           perAction[action] = DataScope.org;
           continue;
         }

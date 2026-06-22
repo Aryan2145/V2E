@@ -246,6 +246,7 @@ model Department {
   description          String?  @db.Text
   parent_department_id String?
   head_user_id         String?
+  color                String?  // optional hex override for the org-chart node; null = inherit branch hue
   position_x           Float    @default(0)
   position_y           Float    @default(0)
   // Assignee-visibility: when false, members of this dept can assign to their direct
