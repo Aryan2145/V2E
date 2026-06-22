@@ -19,7 +19,7 @@ export default function ECSSidebar({ collapsed, onToggle }: ECSSidebarProps) {
   return (
     <aside
       className={[
-        'fixed left-0 top-14 h-[calc(100vh-56px)] bg-[#0F172A] flex flex-col z-40',
+        'sticky top-14 h-[calc(100vh-56px)] bg-[#0F172A] flex flex-col shrink-0 z-30',
         'transition-[width] duration-200 ease-in-out overflow-hidden',
         collapsed ? 'w-16' : 'w-[240px]',
       ].join(' ')}
@@ -27,9 +27,14 @@ export default function ECSSidebar({ collapsed, onToggle }: ECSSidebarProps) {
       {/* Toggle button row */}
       <div className="h-12 flex items-center border-b border-white/10 shrink-0 px-2">
         {!collapsed && (
-          <span className="flex-1 px-2 text-xs font-semibold text-[#94A3B8] uppercase tracking-widest whitespace-nowrap">
-            ECS
-          </span>
+          <div className="flex-1 px-2 min-w-0">
+            <span className="block text-xs font-semibold text-[#94A3B8] uppercase tracking-widest whitespace-nowrap">
+              ESS
+            </span>
+            <span className="block text-[10px] font-medium text-[#64748B] whitespace-nowrap leading-tight">
+              Employee Self Service
+            </span>
+          </div>
         )}
         <button
           onClick={onToggle}

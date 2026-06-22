@@ -7,11 +7,6 @@ export class CreateOrganizationDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty()
-  @IsString()
-  @IsNotEmpty()
-  slug: string;
-
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()

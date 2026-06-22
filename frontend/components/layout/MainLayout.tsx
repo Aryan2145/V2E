@@ -10,7 +10,7 @@ import TopNav from './TopNav'
 // Route prefix → entitlement module (longest match wins). Mirrors the top nav.
 const ROUTE_MODULES: { prefix: string; module: string; label: string }[] = [
   { prefix: '/dashboard/tasks', module: 'tasks', label: 'Tasks' },
-  { prefix: '/dashboard/ecs', module: 'ecs', label: 'ECS' },
+  { prefix: '/dashboard/ecs', module: 'ecs', label: 'ESS' },
   { prefix: '/dashboard/governance', module: 'governance', label: 'Governance' },
   { prefix: '/dashboard/performance', module: 'performance', label: 'Performance' },
   { prefix: '/goals', module: 'goals', label: 'Goals' },

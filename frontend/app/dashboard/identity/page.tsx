@@ -6,23 +6,46 @@ import { useAuth } from '@/lib/auth/context'
 import { getOrgIdentity } from '@/lib/api/org-identity'
 import Button from '@/components/ui/Button'
 import type { OrgIdentity } from '@/lib/types'
-import { Building2, Pencil, Star } from 'lucide-react'
+import { Building2, Pencil, Target, Rocket, Heart } from 'lucide-react'
 
-// ─── Section card ─────────────────────────────────────────────────────────────
+// Core-value stripe colors. Cycles automatically for any number of values.
+const STRIPE_COLORS = ['#7C3AED', '#16A34A', '#EA580C'] // purple, green, orange
 
-function Section({ title, content }: { title: string; content?: string }) {
+// ─── Mission / Purpose card ───────────────────────────────────────────────────
+
+function PillarCard({
+  icon: Icon,
+  iconColor,
+  iconBg,
+  label,
+  content,
+}: {
+  icon: typeof Rocket
+  iconColor: string
+  iconBg: string
+  label: string
+  content?: string
+}) {
   if (!content) return null
   return (
     <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-      <h2 className="text-xs font-semibold text-[#475569] uppercase tracking-wider mb-3">
-        {title}
-      </h2>
-      <p className="text-[#1E293B] leading-relaxed whitespace-pre-wrap">{content}</p>
+      <div className="flex items-center gap-2.5 mb-3">
+        <span
+          className="w-8 h-8 rounded-[8px] flex items-center justify-center shrink-0"
+          style={{ backgroundColor: iconBg }}
+        >
+          <Icon size={16} style={{ color: iconColor }} />
+        </span>
+        <span className="text-xs font-bold uppercase tracking-[0.1em] text-[#475569]">
+          {label}
+        </span>
+      </div>
+      <p className="text-[15px] text-[#1E293B] leading-relaxed whitespace-pre-wrap">{content}</p>
     </div>
   )
 }
 
-// ─── Empty state ──────────────────────────────────────────────────────────────
+// ─── Empty state (unchanged) ──────────────────────────────────────────────────
 
 function EmptyState({ canEdit }: { canEdit: boolean }) {
   return (
@@ -32,7 +55,7 @@ function EmptyState({ canEdit }: { canEdit: boolean }) {
       </div>
       <h2 className="text-lg font-semibold text-[#0F172A]">No identity defined yet</h2>
       <p className="text-[#475569] text-sm mt-1 max-w-xs">
-        Define your organization&apos;s philosophy, vision, mission, purpose and values.
+        Define your organization&apos;s vision, mission, purpose and values.
       </p>
       {canEdit && (
         <Link href="/setup/step-1-identity" className="mt-5">
@@ -64,9 +87,10 @@ export default function IdentityPage() {
       .finally(() => setLoading(false))
   }, [orgId])
 
+  const values = identity?.values ?? []
   const hasContent =
-    identity &&
-    (identity.philosophy || identity.vision || identity.mission || identity.purpose)
+    !!identity &&
+    (!!identity.vision || !!identity.mission || !!identity.purpose || values.length > 0)
 
   if (loading) {
     return (
@@ -77,22 +101,22 @@ export default function IdentityPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-10">
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">
+          <h1 className="text-[22px] sm:text-[28px] font-bold text-[#0F172A] leading-tight">
             Organization Identity
           </h1>
-          <p className="mt-1 text-[15px] text-[#475569]">
-            Your company&apos;s philosophy, vision, mission, purpose and core values.
+          <p className="mt-1 text-[14px] sm:text-[15px] text-[#475569]">
+            Why we exist and how we behave.
           </p>
         </div>
         {canEdit && hasContent && (
-          <Link href="/setup/step-1-identity">
+          <Link href="/setup/step-1-identity" className="shrink-0">
             <Button variant="secondary" size="sm">
               <Pencil size={14} />
-              Edit
+              <span className="hidden sm:inline">Edit</span>
             </Button>
           </Link>
         )}
@@ -102,38 +126,77 @@ export default function IdentityPage() {
         <EmptyState canEdit={canEdit} />
       ) : (
         <>
-          {/* Core sections */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <Section title="Philosophy" content={identity?.philosophy} />
-            <Section title="Vision" content={identity?.vision} />
-            <Section title="Mission" content={identity?.mission} />
-            <Section title="Purpose" content={identity?.purpose} />
-          </div>
+          {/* VISION — hero */}
+          {identity?.vision && (
+            <section className="rounded-[16px] bg-[#EFF6FF] border border-[#DBEAFE] p-7 sm:p-9">
+              <div className="flex items-center gap-2 mb-4">
+                <Target size={16} className="text-[#2563EB]" />
+                <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#2563EB]">
+                  Vision
+                </span>
+              </div>
+              <p className="text-[#0F172A] font-bold text-[20px] sm:text-[22px] leading-snug whitespace-pre-wrap">
+                {identity.vision}
+              </p>
+            </section>
+          )}
 
-          {/* Values */}
-          {identity?.values && identity.values.length > 0 && (
+          {/* MISSION + PURPOSE — two equal cards */}
+          {(identity?.mission || identity?.purpose) && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+              <PillarCard
+                icon={Rocket}
+                iconColor="#2563EB"
+                iconBg="#EFF6FF"
+                label="Mission"
+                content={identity?.mission}
+              />
+              <PillarCard
+                icon={Heart}
+                iconColor="#7C3AED"
+                iconBg="#F5F3FF"
+                label="Purpose"
+                content={identity?.purpose}
+              />
+            </div>
+          )}
+
+          {/* CORE VALUES */}
+          {values.length > 0 && (
             <div>
-              <h2 className="text-lg font-semibold text-[#0F172A] mb-4 flex items-center gap-2">
-                <Star size={18} className="text-[#CA8A04]" />
+              <h2 className="text-[18px] sm:text-[20px] font-semibold text-[#0F172A] mb-5">
                 Core Values
               </h2>
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                {identity.values.map((v, i) => (
-                  <div
-                    key={i}
-                    className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5"
-                  >
-                    <div className="w-8 h-8 rounded-full bg-[#FEF9C3] flex items-center justify-center mb-3">
-                      <Star size={14} className="text-[#CA8A04]" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
+                {values.map((v, i) => {
+                  const color = STRIPE_COLORS[i % STRIPE_COLORS.length]
+                  return (
+                    <div
+                      key={i}
+                      className="flex flex-row sm:flex-col bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden"
+                    >
+                      {/* Stripe: left edge on mobile, top edge on desktop */}
+                      <div
+                        className="w-1.5 sm:w-full sm:h-1.5 shrink-0"
+                        style={{ backgroundColor: color }}
+                      />
+                      <div className="p-5 flex-1 min-w-0">
+                        <span
+                          className="block text-sm font-bold tabular-nums mb-2"
+                          style={{ color }}
+                        >
+                          {String(i + 1).padStart(2, '0')}
+                        </span>
+                        <h3 className="font-bold text-[15px] text-[#0F172A]">{v.title}</h3>
+                        {v.description && (
+                          <p className="text-[13px] text-[#475569] mt-1.5 leading-relaxed whitespace-pre-wrap">
+                            {v.description}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    <h3 className="font-bold text-[#0F172A] text-sm">{v.title}</h3>
-                    {v.description && (
-                      <p className="text-[#475569] text-xs mt-1.5 leading-relaxed">
-                        {v.description}
-                      </p>
-                    )}
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}

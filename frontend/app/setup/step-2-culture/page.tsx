@@ -36,12 +36,19 @@ function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
 
   const handleSave = async () => {
     if (!title.trim()) { setError('Title is required'); return }
+    if (!description.trim()) { setError('Description is required'); return }
     setSaving(true)
     setError(null)
     try {
       await onSave(title.trim(), description.trim())
-    } catch {
-      setError('Failed to save. Please try again.')
+    } catch (err: unknown) {
+      // Surface the server's validation message (class-validator returns an array)
+      // so the user sees the real reason instead of a generic failure.
+      const raw = (err as { response?: { data?: { message?: string | string[] } } })
+        ?.response?.data?.message
+      setError(
+        Array.isArray(raw) ? raw[0] : raw ?? 'Failed to save. Please try again.',
+      )
     } finally {
       setSaving(false)
     }
@@ -50,7 +57,9 @@ function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
   return (
     <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px] p-4 flex flex-col gap-3 mt-2">
       <div>
-        <label className="text-xs font-semibold text-[#374151] mb-1 block">Title</label>
+        <label className="text-xs font-semibold text-[#374151] mb-1 block">
+          Title <span className="text-[#DC2626]">*</span>
+        </label>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
@@ -58,10 +67,11 @@ function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
           className={inputCls}
           autoFocus
         />
-        {error && <p className="text-xs text-[#DC2626] mt-1">{error}</p>}
       </div>
       <div>
-        <label className="text-xs font-semibold text-[#374151] mb-1 block">Description</label>
+        <label className="text-xs font-semibold text-[#374151] mb-1 block">
+          Description <span className="text-[#DC2626]">*</span>
+        </label>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
@@ -70,6 +80,7 @@ function InlineForm({ type, initial, onSave, onCancel }: InlineFormProps) {
           className={textareaCls}
         />
       </div>
+      {error && <p className="text-xs text-[#DC2626]">{error}</p>}
       <div className="flex gap-2">
         <button
           onClick={handleSave}

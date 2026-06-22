@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   NotFoundException,
   UnprocessableEntityException,
@@ -145,6 +144,29 @@ export class OrganizationsService {
     }
   }
 
+  /**
+   * Turn an org name into a URL-safe slug and ensure it's unique by appending
+   * a numeric suffix (`acme-corp`, `acme-corp-2`, …) on collision.
+   */
+  private async generateUniqueSlug(name: string): Promise<string> {
+    const base =
+      name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'org';
+
+    let candidate = base;
+    let n = 2;
+    // eslint-disable-next-line no-await-in-loop
+    while (await this.prisma.organization.findUnique({ where: { slug: candidate } })) {
+      candidate = `${base}-${n++}`;
+    }
+    return candidate;
+  }
+
   async create(dto: CreateOrgWithAdminDto) {
     const { admin_name, admin_email, admin_password, existing_user_id, ...orgData } = dto;
 
@@ -152,12 +174,12 @@ export class OrganizationsService {
       throw new UnprocessableEntityException('Either existing_user_id or admin_email is required');
     }
 
-    const existingOrg = await this.prisma.organization.findUnique({ where: { slug: orgData.slug } });
-    if (existingOrg) throw new ConflictException(`Slug '${orgData.slug}' is already taken`);
+    // Slug is an internal identifier — derive it from the name and guarantee uniqueness.
+    const slug = await this.generateUniqueSlug(orgData.name);
 
     return this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
-        data: { ...orgData, status: 'active' as any },
+        data: { ...orgData, slug, status: 'active' as any },
       });
 
       let adminUser: { id: string; name: string; email: string; is_active: boolean; created_at: Date };

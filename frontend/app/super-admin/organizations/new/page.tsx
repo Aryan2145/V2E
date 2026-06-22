@@ -17,10 +17,6 @@ import type { GroupUser } from '@/lib/api/groups'
 
 const schema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
-  slug: z
-    .string()
-    .min(2, 'Slug must be at least 2 characters')
-    .regex(/^[a-z0-9-]+$/, 'Slug can only contain lowercase letters, numbers, and hyphens'),
   industry: z.string().optional(),
   country: z.string().optional(),
   timezone: z.string().optional(),
@@ -89,7 +85,6 @@ export default function NewOrganizationPage() {
   const {
     register,
     handleSubmit,
-    setValue,
     watch,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
@@ -114,11 +109,6 @@ export default function NewOrganizationPage() {
       .catch(() => setGroupUsers([]))
       .finally(() => setLoadingGroupUsers(false))
   }, [selectedGroupId])
-
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const slug = e.target.value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-')
-    setValue('slug', slug, { shouldValidate: true })
-  }
 
   const filteredUsers = groupUsers.filter((u) => {
     const q = userSearch.toLowerCase()
@@ -148,7 +138,6 @@ export default function NewOrganizationPage() {
     try {
       const payload: Parameters<typeof createOrganization>[0] = {
         name: values.name,
-        slug: values.slug,
         industry: values.industry || undefined,
         country: values.country || undefined,
         timezone: values.timezone || undefined,
@@ -196,19 +185,13 @@ export default function NewOrganizationPage() {
         <Card>
           <h2 className="text-[16px] font-semibold text-[#0F172A] mb-5 pb-4 border-b border-[#E2E8F0]">Organization Details</h2>
           <div className="grid grid-cols-1 gap-5">
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Organization Name" error={errors.name?.message} required>
-                <input
-                  {...register('name')}
-                  onChange={(e) => { register('name').onChange(e); handleNameChange(e) }}
-                  placeholder="Acme Corp"
-                  className={inputCls(!!errors.name)}
-                />
-              </Field>
-              <Field label="Slug" error={errors.slug?.message} required>
-                <input {...register('slug')} placeholder="acme-corp" className={inputCls(!!errors.slug)} />
-              </Field>
-            </div>
+            <Field label="Organization Name" error={errors.name?.message} required>
+              <input
+                {...register('name')}
+                placeholder="Acme Corp"
+                className={inputCls(!!errors.name)}
+              />
+            </Field>
 
             <div className="grid grid-cols-2 gap-4">
               <Field label="Industry" error={errors.industry?.message}>

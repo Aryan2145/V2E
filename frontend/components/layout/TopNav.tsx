@@ -18,7 +18,7 @@ const NAV_ITEMS: { label: string; href: string; module?: string }[] = [
   { label: 'Learning', href: '/learning', module: 'learning' },
   { label: 'Communication', href: '/communication', module: 'communication' },
   { label: 'Tasks', href: '/dashboard/tasks', module: 'tasks' },
-  { label: 'ECS', href: '/dashboard/ecs', module: 'ecs' },
+  { label: 'ESS', href: '/dashboard/ecs', module: 'ecs' },
   { label: 'Governance', href: '/dashboard/governance', module: 'governance' },
   { label: 'Performance', href: '/dashboard/performance', module: 'performance' },
 ]
@@ -278,19 +278,9 @@ export default function TopNav() {
                 </>
               )}
 
-              {/* Settings */}
-              {canAccessSettings && (
-                <div className="border-t border-[#F1F5F9] p-2">
-                  <Link
-                    href="/settings"
-                    onClick={() => setOpen(false)}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-[6px] text-sm text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
-                  >
-                    <Settings size={14} />
-                    Settings
-                  </Link>
-                </div>
-              )}
+              {/* Settings lives in the persistent gear icon (top bar) — not duplicated
+                  here. The avatar menu stays focused on identity, org switching, and
+                  the contextual "manage current org" shortcut above. */}
 
               {/* Sign out */}
               <div className="border-t border-[#F1F5F9] p-2">

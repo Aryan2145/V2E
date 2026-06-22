@@ -37,7 +37,7 @@ interface NavGroup {
 
 // Organization Setup — handed over to HR. Low blast radius.
 const ORGANIZATION_ITEMS: NavItem[] = [
-  { label: 'Company Details', href: '/settings/organization/company', Icon: Building2 },
+  { label: 'Identity', href: '/settings/organization/company', Icon: Building2 },
   { label: 'Culture', href: '/settings/organization/culture', Icon: Heart },
   { label: 'Org Structure', href: '/settings/organization/structure', Icon: GitBranch },
   { label: 'Roles', href: '/settings/organization/roles', Icon: Briefcase },

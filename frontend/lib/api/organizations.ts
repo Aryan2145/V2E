@@ -24,7 +24,6 @@ export async function getMyOrganization(id: string): Promise<Organization> {
 
 export async function createOrganization(orgData: {
   name: string
-  slug: string
   group_id?: string
   existing_user_id?: string
   admin_name?: string
