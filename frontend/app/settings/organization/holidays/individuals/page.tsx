@@ -46,8 +46,9 @@ export default function IndividualsPage() {
   const filtered = employees.filter((e) => {
     const q = search.toLowerCase()
     return (
-      e.user_id.toLowerCase().includes(q) ||
-      (e.employee_code ?? '').toLowerCase().includes(q)
+      (e.user?.name ?? '').toLowerCase().includes(q) ||
+      (e.department?.name ?? '').toLowerCase().includes(q) ||
+      (e.role?.title ?? '').toLowerCase().includes(q)
     )
   })
 
@@ -136,9 +137,11 @@ export default function IndividualsPage() {
                 <User size={14} className="shrink-0 text-[#94A3B8]" />
                 <div className="min-w-0">
                   <p className={`text-sm font-medium truncate ${selected?.id === emp.id ? 'text-[#2563EB]' : 'text-[#0F172A]'}`}>
-                    {emp.employee_code ?? emp.user_id.slice(0, 8)}
+                    {emp.user?.name ?? 'Unnamed'}
                   </p>
-                  <p className="text-xs text-[#94A3B8] truncate">{emp.employment_type}</p>
+                  <p className="text-xs text-[#94A3B8] truncate">
+                    {[emp.department?.name, emp.role?.title].filter(Boolean).join(' · ') || emp.employment_type}
+                  </p>
                 </div>
               </button>
             ))}

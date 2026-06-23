@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Pencil, Trash2, RefreshCw, Check, X } from 'lucide-react'
 import type { OrgHoliday, DepartmentHoliday, IndividualHoliday, HolidayType } from '@/lib/types/holidays'
+import { parseLocalDate, dateOnly } from '@/lib/date'
 
 type AnyHoliday = OrgHoliday | DepartmentHoliday | IndividualHoliday
 
@@ -33,7 +34,7 @@ export default function HolidayList({ holidays, onDelete, onUpdate, emptyText = 
   const [deleting, setDeleting] = useState<string | null>(null)
 
   function startEdit(h: AnyHoliday) {
-    setEditing({ id: h.id, name: h.name, date: h.date })
+    setEditing({ id: h.id, name: h.name, date: dateOnly(h.date) })
   }
 
   async function saveEdit() {
@@ -57,7 +58,7 @@ export default function HolidayList({ holidays, onDelete, onUpdate, emptyText = 
       {holidays.map((h) => {
         const isEditing = editing?.id === h.id
         const isDeleting = deleting === h.id
-        const dateDisplay = new Date(h.date + 'T00:00:00').toLocaleDateString('en-IN', {
+        const dateDisplay = parseLocalDate(h.date).toLocaleDateString('en-IN', {
           day: 'numeric', month: 'short', year: 'numeric',
         })
 

@@ -6,16 +6,9 @@ import { getRoles } from '@/lib/api/roles'
 import { flattenTree, ancestorsOf } from '@/lib/dept-tree'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import Button from '@/components/ui/Button'
+import { levelColors } from '@/lib/role-levels'
 import RoleFormDrawer, { type RoleFormTarget } from './RoleFormDrawer'
-import type { Department, Role, RoleLevel } from '@/lib/types'
-
-const levelColors: Record<RoleLevel, string> = {
-  junior: 'bg-[#DCFCE7] text-[#16A34A]',
-  mid: 'bg-[#DBEAFE] text-[#1D4ED8]',
-  senior: 'bg-[#FEF9C3] text-[#CA8A04]',
-  lead: 'bg-[#FEE2E2] text-[#DC2626]',
-  head: 'bg-[#F3E8FF] text-[#7C3AED]',
-}
+import type { Department, Role } from '@/lib/types'
 
 // ─── Role card ──────────────────────────────────────────────────────────────────
 // Clickable (button) when editable; a plain div for read-only viewers.

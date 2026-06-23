@@ -49,7 +49,7 @@ export default function DepartmentsPage() {
             <div className="px-4 py-3 border-b border-[#E2E8F0] bg-[#F8FAFC]">
               <p className="text-xs font-semibold text-[#475569] uppercase tracking-wide">Departments</p>
             </div>
-            <div className="divide-y divide-[#E2E8F0]">
+            <div className="divide-y divide-[#E2E8F0] max-h-[calc(100vh-260px)] overflow-y-auto">
               {departments.map((dept) => (
                 <button
                   key={dept.id}

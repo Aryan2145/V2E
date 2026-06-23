@@ -65,11 +65,24 @@ export interface IndividualWorkingDays {
 
 // ─── Holidays ─────────────────────────────────────────────────────────────────
 
+/** Minimal shape the holiday list + month calendar components render (org or dept). */
+export interface CalendarHoliday {
+  id: string
+  name: string
+  date: string
+  end_date: string | null
+  type: HolidayType
+  status: HolidayStatus
+  is_recurring_yearly: boolean
+}
+
 export interface OrgHoliday {
   id: string
   organization_id: string
   name: string
   date: string
+  /** Inclusive end date for a multi-day holiday; null for single-day. */
+  end_date: string | null
   type: HolidayType
   status: HolidayStatus
   is_recurring_yearly: boolean
@@ -85,6 +98,8 @@ export interface DepartmentHoliday {
   department_id: string
   name: string
   date: string
+  /** Inclusive end date for a multi-day holiday; null for single-day. */
+  end_date: string | null
   type: HolidayType
   status: HolidayStatus
   is_recurring_yearly: boolean

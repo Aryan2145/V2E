@@ -12,11 +12,11 @@ interface HolidayTab {
 }
 
 const HOLIDAY_TABS: HolidayTab[] = [
-  { label: 'Overview', href: '/settings/organization/holidays' },
   { label: 'Org Calendar', href: '/settings/organization/holidays/org' },
   { label: 'Departments', href: '/settings/organization/holidays/departments' },
   { label: 'Individuals', href: '/settings/organization/holidays/individuals', adminOnly: true },
   { label: 'Audit Log', href: '/settings/organization/holidays/audit', adminOnly: true },
+  { label: 'Configurations', href: '/settings/organization/holidays/configurations' },
 ]
 
 /**
@@ -30,7 +30,6 @@ export default function HolidaysLayout({ children }: { children: React.ReactNode
   const isAdminOrHR = !!user?.is_admin
 
   function isActive(href: string): boolean {
-    if (href === '/settings/organization/holidays') return pathname === '/settings/organization/holidays'
     return pathname.startsWith(href)
   }
 

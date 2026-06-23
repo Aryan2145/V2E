@@ -1701,6 +1701,7 @@ model OrgHoliday {
   organization_id      String
   name                 String
   date                 DateTime      @db.Date
+  end_date             DateTime?     @db.Date
   type                 HolidayType
   source               String?
   is_recurring_yearly  Boolean       @default(false)
@@ -1748,6 +1749,7 @@ model DepartmentHoliday {
   department_id       String
   name                String
   date                DateTime      @db.Date
+  end_date            DateTime?     @db.Date
   type                HolidayType
   is_recurring_yearly Boolean       @default(false)
   description         String?       @db.Text

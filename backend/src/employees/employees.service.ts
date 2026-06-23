@@ -111,6 +111,20 @@ export class EmployeesService {
       );
     }
 
+    // Employee codes must be unique within the organization.
+    const code = profileData.employee_code?.trim();
+    if (code) {
+      const codeClash = await this.prisma.employeeProfile.findFirst({
+        where: { organization_id: orgId, employee_code: code },
+        select: { id: true },
+      });
+      if (codeClash) {
+        throw new ConflictException(
+          `Employee code '${code}' is already in use in this organization`,
+        );
+      }
+    }
+
     const { profile, createdUserId } = await this.prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { email } });
 

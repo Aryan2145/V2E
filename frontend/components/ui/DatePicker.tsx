@@ -1,0 +1,328 @@
+'use client'
+
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
+
+interface DatePickerProps {
+  value: string // ISO yyyy-mm-dd, '' = empty
+  onChange: (iso: string) => void
+  placeholder?: string
+  min?: string // ISO yyyy-mm-dd
+  max?: string // ISO yyyy-mm-dd
+  disabled?: boolean
+  id?: string
+}
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const WEEKDAYS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+
+// ─── Local-date helpers (avoid UTC off-by-one from toISOString) ─────────────────
+
+function toIso(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Parse 'yyyy-mm-dd' into a LOCAL Date (midnight), or null. */
+function parseIso(iso: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
+function formatDisplay(iso: string): string {
+  const d = parseIso(iso)
+  if (!d) return ''
+  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS_SHORT[d.getMonth()]} ${d.getFullYear()}`
+}
+
+const sameDay = (a: Date, b: Date) =>
+  a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
+
+/** Compare by day only; returns negative if a < b. */
+const dayDiff = (a: Date, b: Date) =>
+  new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime() -
+  new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime()
+
+export default function DatePicker({
+  value,
+  onChange,
+  placeholder = 'Select date',
+  min,
+  max,
+  disabled,
+  id,
+}: DatePickerProps) {
+  const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<'days' | 'years'>('days')
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
+
+  const selected = useMemo(() => parseIso(value), [value])
+  const minD = useMemo(() => (min ? parseIso(min) : null), [min])
+  const maxD = useMemo(() => (max ? parseIso(max) : null), [max])
+
+  // The month currently shown in the grid.
+  const [view, setView] = useState(() => selected ?? new Date())
+  useEffect(() => {
+    if (open) {
+      setView(selected ?? new Date())
+      setMode('days')
+    }
+  }, [open, selected])
+
+  const isDisabledDay = (d: Date): boolean =>
+    !!((minD && dayDiff(d, minD) < 0) || (maxD && dayDiff(d, maxD) > 0))
+
+  // ── Positioning (portal, fixed) ──────────────────────────────────────────────
+  const place = () => {
+    const t = triggerRef.current
+    if (!t) return
+    const r = t.getBoundingClientRect()
+    const PANEL_H = 340
+    const PANEL_W = 300
+    const below = window.innerHeight - r.bottom
+    const openUp = below < PANEL_H + 12 && r.top > below
+    const top = openUp ? Math.max(8, r.top - PANEL_H - 6) : r.bottom + 6
+    let left = r.left
+    if (left + PANEL_W > window.innerWidth - 8) left = window.innerWidth - PANEL_W - 8
+    setPos({ top, left: Math.max(8, left), width: PANEL_W })
+  }
+
+  useLayoutEffect(() => {
+    if (open) place()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onScroll = () => place()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (wrapRef.current?.contains(target) || panelRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('mousedown', onDown)
+    return () => {
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('mousedown', onDown)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  // ── Day grid (6 weeks) ───────────────────────────────────────────────────────
+  const grid = useMemo(() => {
+    const first = new Date(view.getFullYear(), view.getMonth(), 1)
+    const start = new Date(first)
+    start.setDate(1 - first.getDay()) // back up to the Sunday on/before the 1st
+    return Array.from({ length: 42 }, (_, i) => {
+      const d = new Date(start)
+      d.setDate(start.getDate() + i)
+      return d
+    })
+  }, [view])
+
+  const today = new Date()
+
+  const pick = (d: Date) => {
+    if (isDisabledDay(d)) return
+    onChange(toIso(d))
+    setOpen(false)
+  }
+
+  const shiftMonth = (delta: number) =>
+    setView((v) => new Date(v.getFullYear(), v.getMonth() + delta, 1))
+
+  // Year grid range (12 years around the view year)
+  const yearBase = view.getFullYear() - (view.getFullYear() % 12)
+
+  const triggerCls = `w-full flex items-center gap-0 rounded-[8px] border bg-[#F8FAFC] text-left text-[15px] transition-colors ${
+    disabled
+      ? 'border-[#E2E8F0] cursor-not-allowed opacity-70'
+      : 'border-[#CBD5E1] cursor-pointer hover:bg-white hover:border-[#94A3B8]'
+  } ${open ? '!bg-white !border-[#2563EB] ring-1 ring-[#2563EB]' : ''}`
+
+  return (
+    <div ref={wrapRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        id={id}
+        disabled={disabled}
+        onClick={() => setOpen((o) => !o)}
+        className={triggerCls}
+      >
+        <span className="flex items-center px-2.5 py-2.5 border-r border-[#E2E8F0] rounded-l-[8px] text-[#64748B]">
+          <Calendar size={15} />
+        </span>
+        <span className={`flex-1 px-3 py-2.5 truncate ${selected ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
+          {selected ? formatDisplay(value) : placeholder}
+        </span>
+        {selected && !disabled && (
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label="Clear date"
+            onClick={(e) => {
+              e.stopPropagation()
+              onChange('')
+            }}
+            className="flex items-center px-2.5 text-[#94A3B8] hover:text-[#DC2626]"
+          >
+            <X size={14} />
+          </span>
+        )}
+      </button>
+
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
+            className="z-[80] rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] p-3"
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between mb-2">
+              <button
+                type="button"
+                onClick={() => (mode === 'days' ? shiftMonth(-1) : setView((v) => new Date(v.getFullYear() - 12, v.getMonth(), 1)))}
+                className="w-8 h-8 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9]"
+                aria-label="Previous"
+              >
+                <ChevronLeft size={17} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode((m) => (m === 'days' ? 'years' : 'days'))}
+                className="px-3 py-1.5 rounded-[8px] text-sm font-semibold text-[#0F172A] hover:bg-[#F1F5F9]"
+              >
+                {mode === 'days' ? `${MONTHS[view.getMonth()]} ${view.getFullYear()}` : `${yearBase} – ${yearBase + 11}`}
+              </button>
+              <button
+                type="button"
+                onClick={() => (mode === 'days' ? shiftMonth(1) : setView((v) => new Date(v.getFullYear() + 12, v.getMonth(), 1)))}
+                className="w-8 h-8 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9]"
+                aria-label="Next"
+              >
+                <ChevronRight size={17} />
+              </button>
+            </div>
+
+            {mode === 'days' ? (
+              <>
+                {/* Weekday labels */}
+                <div className="grid grid-cols-7 mb-1">
+                  {WEEKDAYS.map((w) => (
+                    <div key={w} className="text-center text-[11px] font-semibold text-[#94A3B8] py-1">
+                      {w}
+                    </div>
+                  ))}
+                </div>
+                {/* Days */}
+                <div className="grid grid-cols-7 gap-0.5">
+                  {grid.map((d, i) => {
+                    const inMonth = d.getMonth() === view.getMonth()
+                    const isSel = selected && sameDay(d, selected)
+                    const isToday = sameDay(d, today)
+                    const off = isDisabledDay(d)
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        disabled={!!off}
+                        onClick={() => pick(d)}
+                        className={[
+                          'h-9 rounded-[8px] text-sm flex items-center justify-center transition-colors',
+                          off
+                            ? 'text-[#CBD5E1] cursor-not-allowed'
+                            : isSel
+                              ? 'bg-[#2563EB] text-white font-semibold'
+                              : inMonth
+                                ? 'text-[#0F172A] hover:bg-[#EFF6FF]'
+                                : 'text-[#CBD5E1] hover:bg-[#F1F5F9]',
+                          !isSel && isToday && !off ? 'ring-1 ring-inset ring-[#2563EB]' : '',
+                        ].join(' ')}
+                      >
+                        {d.getDate()}
+                      </button>
+                    )
+                  })}
+                </div>
+              </>
+            ) : (
+              /* Year picker */
+              <div className="grid grid-cols-3 gap-1.5 py-1">
+                {Array.from({ length: 12 }, (_, i) => yearBase + i).map((yr) => {
+                  const isSel = selected?.getFullYear() === yr
+                  return (
+                    <button
+                      key={yr}
+                      type="button"
+                      onClick={() => {
+                        setView((v) => new Date(yr, v.getMonth(), 1))
+                        setMode('days')
+                      }}
+                      className={[
+                        'h-10 rounded-[8px] text-sm flex items-center justify-center transition-colors',
+                        isSel
+                          ? 'bg-[#2563EB] text-white font-semibold'
+                          : 'text-[#0F172A] hover:bg-[#EFF6FF]',
+                      ].join(' ')}
+                    >
+                      {yr}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* Footer */}
+            <div className="flex items-center justify-between mt-2 pt-2 border-t border-[#F1F5F9]">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isDisabledDay(today)) return
+                  onChange(toIso(today))
+                  setOpen(false)
+                }}
+                disabled={isDisabledDay(today)}
+                className="text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8] disabled:text-[#CBD5E1] disabled:cursor-not-allowed px-2 py-1"
+              >
+                Today
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange('')
+                  setOpen(false)
+                }}
+                className="text-xs font-semibold text-[#64748B] hover:text-[#0F172A] px-2 py-1"
+              >
+                Clear
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
+  )
+}

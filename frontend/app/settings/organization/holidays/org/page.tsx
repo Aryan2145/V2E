@@ -4,14 +4,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
 import type { OrgHoliday, OrgWorkingDays } from '@/lib/types/holidays'
-import { Loader2, Save, Upload } from 'lucide-react'
-import WorkingDaysToggle from '@/components/holidays/WorkingDaysToggle'
-import HolidayList from '@/components/holidays/HolidayList'
-import AddHolidayForm from '@/components/holidays/AddHolidayForm'
-import HolidayCalendar from '@/components/holidays/HolidayCalendar'
+import { Loader2, Upload, Plus, ChevronLeft, ChevronRight } from 'lucide-react'
+import WorkingWeekStrip from '@/components/holidays/WorkingWeekStrip'
+import OrgHolidayList from '@/components/holidays/OrgHolidayList'
+import OrgHolidayCalendar from '@/components/holidays/OrgHolidayCalendar'
+import HolidayFormModal, { type HolidayFormData } from '@/components/holidays/HolidayFormModal'
 import ImportHolidaysModal from '@/components/holidays/ImportHolidaysModal'
-
-const YEARS = [new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1]
 
 export default function OrgCalendarPage() {
   const { user } = useAuth()
@@ -20,12 +18,11 @@ export default function OrgCalendarPage() {
 
   const [workingDays, setWorkingDays] = useState<OrgWorkingDays | null>(null)
   const [localDays, setLocalDays] = useState<number[]>([1, 2, 3, 4, 5])
-  const [savingDays, setSavingDays] = useState(false)
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
   const [holidays, setHolidays] = useState<OrgHoliday[]>([])
   const [loading, setLoading] = useState(true)
-  const [calRefresh, setCalRefresh] = useState(0)
   const [showImport, setShowImport] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
 
   const load = useCallback(async () => {
     if (!orgId) return
@@ -45,33 +42,31 @@ export default function OrgCalendarPage() {
 
   useEffect(() => { load() }, [load])
 
-  async function saveDays() {
-    setSavingDays(true)
-    try {
-      const updated = await holidaysApi.updateOrgWorkingDays(orgId, localDays)
-      setWorkingDays(updated)
-      setCalRefresh((n) => n + 1)
-    } finally {
-      setSavingDays(false)
-    }
+  async function saveWorkingDays(days: number[]) {
+    const updated = await holidaysApi.updateOrgWorkingDays(orgId, days)
+    setWorkingDays(updated)
+    setLocalDays(updated.working_days)
   }
 
-  async function addHoliday(data: { name: string; date: string; type: OrgHoliday['type']; is_recurring_yearly: boolean; description: string }) {
-    await holidaysApi.createOrgHoliday(orgId, { ...data, status: 'active', source: 'manual', description: data.description || null })
+  async function addHoliday(data: HolidayFormData) {
+    await holidaysApi.createOrgHoliday(orgId, {
+      ...data,
+      end_date: data.end_date || null,
+      status: 'active',
+      source: 'manual',
+      description: data.description || null,
+    })
     await load()
-    setCalRefresh((n) => n + 1)
   }
 
   async function deleteHoliday(id: string) {
     await holidaysApi.deleteOrgHoliday(orgId, id)
     setHolidays((h) => h.filter((x) => x.id !== id))
-    setCalRefresh((n) => n + 1)
   }
 
   async function updateHoliday(id: string, patch: Partial<OrgHoliday>) {
     await holidaysApi.updateOrgHoliday(orgId, id, patch)
-    setHolidays((h) => h.map((x) => x.id === id ? { ...x, ...patch } : x))
-    setCalRefresh((n) => n + 1)
+    await load()
   }
 
   if (loading && !workingDays) {
@@ -79,94 +74,98 @@ export default function OrgCalendarPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-12">
       <div>
         <h1 className="text-[28px] font-bold text-[#0F172A]">Org Calendar</h1>
-        <p className="text-[15px] text-[#475569] mt-1">Manage organization-wide working days and holidays.</p>
+        <p className="text-[15px] text-[#475569] mt-1">Set your working week and holidays. They drive deadlines, leave, and reports.</p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-6">
-        <div className="space-y-5">
-          {/* Working Days */}
-          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-            <h2 className="text-[18px] font-semibold text-[#0F172A] mb-3">Working Days</h2>
-            <WorkingDaysToggle value={localDays} onChange={setLocalDays} disabled={!isAdmin} />
-            {isAdmin && (
-              <button
-                type="button"
-                disabled={savingDays}
-                onClick={saveDays}
-                className="mt-4 flex items-center gap-2 h-9 px-4 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors"
-              >
-                <Save size={14} />
-                {savingDays ? 'Saving...' : 'Save'}
-              </button>
-            )}
-          </div>
+      {/* Working week — slim, auto-saving strip */}
+      <WorkingWeekStrip value={localDays} onSave={saveWorkingDays} disabled={!isAdmin} />
 
-          {/* National Holidays section */}
-          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[18px] font-semibold text-[#0F172A]">National Holidays</h2>
-              <div className="flex gap-2">
-                {YEARS.map((y) => (
-                  <button
-                    key={y}
-                    type="button"
-                    onClick={() => setSelectedYear(y)}
-                    className={[
-                      'h-8 px-3 rounded-[8px] text-sm font-medium border transition-colors',
-                      selectedYear === y
-                        ? 'bg-[#2563EB] text-white border-[#2563EB]'
-                        : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB]',
-                    ].join(' ')}
-                  >
-                    {y}
-                  </button>
-                ))}
+      {/* Holidays + calendar, side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6 items-start lg:items-stretch">
+        {/* Holidays list */}
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-4 shrink-0">
+            <div className="flex items-center gap-3">
+              <h2 className="text-[18px] font-semibold text-[#0F172A]">Holidays</h2>
+              {/* Year stepper — < 2026 > */}
+              <div className="flex items-center gap-1 rounded-[8px] border border-[#CBD5E1] bg-white">
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear((y) => y - 1)}
+                  className="p-1.5 rounded-l-[7px] text-[#475569] hover:bg-[#F1F5F9] transition-colors"
+                  aria-label="Previous year"
+                >
+                  <ChevronLeft size={15} />
+                </button>
+                <span className="min-w-[44px] text-center text-sm font-semibold text-[#0F172A] tabular-nums">{selectedYear}</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedYear((y) => y + 1)}
+                  className="p-1.5 rounded-r-[7px] text-[#475569] hover:bg-[#F1F5F9] transition-colors"
+                  aria-label="Next year"
+                >
+                  <ChevronRight size={15} />
+                </button>
               </div>
             </div>
 
-            {loading ? (
-              <div className="flex items-center justify-center h-16"><Loader2 size={18} className="animate-spin text-[#94A3B8]" /></div>
-            ) : (
-              <>
-                <HolidayList
-                  holidays={holidays}
-                  onDelete={deleteHoliday}
-                  onUpdate={updateHoliday}
-                  emptyText="No holidays for this year."
-                />
-
-                {isAdmin && (
-                  <div className="mt-4 flex items-center gap-3 flex-wrap">
-                    <AddHolidayForm onAdd={addHoliday} />
-                    <button
-                      type="button"
-                      onClick={() => setShowImport(true)}
-                      className="flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] transition-colors"
-                    >
-                      <Upload size={14} />
-                      Import CSV
-                    </button>
-                  </div>
-                )}
-              </>
+            {isAdmin && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowImport(true)}
+                  className="flex items-center gap-1.5 h-9 px-3 rounded-[8px] border border-[#CBD5E1] text-sm font-medium text-[#475569] hover:border-[#2563EB] hover:text-[#2563EB] transition-colors"
+                >
+                  <Upload size={14} />
+                  Import CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowAdd(true)}
+                  className="flex items-center gap-1.5 h-9 px-4 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
+                >
+                  <Plus size={15} />
+                  Add Holiday
+                </button>
+              </div>
             )}
           </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center h-16"><Loader2 size={18} className="animate-spin text-[#94A3B8]" /></div>
+          ) : (
+            <div className="flex-1 min-h-0 overflow-y-auto lg:max-h-[360px]">
+              <OrgHolidayList
+                holidays={holidays}
+                onDelete={deleteHoliday}
+                onUpdate={updateHoliday}
+                emptyText="No holidays for this year."
+              />
+            </div>
+          )}
         </div>
 
-        {/* Calendar */}
-        <div className="hidden lg:block">
-          <HolidayCalendar orgId={orgId} refreshKey={calRefresh} />
-        </div>
+        {/* Month calendar */}
+        <OrgHolidayCalendar
+          workingDays={localDays}
+          holidays={holidays}
+        />
       </div>
+
+      <HolidayFormModal
+        isOpen={showAdd}
+        onClose={() => setShowAdd(false)}
+        onAdd={addHoliday}
+      />
 
       {showImport && (
         <ImportHolidaysModal
           orgId={orgId}
           onClose={() => setShowImport(false)}
-          onImported={() => { load(); setCalRefresh((n) => n + 1) }}
+          onImported={() => { load() }}
         />
       )}
     </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Eye, EyeOff, Loader2, Plus } from 'lucide-react'
+import { X, Eye, EyeOff, Loader2, Plus, ChevronDown } from 'lucide-react'
 import { createEmployee } from '@/lib/api/employees'
 import { getUsers } from '@/lib/api/users'
 import { useToast } from '@/components/ui/Toast'
@@ -10,9 +10,58 @@ import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
 import DeptFormDrawer from '@/components/org-chart/DeptFormDrawer'
 import RoleFormDrawer from '@/components/roles/RoleFormDrawer'
+import DatePicker from '@/components/ui/DatePicker'
+import ReportsToSelect from './ReportsToSelect'
+import DepartmentSelect from './DepartmentSelect'
+import RoleSelect from './RoleSelect'
 import type { Department, Role, User, EmployeeProfile, EmploymentType } from '@/lib/types'
 
 const STRUCTURE_LEAF = 'settings.organization.structure'
+
+/**
+ * Suggest the next employee code by incrementing the highest existing one,
+ * preserving its prefix and zero-padding (e.g. EMP-056 → EMP-057, 56 → 57).
+ * Returns '' when no numeric code exists yet.
+ */
+function suggestNextEmployeeCode(employees: EmployeeProfile[]): string {
+  let best: { prefix: string; num: number; width: number } | null = null
+  for (const e of employees) {
+    const m = /^(.*?)(\d+)\s*$/.exec((e.employee_code ?? '').trim())
+    if (!m) continue
+    const num = parseInt(m[2], 10)
+    if (!Number.isFinite(num)) continue
+    if (!best || num > best.num) best = { prefix: m[1], num, width: m[2].length }
+  }
+  if (!best) return ''
+  return best.prefix + String(best.num + 1).padStart(best.width, '0')
+}
+
+// Native <select> with a soft fill + a distinct chevron "affordance" box, so it
+// reads clearly as a dropdown rather than a plain text input.
+const selectClass =
+  'w-full appearance-none rounded-[8px] border border-[#CBD5E1] bg-[#F8FAFC] pl-3.5 pr-11 py-2.5 text-[15px] text-[#0F172A] cursor-pointer hover:bg-white hover:border-[#94A3B8] focus:bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors'
+
+function SelectField({
+  children,
+  disabled,
+  ...props
+}: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <div className="relative group">
+      <select {...props} disabled={disabled} className={selectClass}>
+        {children}
+      </select>
+      <span
+        className={`pointer-events-none absolute right-0 top-0 bottom-0 flex items-center px-2.5 border-l border-[#E2E8F0] rounded-r-[8px] ${
+          disabled ? 'text-[#CBD5E1]' : 'text-[#64748B] group-hover:text-[#2563EB]'
+        } transition-colors`}
+      >
+        <ChevronDown size={16} />
+      </span>
+    </div>
+  )
+}
+
 
 interface Props {
   orgId: string
@@ -84,19 +133,19 @@ export default function AddEmployeeModal({
     }
   }, [])
 
-  const [form, setForm] = useState({
+  const [form, setForm] = useState(() => ({
     name: '',
     email: '',
     password: '',
     department_id: '',
     role_id: '',
     employment_type: 'full_time' as EmploymentType,
-    employee_code: '',
+    employee_code: suggestNextEmployeeCode(employees), // pre-fill the next code
     reporting_to_user_id: '',
     date_of_joining: '',
     date_of_birth: '',
     marriage_date: '',
-  })
+  }))
 
   const set = (k: keyof typeof form, v: string) =>
     setForm((f) => ({ ...f, [k]: v }))
@@ -106,6 +155,25 @@ export default function AddEmployeeModal({
     () => localRoles.filter((r) => r.department_id === form.department_id),
     [localRoles, form.department_id],
   )
+
+  // Employee codes must be unique within the org — flag a clash as the user types.
+  const usedCodes = useMemo(
+    () =>
+      new Set(
+        employees.map((e) => (e.employee_code ?? '').trim().toLowerCase()).filter(Boolean),
+      ),
+    [employees],
+  )
+  const codeTaken =
+    form.employee_code.trim() !== '' && usedCodes.has(form.employee_code.trim().toLowerCase())
+
+  // Today as yyyy-mm-dd (local) — caps date-of-birth / marriage to the past.
+  const todayIso = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+      d.getDate(),
+    ).padStart(2, '0')}`
+  }, [])
 
 
   async function handleSubmit(e: React.FormEvent) {
@@ -122,6 +190,10 @@ export default function AddEmployeeModal({
     }
     if (!form.department_id || !form.role_id) {
       setError('Please select a department and role.')
+      return
+    }
+    if (codeTaken) {
+      setError('That employee code is already in use. Please choose a unique code.')
       return
     }
 
@@ -226,30 +298,28 @@ export default function AddEmployeeModal({
                   value={form.employee_code}
                   onChange={(e) => set('employee_code', e.target.value)}
                   placeholder="EMP-001"
-                  className={inputClass}
+                  className={`${inputClass} ${
+                    codeTaken ? '!border-[#DC2626] focus:!border-[#DC2626] focus:!ring-[#DC2626]' : ''
+                  }`}
                 />
+                {codeTaken && (
+                  <p className="mt-1 text-xs text-[#DC2626]">This code is already in use.</p>
+                )}
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Department *</label>
-                <select
+                <DepartmentSelect
                   value={form.department_id}
-                  onChange={(e) => {
-                    set('department_id', e.target.value)
+                  departments={localDepartments}
+                  onChange={(id) => {
+                    set('department_id', id)
                     set('role_id', '') // reset role when department changes
                     setCreatingRole(false) // roles are dept-scoped
                   }}
-                  className={inputClass}
-                >
-                  <option value="">Select department…</option>
-                  {localDepartments.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
+                />
                 {canCreateDept && (
                   <button
                     type="button"
@@ -262,21 +332,13 @@ export default function AddEmployeeModal({
               </div>
               <div>
                 <label className={labelClass}>Role *</label>
-                <select
+                <RoleSelect
                   value={form.role_id}
-                  onChange={(e) => set('role_id', e.target.value)}
+                  roles={deptRoles}
                   disabled={!form.department_id}
-                  className={`${inputClass} disabled:bg-[#F1F5F9] disabled:text-[#94A3B8]`}
-                >
-                  <option value="">
-                    {form.department_id ? 'Select role…' : 'Pick a department first'}
-                  </option>
-                  {deptRoles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.title}
-                    </option>
-                  ))}
-                </select>
+                  disabledHint="Pick a department first"
+                  onChange={(id) => set('role_id', id)}
+                />
 
                 {/* Inline role creation — opens the full role drawer over this
                     modal, scoped to the chosen department (admin only) */}
@@ -295,61 +357,54 @@ export default function AddEmployeeModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Employment type</label>
-                <select
+                <SelectField
                   value={form.employment_type}
                   onChange={(e) => set('employment_type', e.target.value)}
-                  className={inputClass}
                 >
                   {EMPLOYMENT_TYPES.map((t) => (
                     <option key={t.value} value={t.value}>
                       {t.label}
                     </option>
                   ))}
-                </select>
+                </SelectField>
               </div>
               <div>
                 <label className={labelClass}>Reports to</label>
-                <select
+                <ReportsToSelect
                   value={form.reporting_to_user_id}
-                  onChange={(e) => set('reporting_to_user_id', e.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">No manager</option>
-                  {employees.map((emp) => (
-                    <option key={emp.id} value={emp.user_id}>
-                      {emp.user?.name ?? 'Unknown'}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(userId) => set('reporting_to_user_id', userId)}
+                  employees={employees}
+                  departments={localDepartments}
+                  selectedDeptId={form.department_id}
+                />
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className={labelClass}>Date of joining</label>
-                <input
-                  type="date"
+                <DatePicker
                   value={form.date_of_joining}
-                  onChange={(e) => set('date_of_joining', e.target.value)}
-                  className={inputClass}
+                  onChange={(iso) => set('date_of_joining', iso)}
+                  placeholder="Select date"
                 />
               </div>
               <div>
                 <label className={labelClass}>Date of birth</label>
-                <input
-                  type="date"
+                <DatePicker
                   value={form.date_of_birth}
-                  onChange={(e) => set('date_of_birth', e.target.value)}
-                  className={inputClass}
+                  onChange={(iso) => set('date_of_birth', iso)}
+                  placeholder="Select date"
+                  max={todayIso}
                 />
               </div>
               <div>
                 <label className={labelClass}>Marriage date</label>
-                <input
-                  type="date"
+                <DatePicker
                   value={form.marriage_date}
-                  onChange={(e) => set('marriage_date', e.target.value)}
-                  className={inputClass}
+                  onChange={(iso) => set('marriage_date', iso)}
+                  placeholder="Select date"
+                  max={todayIso}
                 />
               </div>
             </div>

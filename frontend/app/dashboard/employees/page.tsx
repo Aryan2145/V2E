@@ -10,6 +10,9 @@ import type { EmployeeProfile, Department, Role, EmployeeStatus } from '@/lib/ty
 import { Search, Users, ChevronRight, UserPlus, Upload } from 'lucide-react'
 import AddEmployeeModal from '@/components/employees/AddEmployeeModal'
 import ImportEmployeesModal from '@/components/employees/ImportEmployeesModal'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import EmployeeTreeView from '@/components/employees/EmployeeTreeView'
+import ViewToggle, { type EmployeeView } from '@/components/employees/ViewToggle'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -105,6 +108,7 @@ export default function EmployeesPage() {
   const [deptFilter, setDeptFilter] = useState('all')
   const [showAdd, setShowAdd] = useState(false)
   const [showImport, setShowImport] = useState(false)
+  const [view, setView] = useState<EmployeeView>('table')
 
   const reloadEmployees = useCallback(() => {
     if (!orgId) return
@@ -260,33 +264,36 @@ export default function EmployeesPage() {
             className="w-full pl-9 pr-3 py-[10px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A] placeholder:text-[#94A3B8]"
           />
         </div>
-        <select
-          value={deptFilter}
-          onChange={(e) => setDeptFilter(e.target.value)}
-          className="px-3 py-[10px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-        >
-          <option value="all">All departments</option>
-          {departments.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.name}
-            </option>
-          ))}
-        </select>
+        <div className="w-full sm:w-60">
+          <DepartmentSelect
+            value={deptFilter === 'all' ? '' : deptFilter}
+            onChange={(id) => setDeptFilter(id || 'all')}
+            departments={departments}
+            allLabel="All departments"
+          />
+        </div>
       </div>
 
-      {/* Count */}
-      <p className="text-sm text-[#475569]">
-        {filtered.length} employee{filtered.length !== 1 ? 's' : ''}
-      </p>
+      {/* Count + view toggle */}
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-[#475569]">
+          {filtered.length} employee{filtered.length !== 1 ? 's' : ''}
+        </p>
+        <ViewToggle value={view} onChange={setView} />
+      </div>
 
-      {/* Table */}
-      <ResponsiveTable
-        columns={columns}
-        rows={filtered}
-        rowKey={(emp) => emp.id}
-        onRowClick={(emp) => { window.location.href = `/settings/organization/employees/${emp.id}` }}
-        emptyState={<EmptyState filtered={isFiltered} />}
-      />
+      {/* Table / Tree */}
+      {view === 'table' ? (
+        <ResponsiveTable
+          columns={columns}
+          rows={filtered}
+          rowKey={(emp) => emp.id}
+          onRowClick={(emp) => { window.location.href = `/settings/organization/employees/${emp.id}` }}
+          emptyState={<EmptyState filtered={isFiltered} />}
+        />
+      ) : (
+        <EmployeeTreeView employees={filtered} departments={departments} />
+      )}
 
       {/* Add / Import modals */}
       {showAdd && (

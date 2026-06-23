@@ -134,16 +134,34 @@ export class HolidaysService {
     return !this.matchesAnyHoliday(date, holidays)
   }
 
-  private matchesAnyHoliday(date: Date, holidays: { date: Date; is_recurring_yearly: boolean }[]): boolean {
-    return holidays.some((h) => {
-      const hd = new Date(h.date)
-      if (h.is_recurring_yearly) {
-        return hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-      }
-      return hd.getFullYear() === date.getFullYear() &&
-        hd.getMonth() === date.getMonth() &&
-        hd.getDate() === date.getDate()
-    })
+  /**
+   * Whether `date` falls on a holiday — supporting both single-day holidays and
+   * inclusive ranges (`end_date`). For recurring-yearly holidays only the month/day
+   * matters, so a range is compared on month/day (handling a year-wrap span).
+   */
+  private dateMatchesHoliday(
+    date: Date,
+    h: { date: Date; end_date?: Date | null; is_recurring_yearly: boolean },
+  ): boolean {
+    const start = new Date(h.date)
+    const end = h.end_date ? new Date(h.end_date) : start
+
+    if (h.is_recurring_yearly) {
+      const md = (d: Date) => (d.getMonth() + 1) * 100 + d.getDate()
+      const s = md(start), e = md(end), x = md(date)
+      return s <= e ? x >= s && x <= e : x >= s || x <= e
+    }
+
+    const dayMs = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+    const x = dayMs(date)
+    return x >= dayMs(start) && x <= dayMs(end)
+  }
+
+  private matchesAnyHoliday(
+    date: Date,
+    holidays: { date: Date; end_date?: Date | null; is_recurring_yearly: boolean }[],
+  ): boolean {
+    return holidays.some((h) => this.dateMatchesHoliday(date, h))
   }
 
   // ─── Deadline Adjustment ──────────────────────────────────────────────────────
@@ -219,22 +237,14 @@ export class HolidaysService {
     const orgHolidays = await this.prisma.orgHoliday.findMany({
       where: { organization_id: orgId, status: HolidayStatus.active },
     })
-    const orgMatch = orgHolidays.find((h) => {
-      const hd = new Date(h.date)
-      if (h.is_recurring_yearly) return hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-      return hd.getFullYear() === date.getFullYear() && hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-    })
+    const orgMatch = orgHolidays.find((h) => this.dateMatchesHoliday(date, h))
     if (orgMatch) return orgMatch.name
 
     if (deptId) {
       const deptHolidays = await this.prisma.departmentHoliday.findMany({
         where: { organization_id: orgId, department_id: deptId, status: HolidayStatus.active },
       })
-      const deptMatch = deptHolidays.find((h) => {
-        const hd = new Date(h.date)
-        if (h.is_recurring_yearly) return hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-        return hd.getFullYear() === date.getFullYear() && hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-      })
+      const deptMatch = deptHolidays.find((h) => this.dateMatchesHoliday(date, h))
       if (deptMatch) return deptMatch.name
     }
 
@@ -242,11 +252,7 @@ export class HolidaysService {
       const userHolidays = await this.prisma.individualHoliday.findMany({
         where: { organization_id: orgId, user_id: userId },
       })
-      const userMatch = userHolidays.find((h) => {
-        const hd = new Date(h.date)
-        if (h.is_recurring_yearly) return hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-        return hd.getFullYear() === date.getFullYear() && hd.getMonth() === date.getMonth() && hd.getDate() === date.getDate()
-      })
+      const userMatch = userHolidays.find((h) => this.dateMatchesHoliday(date, h))
       if (userMatch) return userMatch.name
     }
 
@@ -413,11 +419,15 @@ export class HolidaysService {
 
   async createOrgHoliday(orgId: string, dto: CreateOrgHolidayDto) {
     const date = new Date(dto.date)
+    // Only keep an end date when it's a genuine range (strictly after the start).
+    const endDate = dto.end_date ? new Date(dto.end_date) : null
+    const end = endDate && endDate.getTime() > date.getTime() ? endDate : null
     return this.prisma.orgHoliday.create({
       data: {
         organization_id: orgId,
         name: dto.name,
         date,
+        end_date: end,
         type: dto.type,
         description: dto.description,
         is_recurring_yearly: dto.is_recurring_yearly ?? false,
@@ -430,11 +440,13 @@ export class HolidaysService {
   async updateOrgHoliday(orgId: string, id: string, dto: UpdateOrgHolidayDto) {
     await this.findOrgHolidayOrFail(orgId, id)
     const date = dto.date ? new Date(dto.date) : undefined
+    const endDate = dto.end_date ? new Date(dto.end_date) : undefined
     return this.prisma.orgHoliday.update({
       where: { id },
       data: {
         ...(dto.name && { name: dto.name }),
         ...(date && { date, year: date.getFullYear() }),
+        ...(dto.end_date !== undefined && { end_date: endDate ?? null }),
         ...(dto.type && { type: dto.type }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.is_recurring_yearly !== undefined && { is_recurring_yearly: dto.is_recurring_yearly }),
@@ -490,12 +502,15 @@ export class HolidaysService {
 
   async createDeptHoliday(orgId: string, deptId: string, dto: CreateDepartmentHolidayDto) {
     const date = new Date(dto.date)
+    const endDate = dto.end_date ? new Date(dto.end_date) : null
+    const end = endDate && endDate.getTime() > date.getTime() ? endDate : null
     return this.prisma.departmentHoliday.create({
       data: {
         organization_id: orgId,
         department_id: deptId,
         name: dto.name,
         date,
+        end_date: end,
         type: dto.type,
         description: dto.description,
         is_recurring_yearly: dto.is_recurring_yearly ?? false,
@@ -509,11 +524,13 @@ export class HolidaysService {
     const existing = await this.prisma.departmentHoliday.findFirst({ where: { id, organization_id: orgId, department_id: deptId } })
     if (!existing) throw new NotFoundException(`Department holiday ${id} not found`)
     const date = dto.date ? new Date(dto.date) : undefined
+    const endDate = dto.end_date ? new Date(dto.end_date) : undefined
     return this.prisma.departmentHoliday.update({
       where: { id },
       data: {
         ...(dto.name && { name: dto.name }),
         ...(date && { date, year: date.getFullYear() }),
+        ...(dto.end_date !== undefined && { end_date: endDate ?? null }),
         ...(dto.type && { type: dto.type }),
         ...(dto.description !== undefined && { description: dto.description }),
         ...(dto.is_recurring_yearly !== undefined && { is_recurring_yearly: dto.is_recurring_yearly }),
