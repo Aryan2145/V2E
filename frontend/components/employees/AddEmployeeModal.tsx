@@ -2,10 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { X, Eye, EyeOff, Loader2, Plus } from 'lucide-react'
 import { createEmployee } from '@/lib/api/employees'
+import { getUsers } from '@/lib/api/users'
 import { useToast } from '@/components/ui/Toast'
-import type { Department, Role, EmployeeProfile, EmploymentType } from '@/lib/types'
+import { useAuth } from '@/lib/auth/context'
+import { usePermissions } from '@/lib/auth/use-permissions'
+import DeptFormDrawer from '@/components/org-chart/DeptFormDrawer'
+import RoleFormDrawer from '@/components/roles/RoleFormDrawer'
+import type { Department, Role, User, EmployeeProfile, EmploymentType } from '@/lib/types'
+
+const STRUCTURE_LEAF = 'settings.organization.structure'
 
 interface Props {
   orgId: string
@@ -35,10 +42,36 @@ export default function AddEmployeeModal({
   onCreated,
 }: Props) {
   const { addToast } = useToast()
+  const { user } = useAuth()
+  const { can } = usePermissions()
+  // Role create is @RequireAdmin; department create is the structure-write permission.
+  const canCreateRole = !!user?.is_admin
+  const canCreateDept = can(STRUCTURE_LEAF, 'write')
+
   const [mounted, setMounted] = useState(false)
   const [saving, setSaving] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+
+  // Roles can be created inline via the role drawer, so keep a local copy we can
+  // append to.
+  const [localRoles, setLocalRoles] = useState<Role[]>(roles)
+  const [creatingRole, setCreatingRole] = useState(false)
+
+  // Departments can be created inline via the org-chart drawer (kept in flow,
+  // so the user never has to leave the form). Keep a local, appendable copy.
+  const [localDepartments, setLocalDepartments] = useState<Department[]>(departments)
+  const [creatingDept, setCreatingDept] = useState(false)
+  const [users, setUsers] = useState<User[]>([])
+
+  // The dept drawer needs the user list for its "head" picker; load it lazily
+  // only when the current user can actually create departments.
+  useEffect(() => {
+    if (!orgId || !canCreateDept) return
+    getUsers(orgId)
+      .then(setUsers)
+      .catch(() => setUsers([]))
+  }, [orgId, canCreateDept])
 
   // Portal to <body> so the overlay isn't constrained by the dashboard layout's
   // stacking context, and lock background scroll while open.
@@ -70,9 +103,10 @@ export default function AddEmployeeModal({
 
   // Roles are scoped to the chosen department.
   const deptRoles = useMemo(
-    () => roles.filter((r) => r.department_id === form.department_id),
-    [roles, form.department_id],
+    () => localRoles.filter((r) => r.department_id === form.department_id),
+    [localRoles, form.department_id],
   )
+
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -167,7 +201,7 @@ export default function AddEmployeeModal({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>Temporary password *</label>
+                <label className={labelClass}>Password *</label>
                 <div className="relative">
                   <input
                     type={showPassword ? 'text' : 'password'}
@@ -205,16 +239,26 @@ export default function AddEmployeeModal({
                   onChange={(e) => {
                     set('department_id', e.target.value)
                     set('role_id', '') // reset role when department changes
+                    setCreatingRole(false) // roles are dept-scoped
                   }}
                   className={inputClass}
                 >
                   <option value="">Select department…</option>
-                  {departments.map((d) => (
+                  {localDepartments.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.name}
                     </option>
                   ))}
                 </select>
+                {canCreateDept && (
+                  <button
+                    type="button"
+                    onClick={() => setCreatingDept(true)}
+                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-[#2563EB] hover:text-[#1D4ED8]"
+                  >
+                    <Plus size={12} /> New department
+                  </button>
+                )}
               </div>
               <div>
                 <label className={labelClass}>Role *</label>
@@ -233,6 +277,18 @@ export default function AddEmployeeModal({
                     </option>
                   ))}
                 </select>
+
+                {/* Inline role creation — opens the full role drawer over this
+                    modal, scoped to the chosen department (admin only) */}
+                {canCreateRole && form.department_id && (
+                  <button
+                    type="button"
+                    onClick={() => setCreatingRole(true)}
+                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-[#2563EB] hover:text-[#1D4ED8]"
+                  >
+                    <Plus size={12} /> New role
+                  </button>
+                )}
               </div>
             </div>
 
@@ -319,6 +375,45 @@ export default function AddEmployeeModal({
           </div>
         </form>
       </div>
+
+      {/* Inline department creation — opens over this modal, keeping the user in flow */}
+      {canCreateDept && (
+        <DeptFormDrawer
+          target={creatingDept ? { mode: 'create' } : null}
+          departments={localDepartments}
+          users={users}
+          orgId={orgId}
+          onClose={() => setCreatingDept(false)}
+          onSaved={(saved) => {
+            setLocalDepartments((ds) => [...ds, saved])
+            set('department_id', saved.id) // auto-select the new department
+            set('role_id', '') // its role list is empty until one is added
+            setCreatingRole(false)
+            setCreatingDept(false)
+            addToast(`Department "${saved.name}" created`, 'success')
+          }}
+        />
+      )}
+
+      {/* Inline role creation — full role form (level, JD, KRAs, KPIs) over this
+          modal, scoped to the selected department */}
+      {canCreateRole && (
+        <RoleFormDrawer
+          target={
+            creatingRole && form.department_id
+              ? { mode: 'create', deptId: form.department_id }
+              : null
+          }
+          orgId={orgId}
+          onClose={() => setCreatingRole(false)}
+          onSaved={(saved) => {
+            setLocalRoles((rs) => [...rs, saved])
+            set('role_id', saved.id) // auto-select the new role
+            setCreatingRole(false)
+            addToast(`Role "${saved.title}" created`, 'success')
+          }}
+        />
+      )}
     </div>,
     document.body,
   )

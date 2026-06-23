@@ -195,68 +195,81 @@ function Column({
   return (
     <div className="flex-1 flex flex-col min-w-0">
       <div className={`rounded-t-[12px] border border-b-0 px-4 py-3 flex items-center gap-2 ${headerBg}`}>
-        <div className={`w-2 h-2 rounded-full ${dotColor}`} />
+        <span
+          className={`w-5 h-5 shrink-0 rounded-full inline-flex items-center justify-center ${dotColor}`}
+        >
+          <span className="text-[11px] font-bold leading-none text-white tabular-nums translate-y-[1px]">
+            {items.length}
+          </span>
+        </span>
         <h3 className={`font-bold text-sm ${headerText}`}>{title}</h3>
-        <span className="ml-auto text-xs text-[#94A3B8]">{items.length}</span>
+        {!showForm && (
+          <button
+            type="button"
+            onClick={() => setShowForm(true)}
+            className={`ml-auto inline-flex items-center gap-1 text-xs font-semibold ${headerText} hover:opacity-80 transition-opacity`}
+          >
+            <Plus size={13} /> Add
+          </button>
+        )}
       </div>
 
-      <div className="border border-[#E2E8F0] rounded-b-[12px] bg-[#FAFAFA] p-3 flex flex-col gap-2 min-h-[160px]">
-        {items.length === 0 && !showForm && (
-          <div className="flex flex-col items-center gap-1 py-8">
-            <p className="text-xs text-[#CBD5E1] text-center">No standards added yet.</p>
+      <div className="border border-[#E2E8F0] rounded-b-[12px] bg-[#FAFAFA] flex flex-col">
+        {/* Add form sits below the fixed header so it stays visible while typing */}
+        {showForm && (
+          <div className="px-3 pt-3">
+            <InlineForm type={type} onSave={handleAdd} onCancel={() => setShowForm(false)} />
           </div>
         )}
 
-        {items.map((item) =>
-          editingId === item.id ? (
-            <InlineForm
-              key={item.id}
-              type={type}
-              initial={{ title: item.title, description: item.description }}
-              onSave={(t, d) => handleEdit(item.id, t, d)}
-              onCancel={() => setEditingId(null)}
-            />
-          ) : (
-            <div key={item.id}>
-              {confirmDeleteId === item.id ? (
-                <div className="bg-[#FEF2F2] border border-[#FECACA] rounded-[10px] p-3 flex items-center justify-between gap-3">
-                  <p className="text-xs text-[#7F1D1D]">Delete &quot;{item.title}&quot;?</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleDelete(item.id)}
-                      className="px-2.5 py-1 rounded-[6px] bg-[#DC2626] text-white text-xs font-semibold hover:bg-[#B91C1C]"
-                    >
-                      Delete
-                    </button>
-                    <button
-                      onClick={() => setConfirmDeleteId(null)}
-                      className="px-2.5 py-1 rounded-[6px] border border-[#CBD5E1] text-xs font-semibold"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <CultureCard
-                  standard={item}
-                  onEdit={() => setEditingId(item.id)}
-                  onDelete={() => setConfirmDeleteId(item.id)}
-                />
-              )}
+        {/* Scrollable card list — the column heading above stays fixed */}
+        <div className="p-3 flex flex-col gap-2 max-h-[360px] overflow-y-auto min-h-[120px]">
+          {items.length === 0 && !showForm && (
+            <div className="flex flex-col items-center gap-1 py-8">
+              <p className="text-xs text-[#CBD5E1] text-center">No standards added yet.</p>
             </div>
-          ),
-        )}
+          )}
 
-        {showForm && <InlineForm type={type} onSave={handleAdd} onCancel={() => setShowForm(false)} />}
-
-        {!showForm && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="inline-flex items-center gap-1.5 self-start text-sm font-medium text-[#475569] hover:text-[#0F172A] mt-1 transition-colors"
-          >
-            <Plus size={15} /> Add Standard
-          </button>
-        )}
+          {items.map((item) =>
+            editingId === item.id ? (
+              <InlineForm
+                key={item.id}
+                type={type}
+                initial={{ title: item.title, description: item.description }}
+                onSave={(t, d) => handleEdit(item.id, t, d)}
+                onCancel={() => setEditingId(null)}
+              />
+            ) : (
+              <div key={item.id}>
+                {confirmDeleteId === item.id ? (
+                  <div className="bg-[#FEF2F2] border border-[#FECACA] rounded-[10px] p-3 flex items-center justify-between gap-3">
+                    <p className="text-xs text-[#7F1D1D]">Delete &quot;{item.title}&quot;?</p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleDelete(item.id)}
+                        className="px-2.5 py-1 rounded-[6px] bg-[#DC2626] text-white text-xs font-semibold hover:bg-[#B91C1C]"
+                      >
+                        Delete
+                      </button>
+                      <button
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="px-2.5 py-1 rounded-[6px] border border-[#CBD5E1] text-xs font-semibold"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <CultureCard
+                    standard={item}
+                    onEdit={() => setEditingId(item.id)}
+                    onDelete={() => setConfirmDeleteId(item.id)}
+                  />
+                )}
+              </div>
+            ),
+          )}
+        </div>
       </div>
     </div>
   )
@@ -327,7 +340,8 @@ export default function CultureManagerDrawer({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-5">
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="px-5 py-5">
           {loading ? (
             <div className="flex gap-4">
               {[1, 2].map((i) => (
@@ -352,12 +366,13 @@ export default function CultureManagerDrawer({
               />
             </div>
           )}
-        </div>
+          </div>
 
-        <div className="px-5 py-4 border-t border-[#E2E8F0] flex gap-3">
-          <Button variant="primary" onClick={onClose}>
-            Done
-          </Button>
+          <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex gap-3">
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          </div>
         </div>
       </div>
     </>,

@@ -122,8 +122,8 @@ export default function IdentityFormDrawer({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="flex-1 flex flex-col min-h-0">
-          <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-5">
+        <form onSubmit={handleSubmit(onSubmit)} className="flex-1 overflow-y-auto min-h-0">
+          <div className="px-5 py-5 flex flex-col gap-5">
             {/* Core pillars */}
             <div className="flex flex-col gap-4">
               <div>
@@ -176,7 +176,7 @@ export default function IdentityFormDrawer({
                   <Plus size={13} /> Add Value
                 </button>
               </div>
-              <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 max-h-[340px] overflow-y-auto pr-1">
                 {fields.length === 0 && (
                   <p className="text-xs text-[#94A3B8] text-center py-3">No values added yet.</p>
                 )}
@@ -228,7 +228,7 @@ export default function IdentityFormDrawer({
             )}
           </div>
 
-          <div className="px-5 py-4 border-t border-[#E2E8F0] flex gap-3">
+          <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex gap-3">
             <Button type="submit" variant="primary" isLoading={isSubmitting}>
               Save
             </Button>

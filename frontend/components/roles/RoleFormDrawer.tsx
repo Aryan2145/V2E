@@ -178,9 +178,9 @@ export default function RoleFormDrawer({
 
         <form
           onSubmit={handleSubmit(onSubmit)}
-          className="flex-1 flex flex-col min-h-0"
+          className="flex-1 overflow-y-auto min-h-0"
         >
-          <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-5">
+          <div className="px-5 py-5 flex flex-col gap-5">
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -355,7 +355,7 @@ export default function RoleFormDrawer({
             )}
           </div>
 
-          <div className="px-5 py-4 border-t border-[#E2E8F0] flex gap-3">
+          <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex gap-3">
             <Button type="submit" variant="primary" isLoading={isSubmitting}>
               {isEdit ? 'Save' : 'Add Role'}
             </Button>

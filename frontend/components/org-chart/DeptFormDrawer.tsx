@@ -139,7 +139,8 @@ export default function DeptFormDrawer({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-5 flex flex-col gap-4">
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <div className="px-5 py-5 flex flex-col gap-4">
           <div>
             <label className={labelCls}>Department Name *</label>
             <input
@@ -222,15 +223,16 @@ export default function DeptFormDrawer({
             </p>
           </div>
           {error && <p className="text-xs text-[#DC2626]">{error}</p>}
-        </div>
+          </div>
 
-        <div className="px-5 py-4 border-t border-[#E2E8F0] flex gap-3">
-          <Button variant="primary" isLoading={saving} onClick={handleSave}>
-            {isEdit ? 'Save' : 'Add Department'}
-          </Button>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
+          <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex gap-3">
+            <Button variant="primary" isLoading={saving} onClick={handleSave}>
+              {isEdit ? 'Save' : 'Add Department'}
+            </Button>
+            <Button variant="secondary" onClick={onClose} disabled={saving}>
+              Cancel
+            </Button>
+          </div>
         </div>
       </div>
     </>,
