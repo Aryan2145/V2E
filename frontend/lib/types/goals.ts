@@ -99,8 +99,8 @@ export const STATUS_META: Record<GoalStatus, { label: string; bg: string; text: 
 
 export const LEVEL_META: Record<GoalLevel, { label: string; plural: string; child: GoalLevel | null }> = {
   objective: { label: 'Objective', plural: 'Objectives', child: 'annual' },
-  annual: { label: 'Annual Goal', plural: 'Annual Goals', child: 'quarterly' },
-  quarterly: { label: 'Quarterly Goal', plural: 'Quarterly Goals', child: null },
+  annual: { label: 'Goal', plural: 'Goals', child: 'quarterly' },
+  quarterly: { label: 'Sub-goal', plural: 'Sub-goals', child: null },
 }
 
 // ─── Access Rights & Audit ─────────────────────────────────────────────────────
@@ -127,22 +127,5 @@ export interface MyPermissions {
   can_manage_access_rights: boolean
 }
 
-export interface AuditEntry {
-  id: string
-  organization_id: string
-  actor_user_id: string
-  action: string
-  resource: string
-  entity_id: string
-  entity_label: string | null
-  changes: Record<string, { before: unknown; after: unknown }> | null
-  created_at: string
-  actor?: { id: string; name: string; email: string }
-}
-
-export interface AuditListResponse {
-  items: AuditEntry[]
-  total: number
-  skip: number
-  take: number
-}
+// AuditEntry / AuditListResponse moved to '@/lib/types/audit'.
+export type { AuditEntry, AuditListResponse } from './audit'

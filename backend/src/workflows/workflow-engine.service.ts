@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
 import { NotificationsService } from '../notifications/notifications.service'
+import { AuditWriterService } from '../audit/audit-writer.service'
 
 @Injectable()
 export class WorkflowEngineService {
@@ -12,6 +13,7 @@ export class WorkflowEngineService {
     private readonly prisma: PrismaService,
     private readonly holidaysService: HolidaysService,
     private readonly notifications: NotificationsService,
+    private readonly auditWriter: AuditWriterService,
   ) {}
 
   // ── Instance naming ─────────────────────────────────────────────────────────
@@ -493,6 +495,13 @@ export class WorkflowEngineService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processOverdueStepsForOrg(orgId: string, now: Date): Promise<void> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'workflow_overdue', occurredAt: now },
+      () => this.processOverdueStepsForOrgImpl(orgId, now),
+    )
+  }
+
+  private async processOverdueStepsForOrgImpl(orgId: string, now: Date): Promise<void> {
     const activeSteps = await this.prisma.workflowInstanceStep.findMany({
       where: { organization_id: orgId, status: 'active', scheduled_at: { lt: now } },
       include: { instance: { include: { template: { include: { steps: { orderBy: { order_index: 'asc' } } } } } } },
@@ -582,6 +591,13 @@ export class WorkflowEngineService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processDateTriggersForOrg(orgId: string, now: Date): Promise<void> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'date_trigger', occurredAt: now },
+      () => this.processDateTriggersForOrgImpl(orgId, now),
+    )
+  }
+
+  private async processDateTriggersForOrgImpl(orgId: string, now: Date): Promise<void> {
     const today = new Date(now)
     today.setHours(0, 0, 0, 0)
     const todayStr = `${today.getFullYear()}-${String(today.getMonth()+1).padStart(2,'0')}-${String(today.getDate()).padStart(2,'0')}`

@@ -30,6 +30,10 @@ interface ResponsiveTableProps<T> {
   className?: string
   /** Header strip above the table/cards (e.g. count + Export CSV). */
   toolbar?: React.ReactNode
+  /** When set and returns true for a row, an expanded full-width region is rendered under it. */
+  isExpanded?: (row: T, index: number) => boolean
+  /** Content of the expanded full-width region (desktop: colSpan row; mobile: under the card). */
+  renderExpanded?: (row: T, index: number) => React.ReactNode
 }
 
 const alignClass = {
@@ -54,6 +58,8 @@ export default function ResponsiveTable<T>({
   skeletonRows = 5,
   className = '',
   toolbar,
+  isExpanded,
+  renderExpanded,
 }: ResponsiveTableProps<T>) {
   const primaryIdx = Math.max(0, columns.findIndex((c) => c.primary))
   const primary = columns[primaryIdx]
@@ -104,27 +110,38 @@ export default function ResponsiveTable<T>({
                     ))}
                   </tr>
                 ))
-              : rows.map((row, i) => (
-                  <tr
-                    key={rowKey(row, i)}
-                    onClick={onRowClick ? () => onRowClick(row, i) : undefined}
-                    className={`transition-colors hover:bg-[#F8FAFC] ${onRowClick ? 'cursor-pointer' : ''}`}
-                  >
-                    {columns.map((col) => (
-                      <td
-                        key={col.key}
-                        className={[
-                          'px-4 py-3.5 text-[#1E293B]',
-                          alignClass[col.align ?? 'left'],
-                          col.desktopHiddenBelow ? desktopHideClass[col.desktopHiddenBelow] : '',
-                          col.cellClassName ?? '',
-                        ].join(' ')}
+              : rows.map((row, i) => {
+                  const expanded = isExpanded?.(row, i) ?? false
+                  return (
+                    <React.Fragment key={rowKey(row, i)}>
+                      <tr
+                        onClick={onRowClick ? () => onRowClick(row, i) : undefined}
+                        className={`transition-colors hover:bg-[#F8FAFC] ${onRowClick ? 'cursor-pointer' : ''} ${expanded ? 'bg-[#F8FAFC]' : ''}`}
                       >
-                        {col.render(row, i)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                        {columns.map((col) => (
+                          <td
+                            key={col.key}
+                            className={[
+                              'px-4 py-3.5 text-[#1E293B]',
+                              alignClass[col.align ?? 'left'],
+                              col.desktopHiddenBelow ? desktopHideClass[col.desktopHiddenBelow] : '',
+                              col.cellClassName ?? '',
+                            ].join(' ')}
+                          >
+                            {col.render(row, i)}
+                          </td>
+                        ))}
+                      </tr>
+                      {expanded && renderExpanded && (
+                        <tr className="bg-[#F8FAFC]">
+                          <td colSpan={columns.length} className="px-4 pb-4 pt-0 border-b border-[#E2E8F0]">
+                            {renderExpanded(row, i)}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  )
+                })}
           </tbody>
         </table>
       </div>
@@ -161,6 +178,9 @@ export default function ResponsiveTable<T>({
                     ),
                   )}
                 </dl>
+                {(isExpanded?.(row, i) ?? false) && renderExpanded && (
+                  <div className="mt-3">{renderExpanded(row, i)}</div>
+                )}
               </div>
             ))}
         {!loading && rows.length === 0 && emptyState}

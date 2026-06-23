@@ -42,7 +42,11 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
   const showPerspective = level !== 'objective'
   const { perms } = useGoalPermissions(orgId)
 
+  // The parent level a new goal at this level rolls up to: annual → objective, quarterly → annual.
+  const parentLevel: GoalLevel | null = level === 'annual' ? 'objective' : level === 'quarterly' ? 'annual' : null
+
   const [goals, setGoals] = useState<Goal[]>([])
+  const [parentOptions, setParentOptions] = useState<Goal[]>([])
   const [employees, setEmployees] = useState<{ user_id: string; name: string }[]>([])
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
@@ -65,16 +69,18 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
       goalsApi.list(orgId, { level }).catch(() => []),
       getEmployees(orgId).catch(() => []),
       getDepartments(orgId).catch(() => []),
+      parentLevel ? goalsApi.list(orgId, { level: parentLevel }).catch(() => []) : Promise.resolve([]),
     ])
-      .then(([g, emps, depts]: any[]) => {
+      .then(([g, emps, depts, parents]: any[]) => {
         setGoals(g)
         setEmployees(
           (emps as any[]).map((e) => ({ user_id: e.user_id, name: e.user?.name ?? e.name ?? e.email ?? 'Unknown' })),
         )
         setDepartments((depts as any[]).map((d) => ({ id: d.id, name: d.name })))
+        setParentOptions(parents as Goal[])
       })
       .finally(() => setLoading(false))
-  }, [orgId, level])
+  }, [orgId, level, parentLevel])
 
   useEffect(() => {
     load()
@@ -96,7 +102,7 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
     const cols: ResponsiveColumn<Goal>[] = [
       {
         key: 'goal',
-        header: 'Goal',
+        header: meta.label,
         primary: true,
         render: (g) => (
           <>
@@ -152,7 +158,7 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
       },
     )
     return cols
-  }, [showPerspective])
+  }, [showPerspective, meta.label])
 
   return (
     <div>
@@ -162,16 +168,16 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
           <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">{meta.plural}</h1>
           <p className="text-sm text-[#475569] mt-1">
             {level === 'objective' && '3–5 year strategic north stars.'}
-            {level === 'annual' && 'Yearly goals, each tagged with a Balanced-Scorecard perspective and linked to an objective.'}
-            {level === 'quarterly' && 'Quarterly goals that roll up to an annual goal and carry work via linked tasks.'}
+            {level === 'annual' && 'Goals, each tagged with a Balanced-Scorecard perspective and linked to an objective.'}
+            {level === 'quarterly' && 'Sub-goals that roll up to a goal and carry work via linked tasks.'}
           </p>
         </div>
-        {level === 'objective' && perms.write && (
+        {perms.write && (
           <button
             onClick={() => setCreateOpen(true)}
             className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] shrink-0"
           >
-            <Plus size={16} /> New Objective
+            <Plus size={16} /> New {meta.label}
           </button>
         )}
       </div>
@@ -233,16 +239,16 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
                   : level === 'objective'
                     ? 'Start by creating an objective — your top-level strategic goal.'
                     : level === 'annual'
-                      ? 'Open an objective and add an annual goal under it.'
-                      : 'Open an annual goal and add a quarterly goal under it.'
+                      ? 'Open an objective and add a goal under it.'
+                      : 'Open a goal and add a sub-goal under it.'
               }
               action={
-                level === 'objective' && perms.write && !isFiltered ? (
+                perms.write && !isFiltered ? (
                   <button
                     onClick={() => setCreateOpen(true)}
                     className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"
                   >
-                    <Plus size={16} /> New Objective
+                    <Plus size={16} /> New {meta.label}
                   </button>
                 ) : undefined
               }
@@ -251,17 +257,16 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
         }
       />
 
-      {level === 'objective' && (
-        <CreateGoalModal
-          isOpen={createOpen}
-          onClose={() => setCreateOpen(false)}
-          orgId={orgId}
-          level="objective"
-          employees={employees}
-          departments={departments}
-          onCreated={() => load()}
-        />
-      )}
+      <CreateGoalModal
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        orgId={orgId}
+        level={level}
+        parentOptions={parentLevel ? parentOptions : undefined}
+        employees={employees}
+        departments={departments}
+        onCreated={() => load()}
+      />
     </div>
   )
 }

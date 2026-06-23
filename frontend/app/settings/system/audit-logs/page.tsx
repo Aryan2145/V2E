@@ -4,24 +4,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ScrollText, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { auditApi, type AuditFilters } from '@/lib/api/audit'
-import type { AuditEntry } from '@/lib/types/goals'
+import type { AuditEntry } from '@/lib/types/audit'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import {
+  ActorCell,
+  ActionBadge,
+  AuditExpandedDetail,
+  hasChanges,
+  fmtDateTime,
+  triggerLabel,
+} from '@/components/audit/AuditDetail'
 
 const selectClass =
   'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
-
-const ACTION_META: Record<string, { label: string; bg: string; text: string }> = {
-  create: { label: 'Create', bg: '#DCFCE7', text: '#16A34A' },
-  update: { label: 'Update', bg: '#E0F2FE', text: '#0369A1' },
-  delete: { label: 'Delete', bg: '#FEE2E2', text: '#DC2626' },
-}
-
-const RESOURCES = ['goal', 'access_right']
-
-function fmt(iso: string) {
-  const d = new Date(iso)
-  return d.toLocaleString(undefined, { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
 
 export default function AuditLogsPage() {
   const { user } = useAuth()
@@ -32,9 +27,28 @@ export default function AuditLogsPage() {
   const [denied, setDenied] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
 
+  const [resources, setResources] = useState<string[]>([])
+  const [triggerSources, setTriggerSources] = useState<string[]>([])
+
   const [resource, setResource] = useState('')
   const [action, setAction] = useState('')
+  const [actorType, setActorType] = useState('')
+  const [triggerSource, setTriggerSource] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   const [search, setSearch] = useState('')
+
+  // Load the filter option lists once.
+  useEffect(() => {
+    if (!orgId) return
+    auditApi
+      .resources(orgId)
+      .then((res) => {
+        setResources(res.resources)
+        setTriggerSources(res.trigger_sources)
+      })
+      .catch(() => {})
+  }, [orgId])
 
   const load = useCallback(() => {
     if (!orgId) {
@@ -45,6 +59,14 @@ export default function AuditLogsPage() {
     const filters: AuditFilters = {}
     if (resource) filters.resource = resource
     if (action) filters.action = action
+    if (actorType) filters.actor_type = actorType
+    if (triggerSource) filters.trigger_source = triggerSource
+    if (fromDate) filters.from_date = new Date(fromDate).toISOString()
+    if (toDate) {
+      const end = new Date(toDate)
+      end.setHours(23, 59, 59, 999)
+      filters.to_date = end.toISOString()
+    }
     if (search) filters.search = search
     auditApi
       .list(orgId, filters)
@@ -53,82 +75,47 @@ export default function AuditLogsPage() {
         if (err?.response?.status === 403) setDenied(true)
       })
       .finally(() => setLoading(false))
-  }, [orgId, resource, action, search])
+  }, [orgId, resource, action, actorType, triggerSource, fromDate, toDate, search])
 
   useEffect(() => {
     const t = setTimeout(load, search ? 300 : 0)
     return () => clearTimeout(t)
   }, [load, search])
 
-  const columns = useMemo<ResponsiveColumn<AuditEntry>[]>(() => {
-    const renderChanges = (e: AuditEntry) => {
-      const hasChanges = e.changes && Object.keys(e.changes).length > 0
-      if (!hasChanges || expanded !== e.id) return null
-      return (
-        <div className="mt-2 flex flex-col gap-1.5">
-          {Object.entries(e.changes!).map(([field, ch]) => (
-            <div key={field} className="text-sm flex items-center gap-2 flex-wrap">
-              <span className="font-medium text-[#374151] capitalize">{field.replace(/_/g, ' ')}:</span>
-              <span className="text-[#DC2626] line-through">{String(ch.before ?? '—')}</span>
-              <span className="text-[#94A3B8]">→</span>
-              <span className="text-[#16A34A]">{String(ch.after ?? '—')}</span>
-            </div>
-          ))}
-        </div>
-      )
-    }
-    return [
+  const columns = useMemo<ResponsiveColumn<AuditEntry>[]>(
+    () => [
       {
         key: 'expand',
         header: '',
         headerClassName: 'w-8 px-2',
         cellClassName: 'w-8 px-2 text-[#CBD5E1] align-top',
         hideOnMobile: true,
-        render: (e) => {
-          const hasChanges = e.changes && Object.keys(e.changes).length > 0
-          if (!hasChanges) return null
-          return expanded === e.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />
-        },
+        render: (e) => (hasChanges(e) ? expanded === e.id ? <ChevronDown size={15} /> : <ChevronRight size={15} /> : null),
       },
       {
         key: 'when',
         header: 'When',
         primary: true,
         cellClassName: 'align-top',
-        render: (e) => (
-          <div>
-            <span className="text-sm text-[#475569] whitespace-nowrap">{fmt(e.created_at)}</span>
-            {renderChanges(e)}
-          </div>
-        ),
+        render: (e) => <span className="text-sm text-[#475569] whitespace-nowrap">{fmtDateTime(e.occurred_at)}</span>,
       },
       {
         key: 'actor',
         header: 'Actor',
         cellClassName: 'align-top',
-        render: (e) => <span className="text-sm text-[#0F172A]">{e.actor?.name ?? '—'}</span>,
+        render: (e) => <ActorCell entry={e} />,
       },
       {
         key: 'action',
         header: 'Action',
         cellClassName: 'align-top',
-        render: (e) => {
-          const am = ACTION_META[e.action] ?? { label: e.action, bg: '#F1F5F9', text: '#475569' }
-          return (
-            <span
-              className="text-[12px] font-medium rounded-full px-2.5 py-0.5"
-              style={{ backgroundColor: am.bg, color: am.text }}
-            >
-              {am.label}
-            </span>
-          )
-        },
+        render: (e) => <ActionBadge action={e.action} />,
       },
       {
         key: 'module',
         header: 'Module',
         cellClassName: 'align-top capitalize',
-        render: (e) => <span className="text-sm text-[#475569]">{e.resource.replace('_', ' ')}</span>,
+        render: (e) => <span className="text-sm text-[#475569]">{e.resource.replace(/_/g, ' ')}</span>,
       },
       {
         key: 'entity',
@@ -136,12 +123,12 @@ export default function AuditLogsPage() {
         cellClassName: 'align-top',
         render: (e) => <span className="text-sm text-[#0F172A]">{e.entity_label ?? e.entity_id}</span>,
       },
-    ]
-  }, [expanded])
+    ],
+    [expanded],
+  )
 
   const toggleRow = useCallback((e: AuditEntry) => {
-    const hasChanges = e.changes && Object.keys(e.changes).length > 0
-    if (hasChanges) setExpanded((cur) => (cur === e.id ? null : e.id))
+    if (hasChanges(e)) setExpanded((cur) => (cur === e.id ? null : e.id))
   }, [])
 
   if (denied)
@@ -159,7 +146,7 @@ export default function AuditLogsPage() {
           <ScrollText size={24} className="text-[#2563EB]" /> Audit Logs
         </h1>
         <p className="text-sm text-[#475569] mt-1">
-          Software-wide record of who changed what, and when, across modules.
+          Software-wide record of who — or what — changed what, and when, across modules.
         </p>
       </div>
 
@@ -169,16 +156,16 @@ export default function AuditLogsPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
           <input
             className={`${selectClass} w-full pl-9`}
-            placeholder="Search by entity…"
+            placeholder="Search by entity or action…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
         <select className={selectClass} value={resource} onChange={(e) => setResource(e.target.value)}>
           <option value="">All modules</option>
-          {RESOURCES.map((r) => (
+          {resources.map((r) => (
             <option key={r} value={r}>
-              {r.replace('_', ' ')}
+              {r.replace(/_/g, ' ')}
             </option>
           ))}
         </select>
@@ -188,6 +175,37 @@ export default function AuditLogsPage() {
           <option value="update">Update</option>
           <option value="delete">Delete</option>
         </select>
+        <select className={selectClass} value={actorType} onChange={(e) => setActorType(e.target.value)}>
+          <option value="">User &amp; System</option>
+          <option value="user">User</option>
+          <option value="system">System</option>
+        </select>
+        {triggerSources.length > 0 && (
+          <select className={selectClass} value={triggerSource} onChange={(e) => setTriggerSource(e.target.value)}>
+            <option value="">All triggers</option>
+            {triggerSources.map((t) => (
+              <option key={t} value={t}>
+                {triggerLabel(t)}
+              </option>
+            ))}
+          </select>
+        )}
+        <input
+          type="date"
+          className={selectClass}
+          value={fromDate}
+          max={toDate || undefined}
+          onChange={(e) => setFromDate(e.target.value)}
+          aria-label="From date"
+        />
+        <input
+          type="date"
+          className={selectClass}
+          value={toDate}
+          min={fromDate || undefined}
+          onChange={(e) => setToDate(e.target.value)}
+          aria-label="To date"
+        />
       </div>
 
       {/* Table */}
@@ -197,6 +215,8 @@ export default function AuditLogsPage() {
         rowKey={(e) => e.id}
         loading={loading}
         onRowClick={toggleRow}
+        isExpanded={(e) => expanded === e.id && hasChanges(e)}
+        renderExpanded={(e) => <AuditExpandedDetail entry={e} />}
         emptyState={
           <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
             <div className="p-10 text-center text-sm text-[#475569]">No audit entries.</div>

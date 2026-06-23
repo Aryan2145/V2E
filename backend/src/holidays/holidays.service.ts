@@ -1,16 +1,47 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { HolidayOnTaskAction, HolidayAuditAction, HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
+import { AuditService } from '../audit/audit.service'
+import { NotificationsService } from '../notifications/notifications.service'
+import { ancestorChain, descendantIds, holidayReaches, type DeptNode } from './dept-tree.util'
 import type { UpdateHolidayMasterDto } from './dto/update-holiday-master.dto'
 import type { UpdateWorkingDaysDto } from './dto/update-working-days.dto'
 import type { CreateOrgHolidayDto, UpdateOrgHolidayDto } from './dto/create-org-holiday.dto'
 import type { CreateDepartmentHolidayDto, UpdateDepartmentHolidayDto } from './dto/create-department-holiday.dto'
 import type { CreateIndividualHolidayDto, UpdateIndividualHolidayDto, CreateIndividualWorkingDaysDto, UpdateIndividualWorkingDaysDto } from './dto/create-individual-holiday.dto'
 
+/** A department holiday plus where-it-came-from metadata for the dept calendar UI. */
+export interface ResolvedDeptHoliday {
+  id: string
+  organization_id: string
+  department_id: string
+  name: string
+  date: Date
+  end_date: Date | null
+  type: HolidayType
+  is_recurring_yearly: boolean
+  description: string | null
+  status: HolidayStatus
+  year: number
+  created_at: Date
+  updated_at: Date
+  /** True when this department inherits the holiday from an ancestor (a link, not a copy). */
+  inherited: boolean
+  /** Origin department of an inherited holiday (the cascade source); null for own holidays. */
+  source_department_id: string | null
+  source_department_name: string | null
+  source_department_head_user_id: string | null
+  source_department_head_name: string | null
+  /** For an own holiday: how many descendant departments it currently cascades to. */
+  cascade_target_count: number
+}
+
 @Injectable()
 export class HolidaysService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ─── Defaults ────────────────────────────────────────────────────────────────
@@ -48,9 +79,6 @@ export class HolidaysService {
         ...(dto.priority_level && { priority_level: dto.priority_level }),
         ...(dto.pending_review_deadline_days !== undefined && { pending_review_deadline_days: dto.pending_review_deadline_days }),
         ...(dto.auto_apply_if_not_reviewed !== undefined && { auto_apply_if_not_reviewed: dto.auto_apply_if_not_reviewed }),
-        ...(dto.org_holiday_manage_roles && { org_holiday_manage_roles: dto.org_holiday_manage_roles as never }),
-        ...(dto.dept_holiday_manage_roles && { dept_holiday_manage_roles: dto.dept_holiday_manage_roles as never }),
-        ...(dto.individual_holiday_manage_roles && { individual_holiday_manage_roles: dto.individual_holiday_manage_roles as never }),
       },
     })
     return updated
@@ -105,9 +133,10 @@ export class HolidaysService {
     const wd = await this.prisma.departmentWorkingDays.findUnique({
       where: { organization_id_department_id: { organization_id: orgId, department_id: deptId } },
     })
-    const holidays = await this.prisma.departmentHoliday.findMany({
-      where: { organization_id: orgId, department_id: deptId, status: HolidayStatus.active },
-    })
+    // Effective holidays = this dept's own + any inherited from ancestors (minus
+    // local opt-outs). So a cascaded holiday blocks task scheduling here too,
+    // not just the calendar display.
+    const holidays = await this.resolveDeptHolidays(orgId, deptId, { activeOnly: true })
     if (!wd && holidays.length === 0) return null
     const workingDays = wd ? (wd.working_days as number[]) : [1, 2, 3, 4, 5]
     if (!workingDays.includes(date.getDay())) return false
@@ -241,9 +270,7 @@ export class HolidaysService {
     if (orgMatch) return orgMatch.name
 
     if (deptId) {
-      const deptHolidays = await this.prisma.departmentHoliday.findMany({
-        where: { organization_id: orgId, department_id: deptId, status: HolidayStatus.active },
-      })
+      const deptHolidays = await this.resolveDeptHolidays(orgId, deptId, { activeOnly: true })
       const deptMatch = deptHolidays.find((h) => this.dateMatchesHoliday(date, h))
       if (deptMatch) return deptMatch.name
     }
@@ -493,18 +520,128 @@ export class HolidaysService {
     return { ok: true }
   }
 
-  async listDeptHolidays(orgId: string, deptId: string, year?: number) {
-    return this.prisma.departmentHoliday.findMany({
-      where: { organization_id: orgId, department_id: deptId, ...(year && { year }) },
-      orderBy: { date: 'asc' },
+  /** Org departments as the lightweight tree shape used for cascade resolution. */
+  private async getDeptNodes(orgId: string): Promise<DeptNode[]> {
+    const rows = await this.prisma.department.findMany({
+      where: { organization_id: orgId },
+      select: { id: true, parent_department_id: true },
     })
+    return rows.map((r) => ({ id: r.id, parent_department_id: r.parent_department_id }))
+  }
+
+  /**
+   * The effective holidays for a department: its own holidays plus any inherited
+   * from ancestor departments (by link, not copy), minus locally opted-out ones.
+   *
+   * An ancestor holiday H reaches this department only if the department is in
+   * H's target set (the checked cascade list). It is then dropped if an opt-out
+   * sits anywhere on the path from H's origin down to this department — that is
+   * what makes opt-out flow DOWN only and never affect siblings or the parent.
+   *
+   * This single resolver feeds both the calendar UI and the scheduling engine.
+   */
+  private async resolveDeptHolidays(
+    orgId: string,
+    deptId: string,
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<ResolvedDeptHoliday[]> {
+    const statusFilter = opts.activeOnly ? { status: HolidayStatus.active } : {}
+
+    const [deptRows, ownRows] = await Promise.all([
+      this.prisma.department.findMany({
+        where: { organization_id: orgId },
+        select: {
+          id: true,
+          name: true,
+          parent_department_id: true,
+          head_user_id: true,
+          head_user: { select: { id: true, name: true } },
+        },
+      }),
+      this.prisma.departmentHoliday.findMany({
+        where: { organization_id: orgId, department_id: deptId, ...statusFilter },
+        include: { _count: { select: { targets: true } } },
+      }),
+    ])
+
+    const nodes: DeptNode[] = deptRows.map((d) => ({ id: d.id, parent_department_id: d.parent_department_id }))
+    const deptById = new Map(deptRows.map((d) => [d.id, d]))
+    const chain = ancestorChain(nodes, deptId) // root → … → self
+    const originIds = chain.slice(0, -1) // every ancestor, any depth
+
+    const out: ResolvedDeptHoliday[] = ownRows.map((h) => ({
+      ...h,
+      inherited: false,
+      source_department_id: null,
+      source_department_name: null,
+      source_department_head_user_id: null,
+      source_department_head_name: null,
+      cascade_target_count: h._count.targets,
+    }))
+
+    if (originIds.length) {
+      const candidates = await this.prisma.departmentHoliday.findMany({
+        where: { organization_id: orgId, department_id: { in: originIds }, ...statusFilter },
+        include: { targets: true, opt_outs: true },
+      })
+
+      for (const h of candidates) {
+        // Reaches this department only if it is a target and no opt-out sits on
+        // the path from origin down to here (down-only detach). See holidayReaches.
+        const reaches = holidayReaches(chain, deptId, {
+          originId: h.department_id,
+          targetIds: h.targets.map((t) => t.department_id),
+          optOutIds: h.opt_outs.map((o) => o.department_id),
+        })
+        if (!reaches) continue
+
+        const src = deptById.get(h.department_id)
+        out.push({
+          id: h.id,
+          organization_id: h.organization_id,
+          department_id: h.department_id,
+          name: h.name,
+          date: h.date,
+          end_date: h.end_date,
+          type: h.type,
+          is_recurring_yearly: h.is_recurring_yearly,
+          description: h.description,
+          status: h.status,
+          year: h.year,
+          created_at: h.created_at,
+          updated_at: h.updated_at,
+          inherited: true,
+          source_department_id: h.department_id,
+          source_department_name: src?.name ?? null,
+          source_department_head_user_id: src?.head_user_id ?? null,
+          source_department_head_name: src?.head_user?.name ?? null,
+          cascade_target_count: 0,
+        })
+      }
+    }
+
+    out.sort((a, b) => a.date.getTime() - b.date.getTime())
+    return out
+  }
+
+  /** Keep only ids that are genuine descendants of the origin department. */
+  private async validTargetIds(orgId: string, originDeptId: string, ids?: string[]): Promise<string[]> {
+    if (!ids?.length) return []
+    const descendants = descendantIds(await this.getDeptNodes(orgId), originDeptId)
+    return Array.from(new Set(ids.filter((id) => descendants.has(id))))
+  }
+
+  async listDeptHolidays(orgId: string, deptId: string, year?: number) {
+    const resolved = await this.resolveDeptHolidays(orgId, deptId)
+    // Match by exact year, but always surface recurring-yearly holidays.
+    return year ? resolved.filter((h) => h.year === year || h.is_recurring_yearly) : resolved
   }
 
   async createDeptHoliday(orgId: string, deptId: string, dto: CreateDepartmentHolidayDto) {
     const date = new Date(dto.date)
     const endDate = dto.end_date ? new Date(dto.end_date) : null
     const end = endDate && endDate.getTime() > date.getTime() ? endDate : null
-    return this.prisma.departmentHoliday.create({
+    const holiday = await this.prisma.departmentHoliday.create({
       data: {
         organization_id: orgId,
         department_id: deptId,
@@ -518,6 +655,15 @@ export class HolidaysService {
         year: date.getFullYear(),
       },
     })
+
+    const targets = await this.validTargetIds(orgId, deptId, dto.target_department_ids)
+    if (targets.length) {
+      await this.prisma.departmentHolidayTarget.createMany({
+        data: targets.map((department_id) => ({ organization_id: orgId, holiday_id: holiday.id, department_id })),
+        skipDuplicates: true,
+      })
+    }
+    return holiday
   }
 
   async updateDeptHoliday(orgId: string, deptId: string, id: string, dto: UpdateDepartmentHolidayDto) {
@@ -525,7 +671,7 @@ export class HolidaysService {
     if (!existing) throw new NotFoundException(`Department holiday ${id} not found`)
     const date = dto.date ? new Date(dto.date) : undefined
     const endDate = dto.end_date ? new Date(dto.end_date) : undefined
-    return this.prisma.departmentHoliday.update({
+    const updated = await this.prisma.departmentHoliday.update({
       where: { id },
       data: {
         ...(dto.name && { name: dto.name }),
@@ -536,12 +682,110 @@ export class HolidaysService {
         ...(dto.is_recurring_yearly !== undefined && { is_recurring_yearly: dto.is_recurring_yearly }),
       },
     })
+
+    // Replace the cascade reach wholesale when the caller sends a target list.
+    if (dto.target_department_ids !== undefined) {
+      const targets = await this.validTargetIds(orgId, deptId, dto.target_department_ids)
+      await this.prisma.departmentHolidayTarget.deleteMany({ where: { holiday_id: id } })
+      if (targets.length) {
+        await this.prisma.departmentHolidayTarget.createMany({
+          data: targets.map((department_id) => ({ organization_id: orgId, holiday_id: id, department_id })),
+          skipDuplicates: true,
+        })
+      }
+    }
+    return updated
   }
 
   async deleteDeptHoliday(orgId: string, deptId: string, id: string) {
     const existing = await this.prisma.departmentHoliday.findFirst({ where: { id, organization_id: orgId, department_id: deptId } })
     if (!existing) throw new NotFoundException(`Department holiday ${id} not found`)
-    await this.prisma.departmentHoliday.delete({ where: { id } })
+    await this.prisma.departmentHoliday.delete({ where: { id } }) // targets + opt-outs cascade
+    return { ok: true }
+  }
+
+  // ─── Cascade opt-out (local detach of an inherited holiday) ───────────────────
+
+  /**
+   * Opt a department out of an inherited holiday. The detach applies to this
+   * department and its descendants only — parent and siblings keep the holiday.
+   * The SOURCE department's head (the cascade origin) is notified, and the
+   * action is written to the shared audit log.
+   */
+  async optOutDeptHoliday(orgId: string, deptId: string, holidayId: string, actorId: string) {
+    const holiday = await this.prisma.departmentHoliday.findFirst({ where: { id: holidayId, organization_id: orgId } })
+    if (!holiday) throw new NotFoundException(`Department holiday ${holidayId} not found`)
+    if (holiday.department_id === deptId) {
+      throw new BadRequestException('Cannot opt out of a holiday this department owns — delete it instead.')
+    }
+    const target = await this.prisma.departmentHolidayTarget.findUnique({
+      where: { holiday_id_department_id: { holiday_id: holidayId, department_id: deptId } },
+    })
+    if (!target) throw new BadRequestException('This holiday is not inherited by this department.')
+
+    await this.prisma.departmentHolidayOptOut.upsert({
+      where: { holiday_id_department_id: { holiday_id: holidayId, department_id: deptId } },
+      create: { organization_id: orgId, holiday_id: holidayId, department_id: deptId, opted_out_by_user_id: actorId },
+      update: {},
+    })
+
+    const [optingDept, sourceDept] = await Promise.all([
+      this.prisma.department.findUnique({ where: { id: deptId }, select: { name: true } }),
+      this.prisma.department.findUnique({
+        where: { id: holiday.department_id },
+        select: { name: true, head_user_id: true },
+      }),
+    ])
+    const optingName = optingDept?.name ?? 'A department'
+    const sourceName = sourceDept?.name ?? 'the source department'
+
+    await this.audit.record({
+      orgId,
+      actorId,
+      action: 'update',
+      resource: 'department_holiday',
+      entityId: holidayId,
+      entityLabel: holiday.name,
+      changes: { opted_out_by_department: { before: null, after: `${optingName} (${deptId})` } },
+    })
+
+    // Notify the SOURCE department's head — it's their holiday being declined.
+    if (sourceDept?.head_user_id && sourceDept.head_user_id !== actorId) {
+      await this.notifications.emit({
+        orgId,
+        module: 'system',
+        event_type: 'holiday_opted_out',
+        recipients: [sourceDept.head_user_id],
+        title: 'Department opted out of a holiday',
+        body: `${optingName} opted out of "${holiday.name}" (cascaded from ${sourceName}). It still applies to ${sourceName} and all other departments.`,
+        link: '/settings/organization/holidays/departments',
+        entity: { type: 'department_holiday', id: holidayId },
+      })
+    }
+
+    return { ok: true }
+  }
+
+  /** Reverse a local opt-out (re-attach the inherited holiday for this department). */
+  async undoOptOutDeptHoliday(orgId: string, deptId: string, holidayId: string, actorId: string) {
+    const holiday = await this.prisma.departmentHoliday.findFirst({ where: { id: holidayId, organization_id: orgId } })
+    if (!holiday) throw new NotFoundException(`Department holiday ${holidayId} not found`)
+
+    const removed = await this.prisma.departmentHolidayOptOut.deleteMany({
+      where: { holiday_id: holidayId, department_id: deptId },
+    })
+    if (removed.count > 0) {
+      const optingDept = await this.prisma.department.findUnique({ where: { id: deptId }, select: { name: true } })
+      await this.audit.record({
+        orgId,
+        actorId,
+        action: 'update',
+        resource: 'department_holiday',
+        entityId: holidayId,
+        entityLabel: holiday.name,
+        changes: { opted_out_by_department: { before: `${optingDept?.name ?? deptId} (${deptId})`, after: null } },
+      })
+    }
     return { ok: true }
   }
 

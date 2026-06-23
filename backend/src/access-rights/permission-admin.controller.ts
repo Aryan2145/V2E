@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, Put, Request, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
@@ -7,15 +18,18 @@ import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { PermissionAdminService } from './permission-admin.service';
 import { Principal } from './permissions.service';
 import {
+  CreateSystemRoleDto,
+  SetModuleScopeDto,
   SetUserOverrideDto,
   SetUserSubjectOverrideDto,
   UpdateRolePermissionsDto,
+  UpdateSystemRoleDto,
   UpdateSubjectPoliciesDto,
 } from './dto/permission-admin.dto';
 
 const principalOf = (req: any): Principal => ({
   userId: req.user.id,
-  jobRoleId: req.user.job_role_id ?? null,
+  systemRoleId: req.user.system_role_id ?? null,
   isAdmin: !!req.user.is_admin,
   isSuperAdmin: !!req.user.isSuperAdmin,
 });
@@ -38,16 +52,62 @@ export class PermissionAdminController {
 
   @Get('role-permissions')
   @RequireAdmin()
-  @ApiOperation({ summary: 'JobRole × feature-leaf permission matrix' })
+  @ApiOperation({ summary: 'System Role × feature-leaf permission matrix (+ scope cascade)' })
   getRoleMatrix(@Param('orgId') orgId: string) {
     return this.service.getRoleMatrix(orgId);
   }
 
   @Put('role-permissions')
   @RequireAdmin()
-  @ApiOperation({ summary: 'Bulk update JobRole feature permissions' })
+  @ApiOperation({ summary: 'Bulk update System Role feature permissions' })
   updateRoleMatrix(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: UpdateRolePermissionsDto) {
     return this.service.updateRoleMatrix(orgId, req.user.id, dto.entries);
+  }
+
+  // ─── System Role CRUD + module-scope cascade (admin) ────────────────────────
+
+  @Get('system-roles')
+  @ApiOperation({ summary: 'Lightweight System Role list (for pickers); any member' })
+  listSystemRoles(@Param('orgId') orgId: string) {
+    return this.service.listSystemRoles(orgId);
+  }
+
+  @Post('system-roles')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'Create a new System Role' })
+  createSystemRole(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateSystemRoleDto) {
+    return this.service.createSystemRole(orgId, req.user.id, dto);
+  }
+
+  @Patch('system-roles/:roleId')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'Rename / describe / set default scope of a System Role' })
+  updateSystemRole(
+    @Param('orgId') orgId: string,
+    @Param('roleId') roleId: string,
+    @Request() req: any,
+    @Body() dto: UpdateSystemRoleDto,
+  ) {
+    return this.service.updateSystemRole(orgId, req.user.id, roleId, dto);
+  }
+
+  @Delete('system-roles/:roleId')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'Delete a System Role (assigned employees fall back to none)' })
+  deleteSystemRole(@Param('orgId') orgId: string, @Param('roleId') roleId: string, @Request() req: any) {
+    return this.service.deleteSystemRole(orgId, req.user.id, roleId);
+  }
+
+  @Put('system-roles/:roleId/module-scope')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'Set or clear a module-tier data-scope override' })
+  setModuleScope(
+    @Param('orgId') orgId: string,
+    @Param('roleId') roleId: string,
+    @Request() req: any,
+    @Body() dto: SetModuleScopeDto,
+  ) {
+    return this.service.setModuleScope(orgId, req.user.id, roleId, dto.module_key, dto.scope ?? null);
   }
 
   // ─── Subject eligibility org defaults (admin) ───────────────────────────────

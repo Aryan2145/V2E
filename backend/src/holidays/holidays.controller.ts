@@ -1,11 +1,20 @@
 import {
-  Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards,
+  Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, UseGuards,
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
-import { HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
+import { HolidayEntityType, HolidayStatus, HolidayType, PermissionAction } from '@prisma/client'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
 import { RolesGuard } from '../common/guards/roles.guard'
+import { OrgScopeGuard } from '../common/guards/org-scope.guard'
+import { PermissionsGuard } from '../common/guards/permissions.guard'
+import { RequirePermission } from '../common/decorators/require-permission.decorator'
 import { HolidaysService } from './holidays.service'
+
+// Holiday management is gated by central access rights (System Roles); admins hold
+// these implicitly. Viewing holidays stays open to all members (no gate on GETs).
+const ORG = 'holidays.org.manage'
+const DEPT = 'holidays.department.manage'
+const INDIV = 'holidays.individual.manage'
 import { UpdateHolidayMasterDto } from './dto/update-holiday-master.dto'
 import { UpdateWorkingDaysDto } from './dto/update-working-days.dto'
 import { CreateOrgHolidayDto, UpdateOrgHolidayDto } from './dto/create-org-holiday.dto'
@@ -17,7 +26,7 @@ import {
 
 @ApiTags('holidays')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/holidays')
 export class HolidaysController {
   constructor(private readonly service: HolidaysService) {}
@@ -31,6 +40,7 @@ export class HolidaysController {
   }
 
   @Patch('master')
+  @RequirePermission(ORG, PermissionAction.edit)
   @ApiOperation({ summary: 'Update holiday master config' })
   updateConfig(@Param('orgId') orgId: string, @Body() dto: UpdateHolidayMasterDto) {
     return this.service.updateConfig(orgId, dto)
@@ -45,6 +55,7 @@ export class HolidaysController {
   }
 
   @Patch('org/working-days')
+  @RequirePermission(ORG, PermissionAction.edit)
   @ApiOperation({ summary: 'Update org working days' })
   updateOrgWorkingDays(@Param('orgId') orgId: string, @Body() dto: UpdateWorkingDaysDto) {
     return this.service.updateOrgWorkingDays(orgId, dto)
@@ -64,6 +75,7 @@ export class HolidaysController {
   }
 
   @Post('org/holidays/bulk-import')
+  @RequirePermission(ORG, PermissionAction.write)
   @ApiOperation({ summary: 'Bulk import org holidays from CSV data' })
   bulkImportOrgHolidays(
     @Param('orgId') orgId: string,
@@ -73,18 +85,21 @@ export class HolidaysController {
   }
 
   @Post('org/holidays')
+  @RequirePermission(ORG, PermissionAction.write)
   @ApiOperation({ summary: 'Create org holiday' })
   createOrgHoliday(@Param('orgId') orgId: string, @Body() dto: CreateOrgHolidayDto) {
     return this.service.createOrgHoliday(orgId, dto)
   }
 
   @Patch('org/holidays/:id')
+  @RequirePermission(ORG, PermissionAction.edit)
   @ApiOperation({ summary: 'Update org holiday' })
   updateOrgHoliday(@Param('orgId') orgId: string, @Param('id') id: string, @Body() dto: UpdateOrgHolidayDto) {
     return this.service.updateOrgHoliday(orgId, id, dto)
   }
 
   @Delete('org/holidays/:id')
+  @RequirePermission(ORG, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete org holiday' })
   deleteOrgHoliday(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.deleteOrgHoliday(orgId, id)
@@ -99,6 +114,7 @@ export class HolidaysController {
   }
 
   @Patch('dept/:deptId/working-days')
+  @RequirePermission(DEPT, PermissionAction.edit)
   @ApiOperation({ summary: 'Upsert dept working days' })
   upsertDeptWorkingDays(
     @Param('orgId') orgId: string,
@@ -109,6 +125,7 @@ export class HolidaysController {
   }
 
   @Delete('dept/:deptId/working-days')
+  @RequirePermission(DEPT, PermissionAction.delete)
   @ApiOperation({ summary: 'Remove dept working days override' })
   deleteDeptWorkingDays(@Param('orgId') orgId: string, @Param('deptId') deptId: string) {
     return this.service.deleteDeptWorkingDays(orgId, deptId)
@@ -127,6 +144,7 @@ export class HolidaysController {
   }
 
   @Post('dept/:deptId/holidays')
+  @RequirePermission(DEPT, PermissionAction.write)
   @ApiOperation({ summary: 'Create dept holiday' })
   createDeptHoliday(
     @Param('orgId') orgId: string,
@@ -137,6 +155,7 @@ export class HolidaysController {
   }
 
   @Patch('dept/:deptId/holidays/:id')
+  @RequirePermission(DEPT, PermissionAction.edit)
   @ApiOperation({ summary: 'Update dept holiday' })
   updateDeptHoliday(
     @Param('orgId') orgId: string,
@@ -148,6 +167,7 @@ export class HolidaysController {
   }
 
   @Delete('dept/:deptId/holidays/:id')
+  @RequirePermission(DEPT, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete dept holiday' })
   deleteDeptHoliday(
     @Param('orgId') orgId: string,
@@ -155,6 +175,30 @@ export class HolidaysController {
     @Param('id') id: string,
   ) {
     return this.service.deleteDeptHoliday(orgId, deptId, id)
+  }
+
+  @Post('dept/:deptId/holidays/:id/opt-out')
+  @RequirePermission(DEPT, PermissionAction.edit)
+  @ApiOperation({ summary: 'Opt this department (and its descendants) out of an inherited holiday' })
+  optOutDeptHoliday(
+    @Param('orgId') orgId: string,
+    @Param('deptId') deptId: string,
+    @Param('id') id: string,
+    @Request() req: any,
+  ) {
+    return this.service.optOutDeptHoliday(orgId, deptId, id, req.user.id)
+  }
+
+  @Delete('dept/:deptId/holidays/:id/opt-out')
+  @RequirePermission(DEPT, PermissionAction.edit)
+  @ApiOperation({ summary: 'Undo a local opt-out (re-attach the inherited holiday)' })
+  undoOptOutDeptHoliday(
+    @Param('orgId') orgId: string,
+    @Param('deptId') deptId: string,
+    @Param('id') id: string,
+    @Request() req: any,
+  ) {
+    return this.service.undoOptOutDeptHoliday(orgId, deptId, id, req.user.id)
   }
 
   // ─── Individual working days ──────────────────────────────────────────────────
@@ -166,6 +210,7 @@ export class HolidaysController {
   }
 
   @Post('user/:userId/working-days')
+  @RequirePermission(INDIV, PermissionAction.write)
   @ApiOperation({ summary: 'Create user working day schedule' })
   createUserWorkingDays(
     @Param('orgId') orgId: string,
@@ -176,6 +221,7 @@ export class HolidaysController {
   }
 
   @Patch('user/:userId/working-days/:id')
+  @RequirePermission(INDIV, PermissionAction.edit)
   @ApiOperation({ summary: 'Update user working day schedule' })
   updateUserWorkingDays(
     @Param('orgId') orgId: string,
@@ -187,6 +233,7 @@ export class HolidaysController {
   }
 
   @Delete('user/:userId/working-days/:id')
+  @RequirePermission(INDIV, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete user working day schedule' })
   deleteUserWorkingDays(
     @Param('orgId') orgId: string,
@@ -209,6 +256,7 @@ export class HolidaysController {
   }
 
   @Post('user/:userId/holidays')
+  @RequirePermission(INDIV, PermissionAction.write)
   @ApiOperation({ summary: 'Create user holiday' })
   createUserHoliday(
     @Param('orgId') orgId: string,
@@ -219,6 +267,7 @@ export class HolidaysController {
   }
 
   @Patch('user/:userId/holidays/:id')
+  @RequirePermission(INDIV, PermissionAction.edit)
   @ApiOperation({ summary: 'Update user holiday' })
   updateUserHoliday(
     @Param('orgId') orgId: string,
@@ -230,6 +279,7 @@ export class HolidaysController {
   }
 
   @Delete('user/:userId/holidays/:id')
+  @RequirePermission(INDIV, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete user holiday' })
   deleteUserHoliday(
     @Param('orgId') orgId: string,

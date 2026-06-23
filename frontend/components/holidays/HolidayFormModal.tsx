@@ -4,7 +4,9 @@ import { useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
+import CascadeTargetTree from './CascadeTargetTree'
 import type { HolidayType } from '@/lib/types/holidays'
+import type { Department } from '@/lib/types'
 
 const HOLIDAY_TYPES: HolidayType[] = ['national', 'company', 'regional', 'team', 'personal', 'leave']
 
@@ -16,6 +18,8 @@ export interface HolidayFormData {
   type: HolidayType
   is_recurring_yearly: boolean
   description: string
+  /** Cascade target departments (checked descendants). Empty = this department only. */
+  target_department_ids: string[]
 }
 
 type Span = 'single' | 'range'
@@ -27,6 +31,7 @@ const DEFAULT: HolidayFormData = {
   type: 'company',
   is_recurring_yearly: false,
   description: '',
+  target_department_ids: [],
 }
 
 interface Props {
@@ -34,14 +39,28 @@ interface Props {
   onClose: () => void
   onAdd: (data: HolidayFormData) => Promise<void>
   title?: string
+  /** Pass these (dept context) to show the cascade control for sub-departments. */
+  departments?: Department[]
+  originDeptId?: string
+  originDeptName?: string
 }
 
 /** Centered modal for creating a holiday — single day, or a start→end range. */
-export default function HolidayFormModal({ isOpen, onClose, onAdd, title = 'New Holiday' }: Props) {
+export default function HolidayFormModal({
+  isOpen,
+  onClose,
+  onAdd,
+  title = 'New Holiday',
+  departments,
+  originDeptId,
+  originDeptName,
+}: Props) {
   const [span, setSpan] = useState<Span>('single')
   const [form, setForm] = useState<HolidayFormData>(DEFAULT)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  const showCascade = !!departments && !!originDeptId && !!originDeptName
 
   function set<K extends keyof HolidayFormData>(key: K, val: HolidayFormData[K]) {
     setForm((f) => ({ ...f, [key]: val }))
@@ -184,6 +203,16 @@ export default function HolidayFormModal({ isOpen, onClose, onAdd, title = 'New 
           />
           <span className="text-sm text-[#475569]">Repeat yearly{span === 'range' ? ' on these dates' : ' on this date'}</span>
         </label>
+
+        {showCascade && (
+          <CascadeTargetTree
+            departments={departments!}
+            originDeptId={originDeptId!}
+            originDeptName={originDeptName!}
+            value={form.target_department_ids}
+            onChange={(ids) => set('target_department_ids', ids)}
+          />
+        )}
 
         {error && <p className="text-xs text-[#DC2626]">{error}</p>}
 

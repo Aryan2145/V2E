@@ -19,7 +19,7 @@ interface AuthUser {
   role: string
   is_admin?: boolean
   isSuperAdmin?: boolean
-  job_role_id?: string | null
+  system_role_id?: string | null
   organizationId: string
 }
 

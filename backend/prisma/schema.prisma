@@ -136,7 +136,9 @@ model Organization {
   culture_standards  CultureStandard[]
   departments        Department[]
   roles              Role[]
+  system_roles       SystemRole[]
   employee_profiles  EmployeeProfile[]
+  employee_import_batches EmployeeImportBatch[]
   learning_paths     LearningPath[]
   company_policies   CompanyPolicy[]
   announcements      Announcement[]
@@ -184,6 +186,7 @@ model User {
 
   organization_memberships OrganizationMember[]
   employee_profiles        EmployeeProfile[]
+  employee_import_batches  EmployeeImportBatch[] @relation("EmployeeImportedBy")
   headed_departments       Department[]       @relation("DepartmentHead")
   reports_to_employees     EmployeeProfile[]  @relation("ReportingTo")
   announcements            Announcement[]
@@ -284,7 +287,6 @@ model Role {
   organization      Organization      @relation(fields: [organization_id], references: [id])
   department        Department        @relation(fields: [department_id], references: [id])
   employee_profiles EmployeeProfile[]
-  permissions       RolePermission[]
 
   @@map("roles")
 }
@@ -293,9 +295,11 @@ model EmployeeProfile {
   id                   String         @id @default(uuid())
   organization_id      String
   user_id              String
-  role_id              String
+  role_id              String // job role (title / designation)
+  system_role_id       String? // access-rights bundle (System Role); null until assigned
   department_id        String
   reporting_to_user_id String?
+  import_batch_id      String? // set when the profile was created via bulk import; enables guarded undo
   employee_code        String?
   date_of_joining      DateTime?
   date_of_birth        DateTime?
@@ -308,13 +312,45 @@ model EmployeeProfile {
   organization         Organization             @relation(fields: [organization_id], references: [id])
   user                 User                     @relation(fields: [user_id], references: [id])
   role                 Role                     @relation(fields: [role_id], references: [id])
+  system_role          SystemRole?              @relation(fields: [system_role_id], references: [id])
   department           Department               @relation(fields: [department_id], references: [id])
   reporting_to         User?                    @relation("ReportingTo", fields: [reporting_to_user_id], references: [id])
+  import_batch         EmployeeImportBatch?     @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
   learning_assignments LearningPathAssignment[]
   policy_assignments   CompanyPolicyAssignment[]
 
   @@unique([organization_id, user_id])
+  @@index([import_batch_id])
   @@map("employee_profiles")
+}
+
+// One bulk-import run. Kept permanently for Import History; `status` flips when undone.
+// Undo is guarded: only rows still free of dependent data are removed (see EmployeesService.undoImport).
+enum ImportBatchStatus {
+  committed
+  undone
+  partially_undone
+}
+
+model EmployeeImportBatch {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  imported_by_user_id String
+  file_name           String?
+  total_rows          Int // rows submitted for commit
+  created_count       Int // profiles actually created
+  failed_count        Int // rows rejected at commit time
+  status              ImportBatchStatus @default(committed)
+  undo_summary        Json? // { undone: number, kept: [{ name, email, reason }] }
+  created_at          DateTime          @default(now())
+  undone_at           DateTime?
+
+  organization Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  imported_by  User              @relation("EmployeeImportedBy", fields: [imported_by_user_id], references: [id])
+  profiles     EmployeeProfile[]
+
+  @@index([organization_id])
+  @@map("employee_import_batches")
 }
 
 model LearningPath {
@@ -881,6 +917,8 @@ model Task {
   reopened_at          DateTime?
   reopen_expires_at    DateTime?
   deadline             DateTime?
+  is_overdue           Boolean        @default(false) // persisted by the auto-overdue sweep (mirrors Ticket.sla_breached)
+  overdue_at           DateTime?      // business time the task crossed its deadline
   recurring_template_id     String?
   workflow_instance_step_id String?
   goal_id              String?        // links a task to a QUARTERLY goal (initiative)
@@ -1677,9 +1715,6 @@ model HolidayMaster {
   priority_level                HolidayPriorityLevel  @default(individual_first)
   pending_review_deadline_days  Int                   @default(7)
   auto_apply_if_not_reviewed    Boolean               @default(false)
-  org_holiday_manage_roles      Json                  @default("[\"org_admin\",\"hr_manager\"]")
-  dept_holiday_manage_roles     Json                  @default("[\"org_admin\",\"hr_manager\",\"manager\"]")
-  individual_holiday_manage_roles Json               @default("[\"org_admin\",\"hr_manager\"]")
   created_at                    DateTime              @default(now())
   updated_at                    DateTime              @updatedAt
 
@@ -1746,6 +1781,9 @@ model DepartmentWorkingDays {
 model DepartmentHoliday {
   id                  String        @id @default(uuid())
   organization_id     String
+  // The ORIGIN department — where the holiday was created. It is the single
+  // source row; descendants inherit it by reference (see DepartmentHolidayTarget),
+  // never by copy, so editing this row updates every department it cascaded to.
   department_id       String
   name                String
   date                DateTime      @db.Date
@@ -1758,7 +1796,52 @@ model DepartmentHoliday {
   created_at          DateTime      @default(now())
   updated_at          DateTime      @updatedAt
 
+  targets  DepartmentHolidayTarget[]
+  opt_outs DepartmentHolidayOptOut[]
+
   @@map("department_holidays")
+}
+
+/**
+ * Cascade reach of a department holiday: one row per descendant department the
+ * holiday applies to (the "checked department list" from the cascade control).
+ * The origin department is implicit and never stored here. Membership alone
+ * decides inheritance — there is no All/Some/None label; it is derived from the
+ * set. Deleting the holiday removes its targets.
+ */
+model DepartmentHolidayTarget {
+  id              String   @id @default(uuid())
+  organization_id String
+  holiday_id      String
+  department_id   String // a descendant of the holiday's origin department
+  created_at      DateTime @default(now())
+
+  holiday DepartmentHoliday @relation(fields: [holiday_id], references: [id], onDelete: Cascade)
+
+  @@unique([holiday_id, department_id])
+  @@index([organization_id, department_id])
+  @@map("department_holiday_targets")
+}
+
+/**
+ * Local opt-out (detach) of an inherited holiday, anchored at a department.
+ * It suppresses the holiday for that department AND its descendants only —
+ * resolution walks ancestors and drops a holiday whose path carries an opt-out,
+ * so the effect flows DOWN, never up or sideways. Reversible (delete the row).
+ */
+model DepartmentHolidayOptOut {
+  id                   String   @id @default(uuid())
+  organization_id      String
+  holiday_id           String
+  department_id        String // the department that opted out (anchor of the detach)
+  opted_out_by_user_id String
+  created_at           DateTime @default(now())
+
+  holiday DepartmentHoliday @relation(fields: [holiday_id], references: [id], onDelete: Cascade)
+
+  @@unique([holiday_id, department_id])
+  @@index([organization_id, department_id])
+  @@map("department_holiday_opt_outs")
 }
 
 model IndividualWorkingDays {
@@ -2215,24 +2298,69 @@ enum DataScope {
   org
 }
 
-// Layer 2 — functional baseline: feature permissions per JOB-TITLE role (Role.id).
-// One row per (org, job_role, feature leaf, action). Missing ⇒ not allowed.
+// Access-rights are now carried by SYSTEM ROLES (delinked from job titles).
+// A SystemRole is the access bundle assigned to an employee: which feature leaves
+// it may act on (via RolePermission rows) and the data-scope cascade defaults.
+//   - Administrator (is_system) is seeded, locked and non-deletable: full access.
+//   - Custom roles are created in the Access Control UI via "+ New".
+// `default_scope` is the GLOBAL tier of the living-default scope cascade
+// (global → module → line). See SystemRoleModuleScope + RolePermission.scope.
+model SystemRole {
+  id              String    @id @default(uuid())
+  organization_id String
+  name            String
+  description     String?   @db.Text
+  is_system       Boolean   @default(false) // Administrator: locked, non-deletable
+  is_admin        Boolean   @default(false) // full access — bypasses the permission matrix
+  default_scope   DataScope @default(own) // global tier of the data-scope cascade
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+
+  organization      Organization            @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  permissions       RolePermission[]
+  module_scopes     SystemRoleModuleScope[]
+  employee_profiles EmployeeProfile[]
+
+  @@unique([organization_id, name])
+  @@index([organization_id])
+  @@map("system_roles")
+}
+
+// Module tier of the data-scope cascade: an optional per-module scope override for a
+// system role. Absent row ⇒ that module inherits the role's default_scope.
+model SystemRoleModuleScope {
+  id             String    @id @default(uuid())
+  system_role_id String
+  module_key     String // top-level module key, e.g. "tasks","goals"
+  scope          DataScope
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @updatedAt
+
+  system_role SystemRole @relation(fields: [system_role_id], references: [id], onDelete: Cascade)
+
+  @@unique([system_role_id, module_key])
+  @@map("system_role_module_scopes")
+}
+
+// Layer 2 — functional baseline: feature permissions per SYSTEM ROLE.
+// One row per (org, system_role, feature leaf, action). Missing ⇒ not allowed.
+// `scope` is the LINE tier of the cascade; null ⇒ inherit module/default scope.
 model RolePermission {
   id                 String           @id @default(uuid())
   organization_id    String
-  job_role_id        String // FK Role.id (per-department job title)
+  system_role_id     String // FK SystemRole.id (the access bundle)
   feature_key        String // leaf key, e.g. "tasks.assignment.reassign"
   action             PermissionAction
   allowed            Boolean          @default(false)
-  scope              DataScope? // row-level data scope for this action (content leaves); null ⇒ own
+  scope              DataScope? // line-tier data scope (content leaves); null ⇒ inherit module/default
   updated_by_user_id String?
   created_at         DateTime         @default(now())
   updated_at         DateTime         @updatedAt
 
-  job_role Role @relation(fields: [job_role_id], references: [id], onDelete: Cascade)
+  system_role SystemRole @relation(fields: [system_role_id], references: [id], onDelete: Cascade)
 
-  @@unique([organization_id, job_role_id, feature_key, action])
-  @@index([organization_id, job_role_id])
+  @@unique([organization_id, system_role_id, feature_key, action])
+  @@index([organization_id, system_role_id])
   @@map("role_permissions")
 }
 
@@ -2312,17 +2440,28 @@ model OrgModuleEntitlement {
 model AuditLog {
   id              String   @id @default(uuid())
   organization_id String
-  actor_user_id   String
-  action          String   // create | update | delete
+  actor_user_id   String?  // NULL for system-triggered entries
+  actor_type      String   @default("user") // user | system
+  action          String   // create | update | delete | <semantic verb>
   resource        String   // "goal", "access_right", ...
   entity_id       String
+  entity_type     String?  // originating Prisma model name (e.g. "Task")
   entity_label    String?  // human-readable (e.g. goal title)
   changes         Json?    // { field: { before, after } }
-  created_at      DateTime @default(now())
+  trigger_source  String?  // for system entries: "sla_breach", "auto_overdue", ...
+  trigger_context Json?    // arbitrary context about the system trigger
+  occurred_at     DateTime @default(now()) // business time (respects sim clock)
+  request_id      String?
+  ip              String?
+  user_agent      String?
+  created_at      DateTime @default(now()) // physical write time
 
-  actor User @relation(fields: [actor_user_id], references: [id])
+  actor User? @relation(fields: [actor_user_id], references: [id])
 
   @@index([organization_id, resource, created_at])
+  @@index([organization_id, entity_id])
+  @@index([organization_id, created_at])
+  @@index([organization_id, actor_type, created_at])
   @@map("audit_logs")
 }
 

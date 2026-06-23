@@ -39,6 +39,7 @@ export async function createEmployee(
     password: string;
     role_id: string;
     department_id: string;
+    system_role_id?: string;
     reporting_to_user_id?: string;
     employee_code?: string;
     date_of_joining?: string;
@@ -60,6 +61,7 @@ export interface BulkImportRow {
   password?: string;
   department?: string;
   role?: string;
+  system_role?: string;
   employment_type?: string;
   employee_code?: string;
   reporting_to?: string;
@@ -67,6 +69,55 @@ export interface BulkImportRow {
   date_of_birth?: string;
   marriage_date?: string;
 }
+
+// ─── Validation (dry-run) ───────────────────────────────────────────────────────
+
+export type ImportRowStatus = 'ready' | 'duplicate' | 'error';
+
+export interface ImportRowIssue {
+  field?: string;
+  message: string;
+  severity: 'error' | 'warning';
+}
+
+export interface ImportResolved {
+  department?: string;
+  role?: string;
+  system_role?: string;
+  reporting_to?: string;
+  employment_type?: string;
+}
+
+export interface ImportValidationRow {
+  row: number;
+  name: string;
+  email: string;
+  status: ImportRowStatus;
+  resolved: ImportResolved;
+  issues: ImportRowIssue[];
+}
+
+export interface ImportValidationResult {
+  total: number;
+  ready: number;
+  duplicates: number;
+  errors: number;
+  warnings: number;
+  rows: ImportValidationRow[];
+}
+
+export async function validateImport(
+  orgId: string,
+  rows: BulkImportRow[]
+): Promise<ImportValidationResult> {
+  const { data } = await apiClient.post<ApiResponse<ImportValidationResult>>(
+    `/api/v1/org/${orgId}/employees/bulk-import/validate`,
+    { rows }
+  );
+  return data.data;
+}
+
+// ─── Commit ─────────────────────────────────────────────────────────────────────
 
 export interface BulkImportRowResult {
   row: number;
@@ -77,18 +128,64 @@ export interface BulkImportRowResult {
 }
 
 export interface BulkImportResult {
+  batch_id: string | null;
   created: number;
   failed: number;
   results: BulkImportRowResult[];
 }
 
-export async function bulkImportEmployees(
+export async function commitImport(
   orgId: string,
-  rows: BulkImportRow[]
+  rows: BulkImportRow[],
+  fileName?: string
 ): Promise<BulkImportResult> {
   const { data } = await apiClient.post<ApiResponse<BulkImportResult>>(
-    `/api/v1/org/${orgId}/employees/bulk-import`,
-    { rows }
+    `/api/v1/org/${orgId}/employees/bulk-import/commit`,
+    { rows, file_name: fileName }
+  );
+  return data.data;
+}
+
+// ─── History + undo ─────────────────────────────────────────────────────────────
+
+export interface UndoKeptRow {
+  name: string;
+  email: string;
+  reason: string;
+}
+
+export interface UndoImportResult {
+  batch_id: string;
+  undone: number;
+  kept: UndoKeptRow[];
+  status: 'committed' | 'undone' | 'partially_undone';
+}
+
+export interface ImportBatchSummary {
+  id: string;
+  file_name: string | null;
+  imported_by: string;
+  total_rows: number;
+  created_count: number;
+  failed_count: number;
+  remaining: number;
+  status: 'committed' | 'undone' | 'partially_undone';
+  can_undo: boolean;
+  created_at: string;
+  undone_at: string | null;
+}
+
+export async function listImportBatches(orgId: string): Promise<ImportBatchSummary[]> {
+  const { data } = await apiClient.get<ApiResponse<ImportBatchSummary[]>>(
+    `/api/v1/org/${orgId}/employees/imports`
+  );
+  return data.data;
+}
+
+export async function undoImport(orgId: string, batchId: string): Promise<UndoImportResult> {
+  const { data } = await apiClient.post<ApiResponse<UndoImportResult>>(
+    `/api/v1/org/${orgId}/employees/imports/${batchId}/undo`,
+    {}
   );
   return data.data;
 }
@@ -99,6 +196,7 @@ export async function updateEmployee(
   employeeData: Partial<{
     role_id: string;
     department_id: string;
+    system_role_id: string;
     employment_type: EmploymentType;
     reporting_to_user_id: string;
     employee_code: string;

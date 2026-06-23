@@ -580,6 +580,12 @@ export class TasksService {
       if (String(old.deadline) !== String(newDeadline)) {
         changedFields.push({ field: 'deadline', from: old.deadline, to: newDeadline });
         updateData.deadline = newDeadline;
+        // Re-evaluate the persisted overdue flag; the auto-overdue sweep re-flags if it lapses again.
+        const stillOverdue = !!newDeadline && newDeadline < new Date();
+        if (old.is_overdue !== stillOverdue) {
+          updateData.is_overdue = stillOverdue;
+          updateData.overdue_at = stillOverdue ? new Date() : null;
+        }
       }
     }
 
@@ -760,6 +766,9 @@ export class TasksService {
         status_id: resetStatusId,
         reopen_expires_at: null,
         reopened_at: new Date(),
+        // Clear the persisted overdue flag; the sweep re-flags if the deadline is still past.
+        is_overdue: false,
+        overdue_at: null,
       },
     });
 

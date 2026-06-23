@@ -66,7 +66,7 @@ export default function AddInitiativeModal({ isOpen, onClose, orgId, goalId, emp
     <Modal isOpen={isOpen} onClose={onClose} title="Add initiative" size="md">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="text-sm text-[#475569] -mt-1">
-          Initiatives are tasks from the Task module linked to this quarterly goal.
+          Initiatives are tasks from the Task module linked to this sub-goal.
         </p>
         <div>
           <label className={labelClass}>Task title *</label>

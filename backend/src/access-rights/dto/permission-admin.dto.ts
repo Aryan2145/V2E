@@ -4,17 +4,19 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  MaxLength,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { DataScope, OverrideEffect, PermissionAction } from '@prisma/client';
 
 export class RolePermissionEntryDto {
-  @IsString() job_role_id!: string;
+  @IsString() system_role_id!: string;
   @IsString() feature_key!: string;
   @IsEnum(PermissionAction) action!: PermissionAction;
   @IsBoolean() allowed!: boolean;
-  // Row-level data scope for this action (scopable content leaves); null ⇒ own.
+  // Line-tier data scope for this action (scopable content leaves); null ⇒ inherit.
   @IsOptional() @IsEnum(DataScope) scope?: DataScope | null;
 }
 
@@ -23,6 +25,27 @@ export class UpdateRolePermissionsDto {
   @ValidateNested({ each: true })
   @Type(() => RolePermissionEntryDto)
   entries!: RolePermissionEntryDto[];
+}
+
+// ─── System Role CRUD ──────────────────────────────────────────────────────────
+
+export class CreateSystemRoleDto {
+  @IsString() @MinLength(1) @MaxLength(60) name!: string;
+  @IsOptional() @IsString() @MaxLength(280) description?: string;
+  // Global tier of the data-scope cascade. Defaults to `own` (safe floor).
+  @IsOptional() @IsEnum(DataScope) default_scope?: DataScope;
+}
+
+export class UpdateSystemRoleDto {
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(60) name?: string;
+  @IsOptional() @IsString() @MaxLength(280) description?: string;
+  @IsOptional() @IsEnum(DataScope) default_scope?: DataScope;
+}
+
+export class SetModuleScopeDto {
+  @IsString() module_key!: string;
+  // null clears the module override (module re-inherits the role's default_scope).
+  @IsOptional() @IsEnum(DataScope) scope?: DataScope | null;
 }
 
 export class SubjectPolicyEntryDto {

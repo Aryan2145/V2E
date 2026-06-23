@@ -34,7 +34,7 @@ import {
 
 export interface Actor {
   id: string;
-  job_role_id: string | null;
+  system_role_id: string | null;
   is_admin: boolean;
   isSuperAdmin: boolean;
 }
@@ -755,7 +755,7 @@ export class MeetingsService {
     if (actor.id === organizerId) return true;
     return this.permissions.hasEffective(
       orgId,
-      { userId: actor.id, jobRoleId: actor.job_role_id, isAdmin: actor.is_admin, isSuperAdmin: actor.isSuperAdmin },
+      { userId: actor.id, systemRoleId: actor.system_role_id, isAdmin: actor.is_admin, isSuperAdmin: actor.isSuperAdmin },
       MEETING,
       'edit',
     );

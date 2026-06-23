@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditService } from '../audit/audit.service';
 
 @Injectable()
 export class ProjectProgressService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly audit: AuditService,
   ) {}
 
   async recalculateProjectProgress(projectId: string): Promise<void> {
@@ -81,6 +83,21 @@ export class ProjectProgressService {
             link: `/dashboard/projects/${projectId}`,
             entity: { type: 'milestone', id: milestone.id },
             dedupe: true,
+          });
+
+          // Semantic system entry — the milestone completed itself once its tasks
+          // were all done. markHandled (inside record) suppresses the automatic
+          // user-attributed entry for this same milestone update.
+          await this.audit.record({
+            orgId: proj.organization_id,
+            actorType: 'system',
+            action: 'Milestone auto-completed',
+            resource: 'project',
+            entityId: milestone.id,
+            entityType: 'ProjectMilestone',
+            entityLabel: milestone.name,
+            triggerSource: 'milestone_autocomplete',
+            changes: { status: { before: milestone.status, after: 'achieved' } },
           });
         }
       } else if (!allDone && milestone.status === 'achieved') {

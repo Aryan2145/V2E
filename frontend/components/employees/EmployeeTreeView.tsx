@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import ReactFlow, {
   Background,
   BackgroundVariant,
   Controls,
   MiniMap,
+  Panel,
   ReactFlowProvider,
   useNodesState,
   useEdgesState,
@@ -16,7 +17,7 @@ import ReactFlow, {
   type NodeMouseHandler,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { Users, Zap } from 'lucide-react'
+import { Maximize2, Users, Zap } from 'lucide-react'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { levelColors } from '@/lib/role-levels'
 import {
@@ -40,6 +41,10 @@ const statusDot: Record<EmployeeStatus, string> = {
   inactive: 'bg-[#DC2626]',
   on_leave: 'bg-[#CA8A04]',
 }
+
+// Don't let the auto-fit zoom out past this — below it node text is unreadable,
+// so we'd rather start readable (and let the user pan) than show an unusable overview.
+const FIT_MIN_ZOOM = 0.65
 
 function initials(name: string): string {
   const p = name.trim().split(/\s+/)
@@ -74,11 +79,30 @@ const nodeTypes = { employeeNode: EmployeeNode, frLabel: FrLabelNode }
 
 // ─── Canvas (reactflow) ─────────────────────────────────────────────────────────
 
-function Flow({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
+function Flow({
+  nodes,
+  edges,
+  fitRef,
+}: {
+  nodes: Node[]
+  edges: Edge[]
+  fitRef: { current: (() => void) | null }
+}) {
   const router = useRouter()
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState(nodes)
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState(edges)
+  const [interacted, setInteracted] = useState(false)
   const { fitView } = useReactFlow()
+
+  // Expose Fit to the toolbar button rendered outside the provider.
+  // This is the explicit "show me everything" overview, so it's allowed to
+  // zoom out past FIT_MIN_ZOOM (unlike the readable auto-fit on load).
+  useEffect(() => {
+    fitRef.current = () => fitView({ padding: 0.2, duration: 300, maxZoom: 1 })
+    return () => {
+      fitRef.current = null
+    }
+  }, [fitView, fitRef])
 
   // Bound panning to the content (plus margin) so it can't scroll into infinity.
   const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
@@ -105,7 +129,10 @@ function Flow({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
     setRfNodes(nodes)
     setRfEdges(edges)
     // Refit after the data changes (e.g. filter applied).
-    const t = setTimeout(() => fitView({ padding: 0.2, duration: 300 }), 50)
+    const t = setTimeout(
+      () => fitView({ padding: 0.2, duration: 300, minZoom: FIT_MIN_ZOOM, maxZoom: 1 }),
+      50,
+    )
     return () => clearTimeout(t)
   }, [nodes, edges, setRfNodes, setRfEdges, fitView])
 
@@ -121,21 +148,32 @@ function Flow({ nodes, edges }: { nodes: Node[]; edges: Edge[] }) {
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onNodeClick={onNodeClick}
+      onMoveStart={() => setInteracted(true)}
       nodeTypes={nodeTypes}
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
       panOnDrag
       zoomOnScroll={false}
+      preventScrolling={false}
       zoomOnPinch
       translateExtent={translateExtent}
       minZoom={0.2}
-      maxZoom={2}
+      maxZoom={2.5}
       fitView
-      fitViewOptions={{ padding: 0.2 }}
+      fitViewOptions={{ padding: 0.2, minZoom: FIT_MIN_ZOOM, maxZoom: 1 }}
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
+      <Panel position="bottom-center">
+        <div
+          className={`pointer-events-none select-none rounded-[999px] border border-[#E2E8F0] bg-white/85 px-3 py-1 text-[11px] font-medium text-[#94A3B8] shadow-sm backdrop-blur transition-opacity duration-500 ${
+            interacted ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          Scroll to move the page · drag to explore the chart
+        </div>
+      </Panel>
       <Controls showInteractive={false} />
       <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable />
     </ReactFlow>
@@ -231,6 +269,7 @@ function MobileBranch({
 export default function EmployeeTreeView({ employees, departments }: Props) {
   const router = useRouter()
   const isDesktop = useIsDesktop()
+  const fitRef = useRef<(() => void) | null>(null)
 
   const colors = useMemo(() => computeNodeColors(departments), [departments])
   const colorFor = (deptId: string) => colors[deptId]?.base ?? '#94A3B8'
@@ -331,8 +370,15 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
           </span>
         )}
         {isDesktop && (
-          <span className="ml-auto hidden md:inline text-[#94A3B8]">
-            Drag to pan · Ctrl/⌘ + scroll or pinch to zoom
+          <span className="ml-auto hidden items-center gap-3 md:inline-flex">
+            <span className="text-[#94A3B8]">Drag to pan · Ctrl/⌘ + scroll or pinch to zoom</span>
+            <button
+              type="button"
+              onClick={() => fitRef.current?.()}
+              className="inline-flex items-center gap-1.5 rounded-[8px] border border-[#E2E8F0] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#475569] transition-colors hover:bg-[#F8FAFC] hover:text-[#0F172A]"
+            >
+              <Maximize2 size={12} /> Fit
+            </button>
           </span>
         )}
       </div>
@@ -343,7 +389,7 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
           style={{ height: 640 }}
         >
           <ReactFlowProvider>
-            <Flow nodes={nodes} edges={edges} />
+            <Flow nodes={nodes} edges={edges} fitRef={fitRef} />
           </ReactFlowProvider>
         </div>
       ) : (

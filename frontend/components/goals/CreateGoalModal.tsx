@@ -14,7 +14,6 @@ import {
   type GoalPerspective,
   type CreateGoalInput,
 } from '@/lib/types/goals'
-import { PerspectiveBadge } from './shared'
 
 const inputClass =
   'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
@@ -41,7 +40,10 @@ interface Props {
   onClose: () => void
   orgId: string
   level: GoalLevel
+  /** Fixed parent (when creating from a parent's detail page). */
   parent?: Goal | null
+  /** Selectable parents (when creating from a list page) — renders a parent dropdown. */
+  parentOptions?: Goal[]
   employees: EmployeeOption[]
   departments: DeptOption[]
   onCreated: (goal: Goal) => void
@@ -55,12 +57,25 @@ export default function CreateGoalModal({
   orgId,
   level,
   parent,
+  parentOptions,
   employees,
   departments,
   onCreated,
 }: Props) {
   const { addToast } = useToast()
   const meta = LEVEL_META[level]
+
+  // The level a parent must be: objective → annual → quarterly.
+  const parentLevel: GoalLevel = level === 'quarterly' ? 'annual' : 'objective'
+  const parentMeta = LEVEL_META[parentLevel]
+  // When no fixed parent is supplied (creating from a list page), let the user pick one.
+  const selectableParent = !parent && level !== 'objective'
+
+  const [parentId, setParentId] = useState('')
+  const effectiveParent = useMemo<Goal | null>(
+    () => parent ?? parentOptions?.find((p) => p.id === parentId) ?? null,
+    [parent, parentOptions, parentId],
+  )
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -69,14 +84,13 @@ export default function CreateGoalModal({
   const [startDate, setStartDate] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [perspective, setPerspective] = useState<GoalPerspective | ''>('')
-  const [inheritedPerspective, setInheritedPerspective] = useState<GoalPerspective | null>(null)
   const [measures, setMeasures] = useState<MeasureRow[]>([])
   const [minDate, setMinDate] = useState(todayStr())
   const [maxDate, setMaxDate] = useState('')
   const [clampNote, setClampNote] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  // Reset + prefill on open
+  // Reset form fields on open
   useEffect(() => {
     if (!isOpen) return
     setTitle('')
@@ -86,10 +100,15 @@ export default function CreateGoalModal({
     setStartDate('')
     setMeasures([])
     setPerspective('')
-    setInheritedPerspective(null)
+    setParentId(parent?.id ?? '')
+  }, [isOpen, parent])
+
+  // Resolve date bounds + smart default whenever the (effective) parent changes
+  useEffect(() => {
+    if (!isOpen) return
     setClampNote(false)
 
-    if (level === 'objective' || !parent) {
+    if (level === 'objective' || !effectiveParent) {
       setMinDate(todayStr())
       setMaxDate('')
       setDueDate('')
@@ -98,19 +117,21 @@ export default function CreateGoalModal({
 
     // Annual / quarterly: ask backend for bounds + smart default
     goalsApi
-      .nextDefault(orgId, parent.id)
+      .nextDefault(orgId, effectiveParent.id)
       .then((nd) => {
         setMinDate(nd.min_date)
         setMaxDate(nd.max_date)
         setDueDate(nd.suggested ?? '')
         setClampNote(nd.clamped)
-        if (level === 'quarterly') setInheritedPerspective(nd.perspective)
+        // Sub-goals default to the parent goal's perspective, but may be changed.
+        if (level === 'quarterly' && nd.perspective) setPerspective(nd.perspective)
       })
       .catch(() => {
         setMinDate(todayStr())
-        setMaxDate(parent.due_date.slice(0, 10))
+        setMaxDate(effectiveParent.due_date.slice(0, 10))
+        if (level === 'quarterly' && effectiveParent.perspective) setPerspective(effectiveParent.perspective)
       })
-  }, [isOpen, level, parent, orgId])
+  }, [isOpen, level, effectiveParent, orgId])
 
   const ownerOptions = useMemo(
     () => employees.filter((e) => e.user_id && e.name),
@@ -123,10 +144,11 @@ export default function CreateGoalModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (selectableParent && !parentId) return addToast(`${parentMeta.label} is required`, 'error')
     if (!title.trim()) return addToast('Title is required', 'error')
     if (!ownerId) return addToast('Owner is required', 'error')
     if (!dueDate) return addToast('Due date is required', 'error')
-    if (level === 'annual' && !perspective) return addToast('Perspective is required', 'error')
+    if (level !== 'objective' && !perspective) return addToast('Perspective is required', 'error')
 
     const dto: CreateGoalInput = {
       level,
@@ -137,8 +159,8 @@ export default function CreateGoalModal({
     if (description.trim()) dto.description = description.trim()
     if (departmentId) dto.department_id = departmentId
     if (startDate) dto.start_date = new Date(startDate).toISOString()
-    if (parent) dto.parent_goal_id = parent.id
-    if (level === 'annual') dto.perspective = perspective as GoalPerspective
+    if (effectiveParent) dto.parent_goal_id = effectiveParent.id
+    if (level !== 'objective' && perspective) dto.perspective = perspective as GoalPerspective
     const cleanMeasures = measures
       .filter((m) => m.name.trim() && m.target_value.trim())
       .map((m) => ({ name: m.name.trim(), target_value: m.target_value.trim(), unit: m.unit.trim() || undefined }))
@@ -160,13 +182,32 @@ export default function CreateGoalModal({
   const titleText =
     level === 'objective'
       ? 'New Objective'
-      : level === 'annual'
-        ? `New Annual Goal under "${parent?.title ?? ''}"`
-        : `New Quarterly Goal under "${parent?.title ?? ''}"`
+      : effectiveParent
+        ? `New ${meta.label} under "${effectiveParent.title}"`
+        : `New ${meta.label}`
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={titleText} size="lg">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {selectableParent && (
+          <div>
+            <label className={labelClass}>{parentMeta.label} *</label>
+            <select className={inputClass} value={parentId} onChange={(e) => setParentId(e.target.value)} autoFocus>
+              <option value="">Select {parentMeta.label.toLowerCase()}…</option>
+              {parentOptions?.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+            {parentOptions && parentOptions.length === 0 && (
+              <p className="text-xs text-[#D97706] mt-1">
+                No {parentMeta.plural.toLowerCase()} exist yet — create one first.
+              </p>
+            )}
+          </div>
+        )}
+
         <div>
           <label className={labelClass}>Title *</label>
           <input
@@ -174,7 +215,7 @@ export default function CreateGoalModal({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder={level === 'objective' ? 'e.g. Become the #1 platform in our market' : 'What is the goal?'}
-            autoFocus
+            autoFocus={!selectableParent}
           />
         </div>
 
@@ -190,9 +231,16 @@ export default function CreateGoalModal({
         </div>
 
         {/* Perspective */}
-        {level === 'annual' && (
+        {level !== 'objective' && (
           <div>
-            <label className={labelClass}>Balanced-Scorecard Perspective *</label>
+            <label className={labelClass}>
+              Balanced-Scorecard Perspective *
+              {level === 'quarterly' && (
+                <span className="ml-1 text-xs font-normal text-[#94A3B8]">
+                  · defaults to the parent goal&apos;s, change if needed
+                </span>
+              )}
+            </label>
             <div className="grid grid-cols-2 gap-2">
               {PERSPECTIVES.map((p) => {
                 const active = perspective === p
@@ -212,19 +260,6 @@ export default function CreateGoalModal({
                   </button>
                 )
               })}
-            </div>
-          </div>
-        )}
-        {level === 'quarterly' && (
-          <div>
-            <label className={labelClass}>Perspective (inherited)</label>
-            <div className="flex items-center gap-2">
-              {inheritedPerspective ? (
-                <PerspectiveBadge perspective={inheritedPerspective} />
-              ) : (
-                <span className="text-sm text-[#94A3B8]">Inherited from the parent annual goal</span>
-              )}
-              <span className="text-xs text-[#94A3B8]">· set on the annual goal, never re-picked</span>
             </div>
           </div>
         )}

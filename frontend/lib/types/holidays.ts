@@ -26,9 +26,6 @@ export interface HolidayMasterConfig {
   priority_level: HolidayPriorityLevel
   auto_fetch_national_holidays: boolean
   pending_review_deadline_days: number
-  org_manage_roles: string[]
-  dept_manage_roles: string[]
-  individual_manage_roles: string[]
   created_at: string
   updated_at: string
 }
@@ -74,6 +71,14 @@ export interface CalendarHoliday {
   type: HolidayType
   status: HolidayStatus
   is_recurring_yearly: boolean
+  /** Set on a dept calendar when the holiday is inherited from an ancestor (a link, not a copy). */
+  inherited?: boolean
+  source_department_id?: string | null
+  source_department_name?: string | null
+  source_department_head_user_id?: string | null
+  source_department_head_name?: string | null
+  /** For an own holiday: how many descendant departments it cascades to. */
+  cascade_target_count?: number
 }
 
 export interface OrgHoliday {
@@ -106,6 +111,15 @@ export interface DepartmentHoliday {
   description: string | null
   created_at: string
   updated_at: string
+  /** True when this department inherits the holiday from an ancestor (cascade link). */
+  inherited?: boolean
+  /** Origin department of an inherited holiday; null/absent for own holidays. */
+  source_department_id?: string | null
+  source_department_name?: string | null
+  source_department_head_user_id?: string | null
+  source_department_head_name?: string | null
+  /** For an own holiday: how many descendant departments it cascades to. */
+  cascade_target_count?: number
 }
 
 export interface IndividualHoliday {

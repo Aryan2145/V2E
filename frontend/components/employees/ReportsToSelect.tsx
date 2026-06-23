@@ -220,7 +220,7 @@ export default function ReportsToSelect({
             </span>
           </>
         ) : (
-          <span className="flex-1 text-[#94A3B8]">Select manager (optional)</span>
+          <span className="flex-1 text-[#94A3B8]">Select manager</span>
         )}
         <ChevronDown
           size={16}

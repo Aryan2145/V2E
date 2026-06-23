@@ -121,7 +121,7 @@ export default function DeptRolesPanel({ departments, orgId, canEdit }: DeptRole
         </div>
         <p className="font-semibold text-[#0F172A]">No departments yet</p>
         <p className="text-[#475569] text-sm mt-1">
-          Create departments in the org chart first — roles live inside them.
+          Create departments in the org chart first — job roles live inside them.
         </p>
       </div>
     )
@@ -171,7 +171,7 @@ export default function DeptRolesPanel({ departments, orgId, canEdit }: DeptRole
           {!selectedDept ? (
             <div className="flex-1 flex flex-col items-center justify-center gap-2 text-center p-8">
               <Briefcase size={28} className="text-[#CBD5E1]" />
-              <p className="text-sm text-[#94A3B8]">Select a department to manage its roles.</p>
+              <p className="text-sm text-[#94A3B8]">Select a department to manage its job roles.</p>
             </div>
           ) : (
             <>
@@ -196,7 +196,7 @@ export default function DeptRolesPanel({ departments, orgId, canEdit }: DeptRole
                   )}
                   <h3 className="font-bold text-[#0F172A] truncate">{selectedDept.name}</h3>
                   <p className="text-xs text-[#94A3B8] mt-0.5">
-                    {roles.length} role{roles.length !== 1 ? 's' : ''}
+                    {roles.length} job role{roles.length !== 1 ? 's' : ''}
                   </p>
                 </div>
                 {canEdit && (
@@ -205,7 +205,7 @@ export default function DeptRolesPanel({ departments, orgId, canEdit }: DeptRole
                     size="sm"
                     onClick={() => setDrawerTarget({ mode: 'create', deptId: selectedDept.id })}
                   >
-                    <Plus size={14} /> Add Role
+                    <Plus size={14} /> Add Job Role
                   </Button>
                 )}
               </div>
@@ -219,13 +219,13 @@ export default function DeptRolesPanel({ departments, orgId, canEdit }: DeptRole
                 ) : roles.length === 0 ? (
                   <div className="flex flex-col items-center gap-2 py-12">
                     <Briefcase size={28} className="text-[#CBD5E1]" />
-                    <p className="text-sm text-[#94A3B8]">No roles in this department yet.</p>
+                    <p className="text-sm text-[#94A3B8]">No job roles in this department yet.</p>
                     {canEdit && (
                       <button
                         onClick={() => setDrawerTarget({ mode: 'create', deptId: selectedDept.id })}
                         className="text-sm text-[#2563EB] font-medium hover:text-[#1D4ED8]"
                       >
-                        Add the first role
+                        Add the first job role
                       </button>
                     )}
                   </div>

@@ -8,15 +8,21 @@ import { z } from 'zod'
 import { X, Plus, Trash2 } from 'lucide-react'
 import { createRole, updateRole, deleteRole } from '@/lib/api/roles'
 import Button from '@/components/ui/Button'
-import type { Role, RoleLevel } from '@/lib/types'
+import type { Department, Role, RoleLevel } from '@/lib/types'
 
 export type RoleFormTarget =
-  | { mode: 'create'; deptId: string }
+  | { mode: 'create'; deptId?: string }
   | { mode: 'edit'; role: Role }
 
 interface RoleFormDrawerProps {
   target: RoleFormTarget | null
   orgId: string
+  /**
+   * When provided, a Department picker is shown so a role can be created from a
+   * page-level "Add Role" (no preselected dept) or moved to another department.
+   * Omit it (e.g. the setup wizard) to keep the role scoped to `target.deptId`.
+   */
+  departments?: Department[]
   onClose: () => void
   onSaved: (saved: Role) => void
   onDeleted?: (id: string) => void
@@ -25,7 +31,8 @@ interface RoleFormDrawerProps {
 // ─── Schema (mirrors setup wizard step-4) ───────────────────────────────────────
 
 const roleSchema = z.object({
-  title: z.string().min(1, 'Role title is required'),
+  department_id: z.string().optional(),
+  title: z.string().min(1, 'Job role title is required'),
   level: z.enum(['junior', 'mid', 'senior', 'lead', 'head'] as const),
   job_description: z.string().optional(),
   kra: z.array(z.object({ title: z.string(), description: z.string() })).default([]),
@@ -40,11 +47,21 @@ type RoleFormValues = z.infer<typeof roleSchema>
 
 const inputCls =
   'w-full rounded-[8px] border border-[#CBD5E1] bg-white px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 focus:border-[#2563EB] transition-colors'
+const smInputCls =
+  'w-full rounded-[8px] border border-[#CBD5E1] bg-white px-2.5 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 focus:border-[#2563EB] transition-colors'
 const textareaCls =
   'w-full rounded-[8px] border border-[#CBD5E1] bg-white px-3 py-2.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 focus:border-[#2563EB] transition-colors resize-none'
 const labelCls = 'text-sm font-medium text-[#374151] mb-1.5 block'
+const fieldLabelCls = 'text-[11px] font-semibold text-[#64748B] uppercase tracking-wide mb-1 block'
 
-const EMPTY: RoleFormValues = { title: '', level: 'mid', job_description: '', kra: [], kpi: [] }
+const EMPTY: RoleFormValues = {
+  department_id: '',
+  title: '',
+  level: 'mid',
+  job_description: '',
+  kra: [],
+  kpi: [],
+}
 
 /**
  * Create or edit a role from a right-hand drawer, mirroring DeptFormDrawer.
@@ -53,6 +70,7 @@ const EMPTY: RoleFormValues = { title: '', level: 'mid', job_description: '', kr
 export default function RoleFormDrawer({
   target,
   orgId,
+  departments,
   onClose,
   onSaved,
   onDeleted,
@@ -91,6 +109,7 @@ export default function RoleFormDrawer({
     if (target.mode === 'edit') {
       const r = target.role
       reset({
+        department_id: r.department_id,
         title: r.title,
         level: r.level,
         job_description: r.job_description ?? '',
@@ -98,9 +117,9 @@ export default function RoleFormDrawer({
         kpi: r.kpi ?? [],
       })
     } else {
-      reset(EMPTY)
+      reset({ ...EMPTY, department_id: target.deptId ?? departments?.[0]?.id ?? '' })
     }
-  }, [target, reset])
+  }, [target, reset, departments])
 
   const onSubmit = async (data: RoleFormValues) => {
     setFormError(null)
@@ -120,12 +139,23 @@ export default function RoleFormDrawer({
           unit: k.unit.trim(),
         })),
     }
+    // The picker governs the department when `departments` is provided; otherwise
+    // a created role stays scoped to the dept it was launched from.
+    const pickedDept = data.department_id || undefined
     try {
       let saved: Role
       if (isEdit && editing) {
-        saved = await updateRole(orgId, editing.id, payload)
+        saved = await updateRole(orgId, editing.id, {
+          ...payload,
+          ...(departments && pickedDept ? { department_id: pickedDept } : {}),
+        })
       } else if (target?.mode === 'create') {
-        saved = await createRole(orgId, { ...payload, department_id: target.deptId })
+        const department_id = pickedDept ?? target.deptId
+        if (!department_id) {
+          setFormError('Please choose a department for this job role.')
+          return
+        }
+        saved = await createRole(orgId, { ...payload, department_id })
       } else {
         return
       }
@@ -133,7 +163,7 @@ export default function RoleFormDrawer({
     } catch (err: unknown) {
       const raw = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
         ?.message
-      setFormError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to save role.')
+      setFormError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to save job role.')
     }
   }
 
@@ -147,7 +177,7 @@ export default function RoleFormDrawer({
     } catch (err: unknown) {
       const raw = (err as { response?: { data?: { message?: string | string[] } } })?.response?.data
         ?.message
-      setFormError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to delete role.')
+      setFormError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to delete job role.')
       setConfirmDelete(false)
     } finally {
       setDeleting(false)
@@ -166,7 +196,7 @@ export default function RoleFormDrawer({
         }`}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
-          <h3 className="font-semibold text-[#0F172A]">{isEdit ? 'Edit Role' : 'Add Role'}</h3>
+          <h3 className="font-semibold text-[#0F172A]">{isEdit ? 'Edit Job Role' : 'Add Job Role'}</h3>
           <button
             onClick={onClose}
             className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
@@ -181,10 +211,24 @@ export default function RoleFormDrawer({
           className="flex-1 overflow-y-auto min-h-0"
         >
           <div className="px-5 py-5 flex flex-col gap-5">
+            {/* Department picker (page-level create / move) */}
+            {departments && departments.length > 0 && (
+              <div>
+                <label className={labelCls}>Department *</label>
+                <select {...register('department_id')} className={inputCls}>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Basic info */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className={labelCls}>Role Title *</label>
+                <label className={labelCls}>Job Role Title *</label>
                 <input
                   {...register('title')}
                   placeholder="e.g. Senior Engineer"
@@ -238,16 +282,19 @@ export default function RoleFormDrawer({
                     key={field.id}
                     className="bg-white border border-[#E2E8F0] rounded-[8px] p-3 flex gap-3"
                   >
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-xs font-bold text-[#2563EB]">
+                      {i + 1}
+                    </span>
                     <div className="flex-1 flex flex-col gap-2">
                       <input
                         {...register(`kra.${i}.title`)}
-                        placeholder="KRA Title"
+                        placeholder="KRA title — e.g. Code quality"
                         className={inputCls}
                       />
                       <textarea
                         {...register(`kra.${i}.description`)}
                         rows={2}
-                        placeholder="Description…"
+                        placeholder="What does success in this area look like?"
                         className={textareaCls}
                       />
                     </div>
@@ -255,6 +302,7 @@ export default function RoleFormDrawer({
                       type="button"
                       onClick={() => kraArray.remove(i)}
                       className="text-[#94A3B8] hover:text-[#DC2626] self-start p-1 rounded transition-colors"
+                      aria-label="Remove KRA"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -284,32 +332,50 @@ export default function RoleFormDrawer({
                     key={field.id}
                     className="bg-white border border-[#E2E8F0] rounded-[8px] p-3 flex gap-3"
                   >
-                    <div className="flex-1 grid grid-cols-2 gap-2">
-                      <input
-                        {...register(`kpi.${i}.title`)}
-                        placeholder="KPI Title"
-                        className={inputCls}
-                      />
-                      <input
-                        {...register(`kpi.${i}.metric`)}
-                        placeholder="Metric (e.g. Code reviews/week)"
-                        className={inputCls}
-                      />
-                      <input
-                        {...register(`kpi.${i}.target`)}
-                        placeholder="Target value"
-                        className={inputCls}
-                      />
-                      <input
-                        {...register(`kpi.${i}.unit`)}
-                        placeholder="Unit (e.g. %, count, hrs)"
-                        className={inputCls}
-                      />
+                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#EFF6FF] text-xs font-bold text-[#2563EB]">
+                      {i + 1}
+                    </span>
+                    <div className="flex-1 flex flex-col gap-2.5">
+                      <div>
+                        <label className={fieldLabelCls}>Indicator</label>
+                        <input
+                          {...register(`kpi.${i}.title`)}
+                          placeholder="e.g. On-time delivery"
+                          className={smInputCls}
+                        />
+                      </div>
+                      <div>
+                        <label className={fieldLabelCls}>Measured by</label>
+                        <input
+                          {...register(`kpi.${i}.metric`)}
+                          placeholder="e.g. Sprints shipped on schedule"
+                          className={smInputCls}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={fieldLabelCls}>Target</label>
+                          <input
+                            {...register(`kpi.${i}.target`)}
+                            placeholder="e.g. 95"
+                            className={smInputCls}
+                          />
+                        </div>
+                        <div>
+                          <label className={fieldLabelCls}>Unit</label>
+                          <input
+                            {...register(`kpi.${i}.unit`)}
+                            placeholder="e.g. %, count, hrs"
+                            className={smInputCls}
+                          />
+                        </div>
+                      </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => kpiArray.remove(i)}
                       className="text-[#94A3B8] hover:text-[#DC2626] self-start p-1 rounded transition-colors"
+                      aria-label="Remove KPI"
                     >
                       <Trash2 size={14} />
                     </button>
@@ -329,7 +395,7 @@ export default function RoleFormDrawer({
               <div className="border-t border-[#F1F5F9] pt-4">
                 {confirmDelete ? (
                   <div className="flex items-center gap-3">
-                    <p className="text-sm text-[#475569] flex-1">Delete this role permanently?</p>
+                    <p className="text-sm text-[#475569] flex-1">Delete this job role permanently?</p>
                     <Button variant="danger" size="sm" isLoading={deleting} onClick={handleDelete}>
                       Confirm delete
                     </Button>
@@ -348,7 +414,7 @@ export default function RoleFormDrawer({
                     onClick={() => setConfirmDelete(true)}
                     className="inline-flex items-center gap-1.5 text-sm text-[#DC2626] font-medium hover:text-[#B91C1C] transition-colors"
                   >
-                    <Trash2 size={14} /> Delete role
+                    <Trash2 size={14} /> Delete job role
                   </button>
                 )}
               </div>
@@ -357,7 +423,7 @@ export default function RoleFormDrawer({
 
           <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex gap-3">
             <Button type="submit" variant="primary" isLoading={isSubmitting}>
-              {isEdit ? 'Save' : 'Add Role'}
+              {isEdit ? 'Save' : 'Add Job Role'}
             </Button>
             <Button type="button" variant="secondary" onClick={onClose} disabled={isSubmitting}>
               Cancel

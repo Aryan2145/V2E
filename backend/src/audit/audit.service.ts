@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuditContextService, ActorType } from '../common/cls/audit-context.service';
+import { AuditEnrichmentService } from './audit-enrichment.service';
 
-export type AuditAction = 'create' | 'update' | 'delete';
+export type AuditAction = string; // create | update | delete | <semantic verb>
 
 export interface AuditChange {
   before: unknown;
@@ -10,13 +12,18 @@ export interface AuditChange {
 }
 
 export interface RecordAuditInput {
-  orgId: string;
-  actorId: string;
+  orgId?: string;
+  actorId?: string | null;
+  actorType?: ActorType;
   action: AuditAction;
   resource: string;
   entityId: string;
+  entityType?: string | null;
   entityLabel?: string | null;
   changes?: Record<string, AuditChange> | null;
+  triggerSource?: string | null;
+  triggerContext?: Record<string, unknown> | null;
+  occurredAt?: Date;
 }
 
 export interface AuditListFilters {
@@ -24,6 +31,8 @@ export interface AuditListFilters {
   entity_id?: string;
   action?: string;
   actor_user_id?: string;
+  actor_type?: string;
+  trigger_source?: string;
   from_date?: string;
   to_date?: string;
   search?: string;
@@ -32,25 +41,86 @@ export interface AuditListFilters {
 }
 
 /**
- * Shared, software-wide audit log. Any module injects this and calls `record()`
- * to emit an actor/action/entity/before→after entry to the single `audit_logs`
- * table. Exported from a global module so it is available everywhere.
+ * Shared, software-wide audit log. The single source of truth for "who (or what)
+ * changed this, when, and from what to what". Most writes arrive automatically
+ * via the Prisma capture extension; modules call `record()` / `recordTransition()`
+ * for high-value events that deserve a human action name and de-dupe.
  */
 @Injectable()
 export class AuditService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ctx: AuditContextService,
+    private readonly enrichment: AuditEnrichmentService,
+  ) {}
 
+  /** Emit a semantic audit entry; de-dupes the automatic extension for this entity. */
   async record(input: RecordAuditInput): Promise<void> {
+    const orgId = input.orgId ?? this.ctx.orgId;
+    if (!orgId) return; // nothing to scope the entry to
+    const actorType = input.actorType ?? this.ctx.actorType;
+    const actorId = input.actorId !== undefined ? input.actorId : this.ctx.actorId;
+
+    // Suppress the automatic extension entry for this same entity (no double-log).
+    this.ctx.markHandled(input.resource, input.entityId);
+
     await this.prisma.auditLog.create({
       data: {
-        organization_id: input.orgId,
-        actor_user_id: input.actorId,
+        organization_id: orgId,
+        actor_user_id: actorType === 'system' ? null : actorId ?? null,
+        actor_type: actorType,
         action: input.action,
         resource: input.resource,
         entity_id: input.entityId,
+        entity_type: input.entityType ?? null,
         entity_label: input.entityLabel ?? null,
         changes: (input.changes ?? undefined) as Prisma.InputJsonValue | undefined,
+        trigger_source: input.triggerSource ?? this.ctx.triggerSource,
+        trigger_context: (input.triggerContext ?? this.ctx.triggerContext ?? undefined) as
+          | Prisma.InputJsonValue
+          | undefined,
+        occurred_at: input.occurredAt ?? this.ctx.occurredAt ?? new Date(),
+        request_id: this.ctx.requestId,
+        ip: this.ctx.ip,
+        user_agent: this.ctx.userAgent,
       },
+    });
+  }
+
+  /**
+   * Convenience for status/state changes that deserve a human verb
+   * (e.g. action "Marked overdue", field "status": ongoing → overdue).
+   */
+  async recordTransition(input: {
+    orgId?: string;
+    action: string;
+    resource: string;
+    entityId: string;
+    entityType?: string | null;
+    entityLabel?: string | null;
+    field?: string;
+    from: unknown;
+    to: unknown;
+    actorType?: ActorType;
+    actorId?: string | null;
+    triggerSource?: string | null;
+    triggerContext?: Record<string, unknown> | null;
+    occurredAt?: Date;
+  }): Promise<void> {
+    const field = input.field ?? 'status';
+    await this.record({
+      orgId: input.orgId,
+      action: input.action,
+      resource: input.resource,
+      entityId: input.entityId,
+      entityType: input.entityType,
+      entityLabel: input.entityLabel,
+      actorType: input.actorType,
+      actorId: input.actorId,
+      triggerSource: input.triggerSource,
+      triggerContext: input.triggerContext,
+      occurredAt: input.occurredAt,
+      changes: { [field]: { before: input.from, after: input.to } },
     });
   }
 
@@ -81,15 +151,18 @@ export class AuditService {
     if (filters.entity_id) where.entity_id = filters.entity_id;
     if (filters.action) where.action = filters.action;
     if (filters.actor_user_id) where.actor_user_id = filters.actor_user_id;
+    if (filters.actor_type) where.actor_type = filters.actor_type;
+    if (filters.trigger_source) where.trigger_source = filters.trigger_source;
     if (filters.from_date || filters.to_date) {
-      where.created_at = {};
-      if (filters.from_date) where.created_at.gte = new Date(filters.from_date);
-      if (filters.to_date) where.created_at.lte = new Date(filters.to_date);
+      where.occurred_at = {};
+      if (filters.from_date) where.occurred_at.gte = new Date(filters.from_date);
+      if (filters.to_date) where.occurred_at.lte = new Date(filters.to_date);
     }
     if (filters.search) {
       where.OR = [
         { entity_label: { contains: filters.search, mode: 'insensitive' } },
         { entity_id: { contains: filters.search, mode: 'insensitive' } },
+        { action: { contains: filters.search, mode: 'insensitive' } },
       ];
     }
 
@@ -98,14 +171,37 @@ export class AuditService {
     const [items, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { created_at: 'desc' },
+        orderBy: { occurred_at: 'desc' },
         skip,
         take,
         include: { actor: { select: { id: true, name: true, email: true } } },
       }),
       this.prisma.auditLog.count({ where }),
     ]);
-    return { items, total, skip, take };
+    const enriched = await this.enrichment.enrich(items as any[]);
+    return { items: enriched, total, skip, take };
+  }
+
+  /** Distinct resource keys present for an org — drives the filter dropdown. */
+  async resources(orgId: string): Promise<string[]> {
+    const rows = await this.prisma.auditLog.findMany({
+      where: { organization_id: orgId },
+      distinct: ['resource'],
+      select: { resource: true },
+      orderBy: { resource: 'asc' },
+    });
+    return rows.map((r) => r.resource);
+  }
+
+  /** Distinct trigger sources for system entries — drives the trigger filter. */
+  async triggerSources(orgId: string): Promise<string[]> {
+    const rows = await this.prisma.auditLog.findMany({
+      where: { organization_id: orgId, trigger_source: { not: null } },
+      distinct: ['trigger_source'],
+      select: { trigger_source: true },
+      orderBy: { trigger_source: 'asc' },
+    });
+    return rows.map((r) => r.trigger_source!).filter(Boolean);
   }
 }
 

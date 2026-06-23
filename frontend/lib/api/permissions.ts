@@ -5,14 +5,25 @@ import type { ApiResponse } from '../types'
 
 export type PermAction = 'read' | 'write' | 'edit' | 'delete'
 export type OverrideEffect = 'grant' | 'revoke'
-export type DataScope = 'own' | 'team' | 'department' | 'org'
+// 3-level data-scope model: Own / My Team / Company. (`department` is a retired
+// legacy value the backend may still echo for old rows; map it to team for display.)
+export type DataScope = 'own' | 'team' | 'org'
 
-export const DATA_SCOPES: DataScope[] = ['own', 'team', 'department', 'org']
+export const DATA_SCOPES: DataScope[] = ['own', 'team', 'org']
 export const DATA_SCOPE_LABEL: Record<DataScope, string> = {
   own: 'Own',
-  team: 'Team',
-  department: 'Department',
-  org: 'Organization',
+  team: 'My Team',
+  org: 'Company',
+}
+export const DATA_SCOPE_HELP: Record<DataScope, string> = {
+  own: 'Only their own records',
+  team: 'Them and everyone who reports up to them',
+  org: 'Every record in the company',
+}
+// Cascade ordering, narrowest → widest (for the "broadened" badge).
+export const SCOPE_RANK: Record<DataScope, number> = { own: 0, team: 1, org: 2 }
+export function normalizeScope(s: string | null | undefined): DataScope {
+  return s === 'org' || s === 'team' ? s : s === 'department' ? 'team' : 'own'
 }
 
 export interface ResourcePerms {
@@ -44,19 +55,30 @@ export interface RegistryModule {
   subModules: RegistrySubModule[]
 }
 
-export interface JobRole {
+export interface SystemRole {
   id: string
-  title: string
-  level: string
-  department: { id: string; name: string } | null
+  name: string
+  description: string | null
+  is_system: boolean
+  is_admin: boolean
+  default_scope: DataScope // global tier of the scope cascade
+  module_scopes: Record<string, DataScope> // moduleKey → scope (module tier)
 }
 
 export interface RoleMatrix {
-  jobRoles: JobRole[]
+  systemRoles: SystemRole[]
   permissions: Record<string, Record<string, ResourcePerms>>
-  // roleId → leafKey → action → DataScope (scopable content leaves only)
+  // roleId → leafKey → action → DataScope (line tier; absent ⇒ inherits cascade)
   scopes: Record<string, Record<string, Partial<Record<PermAction, DataScope>>>>
   scopableLeaves: string[]
+}
+
+/** Lightweight role for pickers (Add Employee). */
+export interface SystemRoleLite {
+  id: string
+  name: string
+  is_system: boolean
+  is_admin: boolean
 }
 
 export interface SubjectPolicy {
@@ -77,7 +99,7 @@ export interface UserPermissionLeaf {
 
 export interface UserPermissions {
   user_id: string
-  job_role: { id: string; title: string | null } | null
+  system_role: { id: string; name: string | null } | null
   is_admin: boolean
   is_super_admin: boolean
   leaves: UserPermissionLeaf[]
@@ -108,9 +130,51 @@ export async function getRolePermissions(orgId: string): Promise<RoleMatrix> {
 
 export async function updateRolePermissions(
   orgId: string,
-  entries: { job_role_id: string; feature_key: string; action: PermAction; allowed: boolean; scope?: DataScope | null }[],
+  entries: { system_role_id: string; feature_key: string; action: PermAction; allowed: boolean; scope?: DataScope | null }[],
 ): Promise<RoleMatrix> {
   const { data } = await apiClient.put<ApiResponse<RoleMatrix>>(`${base(orgId)}/role-permissions`, { entries })
+  return data.data
+}
+
+// ─── System Role CRUD + scope cascade ───────────────────────────────────────────
+
+export async function listSystemRoles(orgId: string): Promise<{ systemRoles: SystemRoleLite[] }> {
+  const { data } = await apiClient.get<ApiResponse<{ systemRoles: SystemRoleLite[] }>>(`${base(orgId)}/system-roles`)
+  return data.data
+}
+
+export async function createSystemRole(
+  orgId: string,
+  body: { name: string; description?: string; default_scope?: DataScope },
+): Promise<RoleMatrix> {
+  const { data } = await apiClient.post<ApiResponse<RoleMatrix>>(`${base(orgId)}/system-roles`, body)
+  return data.data
+}
+
+export async function updateSystemRole(
+  orgId: string,
+  roleId: string,
+  body: { name?: string; description?: string; default_scope?: DataScope },
+): Promise<RoleMatrix> {
+  const { data } = await apiClient.patch<ApiResponse<RoleMatrix>>(`${base(orgId)}/system-roles/${roleId}`, body)
+  return data.data
+}
+
+export async function deleteSystemRole(orgId: string, roleId: string): Promise<RoleMatrix> {
+  const { data } = await apiClient.delete<ApiResponse<RoleMatrix>>(`${base(orgId)}/system-roles/${roleId}`)
+  return data.data
+}
+
+export async function setModuleScope(
+  orgId: string,
+  roleId: string,
+  module_key: string,
+  scope: DataScope | null,
+): Promise<RoleMatrix> {
+  const { data } = await apiClient.put<ApiResponse<RoleMatrix>>(
+    `${base(orgId)}/system-roles/${roleId}/module-scope`,
+    { module_key, scope },
+  )
   return data.data
 }
 

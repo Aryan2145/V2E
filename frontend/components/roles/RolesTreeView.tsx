@@ -1,0 +1,163 @@
+'use client'
+
+import { useMemo } from 'react'
+import { Plus, ChevronRight, Pencil, Briefcase } from 'lucide-react'
+import { flattenTree } from '@/lib/dept-tree'
+import { levelColors, rankOfLevel } from '@/lib/role-levels'
+import { computeNodeColors } from '@/lib/org-chart-colors'
+import type { Department, Role } from '@/lib/types'
+
+interface Props {
+  roles: Role[]
+  departments: Department[]
+  query: string
+  canEdit: boolean
+  onSelect: (r: Role) => void
+  onEdit: (r: Role) => void
+  onAddRole: (deptId: string) => void
+}
+
+/**
+ * Roles grouped under the department hierarchy — the real tree this data has.
+ * Each department row is indented by its depth (parent → child → grandchild),
+ * with its roles nested one level deeper, ordered by seniority. This is the
+ * full-width, uncramped successor to the old narrow master-detail rail.
+ */
+export default function RolesTreeView({
+  roles,
+  departments,
+  query,
+  canEdit,
+  onSelect,
+  onEdit,
+  onAddRole,
+}: Props) {
+  const colors = useMemo(() => computeNodeColors(departments), [departments])
+  const flat = useMemo(() => flattenTree(departments), [departments])
+
+  const rolesByDept = useMemo(() => {
+    const m = new Map<string, Role[]>()
+    for (const r of roles) {
+      const arr = m.get(r.department_id)
+      if (arr) arr.push(r)
+      else m.set(r.department_id, [r])
+    }
+    m.forEach((arr) =>
+      arr.sort((a, b) => rankOfLevel(a.level) - rankOfLevel(b.level) || a.title.localeCompare(b.title)),
+    )
+    return m
+  }, [roles])
+
+  const q = query.trim().toLowerCase()
+
+  // Resolve which roles to show for a department under the current search.
+  const visibleRoles = (dept: Department): Role[] => {
+    const all = rolesByDept.get(dept.id) ?? []
+    if (!q) return all
+    if (dept.name.toLowerCase().includes(q)) return all
+    return all.filter(
+      (r) => r.title.toLowerCase().includes(q) || r.level.toLowerCase().includes(q),
+    )
+  }
+
+  // When searching, hide departments that contribute no matching roles.
+  const blocks = flat
+    .map(({ dept, depth }) => ({ dept, depth, roles: visibleRoles(dept) }))
+    .filter((b) => !q || b.roles.length > 0)
+
+  if (blocks.length === 0) {
+    return (
+      <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-16 text-center">
+        <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
+          <Briefcase size={24} className="text-[#94A3B8]" />
+        </div>
+        <p className="font-semibold text-[#0F172A]">
+          {q ? 'No job roles match your search' : 'No job roles yet'}
+        </p>
+        <p className="text-[#475569] text-sm mt-1">
+          {q ? 'Try a different name, level, or department.' : 'Add a job role to get started.'}
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden divide-y divide-[#F1F5F9]">
+      {blocks.map(({ dept, depth, roles: deptRoles }) => {
+        const base = colors[dept.id]?.base ?? '#94A3B8'
+        return (
+          <div key={dept.id}>
+            {/* Department header */}
+            <div
+              className="flex items-center gap-2 px-4 py-2.5 bg-[#F8FAFC]"
+              style={{ paddingLeft: 16 + depth * 18 }}
+            >
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: base }} />
+              <span className="text-sm font-semibold text-[#0F172A] truncate">{dept.name}</span>
+              <span className="text-xs text-[#94A3B8]">
+                {deptRoles.length} job role{deptRoles.length !== 1 ? 's' : ''}
+              </span>
+              {canEdit && (
+                <button
+                  onClick={() => onAddRole(dept.id)}
+                  className="ml-auto inline-flex items-center gap-1 text-xs font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+                >
+                  <Plus size={13} /> Add job role
+                </button>
+              )}
+            </div>
+
+            {/* Roles in this department */}
+            {deptRoles.length === 0 ? (
+              <p
+                className="text-xs text-[#94A3B8] italic py-2.5"
+                style={{ paddingLeft: 16 + (depth + 1) * 18 + 18 }}
+              >
+                No job roles in this department.
+              </p>
+            ) : (
+              deptRoles.map((role) => (
+                <button
+                  key={role.id}
+                  onClick={() => onSelect(role)}
+                  style={{ paddingLeft: 16 + (depth + 1) * 18 + 18 }}
+                  className="group w-full flex items-center gap-3 pr-4 py-2.5 text-left hover:bg-[#F8FAFC] transition-colors"
+                >
+                  <span className="font-medium text-sm text-[#0F172A] truncate">{role.title}</span>
+                  <span
+                    className={[
+                      'inline-flex items-center rounded-[999px] px-2 py-0.5 text-[10px] font-semibold capitalize shrink-0',
+                      levelColors[role.level],
+                    ].join(' ')}
+                  >
+                    {role.level}
+                  </span>
+                  <span className="text-xs text-[#94A3B8] shrink-0 hidden sm:inline">
+                    {role.kra?.length ?? 0} KRA · {role.kpi?.length ?? 0} KPI
+                  </span>
+                  <span className="ml-auto flex items-center gap-1 shrink-0">
+                    {canEdit && (
+                      <span
+                        role="button"
+                        tabIndex={-1}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onEdit(role)
+                        }}
+                        className="p-1.5 rounded-[6px] text-[#94A3B8] opacity-0 group-hover:opacity-100 hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-all"
+                        aria-label={`Edit ${role.title}`}
+                      >
+                        <Pencil size={13} />
+                      </span>
+                    )}
+                    <ChevronRight size={15} className="text-[#CBD5E1]" />
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}

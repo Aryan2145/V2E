@@ -77,12 +77,12 @@ export class GoalsService {
 
       if (dto.level === 'annual') {
         if (!dto.perspective) {
-          throw new BadRequestException('An annual goal must have a Balanced-Scorecard perspective.');
+          throw new BadRequestException('A goal must have a Balanced-Scorecard perspective.');
         }
         perspective = dto.perspective;
       } else {
-        // quarterly — perspective is inherited from the parent annual, never re-picked
-        perspective = parent.perspective;
+        // quarterly — defaults to the parent goal's perspective but may be set to any other
+        perspective = dto.perspective ?? parent.perspective;
       }
 
       this.assertWithinParentBounds(dueDate, parent.due_date, dto.level);
@@ -206,7 +206,7 @@ export class GoalsService {
     const parent = await this.findActiveOrFail(orgId, parentId);
     const childLevel: GoalLevel = parent.level === 'objective' ? 'annual' : 'quarterly';
     if (parent.level === 'quarterly') {
-      throw new BadRequestException('Quarterly goals cannot have child goals.');
+      throw new BadRequestException('Sub-goals cannot have child goals.');
     }
 
     const previous = await this.prisma.goal.findFirst({
@@ -364,8 +364,8 @@ export class GoalsService {
     if (childCount > 0) {
       throw new ConflictException(
         existing.level === 'objective'
-          ? 'This objective still has annual goals. Reassign or remove them first.'
-          : 'This annual goal still has quarterly goals. Reassign or remove them first.',
+          ? 'This objective still has goals. Reassign or remove them first.'
+          : 'This goal still has sub-goals. Reassign or remove them first.',
       );
     }
 

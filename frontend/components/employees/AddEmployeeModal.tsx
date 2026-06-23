@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff, Loader2, Plus, ChevronDown } from 'lucide-react'
 import { createEmployee } from '@/lib/api/employees'
 import { getUsers } from '@/lib/api/users'
+import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
@@ -113,6 +114,15 @@ export default function AddEmployeeModal({
   const [creatingDept, setCreatingDept] = useState(false)
   const [users, setUsers] = useState<User[]>([])
 
+  // System roles carry access rights and are required on create.
+  const [systemRoles, setSystemRoles] = useState<SystemRoleLite[]>([])
+  useEffect(() => {
+    if (!orgId) return
+    listSystemRoles(orgId)
+      .then(({ systemRoles }) => setSystemRoles(systemRoles))
+      .catch(() => setSystemRoles([]))
+  }, [orgId])
+
   // The dept drawer needs the user list for its "head" picker; load it lazily
   // only when the current user can actually create departments.
   useEffect(() => {
@@ -139,6 +149,7 @@ export default function AddEmployeeModal({
     password: '',
     department_id: '',
     role_id: '',
+    system_role_id: '',
     employment_type: 'full_time' as EmploymentType,
     employee_code: suggestNextEmployeeCode(employees), // pre-fill the next code
     reporting_to_user_id: '',
@@ -189,7 +200,11 @@ export default function AddEmployeeModal({
       return
     }
     if (!form.department_id || !form.role_id) {
-      setError('Please select a department and role.')
+      setError('Please select a department and job role.')
+      return
+    }
+    if (!form.system_role_id) {
+      setError('Please select a system role.')
       return
     }
     if (codeTaken) {
@@ -205,6 +220,7 @@ export default function AddEmployeeModal({
         password: form.password,
         role_id: form.role_id,
         department_id: form.department_id,
+        system_role_id: form.system_role_id,
         employment_type: form.employment_type,
         reporting_to_user_id: form.reporting_to_user_id || undefined,
         employee_code: form.employee_code.trim() || undefined,
@@ -293,23 +309,6 @@ export default function AddEmployeeModal({
                 </div>
               </div>
               <div>
-                <label className={labelClass}>Employee code</label>
-                <input
-                  value={form.employee_code}
-                  onChange={(e) => set('employee_code', e.target.value)}
-                  placeholder="EMP-001"
-                  className={`${inputClass} ${
-                    codeTaken ? '!border-[#DC2626] focus:!border-[#DC2626] focus:!ring-[#DC2626]' : ''
-                  }`}
-                />
-                {codeTaken && (
-                  <p className="mt-1 text-xs text-[#DC2626]">This code is already in use.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
                 <label className={labelClass}>Department *</label>
                 <DepartmentSelect
                   value={form.department_id}
@@ -330,8 +329,11 @@ export default function AddEmployeeModal({
                   </button>
                 )}
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className={labelClass}>Role *</label>
+                <label className={labelClass}>Job Role *</label>
                 <RoleSelect
                   value={form.role_id}
                   roles={deptRoles}
@@ -348,13 +350,37 @@ export default function AddEmployeeModal({
                     onClick={() => setCreatingRole(true)}
                     className="mt-1.5 inline-flex items-center gap-1 text-xs font-medium text-[#2563EB] hover:text-[#1D4ED8]"
                   >
-                    <Plus size={12} /> New role
+                    <Plus size={12} /> New job role
                   </button>
                 )}
               </div>
+              <div>
+                <label className={labelClass}>Reports to</label>
+                <ReportsToSelect
+                  value={form.reporting_to_user_id}
+                  onChange={(userId) => set('reporting_to_user_id', userId)}
+                  employees={employees}
+                  departments={localDepartments}
+                  selectedDeptId={form.department_id}
+                />
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className={labelClass}>System Role *</label>
+                <SelectField
+                  value={form.system_role_id}
+                  onChange={(e) => set('system_role_id', e.target.value)}
+                >
+                  <option value="">— Select —</option>
+                  {systemRoles.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </SelectField>
+              </div>
               <div>
                 <label className={labelClass}>Employment type</label>
                 <SelectField
@@ -369,14 +395,18 @@ export default function AddEmployeeModal({
                 </SelectField>
               </div>
               <div>
-                <label className={labelClass}>Reports to</label>
-                <ReportsToSelect
-                  value={form.reporting_to_user_id}
-                  onChange={(userId) => set('reporting_to_user_id', userId)}
-                  employees={employees}
-                  departments={localDepartments}
-                  selectedDeptId={form.department_id}
+                <label className={labelClass}>Employee code</label>
+                <input
+                  value={form.employee_code}
+                  onChange={(e) => set('employee_code', e.target.value)}
+                  placeholder="EMP-001"
+                  className={`${inputClass} ${
+                    codeTaken ? '!border-[#DC2626] focus:!border-[#DC2626] focus:!ring-[#DC2626]' : ''
+                  }`}
                 />
+                {codeTaken && (
+                  <p className="mt-1 text-xs text-[#DC2626]">This code is already in use.</p>
+                )}
               </div>
             </div>
 
@@ -465,7 +495,7 @@ export default function AddEmployeeModal({
             setLocalRoles((rs) => [...rs, saved])
             set('role_id', saved.id) // auto-select the new role
             setCreatingRole(false)
-            addToast(`Role "${saved.title}" created`, 'success')
+            addToast(`Job role "${saved.title}" created`, 'success')
           }}
         />
       )}

@@ -5,6 +5,7 @@ import { AuditService } from '../audit/audit.service';
 import { Principal, PermissionsService, ResourcePermissions } from './permissions.service';
 import {
   ALL_FEATURE_LEAVES,
+  ALL_MODULE_KEYS,
   ALL_SUBJECT_LEAVES,
   PERMISSION_REGISTRY,
   isValidLeaf,
@@ -16,8 +17,17 @@ import { isContentLeaf, rowScopeOf } from './scope-registry';
 
 const NONE: ResourcePermissions = { read: false, write: false, edit: false, delete: false };
 
+// The 3-level data-scope model surfaced in the UI: Own / My Team / Company.
+// (`department` remains in the enum for legacy rows but is never authored.)
+const ALLOWED_SCOPES: DataScope[] = [DataScope.own, DataScope.team, DataScope.org];
+const assertScope = (s: DataScope | null | undefined): void => {
+  if (s != null && !ALLOWED_SCOPES.includes(s)) {
+    throw new BadRequestException(`Unsupported data scope "${s}"`);
+  }
+};
+
 interface RolePermissionEntry {
-  job_role_id: string;
+  system_role_id: string;
   feature_key: string;
   action: PermissionAction;
   allowed: boolean;
@@ -55,23 +65,31 @@ export class PermissionAdminService {
     };
   }
 
-  // ─── JobRole permission matrix (Layer 2) ─────────────────────────────────────
+  // ─── System Role permission matrix (Layer 2) ─────────────────────────────────
 
   async getRoleMatrix(orgId: string) {
-    const [roles, rows] = await Promise.all([
-      this.prisma.role.findMany({
+    const [roles, rows, moduleScopes] = await Promise.all([
+      this.prisma.systemRole.findMany({
         where: { organization_id: orgId },
-        include: { department: { select: { id: true, name: true } } },
-        orderBy: [{ department: { name: 'asc' } }, { title: 'asc' }],
+        orderBy: [{ is_system: 'desc' }, { name: 'asc' }],
       }),
       this.prisma.rolePermission.findMany({ where: { organization_id: orgId } }),
+      this.prisma.systemRoleModuleScope.findMany({
+        where: { system_role: { organization_id: orgId } },
+      }),
     ]);
 
-    const allow = new Map(rows.map((r) => [`${r.job_role_id}:${r.feature_key}:${r.action}`, r.allowed]));
-    const scopeAt = new Map(rows.map((r) => [`${r.job_role_id}:${r.feature_key}:${r.action}`, r.scope]));
+    const allow = new Map(rows.map((r) => [`${r.system_role_id}:${r.feature_key}:${r.action}`, r.allowed]));
+    const scopeAt = new Map(rows.map((r) => [`${r.system_role_id}:${r.feature_key}:${r.action}`, r.scope]));
     const permissions: Record<string, Record<string, ResourcePermissions>> = {};
-    // scopes[roleId][leafKey][action] = DataScope — only for scopable content leaves.
+    // scopes[roleId][leafKey][action] = DataScope (line tier) — only for scopable leaves.
     const scopes: Record<string, Record<string, Partial<Record<PermissionAction, DataScope>>>> = {};
+    // moduleScopesByRole[roleId][moduleKey] = DataScope (module tier).
+    const moduleScopesByRole: Record<string, Record<string, DataScope>> = {};
+    for (const ms of moduleScopes) {
+      (moduleScopesByRole[ms.system_role_id] ??= {})[ms.module_key] = ms.scope;
+    }
+
     for (const role of roles) {
       const perLeaf: Record<string, ResourcePermissions> = {};
       const perLeafScope: Record<string, Partial<Record<PermissionAction, DataScope>>> = {};
@@ -86,7 +104,7 @@ export class PermissionAdminService {
           const perAction: Partial<Record<PermissionAction, DataScope>> = {};
           for (const action of leaf.actions) {
             const s = scopeAt.get(`${role.id}:${leaf.key}:${action}`);
-            if (s) perAction[action] = s;
+            if (s) perAction[action] = s; // null/absent ⇒ inherits module/default (cascade)
           }
           perLeafScope[leaf.key] = perAction;
         }
@@ -96,11 +114,14 @@ export class PermissionAdminService {
     }
 
     return {
-      jobRoles: roles.map((r) => ({
+      systemRoles: roles.map((r) => ({
         id: r.id,
-        title: r.title,
-        level: r.level,
-        department: r.department ? { id: r.department.id, name: r.department.name } : null,
+        name: r.name,
+        description: r.description,
+        is_system: r.is_system,
+        is_admin: r.is_admin,
+        default_scope: r.default_scope,
+        module_scopes: moduleScopesByRole[r.id] ?? {},
       })),
       permissions,
       scopes,
@@ -110,9 +131,18 @@ export class PermissionAdminService {
 
   async updateRoleMatrix(orgId: string, actorId: string, entries: RolePermissionEntry[]) {
     // Validate before writing anything (fail loud, atomic-ish).
-    const roleIds = new Set((await this.prisma.role.findMany({ where: { organization_id: orgId }, select: { id: true } })).map((r) => r.id));
+    const roles = await this.prisma.systemRole.findMany({
+      where: { organization_id: orgId },
+      select: { id: true, is_system: true },
+    });
+    const roleById = new Map(roles.map((r) => [r.id, r]));
     for (const e of entries) {
-      if (!roleIds.has(e.job_role_id)) throw new BadRequestException(`Unknown job role "${e.job_role_id}"`);
+      const role = roleById.get(e.system_role_id);
+      if (!role) throw new BadRequestException(`Unknown system role "${e.system_role_id}"`);
+      // The Administrator (system) role is locked — full access, never editable.
+      if (role.is_system) {
+        throw new BadRequestException(`"Administrator" is a system role and cannot be modified.`);
+      }
       if (!isValidLeaf(e.feature_key) || axisOf(e.feature_key) !== 'actor') {
         throw new BadRequestException(`Unknown feature "${e.feature_key}"`);
       }
@@ -125,6 +155,7 @@ export class PermissionAdminService {
       if (!supportsAction(e.feature_key, e.action)) {
         throw new BadRequestException(`Feature "${e.feature_key}" does not support action "${e.action}"`);
       }
+      assertScope(e.scope);
     }
 
     for (const e of entries) {
@@ -132,9 +163,9 @@ export class PermissionAdminService {
       const scope = rowScopeOf(e.feature_key) === 'scopable' ? e.scope ?? null : null;
       const before = await this.prisma.rolePermission.findUnique({
         where: {
-          organization_id_job_role_id_feature_key_action: {
+          organization_id_system_role_id_feature_key_action: {
             organization_id: orgId,
-            job_role_id: e.job_role_id,
+            system_role_id: e.system_role_id,
             feature_key: e.feature_key,
             action: e.action,
           },
@@ -144,16 +175,16 @@ export class PermissionAdminService {
 
       await this.prisma.rolePermission.upsert({
         where: {
-          organization_id_job_role_id_feature_key_action: {
+          organization_id_system_role_id_feature_key_action: {
             organization_id: orgId,
-            job_role_id: e.job_role_id,
+            system_role_id: e.system_role_id,
             feature_key: e.feature_key,
             action: e.action,
           },
         },
         create: {
           organization_id: orgId,
-          job_role_id: e.job_role_id,
+          system_role_id: e.system_role_id,
           feature_key: e.feature_key,
           action: e.action,
           allowed: e.allowed,
@@ -168,7 +199,7 @@ export class PermissionAdminService {
         actorId,
         action: before ? 'update' : 'create',
         resource: 'role_permission',
-        entityId: `${e.job_role_id}:${e.feature_key}:${e.action}`,
+        entityId: `${e.system_role_id}:${e.feature_key}:${e.action}`,
         entityLabel: `${e.feature_key} · ${e.action}`,
         changes: {
           allowed: { before: before?.allowed ?? false, after: e.allowed },
@@ -177,6 +208,146 @@ export class PermissionAdminService {
       });
     }
 
+    return this.getRoleMatrix(orgId);
+  }
+
+  // ─── System Role CRUD + module-scope cascade ─────────────────────────────────
+
+  /** Lightweight list for pickers (e.g. Add Employee). Any org member may read it. */
+  async listSystemRoles(orgId: string) {
+    const systemRoles = await this.prisma.systemRole.findMany({
+      where: { organization_id: orgId },
+      orderBy: [{ is_system: 'desc' }, { name: 'asc' }],
+      select: { id: true, name: true, is_system: true, is_admin: true },
+    });
+    return { systemRoles };
+  }
+
+  private async getSystemRoleOrThrow(orgId: string, id: string) {
+    const role = await this.prisma.systemRole.findFirst({ where: { id, organization_id: orgId } });
+    if (!role) throw new NotFoundException('System role not found');
+    return role;
+  }
+
+  async createSystemRole(
+    orgId: string,
+    actorId: string,
+    input: { name: string; description?: string; default_scope?: DataScope },
+  ) {
+    const name = input.name.trim();
+    if (!name) throw new BadRequestException('A role name is required');
+    assertScope(input.default_scope);
+    const clash = await this.prisma.systemRole.findFirst({
+      where: { organization_id: orgId, name: { equals: name, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    if (clash) throw new BadRequestException(`A role named "${name}" already exists`);
+
+    const role = await this.prisma.systemRole.create({
+      data: {
+        organization_id: orgId,
+        name,
+        description: input.description?.trim() || null,
+        is_system: false,
+        is_admin: false,
+        default_scope: input.default_scope ?? DataScope.own,
+      },
+    });
+    await this.audit.record({
+      orgId, actorId, action: 'create', resource: 'system_role',
+      entityId: role.id, entityLabel: role.name,
+      changes: { name: { before: null, after: role.name } },
+    });
+    return this.getRoleMatrix(orgId);
+  }
+
+  async updateSystemRole(
+    orgId: string,
+    actorId: string,
+    id: string,
+    input: { name?: string; description?: string; default_scope?: DataScope },
+  ) {
+    const role = await this.getSystemRoleOrThrow(orgId, id);
+    if (role.is_system) {
+      throw new BadRequestException(`"Administrator" is a system role and cannot be edited.`);
+    }
+    assertScope(input.default_scope);
+    const name = input.name?.trim();
+    if (name && name.toLowerCase() !== role.name.toLowerCase()) {
+      const clash = await this.prisma.systemRole.findFirst({
+        where: { organization_id: orgId, name: { equals: name, mode: 'insensitive' }, id: { not: id } },
+        select: { id: true },
+      });
+      if (clash) throw new BadRequestException(`A role named "${name}" already exists`);
+    }
+
+    const updated = await this.prisma.systemRole.update({
+      where: { id },
+      data: {
+        ...(name ? { name } : {}),
+        ...(input.description !== undefined ? { description: input.description?.trim() || null } : {}),
+        ...(input.default_scope !== undefined ? { default_scope: input.default_scope } : {}),
+      },
+    });
+    await this.audit.record({
+      orgId, actorId, action: 'update', resource: 'system_role',
+      entityId: id, entityLabel: updated.name,
+      changes: {
+        name: { before: role.name, after: updated.name },
+        default_scope: { before: role.default_scope, after: updated.default_scope },
+      },
+    });
+    return this.getRoleMatrix(orgId);
+  }
+
+  async deleteSystemRole(orgId: string, actorId: string, id: string) {
+    const role = await this.getSystemRoleOrThrow(orgId, id);
+    if (role.is_system) {
+      throw new BadRequestException(`"Administrator" is a system role and cannot be deleted.`);
+    }
+    // Employees assigned this role have their system_role_id set null (FK ON DELETE SET NULL).
+    await this.prisma.systemRole.delete({ where: { id } });
+    await this.audit.record({
+      orgId, actorId, action: 'delete', resource: 'system_role',
+      entityId: id, entityLabel: role.name,
+      changes: { name: { before: role.name, after: null } },
+    });
+    return this.getRoleMatrix(orgId);
+  }
+
+  /** Set or clear a module-tier scope override (the middle tier of the cascade). */
+  async setModuleScope(
+    orgId: string,
+    actorId: string,
+    systemRoleId: string,
+    moduleKey: string,
+    scope: DataScope | null,
+  ) {
+    const role = await this.getSystemRoleOrThrow(orgId, systemRoleId);
+    if (role.is_system) {
+      throw new BadRequestException(`"Administrator" is a system role and cannot be modified.`);
+    }
+    if (!ALL_MODULE_KEYS.includes(moduleKey)) {
+      throw new BadRequestException(`Unknown module "${moduleKey}"`);
+    }
+    assertScope(scope);
+
+    const where = { system_role_id_module_key: { system_role_id: systemRoleId, module_key: moduleKey } };
+    const before = await this.prisma.systemRoleModuleScope.findUnique({ where });
+    if (scope === null) {
+      if (before) await this.prisma.systemRoleModuleScope.delete({ where });
+    } else {
+      await this.prisma.systemRoleModuleScope.upsert({
+        where,
+        create: { system_role_id: systemRoleId, module_key: moduleKey, scope },
+        update: { scope },
+      });
+    }
+    await this.audit.record({
+      orgId, actorId, action: before ? 'update' : 'create', resource: 'system_role_module_scope',
+      entityId: `${systemRoleId}:${moduleKey}`, entityLabel: `${role.name} · ${moduleKey}`,
+      changes: { scope: { before: before?.scope ?? null, after: scope } },
+    });
     return this.getRoleMatrix(orgId);
   }
 
@@ -229,11 +400,14 @@ export class PermissionAdminService {
 
   // ─── Per-user view + overrides (Layer 3) ─────────────────────────────────────
 
-  private async principalForUser(orgId: string, userId: string): Promise<Principal & { jobRoleTitle: string | null }> {
+  private async principalForUser(
+    orgId: string,
+    userId: string,
+  ): Promise<Principal & { systemRoleName: string | null }> {
     const [profile, member, user] = await Promise.all([
       this.prisma.employeeProfile.findFirst({
         where: { organization_id: orgId, user_id: userId },
-        include: { role: { select: { id: true, title: true } } },
+        include: { system_role: { select: { id: true, name: true, is_admin: true } } },
       }),
       this.prisma.organizationMember.findUnique({
         where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
@@ -243,9 +417,9 @@ export class PermissionAdminService {
     ]);
     return {
       userId,
-      jobRoleId: profile?.role_id ?? null,
-      jobRoleTitle: profile?.role?.title ?? null,
-      isAdmin: member?.is_admin ?? false,
+      systemRoleId: profile?.system_role_id ?? null,
+      systemRoleName: profile?.system_role?.name ?? null,
+      isAdmin: (member?.is_admin ?? false) || (profile?.system_role?.is_admin ?? false),
       isSuperAdmin: user?.is_super_admin ?? false,
     };
   }
@@ -255,8 +429,8 @@ export class PermissionAdminService {
     const principal = await this.principalForUser(orgId, userId);
 
     const [baseRows, overrideRows, subjectOverrides] = await Promise.all([
-      principal.jobRoleId
-        ? this.prisma.rolePermission.findMany({ where: { organization_id: orgId, job_role_id: principal.jobRoleId } })
+      principal.systemRoleId
+        ? this.prisma.rolePermission.findMany({ where: { organization_id: orgId, system_role_id: principal.systemRoleId } })
         : Promise.resolve([]),
       this.prisma.userPermissionOverride.findMany({ where: { organization_id: orgId, user_id: userId } }),
       this.prisma.userSubjectOverride.findMany({ where: { organization_id: orgId, user_id: userId } }),
@@ -303,7 +477,7 @@ export class PermissionAdminService {
 
     return {
       user_id: userId,
-      job_role: principal.jobRoleId ? { id: principal.jobRoleId, title: principal.jobRoleTitle } : null,
+      system_role: principal.systemRoleId ? { id: principal.systemRoleId, name: principal.systemRoleName } : null,
       is_admin: principal.isAdmin,
       is_super_admin: principal.isSuperAdmin,
       leaves,

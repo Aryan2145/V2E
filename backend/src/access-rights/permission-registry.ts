@@ -56,6 +56,12 @@ const A_ALL: PermissionAction[] = [
   PermissionAction.delete,
 ];
 const A_NONE: PermissionAction[] = [];
+// "Manage" capability — create/edit/delete, with viewing left open to all members.
+const A_MANAGE: PermissionAction[] = [
+  PermissionAction.write,
+  PermissionAction.edit,
+  PermissionAction.delete,
+];
 
 // Helpers to keep the tree terse.
 const feature = (
@@ -94,7 +100,7 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
         label: 'Goals',
         features: [
           // Legacy umbrella leaf — keep the exact key `goals` so existing rows/decorators resolve.
-          feature('goals', 'Goals', A_ALL, 'Objectives, annual and quarterly goals'),
+          feature('goals', 'Goals', A_ALL, 'Objectives, goals and sub-goals'),
           subject('goals.subject.ownable', 'Can own a goal'),
         ],
       },
@@ -220,6 +226,25 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
         key: 'performance.general',
         label: 'Performance',
         features: [feature('performance.review.manage', 'Performance')],
+      },
+    ],
+  },
+  {
+    // Holiday & working-day management (HR-owned). Core HR, not entitlement-controlled.
+    // "Manage" = create/edit/delete; viewing holidays/working days is open to all members.
+    // Replaces the old bespoke per-scope toggles that lived on the Holidays settings page.
+    key: 'holidays',
+    label: 'Holidays',
+    entitlementControlled: false,
+    subModules: [
+      {
+        key: 'holidays.management',
+        label: 'Holiday management',
+        features: [
+          feature('holidays.org.manage', 'Org-level holidays', A_MANAGE, 'Create, edit and delete organization-wide holidays and working days'),
+          feature('holidays.department.manage', 'Department holidays', A_MANAGE, 'Manage department holidays and working-day overrides'),
+          feature('holidays.individual.manage', 'Individual holidays', A_MANAGE, 'Manage individual employees’ holidays and working days'),
+        ],
       },
     ],
   },

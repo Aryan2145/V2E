@@ -5,10 +5,11 @@ import ReactFlow, {
   Background,
   Controls,
   MiniMap,
-  PanOnScrollMode,
   useNodesState,
   useEdgesState,
   useReactFlow,
+  getRectOfNodes,
+  getTransformForBounds,
   type Node,
   type Edge,
   type NodeMouseHandler,
@@ -26,11 +27,19 @@ import { computeNodeColors, type NodeColor } from '@/lib/org-chart-colors'
 import DeptNode, { type DeptNodeData } from '@/components/org-chart/DeptNode'
 import DeptInfoPanel from '@/components/org-chart/DeptInfoPanel'
 import DeptFormDrawer, { type DeptFormTarget } from '@/components/org-chart/DeptFormDrawer'
+import DeptTableView from '@/components/org-chart/DeptTableView'
+import ImportDepartmentsModal from '@/components/org-chart/ImportDepartmentsModal'
+import ViewToggle, { type ViewMode } from '@/components/ui/ViewToggle'
+import { useToast } from '@/components/ui/Toast'
 import type { Department, EmployeeProfile, User } from '@/lib/types'
-import { Download, Network, Plus, LayoutGrid, Search, Check } from 'lucide-react'
+import { Download, Network, Plus, LayoutGrid, Search, Check, Upload } from 'lucide-react'
 
 const nodeTypes = { deptNode: DeptNode }
 const STRUCTURE_LEAF = 'settings.organization.structure'
+
+// DeptNode footprint, used to bound panning (translateExtent).
+const DEPT_NODE_W = 200
+const DEPT_NODE_H = 120
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -72,21 +81,6 @@ function buildEdges(departments: Department[], colors: Record<string, NodeColor>
     }))
 }
 
-// ─── Export helper ─────────────────────────────────────────────────────────────
-
-function exportPng() {
-  const el = document.querySelector('.react-flow') as HTMLElement | null
-  if (!el) return
-  import('html2canvas').then(({ default: html2canvas }) => {
-    html2canvas(el, { backgroundColor: '#ffffff', useCORS: true }).then((canvas) => {
-      const link = document.createElement('a')
-      link.href = canvas.toDataURL('image/png')
-      link.download = 'department-structure.png'
-      link.click()
-    })
-  })
-}
-
 // ─── Inner chart (must be inside ReactFlowProvider) ───────────────────────────
 
 interface InnerProps {
@@ -94,9 +88,9 @@ interface InnerProps {
   colorMap: Record<string, NodeColor>
   canEdit: boolean
   orgId: string
+  query: string
   onSelect: (d: Department) => void
   onEdit: (d: Department) => void
-  onAdd: () => void
   onDepartmentsChange: (next: Department[]) => void
 }
 
@@ -105,15 +99,16 @@ function OrgChartInner({
   colorMap,
   canEdit,
   orgId,
+  query,
   onSelect,
   onEdit,
-  onAdd,
   onDepartmentsChange,
 }: InnerProps) {
-  const { setCenter } = useReactFlow()
+  const { setCenter, getNodes } = useReactFlow()
+  const { addToast } = useToast()
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges] = useEdgesState([])
-  const [query, setQuery] = useState('')
+  const [exporting, setExporting] = useState(false)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
 
   const highlightIds = useMemo(() => {
@@ -121,6 +116,34 @@ function OrgChartInner({
     if (!q) return new Set<string>()
     return new Set(departments.filter((d) => d.name.toLowerCase().includes(q)).map((d) => d.id))
   }, [query, departments])
+
+  // Bound panning to the content (plus margin) so the wheel/drag can't scroll the
+  // canvas into infinity — same approach as the employee tree. Computed from the
+  // department positions and the DeptNode footprint.
+  const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    departments.forEach((d) => {
+      minX = Math.min(minX, d.position_x)
+      minY = Math.min(minY, d.position_y)
+      maxX = Math.max(maxX, d.position_x + DEPT_NODE_W)
+      maxY = Math.max(maxY, d.position_y + DEPT_NODE_H)
+    })
+    if (!Number.isFinite(minX)) {
+      return [
+        [-500, -500],
+        [500, 500],
+      ]
+    }
+    const PAD_X = 320
+    const PAD_Y = 240
+    return [
+      [minX - PAD_X, minY - PAD_Y],
+      [maxX + PAD_X, maxY + PAD_Y],
+    ]
+  }, [departments])
 
   // Rebuild nodes when the server data, edit-ability, colors or highlight set changes.
   // (Transient drag moves go through onNodesChange and are persisted on drag stop.)
@@ -202,28 +225,62 @@ function OrgChartInner({
     }
   }, [departments, onDepartmentsChange, orgId, focusTop])
 
+  // Export the WHOLE chart (not just what's on screen) to a PNG. We snapshot the
+  // `.react-flow__viewport` pane — which holds only the nodes + edges — so the
+  // minimap/controls/background overlays never leak in (the old html2canvas pass
+  // captured the container, mangling the minimap canvas). The pane is re-framed
+  // to the full node bounds so nothing is clipped at the current zoom/pan.
+  const handleExport = useCallback(async () => {
+    const allNodes = getNodes()
+    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement | null
+    if (!allNodes.length || !viewport) return
+    setExporting(true)
+    try {
+      const PAD = 0.12
+      const bounds = getRectOfNodes(allNodes)
+      const width = Math.min(4096, Math.max(320, Math.round(bounds.width * (1 + PAD * 2))))
+      const height = Math.min(4096, Math.max(320, Math.round(bounds.height * (1 + PAD * 2))))
+      const [tx, ty, scale] = getTransformForBounds(bounds, width, height, 0.2, 2, PAD)
+      const { toPng } = await import('html-to-image')
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: '#ffffff',
+        width,
+        height,
+        pixelRatio: 2,
+        cacheBust: true,
+        style: {
+          width: `${width}px`,
+          height: `${height}px`,
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+        },
+      })
+      const link = document.createElement('a')
+      link.href = dataUrl
+      link.download = 'department-structure.png'
+      link.click()
+    } catch {
+      addToast('Could not export the image. Please try again.', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }, [getNodes, addToast])
+
   return (
     <div
       className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden"
       style={{ height: 640 }}
     >
-      {/* Toolbar */}
+      {/* Tree-only toolbar: arranging the canvas + exporting an image only make
+          sense for the chart, so these controls live here (not in the table view). */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-[#E2E8F0] flex-wrap">
-        <span className="text-sm font-semibold text-[#0F172A]">Department hierarchy</span>
-
-        <div className="relative ml-1">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search…"
-            className="w-44 rounded-[8px] border border-[#CBD5E1] bg-white pl-8 pr-3 py-1.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 focus:border-[#2563EB] transition-colors"
-          />
-        </div>
+        <span className="text-sm font-semibold text-[#0F172A]">Org chart</span>
+        <span className="text-xs text-[#94A3B8] hidden sm:inline">
+          Drag to pan · Ctrl/⌘ + scroll or pinch to zoom
+        </span>
 
         {/* Save status */}
         {canEdit && (
-          <span className="text-xs min-w-[90px]">
+          <span className="text-xs min-w-[90px] ml-1">
             {saveStatus === 'saving' && <span className="text-[#94A3B8]">Saving…</span>}
             {saveStatus === 'saved' && (
               <span className="text-[#16A34A] inline-flex items-center gap-1">
@@ -236,26 +293,19 @@ function OrgChartInner({
 
         <div className="ml-auto flex items-center gap-2">
           {canEdit && (
-            <>
-              <button
-                onClick={onAdd}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-medium bg-[#2563EB] text-white hover:bg-[#1D4ED8] transition-colors"
-              >
-                <Plus size={15} /> Add Department
-              </button>
-              <button
-                onClick={handleAutoArrange}
-                className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-medium bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1] transition-colors"
-              >
-                <LayoutGrid size={15} /> Auto-arrange
-              </button>
-            </>
+            <button
+              onClick={handleAutoArrange}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-medium bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1] transition-colors"
+            >
+              <LayoutGrid size={15} /> Auto-arrange
+            </button>
           )}
           <button
-            onClick={exportPng}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-medium bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1] transition-colors"
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-medium bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           >
-            <Download size={15} /> Export PNG
+            <Download size={15} /> {exporting ? 'Exporting…' : 'Export PNG'}
           </button>
         </div>
       </div>
@@ -274,12 +324,14 @@ function OrgChartInner({
           minZoom={0.2}
           maxZoom={2}
           proOptions={{ hideAttribution: true }}
-          // Scroll/trackpad pans; ctrl/cmd+scroll and pinch zoom.
-          panOnScroll
-          panOnScrollMode={PanOnScrollMode.Free}
+          translateExtent={translateExtent}
+          // Mirror the employee tree's scroll model: the mouse wheel scrolls the
+          // PAGE (preventScrolling=false, no panOnScroll), dragging the canvas
+          // pans, and Ctrl/⌘ + scroll or trackpad pinch zooms.
+          panOnDrag
           zoomOnScroll={false}
+          preventScrolling={false}
           zoomOnPinch
-          zoomActivationKeyCode={['Control', 'Meta']}
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
           <Controls showInteractive={false} />
@@ -331,9 +383,22 @@ export default function OrgChartPage() {
 
   const [selected, setSelected] = useState<Department | null>(null)
   const [formTarget, setFormTarget] = useState<DeptFormTarget | null>(null)
+  const [view, setView] = useState<ViewMode>('tree')
+  const [query, setQuery] = useState('')
+  const [showImport, setShowImport] = useState(false)
 
   const openEdit = useCallback((d: Department) => setFormTarget({ mode: 'edit', department: d }), [])
   const openCreate = useCallback(() => setFormTarget({ mode: 'create' }), [])
+
+  const matchCount = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return departments.length
+    return departments.filter(
+      (d) =>
+        d.name.toLowerCase().includes(q) ||
+        (d.head_user?.name ?? '').toLowerCase().includes(q),
+    ).length
+  }, [query, departments])
 
   const colorMap = useMemo(() => computeNodeColors(departments), [departments])
 
@@ -408,30 +473,91 @@ export default function OrgChartPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div>
-        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Department Structure</h1>
-        <p className="mt-1 text-[15px] text-[#475569]">
-          {canEdit
-            ? 'Drag to arrange, click a department for details, and use the pencil to edit.'
-            : 'Interactive view of your department structure and hierarchy.'}
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Department Structure</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">
+            {canEdit
+              ? 'Drag to arrange, click a department for details, and use the pencil to edit.'
+              : 'Interactive view of your department structure and hierarchy.'}
+          </p>
+        </div>
+        {canEdit && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowImport(true)}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+            >
+              <Upload size={16} />
+              Import
+            </button>
+            <button
+              onClick={openCreate}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
+            >
+              <Plus size={16} />
+              Add Department
+            </button>
+          </div>
+        )}
       </div>
 
       {departments.length === 0 ? (
         <EmptyState canEdit={canEdit} onAdd={openCreate} />
       ) : (
-        <ReactFlowProvider>
-          <OrgChartInner
-            departments={departments}
-            colorMap={colorMap}
-            canEdit={canEdit}
-            orgId={orgId}
-            onSelect={setSelected}
-            onEdit={openEdit}
-            onAdd={openCreate}
-            onDepartmentsChange={setDepartments}
-          />
-        </ReactFlowProvider>
+        <>
+          {/* Search */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1 max-w-xs">
+              <Search
+                size={15}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]"
+              />
+              <input
+                type="text"
+                placeholder="Search departments…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="w-full pl-9 pr-3 py-[10px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A] placeholder:text-[#94A3B8]"
+              />
+            </div>
+          </div>
+
+          {/* Count + view toggle */}
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm text-[#475569]">
+              {query.trim()
+                ? `${matchCount} of ${departments.length} departments`
+                : `${departments.length} department${departments.length !== 1 ? 's' : ''}`}
+            </p>
+            <ViewToggle value={view} onChange={setView} />
+          </div>
+
+          {/* Table / Tree */}
+          {view === 'table' ? (
+            <DeptTableView
+              departments={departments}
+              colorMap={colorMap}
+              query={query}
+              canEdit={canEdit}
+              onSelect={setSelected}
+              onEdit={openEdit}
+            />
+          ) : (
+            <ReactFlowProvider>
+              <OrgChartInner
+                departments={departments}
+                colorMap={colorMap}
+                canEdit={canEdit}
+                orgId={orgId}
+                query={query}
+                onSelect={setSelected}
+                onEdit={openEdit}
+                onDepartmentsChange={setDepartments}
+              />
+            </ReactFlowProvider>
+          )}
+        </>
       )}
 
       {/* Read-only detail drawer */}
@@ -459,6 +585,17 @@ export default function OrgChartPage() {
           orgId={orgId}
           onClose={() => setFormTarget(null)}
           onSaved={handleSaved}
+        />
+      )}
+
+      {/* Bulk import */}
+      {canEdit && showImport && (
+        <ImportDepartmentsModal
+          orgId={orgId}
+          departments={departments}
+          users={users}
+          onClose={() => setShowImport(false)}
+          onImported={reload}
         />
       )}
     </div>

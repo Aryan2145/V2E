@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
 import { NotificationsService } from '../notifications/notifications.service'
+import { AuditWriterService } from '../audit/audit-writer.service'
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service'
 import { ScopeService } from '../access-rights/scope.service'
 import { Principal } from '../access-rights/permissions.service'
@@ -41,6 +42,7 @@ export class TicketsService {
     private readonly notifications: NotificationsService,
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
+    private readonly auditWriter: AuditWriterService,
   ) {
     this.scope.registerWiredList(TicketsService.TICKETS_LEAF)
   }
@@ -857,6 +859,13 @@ export class TicketsService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processSlaForOrg(orgId: string, now: Date) {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'sla_breach', occurredAt: now },
+      () => this.processSlaForOrgImpl(orgId, now),
+    )
+  }
+
+  private async processSlaForOrgImpl(orgId: string, now: Date) {
     const tickets = await this.prisma.ticket.findMany({
       where: {
         organization_id: orgId,

@@ -40,7 +40,7 @@ export class PermissionsGuard implements CanActivate {
       orgId,
       {
         userId: user.id,
-        jobRoleId: user.job_role_id ?? null,
+        systemRoleId: user.system_role_id ?? null,
         isAdmin: !!user.is_admin,
         isSuperAdmin: !!user.isSuperAdmin,
       },

@@ -5,7 +5,7 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { EntitlementState } from '@prisma/client';
+import { DataScope, EntitlementState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
@@ -222,6 +222,20 @@ export class OrganizationsService {
           state: EntitlementState.full,
         })),
         skipDuplicates: true,
+      });
+
+      // Seed the locked Administrator (System) role — full access, non-editable.
+      // Custom roles are created later in the Access Control UI.
+      await tx.systemRole.create({
+        data: {
+          organization_id: organization.id,
+          name: 'Administrator',
+          description:
+            'Full access to everything. This is a system role — it cannot be edited or deleted.',
+          is_system: true,
+          is_admin: true,
+          default_scope: DataScope.org,
+        },
       });
 
       return {

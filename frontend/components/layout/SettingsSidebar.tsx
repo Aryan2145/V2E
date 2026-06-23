@@ -40,7 +40,7 @@ const ORGANIZATION_ITEMS: NavItem[] = [
   { label: 'Identity', href: '/settings/organization/company', Icon: Building2 },
   { label: 'Culture', href: '/settings/organization/culture', Icon: Heart },
   { label: 'Department Structure', href: '/settings/organization/structure', Icon: GitBranch },
-  { label: 'Roles', href: '/settings/organization/roles', Icon: Briefcase },
+  { label: 'Job Roles', href: '/settings/organization/roles', Icon: Briefcase },
   { label: 'Employees', href: '/settings/organization/employees', Icon: Users },
   { label: 'Holidays', href: '/settings/organization/holidays', Icon: CalendarDays },
 ]

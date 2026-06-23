@@ -1,10 +1,14 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Loader2, Plus, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Loader2, Plus, ChevronLeft, ChevronRight, Unlink, Undo2 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { DepartmentHoliday } from '@/lib/types/holidays'
+import { getDepartments } from '@/lib/api/departments'
+import type { DepartmentHoliday, CalendarHoliday } from '@/lib/types/holidays'
+import type { Department } from '@/lib/types'
+import Modal from '@/components/ui/Modal'
+import Button from '@/components/ui/Button'
 import DeptWorkingWeekStrip from './DeptWorkingWeekStrip'
 import OrgHolidayList from './OrgHolidayList'
 import OrgHolidayCalendar from './OrgHolidayCalendar'
@@ -28,20 +32,28 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const [holidays, setHolidays] = useState<DepartmentHoliday[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [selectedYear, setSelectedYear] = useState(YEARS_BASE)
   const [loading, setLoading] = useState(true)
   const [holidaysLoading, setHolidaysLoading] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
+
+  // Opt-out (local detach of an inherited holiday) — confirm dialog + undo toast.
+  const [optOutTarget, setOptOutTarget] = useState<CalendarHoliday | null>(null)
+  const [optingOut, setOptingOut] = useState(false)
+  const [undoToast, setUndoToast] = useState<{ id: string; name: string } | null>(null)
 
   const effectiveDays = override ? deptDays : orgWorkingDays
 
   const loadBase = useCallback(async () => {
     setLoading(true)
     try {
-      const [org, dept] = await Promise.all([
+      const [org, dept, depts] = await Promise.all([
         holidaysApi.getOrgWorkingDays(orgId),
         holidaysApi.getDeptWorkingDays(orgId, deptId),
+        getDepartments(orgId),
       ])
+      setDepartments(depts)
       setOrgWorkingDays(org.working_days)
       if (dept) {
         setOverride(true)
@@ -122,6 +134,7 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
       end_date: data.end_date || null,
       status: 'active',
       description: data.description || null,
+      target_department_ids: data.target_department_ids,
     })
     await loadHolidays()
   }
@@ -135,6 +148,34 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
     await holidaysApi.updateDeptHoliday(orgId, deptId, id, patch)
     await loadHolidays()
   }
+
+  async function confirmOptOut() {
+    if (!optOutTarget) return
+    setOptingOut(true)
+    try {
+      await holidaysApi.optOutDeptHoliday(orgId, deptId, optOutTarget.id)
+      setUndoToast({ id: optOutTarget.id, name: optOutTarget.name })
+      setOptOutTarget(null)
+      await loadHolidays()
+    } finally {
+      setOptingOut(false)
+    }
+  }
+
+  async function undoOptOut() {
+    if (!undoToast) return
+    const id = undoToast.id
+    setUndoToast(null)
+    await holidaysApi.undoOptOutDeptHoliday(orgId, deptId, id)
+    await loadHolidays()
+  }
+
+  // Auto-dismiss the undo toast after a few seconds.
+  useEffect(() => {
+    if (!undoToast) return
+    const t = setTimeout(() => setUndoToast(null), 6000)
+    return () => clearTimeout(t)
+  }, [undoToast])
 
   if (loading) {
     return (
@@ -208,6 +249,7 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
                 holidays={holidays}
                 onDelete={deleteHoliday}
                 onUpdate={updateHoliday}
+                onOptOut={(h) => setOptOutTarget(h)}
                 emptyText="No department-specific holidays."
               />
             </div>
@@ -222,7 +264,68 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
         onClose={() => setShowAdd(false)}
         onAdd={addHoliday}
         title="New Department Holiday"
+        departments={departments}
+        originDeptId={deptId}
+        originDeptName={deptName}
       />
+
+      {/* Opt-out (local detach) confirmation — amber, because it's reversible. */}
+      <Modal
+        isOpen={!!optOutTarget}
+        onClose={() => !optingOut && setOptOutTarget(null)}
+        title="Opt out of inherited holiday"
+        size="sm"
+      >
+        {optOutTarget && (
+          <div className="space-y-3">
+            <div className="flex items-start gap-2.5 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A] p-3">
+              <Unlink size={16} className="text-[#D97706] mt-0.5 shrink-0" />
+              <p className="text-sm text-[#1E293B]">
+                Remove <span className="font-semibold">{optOutTarget.name}</span>, inherited from{' '}
+                <span className="font-semibold">{optOutTarget.source_department_name}</span>, from{' '}
+                <span className="font-semibold">{deptName}</span>?
+              </p>
+            </div>
+            <ul className="text-sm text-[#475569] space-y-1.5 list-disc pl-5">
+              <li>It applies only to <span className="font-medium text-[#0F172A]">{deptName}</span> and the departments under it.</li>
+              <li><span className="font-medium text-[#0F172A]">{optOutTarget.source_department_name}</span> and all other departments keep it.</li>
+              <li>
+                {optOutTarget.source_department_head_name
+                  ? <>{optOutTarget.source_department_head_name}, head of {optOutTarget.source_department_name}, will be notified</>
+                  : <>The head of {optOutTarget.source_department_name} will be notified</>}
+                {' '}and it will be recorded in the audit log.
+              </li>
+              <li>Nothing is deleted — you can re-attach it any time.</li>
+            </ul>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <Button variant="secondary" onClick={() => setOptOutTarget(null)} disabled={optingOut}>Cancel</Button>
+              <Button
+                variant="primary"
+                onClick={confirmOptOut}
+                isLoading={optingOut}
+                disabled={optingOut}
+                className="!bg-[#D97706] hover:!bg-[#B45309]"
+              >
+                Opt out
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Undo toast — a few seconds to reverse an accidental opt-out. */}
+      {undoToast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] flex items-center gap-3 rounded-[10px] bg-[#0F172A] text-white px-4 py-3 shadow-[0_8px_28px_rgba(0,0,0,0.25)]">
+          <span className="text-sm">Opted out of <span className="font-semibold">{undoToast.name}</span></span>
+          <button
+            type="button"
+            onClick={undoOptOut}
+            className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#93C5FD] hover:text-white transition-colors"
+          >
+            <Undo2 size={14} /> Undo
+          </button>
+        </div>
+      )}
     </div>
   )
 }

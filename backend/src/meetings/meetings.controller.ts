@@ -42,7 +42,7 @@ import {
 const MEETINGS = 'meetings';
 
 function actorOf(req: any): Actor {
-  return { id: req.user.id, job_role_id: req.user.job_role_id ?? null, is_admin: !!req.user.is_admin, isSuperAdmin: !!req.user.isSuperAdmin };
+  return { id: req.user.id, system_role_id: req.user.system_role_id ?? null, is_admin: !!req.user.is_admin, isSuperAdmin: !!req.user.isSuperAdmin };
 }
 
 @ApiTags('meetings')

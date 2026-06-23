@@ -41,7 +41,7 @@ export class CreateGoalDto {
 
   @IsOptional()
   @IsEnum(GoalPerspective)
-  perspective?: GoalPerspective; // required for annual; ignored for objective/quarterly
+  perspective?: GoalPerspective; // required for annual; for quarterly defaults to the parent's; ignored for objective
 
   @IsString()
   @MaxLength(250)

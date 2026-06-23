@@ -120,7 +120,7 @@ export default function EmployeePermissionsPanel({ orgId, userId }: { orgId: str
     [registry],
   )
 
-  const jobRoleTitle = data?.job_role?.title ?? 'job role'
+  const systemRoleName = data?.system_role?.name ?? 'system role'
 
   async function changeOverride(
     featureKey: string,
@@ -190,7 +190,7 @@ export default function EmployeePermissionsPanel({ orgId, userId }: { orgId: str
           ) : (
             <>
               <p className="text-sm text-[#475569] mt-4 mb-5">
-                Baseline flows from the <span className="font-medium text-[#0F172A]">{jobRoleTitle}</span> role.
+                Baseline flows from the <span className="font-medium text-[#0F172A]">{systemRoleName}</span> system role.
                 Add a personal <span className="text-[#16A34A] font-medium">grant</span> or{' '}
                 <span className="text-[#DC2626] font-medium">revoke</span> only where this person should differ.
               </p>

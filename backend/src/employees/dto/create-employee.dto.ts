@@ -28,10 +28,15 @@ export class CreateEmployeeDto {
   @MinLength(8)
   password: string;
 
-  @ApiProperty()
+  @ApiProperty({ description: 'Job role (title / designation)' })
   @IsUUID()
   @IsNotEmpty()
   role_id: string;
+
+  @ApiProperty({ description: 'Access-rights bundle (System Role) — required' })
+  @IsUUID()
+  @IsNotEmpty()
+  system_role_id: string;
 
   @ApiProperty()
   @IsUUID()

@@ -30,12 +30,12 @@ export interface ResourcePermissions {
 
 /**
  * The acting principal, resolved from the JWT/request.
- *  - `jobRoleId` = EmployeeProfile.role_id (the functional permission baseline).
- *  - `isAdmin`   = OrganizationMember.is_admin (platform administration only).
+ *  - `systemRoleId` = EmployeeProfile.system_role_id (the access-rights bundle baseline).
+ *  - `isAdmin`      = OrganizationMember.is_admin OR the System Role's is_admin flag.
  */
 export interface Principal {
   userId: string;
-  jobRoleId: string | null;
+  systemRoleId: string | null;
   isAdmin: boolean;
   isSuperAdmin: boolean;
 }
@@ -43,13 +43,13 @@ export interface Principal {
 /** Build a Principal from the request user (jwt.strategy shape). */
 export function principalFromUser(u: {
   id: string;
-  job_role_id?: string | null;
+  system_role_id?: string | null;
   is_admin?: boolean;
   isSuperAdmin?: boolean;
 }): Principal {
   return {
     userId: u.id,
-    jobRoleId: u.job_role_id ?? null,
+    systemRoleId: u.system_role_id ?? null,
     isAdmin: !!u.is_admin,
     isSuperAdmin: !!u.isSuperAdmin,
   };
@@ -123,12 +123,12 @@ export class PermissionsService {
     });
     if (override) return override.effect === 'grant';
 
-    if (!principal.jobRoleId) return false;
+    if (!principal.systemRoleId) return false;
     const base = await this.prisma.rolePermission.findUnique({
       where: {
-        organization_id_job_role_id_feature_key_action: {
+        organization_id_system_role_id_feature_key_action: {
           organization_id: orgId,
-          job_role_id: principal.jobRoleId,
+          system_role_id: principal.systemRoleId,
           feature_key: leafKey,
           action,
         },
@@ -161,9 +161,9 @@ export class PermissionsService {
 
     // Feature leaves — batch role baseline + user overrides, fold against ceiling.
     const [baseRows, overrideRows] = await Promise.all([
-      principal.jobRoleId
+      principal.systemRoleId
         ? this.prisma.rolePermission.findMany({
-            where: { organization_id: orgId, job_role_id: principal.jobRoleId },
+            where: { organization_id: orgId, system_role_id: principal.systemRoleId },
           })
         : Promise.resolve([]),
       this.prisma.userPermissionOverride.findMany({
@@ -199,7 +199,13 @@ export class PermissionsService {
    * The effective data scope for a granted action on a scopable content leaf, or
    * `null` if the action isn't allowed / the leaf isn't scopable. Precedence mirrors
    * `hasEffective`: superadmin⇒null (no content); is_admin⇒org on read; else the
-   * widest of {granting user-override scope, role baseline scope}; null ⇒ own.
+   * widest of {granting user-override scope, resolved role-baseline scope}.
+   *
+   * The role-baseline scope follows the LIVING-DEFAULT cascade for the System Role:
+   *   line  (RolePermission.scope)
+   *     ?? module (SystemRoleModuleScope.scope for the leaf's module)
+   *     ?? global (SystemRole.default_scope)
+   *     ?? own
    */
   async scopeFor(
     orgId: string,
@@ -212,7 +218,8 @@ export class PermissionsService {
     if (!(await this.hasEffective(orgId, principal, leafKey, action))) return null;
     if (principal.isAdmin) return DataScope.org;
 
-    const [override, base] = await Promise.all([
+    const moduleKey = moduleOf(leafKey);
+    const [override, base, role, moduleScope] = await Promise.all([
       this.prisma.userPermissionOverride.findUnique({
         where: {
           organization_id_user_id_feature_key_action: {
@@ -223,14 +230,30 @@ export class PermissionsService {
           },
         },
       }),
-      principal.jobRoleId
+      principal.systemRoleId
         ? this.prisma.rolePermission.findUnique({
             where: {
-              organization_id_job_role_id_feature_key_action: {
+              organization_id_system_role_id_feature_key_action: {
                 organization_id: orgId,
-                job_role_id: principal.jobRoleId,
+                system_role_id: principal.systemRoleId,
                 feature_key: leafKey,
                 action,
+              },
+            },
+          })
+        : Promise.resolve(null),
+      principal.systemRoleId
+        ? this.prisma.systemRole.findUnique({
+            where: { id: principal.systemRoleId },
+            select: { default_scope: true },
+          })
+        : Promise.resolve(null),
+      principal.systemRoleId && moduleKey
+        ? this.prisma.systemRoleModuleScope.findUnique({
+            where: {
+              system_role_id_module_key: {
+                system_role_id: principal.systemRoleId,
+                module_key: moduleKey,
               },
             },
           })
@@ -239,7 +262,9 @@ export class PermissionsService {
 
     const scopes: DataScope[] = [];
     if (override?.effect === 'grant' && override.scope) scopes.push(override.scope);
-    if (base?.allowed && base.scope) scopes.push(base.scope);
+    if (base?.allowed) {
+      scopes.push(base.scope ?? moduleScope?.scope ?? role?.default_scope ?? DEFAULT_SCOPE);
+    }
     return scopes.length ? widestScope(scopes) : DEFAULT_SCOPE;
   }
 
@@ -254,23 +279,38 @@ export class PermissionsService {
     const out: Record<string, Partial<Record<PermissionAction, DataScope>>> = {};
     if (principal.isSuperAdmin) return out; // vendor reads no content
 
-    const [entRows, baseRows, overrideRows] = await Promise.all([
+    const [entRows, baseRows, overrideRows, role, moduleScopeRows] = await Promise.all([
       this.prisma.orgModuleEntitlement.findMany({ where: { organization_id: orgId } }),
-      principal.jobRoleId
+      principal.systemRoleId
         ? this.prisma.rolePermission.findMany({
-            where: { organization_id: orgId, job_role_id: principal.jobRoleId },
+            where: { organization_id: orgId, system_role_id: principal.systemRoleId },
           })
         : Promise.resolve([]),
       this.prisma.userPermissionOverride.findMany({
         where: { organization_id: orgId, user_id: principal.userId },
       }),
+      principal.systemRoleId
+        ? this.prisma.systemRole.findUnique({
+            where: { id: principal.systemRoleId },
+            select: { default_scope: true },
+          })
+        : Promise.resolve(null),
+      principal.systemRoleId
+        ? this.prisma.systemRoleModuleScope.findMany({
+            where: { system_role_id: principal.systemRoleId },
+          })
+        : Promise.resolve([]),
     ]);
     const entByModule = new Map(entRows.map((r) => [r.module_key, r.state]));
     const baseByKey = new Map(baseRows.map((r) => [`${r.feature_key}:${r.action}`, r]));
     const ovByKey = new Map(overrideRows.map((r) => [`${r.feature_key}:${r.action}`, r]));
+    const moduleScopeByModule = new Map(moduleScopeRows.map((r) => [r.module_key, r.scope]));
+    const defaultScope = role?.default_scope ?? DEFAULT_SCOPE;
 
     for (const leaf of SCOPABLE_LEAVES) {
       const state = isEntitlementControlled(leaf) ? entByModule.get(moduleOf(leaf)!) ?? 'off' : 'full';
+      // Resolved cascade fallback for this leaf's module (line tier handled per-row below).
+      const cascadeScope = moduleScopeByModule.get(moduleOf(leaf)!) ?? defaultScope;
       const perAction: Partial<Record<PermissionAction, DataScope>> = {};
       for (const action of actionsFor(leaf)) {
         if (!this.ceilingAllows(state, action)) continue;
@@ -289,7 +329,7 @@ export class PermissionsService {
           allowed = base?.allowed ?? false;
           scope = base?.scope ?? null;
         }
-        if (allowed) perAction[action] = scope ?? DEFAULT_SCOPE;
+        if (allowed) perAction[action] = scope ?? cascadeScope;
       }
       if (Object.keys(perAction).length) out[leaf] = perAction;
     }

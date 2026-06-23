@@ -6,8 +6,8 @@ import MainLayout from '@/components/layout/MainLayout'
 
 const TABS = [
   { label: 'Objectives', href: '/goals/objectives' },
-  { label: 'Annual Goals', href: '/goals/annual' },
-  { label: 'Quarterly Goals', href: '/goals/quarterly' },
+  { label: 'Goals', href: '/goals/annual' },
+  { label: 'Sub-goals', href: '/goals/quarterly' },
   { label: 'Balanced Scorecard', href: '/goals/scorecard' },
 ]
 

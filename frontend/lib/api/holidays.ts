@@ -104,18 +104,38 @@ export const holidaysApi = {
     return unwrap<DepartmentHoliday[]>(res)
   },
 
-  createDeptHoliday: async (orgId: string, deptId: string, dto: Omit<DepartmentHoliday, 'id' | 'organization_id' | 'department_id' | 'created_at' | 'updated_at'>): Promise<DepartmentHoliday> => {
+  createDeptHoliday: async (
+    orgId: string,
+    deptId: string,
+    dto: Omit<DepartmentHoliday, 'id' | 'organization_id' | 'department_id' | 'created_at' | 'updated_at'>
+      & { target_department_ids?: string[] },
+  ): Promise<DepartmentHoliday> => {
     const res = await apiClient.post(`${base(orgId)}/dept/${deptId}/holidays`, dto)
     return unwrap<DepartmentHoliday>(res)
   },
 
-  updateDeptHoliday: async (orgId: string, deptId: string, id: string, dto: Partial<DepartmentHoliday>): Promise<DepartmentHoliday> => {
+  updateDeptHoliday: async (
+    orgId: string,
+    deptId: string,
+    id: string,
+    dto: Partial<DepartmentHoliday> & { target_department_ids?: string[] },
+  ): Promise<DepartmentHoliday> => {
     const res = await apiClient.patch(`${base(orgId)}/dept/${deptId}/holidays/${id}`, dto)
     return unwrap<DepartmentHoliday>(res)
   },
 
   deleteDeptHoliday: async (orgId: string, deptId: string, id: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/dept/${deptId}/holidays/${id}`)
+  },
+
+  /** Opt this department (and its descendants) out of an inherited holiday — a local detach. */
+  optOutDeptHoliday: async (orgId: string, deptId: string, id: string): Promise<void> => {
+    await apiClient.post(`${base(orgId)}/dept/${deptId}/holidays/${id}/opt-out`)
+  },
+
+  /** Reverse a local opt-out (re-attach the inherited holiday). */
+  undoOptOutDeptHoliday: async (orgId: string, deptId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/dept/${deptId}/holidays/${id}/opt-out`)
   },
 
   // ─── Individual working days ───────────────────────────────────────────────

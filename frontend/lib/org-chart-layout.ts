@@ -63,6 +63,42 @@ export function computeTreeLayout(departments: Department[]): Record<string, XY>
   return pos
 }
 
+export interface FlatDept {
+  department: Department
+  depth: number
+  /** The parent department, or null for a top-level (root) department. */
+  parent: Department | null
+}
+
+/**
+ * Flatten the department tree into a depth-first **pre-order** list:
+ * each parent is immediately followed by its full subtree, then the next
+ * parent — so the list reads top-down like an indented org outline.
+ * Siblings (and roots) are ordered alphabetically for a stable table.
+ * Any orphaned cycle members are appended at the end so nothing is dropped.
+ */
+export function flattenDepartmentTree(departments: Department[]): FlatDept[] {
+  const { children, roots } = buildChildren(departments)
+  const byId = new Map(departments.map((d) => [d.id, d]))
+  const byName = (a: string, b: string) =>
+    byId.get(a)!.name.localeCompare(byId.get(b)!.name, undefined, { sensitivity: 'base' })
+
+  const out: FlatDept[] = []
+  const seen = new Set<string>()
+  const walk = (id: string, depth: number, parent: Department | null) => {
+    if (seen.has(id)) return
+    seen.add(id)
+    out.push({ department: byId.get(id)!, depth, parent })
+    for (const child of (children.get(id) ?? []).slice().sort(byName)) {
+      walk(child, depth + 1, byId.get(id)!)
+    }
+  }
+  for (const r of roots.slice().sort(byName)) walk(r, 0, null)
+  // Safety net: surface anything unreachable (e.g. a parent cycle).
+  for (const d of departments) if (!seen.has(d.id)) out.push({ department: d, depth: 0, parent: null })
+  return out
+}
+
 /**
  * A sensible position for a NEW department: directly below its parent, offset by
  * the number of existing siblings so it doesn't overlap them. Top-level depts go

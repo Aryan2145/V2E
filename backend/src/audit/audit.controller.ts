@@ -24,6 +24,8 @@ export class AuditController {
     @Query('entity_id') entity_id?: string,
     @Query('action') action?: string,
     @Query('actor_user_id') actor_user_id?: string,
+    @Query('actor_type') actor_type?: string,
+    @Query('trigger_source') trigger_source?: string,
     @Query('from_date') from_date?: string,
     @Query('to_date') to_date?: string,
     @Query('search') search?: string,
@@ -35,11 +37,24 @@ export class AuditController {
       entity_id,
       action,
       actor_user_id,
+      actor_type,
+      trigger_source,
       from_date,
       to_date,
       search,
       skip: skip ? Number(skip) : undefined,
       take: take ? Number(take) : undefined,
     });
+  }
+
+  @Get('resources')
+  @RequirePermission(ACCESS_RIGHTS_RESOURCE, PermissionAction.read)
+  @ApiOperation({ summary: 'Distinct resources + trigger sources for filters' })
+  async resources(@Param('orgId') orgId: string) {
+    const [resources, trigger_sources] = await Promise.all([
+      this.audit.resources(orgId),
+      this.audit.triggerSources(orgId),
+    ]);
+    return { resources, trigger_sources };
   }
 }

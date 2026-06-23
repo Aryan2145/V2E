@@ -3,6 +3,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AuditWriterService } from '../audit/audit-writer.service';
 import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
 
 @Injectable()
@@ -13,6 +14,7 @@ export class SchedulerService {
     private readonly prisma: PrismaService,
     private readonly holidaysService: HolidaysService,
     private readonly notifications: NotificationsService,
+    private readonly auditWriter: AuditWriterService,
   ) {}
 
   // ─── Recurring Task Spawn Engine ──────────────────────────────────────────────
@@ -41,6 +43,13 @@ export class SchedulerService {
   // Org-scoped, now-injected spawn — used by the midnight cron (real now) and by
   // ReplayService (a simulated day instant) so both paths share identical logic.
   async spawnRecurringForOrg(orgId: string, now: Date): Promise<{ spawned: number }> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'recurring_spawn', occurredAt: now },
+      () => this.spawnRecurringForOrgImpl(orgId, now),
+    );
+  }
+
+  private async spawnRecurringForOrgImpl(orgId: string, now: Date): Promise<{ spawned: number }> {
     const entries = await this.prisma.recurringScheduleEntry.findMany({
       where: { is_active: true, organization_id: orgId, template: { is_active: true } },
       include: { template: true },
@@ -225,6 +234,13 @@ export class SchedulerService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processRemindersForOrg(orgId: string, now: Date): Promise<number> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'reminder', occurredAt: now },
+      () => this.processRemindersForOrgImpl(orgId, now),
+    );
+  }
+
+  private async processRemindersForOrgImpl(orgId: string, now: Date): Promise<number> {
     const dueReminders = await this.prisma.taskReminder.findMany({
       where: { organization_id: orgId, remind_at: { lte: now }, is_sent: false },
       take: 500,
@@ -300,6 +316,13 @@ export class SchedulerService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processMeetingRemindersForOrg(orgId: string, now: Date): Promise<number> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'meeting_reminder', occurredAt: now },
+      () => this.processMeetingRemindersForOrgImpl(orgId, now),
+    );
+  }
+
+  private async processMeetingRemindersForOrgImpl(orgId: string, now: Date): Promise<number> {
     const windowEnd = new Date(now.getTime() + 15 * 60_000);
     const due = await this.prisma.meeting.findMany({
       where: {
@@ -360,6 +383,13 @@ export class SchedulerService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processEscalationsForOrg(orgId: string, now: Date): Promise<number> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'escalation', occurredAt: now },
+      () => this.processEscalationsForOrgImpl(orgId, now),
+    );
+  }
+
+  private async processEscalationsForOrgImpl(orgId: string, now: Date): Promise<number> {
     const overdueTasks = await this.prisma.task.findMany({
       where: {
         organization_id: orgId,
@@ -424,6 +454,13 @@ export class SchedulerService {
   // Daily-frequency demands fold into that day's Daily Update (no separate chase);
   // any other frequency stands alone with its own deadline + a notification.
   async spawnDemandedLogsForOrg(orgId: string, now: Date): Promise<{ spawned: number }> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'demand_spawn', occurredAt: now },
+      () => this.spawnDemandedLogsForOrgImpl(orgId, now),
+    );
+  }
+
+  private async spawnDemandedLogsForOrgImpl(orgId: string, now: Date): Promise<{ spawned: number }> {
     const entries = await this.prisma.workLogDemandSchedule.findMany({
       where: { is_active: true, organization_id: orgId, demand: { is_active: true } },
       include: { demand: true },
@@ -501,6 +538,60 @@ export class SchedulerService {
     });
 
     return { spawned };
+  }
+
+  // ─── Auto-Overdue Detection ───────────────────────────────────────────────────
+  // Task "overdue" is otherwise computed at read time and thus invisible to audit.
+  // This sweep PERSISTS the transition (is_overdue false→true) so it flows through
+  // the Prisma audit extension as a system entry (trigger 'auto_overdue'). Idempotent
+  // via the is_overdue flag (mirrors Ticket.sla_breached); replays deterministically.
+
+  @Cron(CronExpression.EVERY_HOUR)
+  async detectTaskOverdue() {
+    const now = new Date();
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+    let flagged = 0;
+    for (const org of orgs) flagged += await this.detectTaskOverdueForOrg(org.id, now);
+    if (flagged > 0) this.logger.log(`Auto-overdue: ${flagged} task(s) marked overdue`);
+  }
+
+  // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
+  async detectTaskOverdueForOrg(orgId: string, now: Date): Promise<number> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'auto_overdue', occurredAt: now },
+      () => this.detectTaskOverdueForOrgImpl(orgId, now),
+    );
+  }
+
+  private async detectTaskOverdueForOrgImpl(orgId: string, now: Date): Promise<number> {
+    const tasks = await this.prisma.task.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        is_overdue: false,
+        deadline: { lt: now },
+        status: { type: { not: 'completed' } },
+      },
+      select: { id: true },
+    });
+
+    let flagged = 0;
+    for (const task of tasks) {
+      try {
+        // Per-row update so the extension emits one audit entry per task.
+        await this.prisma.task.update({
+          where: { id: task.id },
+          data: { is_overdue: true, overdue_at: now },
+        });
+        flagged++;
+      } catch (err) {
+        this.logger.error(`Failed to mark task ${task.id} overdue: ${err}`);
+      }
+    }
+    return flagged;
   }
 }
 

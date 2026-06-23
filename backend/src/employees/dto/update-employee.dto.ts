@@ -14,6 +14,11 @@ export class UpdateEmployeeDto {
   @IsOptional()
   role_id?: string;
 
+  @ApiPropertyOptional({ description: 'Access-rights bundle (System Role)' })
+  @IsUUID()
+  @IsOptional()
+  system_role_id?: string;
+
   @ApiPropertyOptional()
   @IsUUID()
   @IsOptional()

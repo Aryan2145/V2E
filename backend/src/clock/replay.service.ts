@@ -85,6 +85,7 @@ export class ReplayService {
       await this.workflow.processOverdueStepsForOrg(orgId, to);
       await this.tickets.processSlaForOrg(orgId, to);
       await this.notifications.processOverdueNotificationsForOrg(orgId, to);
+      await this.scheduler.detectTaskOverdueForOrg(orgId, to);
 
       await this.prisma.organization.update({
         where: { id: orgId },

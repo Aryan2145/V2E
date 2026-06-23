@@ -26,11 +26,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const organizationId = payload.organizationId ?? null;
 
     // A user can now have one profile PER organization — resolve, for the org this
-    // token is scoped to: the org's test flag, the employee profile (+ its job role),
-    // and the membership's admin flag. Job role + is_admin drive the four-layer model.
+    // token is scoped to: the org's test flag, the employee profile (+ its System
+    // Role), and the membership's admin flag. System Role + is_admin drive the
+    // four-layer model; admin = platform-admin flag OR the System Role's is_admin.
     let isTestOrg = false;
     let employeeProfileId: string | null = null;
-    let jobRoleId: string | null = null;
+    let systemRoleId: string | null = null;
     let isAdmin = false;
     if (organizationId) {
       const [org, profile, member] = await Promise.all([
@@ -40,7 +41,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         }),
         this.prisma.employeeProfile.findFirst({
           where: { user_id: user.id, organization_id: organizationId },
-          select: { id: true, role_id: true },
+          select: { id: true, system_role_id: true, system_role: { select: { is_admin: true } } },
         }),
         this.prisma.organizationMember.findUnique({
           where: { organization_id_user_id: { organization_id: organizationId, user_id: user.id } },
@@ -49,8 +50,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       ]);
       isTestOrg = org?.is_test ?? false;
       employeeProfileId = profile?.id ?? null;
-      jobRoleId = profile?.role_id ?? null;
-      isAdmin = member?.is_admin ?? false;
+      systemRoleId = profile?.system_role_id ?? null;
+      isAdmin = (member?.is_admin ?? false) || (profile?.system_role?.is_admin ?? false);
     }
 
     return {
@@ -60,7 +61,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       isSuperAdmin: user.is_super_admin,
       organizationId,
       is_admin: isAdmin,
-      job_role_id: jobRoleId,
+      system_role_id: systemRoleId,
       isTestOrg,
       employee_profile_id: employeeProfileId,
     };

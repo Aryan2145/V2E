@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Pencil, Trash2, RefreshCw, Check, X } from 'lucide-react'
+import { Pencil, Trash2, RefreshCw, Check, X, Unlink, GitBranch } from 'lucide-react'
 import type { CalendarHoliday, HolidayType } from '@/lib/types/holidays'
 import { parseLocalDate, dateOnly } from '@/lib/date'
 import Modal from '@/components/ui/Modal'
@@ -31,6 +31,11 @@ interface Props {
   onDelete: (id: string) => void
   onUpdate: (id: string, patch: { name?: string; date?: string }) => void
   emptyText?: string
+  /**
+   * When provided, inherited (cascaded) holidays show an "Inherited from …" badge
+   * and an unlink action that calls this instead of edit/delete — a local opt-out.
+   */
+  onOptOut?: (h: CalendarHoliday) => void
 }
 
 /**
@@ -38,7 +43,7 @@ interface Props {
  * stacked over the day/month (e.g. "MON / 26 Jan") — then the name, a type tag, and
  * bare pencil/trash actions.
  */
-export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText = 'No holidays added.' }: Props) {
+export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText = 'No holidays added.', onOptOut }: Props) {
   const [editing, setEditing] = useState<EditState | null>(null)
   const [toDelete, setToDelete] = useState<CalendarHoliday | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -127,6 +132,18 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
               {isRange && (
                 <p className="text-xs text-[#94A3B8] truncate">{dayMonth} – {endDayMonth}</p>
               )}
+              {h.inherited && h.source_department_name && (
+                <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-[#0369A1] bg-[#E0F2FE] border border-[#BAE6FD] rounded-full px-2 py-0.5">
+                  <GitBranch size={11} />
+                  Inherited from {h.source_department_name}
+                </span>
+              )}
+              {!h.inherited && (h.cascade_target_count ?? 0) > 0 && (
+                <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-[#475569]" title="Cascaded to sub-departments">
+                  <GitBranch size={11} className="text-[#94A3B8]" />
+                  Shared with {h.cascade_target_count} sub-department{h.cascade_target_count === 1 ? '' : 's'}
+                </span>
+              )}
             </div>
 
             <span className={`shrink-0 text-[11px] font-medium px-2 py-0.5 rounded-full border ${TYPE_COLORS[h.type]}`}>
@@ -143,22 +160,37 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
               </span>
             )}
 
-            <button
-              type="button"
-              onClick={() => startEdit(h)}
-              className="p-1.5 rounded-[6px] hover:bg-[#EFF6FF] text-[#475569] hover:text-[#2563EB] transition-colors shrink-0"
-              title="Edit"
-            >
-              <Pencil size={13} />
-            </button>
-            <button
-              type="button"
-              onClick={() => setToDelete(h)}
-              className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#475569] hover:text-[#DC2626] transition-colors shrink-0"
-              title="Delete"
-            >
-              <Trash2 size={13} />
-            </button>
+            {h.inherited ? (
+              onOptOut && (
+                <button
+                  type="button"
+                  onClick={() => onOptOut(h)}
+                  className="p-1.5 rounded-[6px] hover:bg-[#FEF3C7] text-[#475569] hover:text-[#D97706] transition-colors shrink-0"
+                  title="Opt out (remove for this department and its sub-departments)"
+                >
+                  <Unlink size={13} />
+                </button>
+              )
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => startEdit(h)}
+                  className="p-1.5 rounded-[6px] hover:bg-[#EFF6FF] text-[#475569] hover:text-[#2563EB] transition-colors shrink-0"
+                  title="Edit"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToDelete(h)}
+                  className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#475569] hover:text-[#DC2626] transition-colors shrink-0"
+                  title="Delete"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </>
+            )}
           </div>
         )
       })}

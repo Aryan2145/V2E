@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsEnum, IsInt, IsBoolean, IsArray, Min } from 'class-validator'
+import { IsString, IsOptional, IsEnum, IsInt, IsBoolean, Min } from 'class-validator'
 import { HolidayOnTaskAction, HolidayPriorityLevel } from '@prisma/client'
 
 export class UpdateHolidayMasterDto {
@@ -7,7 +7,4 @@ export class UpdateHolidayMasterDto {
   @IsOptional() @IsEnum(HolidayPriorityLevel) priority_level?: HolidayPriorityLevel
   @IsOptional() @IsInt() @Min(1) pending_review_deadline_days?: number
   @IsOptional() @IsBoolean() auto_apply_if_not_reviewed?: boolean
-  @IsOptional() @IsArray() @IsString({ each: true }) org_holiday_manage_roles?: string[]
-  @IsOptional() @IsArray() @IsString({ each: true }) dept_holiday_manage_roles?: string[]
-  @IsOptional() @IsArray() @IsString({ each: true }) individual_holiday_manage_roles?: string[]
 }

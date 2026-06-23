@@ -1,8 +1,10 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { getDepartments } from '@/lib/api/departments'
+import { flattenTree } from '@/lib/dept-tree'
+import { computeNodeColors } from '@/lib/org-chart-colors'
 import type { Department } from '@/lib/types'
 import { Loader2, ChevronRight } from 'lucide-react'
 import DepartmentCalendarPanel from '@/components/holidays/DepartmentCalendarPanel'
@@ -14,6 +16,10 @@ export default function DepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Department | null>(null)
+
+  // Render the list as the department tree — children indented under their parent.
+  const flat = useMemo(() => flattenTree(departments), [departments])
+  const colors = useMemo(() => computeNodeColors(departments), [departments])
 
   useEffect(() => {
     if (!orgId) return
@@ -50,19 +56,26 @@ export default function DepartmentsPage() {
               <p className="text-xs font-semibold text-[#475569] uppercase tracking-wide">Departments</p>
             </div>
             <div className="divide-y divide-[#E2E8F0] max-h-[calc(100vh-260px)] overflow-y-auto">
-              {departments.map((dept) => (
+              {flat.map(({ dept, depth }) => (
                 <button
                   key={dept.id}
                   type="button"
                   onClick={() => setSelected(dept)}
+                  style={{ paddingLeft: 16 + depth * 16 }}
                   className={[
-                    'w-full flex items-center justify-between px-4 py-3 text-sm text-left transition-colors',
+                    'w-full flex items-center justify-between gap-2 pr-4 py-3 text-sm text-left transition-colors',
                     selected?.id === dept.id
                       ? 'bg-[#EFF6FF] text-[#2563EB] font-semibold'
                       : 'text-[#0F172A] hover:bg-[#F8FAFC]',
                   ].join(' ')}
                 >
-                  <span className="truncate">{dept.name}</span>
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: colors[dept.id]?.base || '#94A3B8' }}
+                    />
+                    <span className="truncate">{dept.name}</span>
+                  </span>
                   <ChevronRight size={14} className="shrink-0 text-[#94A3B8]" />
                 </button>
               ))}

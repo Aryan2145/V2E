@@ -29,6 +29,7 @@ import { ClockModule } from './clock/clock.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { AssigneeVisibilityModule } from './assignee-visibility/assignee-visibility.module';
 import { AuditModule } from './audit/audit.module';
+import { AuditClsModule } from './common/cls/audit-cls.module';
 import { AccessRightsModule } from './access-rights/access-rights.module';
 import { GoalsModule } from './goals/goals.module';
 import { MeetingsModule } from './meetings/meetings.module';
@@ -38,6 +39,7 @@ import { WorkLogsModule } from './work-logs/work-logs.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     ScheduleModule.forRoot(),
+    AuditClsModule,
     PrismaModule,
     SchedulerModule,
     ClockModule,

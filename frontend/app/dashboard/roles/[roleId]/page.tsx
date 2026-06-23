@@ -117,10 +117,10 @@ export default function RoleDetailPage() {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
         <Briefcase size={36} className="text-[#94A3B8] mb-3" />
-        <p className="text-lg font-semibold text-[#0F172A]">Role not found</p>
+        <p className="text-lg font-semibold text-[#0F172A]">Job role not found</p>
         <Link href="/dashboard/roles" className="mt-4">
           <Button variant="secondary" size="sm">
-            <ArrowLeft size={14} /> Back to roles
+            <ArrowLeft size={14} /> Back to job roles
           </Button>
         </Link>
       </div>
@@ -135,7 +135,7 @@ export default function RoleDetailPage() {
         className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors"
       >
         <ArrowLeft size={15} />
-        All Roles
+        All Job Roles
       </Link>
 
       {/* Role header */}

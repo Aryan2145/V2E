@@ -63,7 +63,7 @@ export default function ScorecardPage() {
       <div className="mb-5">
         <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">Balanced Scorecard</h1>
         <p className="text-sm text-[#475569] mt-1">
-          Annual goals across the four perspectives. Click a quadrant to drill into its goals.
+          Goals across the four perspectives. Click a quadrant to drill into its goals.
         </p>
       </div>
 
@@ -89,7 +89,7 @@ export default function ScorecardPage() {
                     </div>
                     <p className="text-[34px] font-bold text-[#0F172A] leading-none mt-3">{q.goal_count}</p>
                     <p className="text-sm text-[#475569] mt-1">
-                      annual goal{q.goal_count === 1 ? '' : 's'}
+                      goal{q.goal_count === 1 ? '' : 's'}
                     </p>
                     <span className="inline-flex items-center gap-1 text-sm font-medium text-[#2563EB] mt-4 group-hover:gap-2 transition-all">
                       View goals <ArrowRight size={15} />

@@ -16,7 +16,9 @@ import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EmployeesService } from './employees.service';
+import { EmployeeImportService } from './employee-import.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { BulkImportEmployeesDto } from './dto/bulk-import-employee.dto';
@@ -30,7 +32,10 @@ class UpdateStatusDto {
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/employees')
 export class EmployeesController {
-  constructor(private readonly employeesService: EmployeesService) {}
+  constructor(
+    private readonly employeesService: EmployeesService,
+    private readonly importService: EmployeeImportService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List all employees in the organization' })
@@ -53,6 +58,13 @@ export class EmployeesController {
     return this.employeesService.getPeopleEvents(orgId, window ? parseInt(window, 10) : 30);
   }
 
+  @Get('imports')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Import history — past import batches with undo eligibility' })
+  listImports(@Param('orgId') orgId: string) {
+    return this.importService.listImportBatches(orgId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get full employee profile with reporting chain' })
   findOne(@Param('orgId') orgId: string, @Param('id') id: string) {
@@ -66,11 +78,29 @@ export class EmployeesController {
     return this.employeesService.create(orgId, dto);
   }
 
-  @Post('bulk-import')
+  @Post('bulk-import/validate')
   @RequirePermission('employees.profile.manage', PermissionAction.write)
-  @ApiOperation({ summary: 'Bulk-create employees from CSV rows (resolved by name/email)' })
-  bulkImport(@Param('orgId') orgId: string, @Body() dto: BulkImportEmployeesDto) {
-    return this.employeesService.bulkImport(orgId, dto.rows);
+  @ApiOperation({ summary: 'Dry-run: validate import rows, resolve refs, flag duplicates (no writes)' })
+  validateImport(@Param('orgId') orgId: string, @Body() dto: BulkImportEmployeesDto) {
+    return this.importService.validateImport(orgId, dto.rows);
+  }
+
+  @Post('bulk-import/commit')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Commit an import — writes valid rows and records an undoable batch' })
+  commitImport(
+    @Param('orgId') orgId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: BulkImportEmployeesDto,
+  ) {
+    return this.importService.commitImport(orgId, userId, dto.rows, dto.file_name);
+  }
+
+  @Post('imports/:batchId/undo')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Guarded undo of an import batch (window-limited, skips rows with activity)' })
+  undoImport(@Param('orgId') orgId: string, @Param('batchId') batchId: string) {
+    return this.importService.undoImport(orgId, batchId);
   }
 
   @Patch(':id')
