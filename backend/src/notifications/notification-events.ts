@@ -13,6 +13,8 @@ export const NOTIF_EVENTS = {
     'task_overdue_followup',
     'task_escalated',
     'recurring_spawned',
+    'assignee_on_leave_conflict', // new leave overlaps an existing task's deadline
+    'recurring_assignee_on_leave', // upcoming recurring occurrence lands on an assignee's leave
   ],
   projects: ['project_created', 'project_member_added', 'milestone_completed'],
   workflows: [
@@ -42,6 +44,7 @@ export const NOTIF_EVENTS = {
   ],
   communication: [],
   system: [],
+  leave: ['leave_requested', 'leave_decided', 'leave_overridden'],
 } as const;
 
 export type NotifModule = keyof typeof NOTIF_EVENTS;

@@ -27,6 +27,11 @@ class UpdateStatusDto {
   status: EmployeeStatus;
 }
 
+class UpdateMyProfileDto {
+  date_of_birth?: string | null;
+  marriage_date?: string | null;
+}
+
 @ApiTags('employees')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
@@ -63,6 +68,22 @@ export class EmployeesController {
   @ApiOperation({ summary: 'Import history — past import batches with undo eligibility' })
   listImports(@Param('orgId') orgId: string) {
     return this.importService.listImportBatches(orgId);
+  }
+
+  @Get('me')
+  @ApiOperation({ summary: "The caller's own employee profile (self-service)" })
+  findMine(@Param('orgId') orgId: string, @CurrentUser('id') userId: string) {
+    return this.employeesService.findMine(orgId, userId);
+  }
+
+  @Patch('me')
+  @ApiOperation({ summary: 'Self-edit personal fields (date of birth, marriage date) only' })
+  updateMine(
+    @Param('orgId') orgId: string,
+    @CurrentUser('id') userId: string,
+    @Body() body: UpdateMyProfileDto,
+  ) {
+    return this.employeesService.updateMine(orgId, userId, body);
   }
 
   @Get(':id')
@@ -116,7 +137,7 @@ export class EmployeesController {
 
   @Patch(':id/status')
   @RequireAdmin()
-  @ApiOperation({ summary: 'Update employee status (active/inactive/on_leave)' })
+  @ApiOperation({ summary: 'Update employee status (active/inactive)' })
   @ApiBody({ type: UpdateStatusDto })
   updateStatus(
     @Param('orgId') orgId: string,

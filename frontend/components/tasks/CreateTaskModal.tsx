@@ -14,6 +14,10 @@ import type { HolidayCheckResult } from '@/lib/types/holidays'
 // import QuadrantBadge from './QuadrantBadge'
 import AssigneeSelector from './AssigneeSelector'
 import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
+import LeaveWarningBadge from '@/components/leave/LeaveWarningBadge'
+import { leaveApi } from '@/lib/api/leave'
+import type { LeaveAvailability } from '@/lib/types/leave'
+import { expandLeaveDays, leaveHorizon } from '@/lib/leave-availability'
 
 interface ChecklistEntry {
   title: string
@@ -77,11 +81,32 @@ export default function CreateTaskModal({
   const [error, setError] = useState<string | null>(null)
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
   const holidayDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [leaveAvail, setLeaveAvail] = useState<LeaveAvailability | null>(null)
   // Portal target only exists on the client — guard against SSR mismatch.
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  const primaryAssigneeCount = assignees.filter((a) => !a.is_cc).length
+  const primaryAssignees = assignees.filter((a) => !a.is_cc)
+  const primaryAssigneeCount = primaryAssignees.length
+  const primaryIdsKey = primaryAssignees.map((a) => a.user_id).sort().join(',')
+
+  // Fetch leave windows for the selected (primary) assignees over a bounded horizon.
+  // Drives both the deadline warning and the date-picker dots. Non-blocking.
+  useEffect(() => {
+    const ids = primaryIdsKey ? primaryIdsKey.split(',') : []
+    if (ids.length === 0 || !orgId) { setLeaveAvail(null); return }
+    let cancelled = false
+    leaveApi
+      .availability(orgId, ids, todayStr, leaveHorizon())
+      .then((res) => { if (!cancelled) setLeaveAvail(res) })
+      .catch(() => { if (!cancelled) setLeaveAvail(null) })
+    return () => { cancelled = true }
+  }, [primaryIdsKey, orgId, todayStr])
+
+  const leaveMarkedDays = React.useMemo(
+    () => expandLeaveDays(leaveAvail, todayStr, leaveHorizon()),
+    [leaveAvail, todayStr],
+  )
 
   useEffect(() => {
     if (primaryAssigneeCount <= 1) setCompletionMode('any_can_complete')
@@ -313,6 +338,8 @@ export default function CreateTaskModal({
                   min={todayStr}
                   max="2100-12-31"
                   placeholder="Select date"
+                  markedDates={leaveMarkedDays}
+                  markedHint="An assignee is on leave"
                 />
               </div>
 
@@ -328,6 +355,7 @@ export default function CreateTaskModal({
             </div>
 
             <HolidayWarningBadge check={holidayCheck} />
+            {deadlineDate && <LeaveWarningBadge availability={leaveAvail} deadline={deadlineDate} today={todayStr} />}
           </div>
 
           {/* Description */}

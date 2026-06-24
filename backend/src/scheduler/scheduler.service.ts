@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditWriterService } from '../audit/audit-writer.service';
+import { LeaveService } from '../leave/leave.service';
 import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
 
 @Injectable()
@@ -15,6 +16,7 @@ export class SchedulerService {
     private readonly holidaysService: HolidaysService,
     private readonly notifications: NotificationsService,
     private readonly auditWriter: AuditWriterService,
+    private readonly leave: LeaveService,
   ) {}
 
   // ─── Recurring Task Spawn Engine ──────────────────────────────────────────────
@@ -38,6 +40,77 @@ export class SchedulerService {
     }
 
     this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
+  }
+
+  // ─── Recurring leave look-ahead ───────────────────────────────────────────────
+  // Warn a recurring template's creator in advance when an upcoming occurrence lands
+  // on a date one of its assignees will be on leave. Lead time is per-org config.
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async warnRecurringLeaveConflicts() {
+    const now = new Date();
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+    for (const org of orgs) {
+      try {
+        await this.warnRecurringLeaveForOrg(org.id, now);
+      } catch (err) {
+        this.logger.warn(`Recurring leave look-ahead failed for org ${org.id}: ${err}`);
+      }
+    }
+  }
+
+  async warnRecurringLeaveForOrg(orgId: string, now: Date): Promise<void> {
+    const cfg = await this.leave.getConfig(orgId);
+    const notice = cfg.recurringNoticeDays;
+    if (notice <= 0) return;
+
+    const entries = await this.prisma.recurringScheduleEntry.findMany({
+      where: { is_active: true, organization_id: orgId, template: { is_active: true } },
+      include: { template: true },
+    });
+    if (entries.length === 0) return;
+
+    const today = new Date(now);
+    today.setHours(0, 0, 0, 0);
+
+    for (const entry of entries) {
+      const assigneeIds = Array.isArray(entry.template.assignee_user_ids)
+        ? (entry.template.assignee_user_ids as string[])
+        : [];
+      if (assigneeIds.length === 0) continue;
+
+      for (let d = 1; d <= notice; d++) {
+        const date = new Date(today);
+        date.setDate(today.getDate() + d);
+        if (!shouldEntryFireToday(entry, date)) continue;
+
+        const onLeave = await this.leave.onLeaveTodayMap(orgId, assigneeIds, date);
+        if (onLeave.size === 0) continue;
+
+        const ids = Array.from(onLeave.keys());
+        const users = await this.prisma.user.findMany({
+          where: { id: { in: ids } },
+          select: { name: true },
+        });
+        const names = users.map((u) => u.name).join(', ');
+        const dateStr = date.toISOString().slice(0, 10);
+        await this.notifications.emit({
+          orgId,
+          module: 'tasks',
+          event_type: 'recurring_assignee_on_leave',
+          recipients: [entry.template.created_by_user_id],
+          title: 'Upcoming recurring task — assignee on leave',
+          body: `On ${dateStr}, "${entry.template.title}" is due but ${names} will be on leave.`,
+          link: '/dashboard/tasks/recurring',
+          // Composite id → dedupe per template + occurrence date.
+          entity: { type: 'recurring_template', id: `${entry.template.id}:${dateStr}` },
+          dedupe: true,
+        });
+      }
+    }
   }
 
   // Org-scoped, now-injected spawn — used by the midnight cron (real now) and by

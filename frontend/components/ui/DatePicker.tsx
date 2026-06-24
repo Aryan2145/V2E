@@ -12,6 +12,10 @@ interface DatePickerProps {
   max?: string // ISO yyyy-mm-dd
   disabled?: boolean
   id?: string
+  /** ISO yyyy-mm-dd days to flag with an amber dot (e.g. a selected assignee is on leave). */
+  markedDates?: string[]
+  /** Tooltip shown on marked days. */
+  markedHint?: string
 }
 
 const MONTHS = [
@@ -60,8 +64,11 @@ export default function DatePicker({
   max,
   disabled,
   id,
+  markedDates,
+  markedHint,
 }: DatePickerProps) {
   const [open, setOpen] = useState(false)
+  const markedSet = useMemo(() => new Set(markedDates ?? []), [markedDates])
   const [mode, setMode] = useState<'days' | 'years'>('days')
   const wrapRef = useRef<HTMLDivElement>(null)
 
@@ -208,14 +215,16 @@ export default function DatePicker({
                     const isSel = selected && sameDay(d, selected)
                     const isToday = sameDay(d, today)
                     const off = isDisabledDay(d)
+                    const marked = markedSet.has(toIso(d))
                     return (
                       <button
                         key={i}
                         type="button"
                         disabled={!!off}
                         onClick={() => pick(d)}
+                        title={marked ? (markedHint ?? 'On leave') : undefined}
                         className={[
-                          'h-9 rounded-[8px] text-sm flex items-center justify-center transition-colors',
+                          'relative h-9 rounded-[8px] text-sm flex items-center justify-center transition-colors',
                           off
                             ? 'text-[#CBD5E1] cursor-not-allowed'
                             : isSel
@@ -227,6 +236,11 @@ export default function DatePicker({
                         ].join(' ')}
                       >
                         {d.getDate()}
+                        {marked && (
+                          <span
+                            className={`absolute bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full ${isSel ? 'bg-white' : 'bg-[#D97706]'}`}
+                          />
+                        )}
                       </button>
                     )
                   })}

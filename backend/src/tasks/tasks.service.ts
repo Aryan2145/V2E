@@ -14,6 +14,8 @@ import { HolidaysService } from '../holidays/holidays.service';
 import { ProjectProgressService } from '../projects/project-progress.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
+import { LeaveService } from '../leave/leave.service';
+import { ClockService } from '../clock/clock.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
 import { Principal } from '../access-rights/permissions.service';
@@ -43,6 +45,8 @@ export class TasksService {
     private readonly assigneeVisibility: AssigneeVisibilityService,
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
+    private readonly leave: LeaveService,
+    private readonly clock: ClockService,
   ) {
     this.scope.registerWiredList(TasksService.TASK_LEAF);
   }
@@ -1179,6 +1183,10 @@ export class TasksService {
     const sortedFreq = [...frequencyMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
     const frequentUserIds = new Set(sortedFreq.filter(([, c]) => c > 0).map(([id]) => id));
 
+    // Who is on leave right now (sim-clock aware) — annotates the picker, never filters it.
+    const now = await this.clock.now(orgId);
+    const onLeaveMap = await this.leave.onLeaveTodayMap(orgId, eligibleUserIdArray, now);
+
     const items = eligibleProfiles.map((p) => ({
       user_id: p.user_id,
       name: p.name,
@@ -1189,6 +1197,8 @@ export class TasksService {
       active_task_count: activeTaskMap.get(p.user_id) ?? 0,
       frequency_count: frequencyMap.get(p.user_id) ?? 0,
       is_frequent: frequentUserIds.has(p.user_id),
+      on_leave_today: onLeaveMap.has(p.user_id),
+      leave_until: onLeaveMap.get(p.user_id) ?? null,
     }));
 
     let sorted: typeof items;

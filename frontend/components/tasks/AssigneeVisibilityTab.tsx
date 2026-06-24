@@ -9,8 +9,11 @@ import {
   Loader2,
   Search,
   ArrowRight,
+  ArrowLeftRight,
   Eye,
   ShieldAlert,
+  Info,
+  X,
 } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import { getEmployees } from '@/lib/api/employees'
@@ -128,6 +131,7 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
   const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [showRules, setShowRules] = useState(false)
 
   const reload = useCallback(async () => {
     const [v, emps] = await Promise.all([
@@ -182,10 +186,68 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
 
   return (
     <div className="space-y-5 max-w-3xl">
+      {/* Default-rules info */}
+      <div>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-[18px] font-semibold text-[#0F172A]">Assignee visibility</h2>
+          <button
+            type="button"
+            onClick={() => setShowRules((v) => !v)}
+            aria-label="How the default assignee list works"
+            aria-expanded={showRules}
+            className="w-7 h-7 flex items-center justify-center rounded-full text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+          >
+            <Info size={16} />
+          </button>
+        </div>
+
+        {showRules && (
+          <div className="mt-2 rounded-[12px] border border-[#BFDBFE] bg-[#EFF6FF] p-4 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-semibold text-[#0F172A]">How the default list is built</p>
+              <button
+                type="button"
+                onClick={() => setShowRules(false)}
+                aria-label="Close"
+                className="w-6 h-6 flex items-center justify-center rounded-[6px] text-[#475569] hover:text-[#0F172A] hover:bg-white/60 transition-colors shrink-0"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            <p className="text-[#475569] mt-1">
+              When no override, bridge, or exception applies, each person&apos;s Assignees &amp; CC list is built from just
+              these four things — this is the default for everyone:
+            </p>
+            <ol className="mt-2.5 space-y-2 text-[#1E293B]">
+              <li>
+                <span className="font-semibold text-[#0F172A]">1. Themselves.</span> A person can always assign to themselves.
+              </li>
+              <li>
+                <span className="font-semibold text-[#0F172A]">2. Everyone below them.</span> Anyone who reports to them —
+                directly or further down the chain — in any department.
+              </li>
+              <li>
+                <span className="font-semibold text-[#0F172A]">3. Their own department.</span> Everyone in the department
+                their profile belongs to. The <span className="font-medium">Upward</span> switch decides whether they also
+                see people <em>above</em> them inside that same department.
+              </li>
+              <li>
+                <span className="font-semibold text-[#0F172A]">4. Their direct manager.</span> The person they report to is
+                always included — even when that manager sits in a different (e.g. parent) department.
+              </li>
+            </ol>
+            <p className="text-[#475569] mt-3">
+              Everything else on this page — master override, full-visibility, bridges, and exceptions —
+              only widens or narrows this default.
+            </p>
+          </div>
+        )}
+      </div>
+
       {/* 1 — Master override */}
       <Card
         title="Master override — open everything"
-        description="When on, every user can assign to every active employee (including sensitive groups). All rules below are ignored."
+        description="When on, every user can assign to every active employee. All rules below are ignored."
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-sm">
@@ -197,40 +259,16 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
         {overrideOn && (
           <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#FEF3C7] border border-[#FCD34D] text-[13px] text-[#92400E]">
             <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-            <span>While the override is on, excludes, exceptions, bridges and the upward switch have no effect. Save to apply.</span>
+            <span>While the override is on, exceptions, bridges and the upward switch have no effect. Save to apply.</span>
           </div>
         )}
       </Card>
 
       <div className={overrideOn ? 'opacity-60 pointer-events-none space-y-5' : 'space-y-5'}>
-        {/* 2 — Sensitive groups (excludes) */}
+        {/* 2 — Full-visibility list */}
         <Card
-          title="Sensitive groups (hidden from everyone)"
-          description="Members of these departments/roles never appear in anyone's picker — except the master override and the full-visibility list below."
-        >
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-2">Exclude departments</label>
-            <div className="flex flex-wrap gap-2">
-              {depts.map((d) => (
-                <Chip key={d.id} label={d.name} color="red" active={settings.exclude_departments.includes(d.id)} onClick={() => patch({ exclude_departments: toggleIn(settings.exclude_departments, d.id) })} />
-              ))}
-              {depts.length === 0 && <p className="text-xs text-[#94A3B8]">No departments configured.</p>}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-2">Exclude roles</label>
-            <div className="flex flex-wrap gap-2">
-              {MEMBER_ROLES.map((r) => (
-                <Chip key={r} label={roleLabel(r)} color="red" active={settings.exclude_roles.includes(r)} onClick={() => patch({ exclude_roles: toggleIn(settings.exclude_roles, r) })} />
-              ))}
-            </div>
-          </div>
-        </Card>
-
-        {/* 3 — Full-visibility list */}
-        <Card
-          title="Full-visibility list (sees everyone, incl. sensitive groups)"
-          description="Roles or specific people who can assign to every active employee and are not affected by the excludes above. Separate from admin powers."
+          title="Full-visibility list (sees everyone)"
+          description="Roles or specific people who can assign to every active employee, beyond their default department + reports. Separate from admin powers."
         >
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-2">Roles with full visibility</label>
@@ -259,18 +297,18 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
       </button>
 
       <div className={overrideOn ? 'opacity-60 pointer-events-none space-y-5' : 'space-y-5'}>
-        {/* 4 — Per-department upward switch */}
+        {/* 3 — Per-department upward switch */}
         <UpwardSection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
 
-        {/* 5 — Cross-department bridges */}
+        {/* 4 — Cross-department bridges */}
         <BridgeSection orgId={orgId} view={view} deptName={deptName} onChange={reload} apiError={apiError} />
 
-        {/* 6 — Exceptions */}
+        {/* 5 — Exceptions */}
         <ExceptionSection orgId={orgId} view={view} people={people} onChange={reload} apiError={apiError} />
       </div>
 
       {/* Who can edit */}
-      <Card title="Who can change these settings" description="Member roles allowed to edit assignee visibility (override, excludes, exceptions, bridges, upward switch).">
+      <Card title="Who can change these settings" description="Member roles allowed to edit assignee visibility (override, exceptions, bridges, upward switch).">
         <div className="flex flex-wrap gap-2">
           {MEMBER_ROLES.map((r) => (
             <Chip key={r} label={roleLabel(r)} active={settings.config_roles.includes(r)} onClick={() => patch({ config_roles: toggleIn(settings.config_roles, r) })} />
@@ -302,7 +340,7 @@ function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; vie
   }
   return (
     <Card title="Upward assignment by department" description="When off, members of that department can assign to their direct manager and below — but not higher up the chain.">
-      <div className="divide-y divide-[#F1F5F9]">
+      <div className="max-h-[280px] overflow-y-auto -mr-1 pr-1 divide-y divide-[#F1F5F9]">
         {view.departments.map((d) => (
           <div key={d.id} className="flex items-center justify-between py-2.5">
             <div>
@@ -326,15 +364,45 @@ function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; vie
 function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: string; view: AssigneeVisibilityAdminView; deptName: (id: string) => string; onChange: () => Promise<void>; apiError: (e: any, f: string) => void }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [depth, setDepth] = useState<BridgeDepth>('head_senior')
+  const [depth, setDepth] = useState<BridgeDepth>('whole_dept')
   const [adding, setAdding] = useState(false)
+  const [bothBusy, setBothBusy] = useState<string | null>(null)
+
+  // Reverse direction of a bridge, if it already exists as its own entry.
+  const reverseOf = (b: AssigneeVisibilityAdminView['bridges'][number]) =>
+    view.bridges.find(
+      (x) => x.from_department_id === b.to_department_id && x.to_department_id === b.from_department_id,
+    )
+
+  // "Both ways" toggle: create the reverse entry (B → A) with the same depth, or remove it.
+  // Re-entry is skipped — if the reverse already exists we don't create a duplicate.
+  async function setBidirectional(b: AssigneeVisibilityAdminView['bridges'][number], on: boolean) {
+    setBothBusy(b.id)
+    try {
+      const reverse = reverseOf(b)
+      if (on && !reverse) {
+        await tasksApi.createAssigneeBridge(orgId, {
+          from_department_id: b.to_department_id,
+          to_department_id: b.from_department_id,
+          depth: b.depth,
+        })
+      } else if (!on && reverse) {
+        await tasksApi.deleteAssigneeBridge(orgId, reverse.id)
+      }
+      await onChange()
+    } catch (e) {
+      apiError(e, 'Could not update bridge direction')
+    } finally {
+      setBothBusy(null)
+    }
+  }
 
   async function add() {
     if (!from || !to) return
     setAdding(true)
     try {
       await tasksApi.createAssigneeBridge(orgId, { from_department_id: from, to_department_id: to, depth })
-      setFrom(''); setTo(''); setDepth('head_senior')
+      setFrom(''); setTo(''); setDepth('whole_dept')
       await onChange()
     } catch (e) {
       apiError(e, 'Could not create bridge')
@@ -342,9 +410,13 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
       setAdding(false)
     }
   }
-  async function remove(id: string) {
+  // Deletes the bridge and, if it's bidirectional, its reverse twin too — so removing the
+  // single ⇄ row clears the whole pair rather than leaving the hidden reverse behind.
+  async function remove(b: AssigneeVisibilityAdminView['bridges'][number]) {
     try {
-      await tasksApi.deleteAssigneeBridge(orgId, id)
+      await tasksApi.deleteAssigneeBridge(orgId, b.id)
+      const reverse = reverseOf(b)
+      if (reverse) await tasksApi.deleteAssigneeBridge(orgId, reverse.id)
       await onChange()
     } catch (e) {
       apiError(e, 'Could not delete bridge')
@@ -352,35 +424,7 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
   }
 
   return (
-    <Card title="Cross-department bridges" description="Let one department assign into another. One-directional — X → Y does not imply Y → X.">
-      {view.bridges.length > 0 && (
-        <div className="space-y-2">
-          {view.bridges.map((b) => (
-            <div key={b.id} className="flex items-center justify-between gap-3 p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC]">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-medium text-[#0F172A] flex-wrap">
-                  <span>{b.from_department_name ?? deptName(b.from_department_id)}</span>
-                  <ArrowRight size={14} className="text-[#94A3B8]" />
-                  <span>{b.to_department_name ?? deptName(b.to_department_id)}</span>
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-full px-2 py-0.5">
-                    {b.depth === 'whole_dept' ? 'Whole dept' : 'Head & seniors'}
-                  </span>
-                </div>
-                {b.match_count === 0 ? (
-                  <p className="flex items-center gap-1 text-xs text-[#B45309] mt-1">
-                    <AlertTriangle size={12} /> Matches 0 people — set a department head or a senior role.
-                  </p>
-                ) : (
-                  <p className="text-xs text-[#475569] mt-1">Currently reaches {b.match_count} {b.match_count === 1 ? 'person' : 'people'}.</p>
-                )}
-              </div>
-              <button type="button" onClick={() => remove(b.id)} className="p-1.5 rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition-colors shrink-0">
-                <Trash2 size={15} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+    <Card title="Cross-department bridges" description="Let one department assign into another. One-directional by default — turn on “Both ways” on an entry to also open the reverse (B → A).">
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end pt-1">
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">From</label>
@@ -403,10 +447,56 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
       <div>
         <label className="block text-xs font-medium text-[#374151] mb-1">Reach into target</label>
         <div className="flex gap-2">
-          <Chip label="Head & senior roles" active={depth === 'head_senior'} onClick={() => setDepth('head_senior')} />
           <Chip label="Whole department" active={depth === 'whole_dept'} onClick={() => setDepth('whole_dept')} />
+          <Chip label="Head & senior roles" active={depth === 'head_senior'} onClick={() => setDepth('head_senior')} />
         </div>
       </div>
+      {view.bridges.length > 0 && (
+        <div className="max-h-[300px] overflow-y-auto -mr-1 pr-1 space-y-2 border-t border-[#F1F5F9] pt-4">
+          {view.bridges.map((b) => {
+            const bothWays = !!reverseOf(b)
+            // Collapse a bidirectional pair into a single ⇄ row — render only the canonical side.
+            if (bothWays && b.from_department_id > b.to_department_id) return null
+            return (
+            <div key={b.id} className="flex items-center justify-between gap-3 p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC]">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium text-[#0F172A] flex-wrap">
+                  <span>{b.from_department_name ?? deptName(b.from_department_id)}</span>
+                  {bothWays ? <ArrowLeftRight size={14} className="text-[#2563EB]" /> : <ArrowRight size={14} className="text-[#94A3B8]" />}
+                  <span>{b.to_department_name ?? deptName(b.to_department_id)}</span>
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-full px-2 py-0.5">
+                    {b.depth === 'whole_dept' ? 'Whole dept' : 'Head & seniors'}
+                  </span>
+                </div>
+                {b.match_count === 0 ? (
+                  <p className="flex items-center gap-1 text-xs text-[#B45309] mt-1">
+                    <AlertTriangle size={12} /> Matches 0 people — set a department head or a senior role.
+                  </p>
+                ) : (
+                  <p className="text-xs text-[#475569] mt-1">Currently reaches {b.match_count} {b.match_count === 1 ? 'person' : 'people'}.</p>
+                )}
+              </div>
+              <div className="flex items-center gap-3 shrink-0">
+                <div
+                  className="flex items-center gap-1.5"
+                  title={bothWays ? 'Both directions open — turn off to remove the reverse entry' : 'One-directional — turn on to also create the reverse entry (B → A)'}
+                >
+                  <span className="text-[11px] font-medium text-[#475569] hidden sm:inline">Both ways</span>
+                  {bothBusy === b.id ? (
+                    <Loader2 size={14} className="animate-spin text-[#94A3B8]" />
+                  ) : (
+                    <Toggle on={bothWays} disabled={bothBusy === b.id} onChange={() => setBidirectional(b, !bothWays)} />
+                  )}
+                </div>
+                <button type="button" onClick={() => remove(b)} className="p-1.5 rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition-colors">
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            </div>
+            )
+          })}
+        </div>
+      )}
     </Card>
   )
 }
@@ -588,9 +678,6 @@ function ExplainSection({ orgId, people }: { orgId: string; people: Person[] }) 
             <span className="text-[11px] font-semibold uppercase tracking-wide text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-full px-2 py-0.5">
               {REASON_LABEL[result.trace.reason] ?? result.trace.reason}
             </span>
-            {!!result.trace.excluded_count && (
-              <span className="text-xs text-[#B45309]">({result.trace.excluded_count} hidden by excludes)</span>
-            )}
           </div>
           {!!result.trace.bridges_used?.length && (
             <p className="text-xs text-[#475569]">
@@ -599,6 +686,9 @@ function ExplainSection({ orgId, people }: { orgId: string; people: Person[] }) 
                 <span className="text-[#B45309]"> — one bridge currently matches 0 people.</span>
               )}
             </p>
+          )}
+          {result.trace.direct_manager_included && (
+            <p className="text-xs text-[#475569]">Includes their direct reporting manager (always assignable, even cross-department).</p>
           )}
           <div className="border border-[#E2E8F0] rounded-[8px] max-h-56 overflow-y-auto divide-y divide-[#F1F5F9]">
             {result.users.map((u) => (

@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { FileText, ChevronLeft, ChevronRight } from 'lucide-react'
+import { FileText, ChevronLeft, ChevronRight, User, CalendarOff, CheckSquare } from 'lucide-react'
 
 interface ECSSidebarProps {
   collapsed: boolean
@@ -10,6 +10,9 @@ interface ECSSidebarProps {
 }
 
 const NAV_ITEMS = [
+  { label: 'My Profile', href: '/dashboard/ecs/profile', Icon: User },
+  { label: 'My Leave', href: '/dashboard/ecs/leave', Icon: CalendarOff },
+  { label: 'Approvals', href: '/dashboard/ecs/approvals', Icon: CheckSquare },
   { label: 'Company Policy', href: '/dashboard/ecs/company-policy', Icon: FileText },
 ]
 

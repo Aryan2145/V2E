@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import ReactFlow, {
   Background,
@@ -12,9 +12,11 @@ import ReactFlow, {
   useNodesState,
   useEdgesState,
   useReactFlow,
+  useStore,
   type Node,
   type Edge,
   type NodeMouseHandler,
+  type Viewport,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
 import { Maximize2, Users, Zap } from 'lucide-react'
@@ -39,12 +41,46 @@ interface Props {
 const statusDot: Record<EmployeeStatus, string> = {
   active: 'bg-[#16A34A]',
   inactive: 'bg-[#DC2626]',
-  on_leave: 'bg-[#CA8A04]',
 }
 
-// Don't let the auto-fit zoom out past this — below it node text is unreadable,
-// so we'd rather start readable (and let the user pan) than show an unusable overview.
+// Don't let the auto-fit / "Fit" zoom out past this — below it node text is
+// unreadable, so we'd rather start readable (and let the user pan) than show an
+// unusable overview where every card is a smudge.
 const FIT_MIN_ZOOM = 0.65
+
+// Persist the canvas position so navigating into a profile and back (browser
+// back) restores the chart exactly as the user left it, rather than snapping
+// back to a fresh fit.
+const VIEWPORT_KEY = 'org-chart-viewport'
+
+function readSavedViewport(): Viewport | null {
+  try {
+    const raw = sessionStorage.getItem(VIEWPORT_KEY)
+    if (!raw) return null
+    const v = JSON.parse(raw)
+    if (
+      typeof v?.x === 'number' &&
+      typeof v?.y === 'number' &&
+      typeof v?.zoom === 'number' &&
+      Number.isFinite(v.x) &&
+      Number.isFinite(v.y) &&
+      Number.isFinite(v.zoom)
+    ) {
+      return v as Viewport
+    }
+  } catch {
+    /* ignore malformed storage */
+  }
+  return null
+}
+
+function saveViewport(v: Viewport) {
+  try {
+    sessionStorage.setItem(VIEWPORT_KEY, JSON.stringify(v))
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
 
 function initials(name: string): string {
   const p = name.trim().split(/\s+/)
@@ -92,20 +128,13 @@ function Flow({
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState(nodes)
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState(edges)
   const [interacted, setInteracted] = useState(false)
-  const { fitView } = useReactFlow()
+  const { setViewport } = useReactFlow()
+  const paneW = useStore((s) => s.width)
+  const paneH = useStore((s) => s.height)
 
-  // Expose Fit to the toolbar button rendered outside the provider.
-  // This is the explicit "show me everything" overview, so it's allowed to
-  // zoom out past FIT_MIN_ZOOM (unlike the readable auto-fit on load).
-  useEffect(() => {
-    fitRef.current = () => fitView({ padding: 0.2, duration: 300, maxZoom: 1 })
-    return () => {
-      fitRef.current = null
-    }
-  }, [fitView, fitRef])
-
-  // Bound panning to the content (plus margin) so it can't scroll into infinity.
-  const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
+  // Content bounding box — drives both the readable "top of the tree" framing
+  // and the pan bounds.
+  const bbox = useMemo(() => {
     let minX = Infinity
     let minY = Infinity
     let maxX = -Infinity
@@ -116,25 +145,75 @@ function Flow({
       maxX = Math.max(maxX, n.position.x + NODE_W)
       maxY = Math.max(maxY, n.position.y + NODE_H)
     })
-    if (!Number.isFinite(minX)) return [[-500, -500], [500, 500]]
+    if (!Number.isFinite(minX)) return null
+    return { minX, minY, maxX, maxY }
+  }, [nodes])
+
+  // Frame the chart at the TOP of the tree (roots near the top edge) at a
+  // readable zoom, horizontally centered. This is what "load" and "Fit" both
+  // do — a wide org never fits-to-screen readably, so instead of zooming out
+  // to an unreadable smudge we anchor the top and let the user pan/zoom.
+  const frameTop = useCallback(
+    (duration: number) => {
+      if (!bbox || !paneW || !paneH) return
+      const contentW = bbox.maxX - bbox.minX
+      const PAD_X = 80
+      const zoom = Math.min(1, Math.max(FIT_MIN_ZOOM, paneW / (contentW + PAD_X * 2)))
+      const centerX = (bbox.minX + bbox.maxX) / 2
+      const TOP_PAD = 32
+      setViewport(
+        { x: paneW / 2 - centerX * zoom, y: TOP_PAD - bbox.minY * zoom, zoom },
+        { duration },
+      )
+    },
+    [bbox, paneW, paneH, setViewport],
+  )
+
+  // Expose Fit to the toolbar button rendered outside the provider.
+  useEffect(() => {
+    fitRef.current = () => frameTop(300)
+    return () => {
+      fitRef.current = null
+    }
+  }, [frameTop, fitRef])
+
+  // Initial framing: restore the saved viewport (browser back returns here) or,
+  // failing that, frame the top of the tree. Runs once, after the pane has been
+  // measured.
+  const didInit = useRef(false)
+  useEffect(() => {
+    if (didInit.current || !paneW || !paneH) return
+    didInit.current = true
+    const saved = readSavedViewport()
+    if (saved) setViewport(saved, { duration: 0 })
+    else frameTop(0)
+  }, [paneW, paneH, frameTop, setViewport])
+
+  // Bound panning to the content (plus margin) so it can't scroll into infinity.
+  const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
+    if (!bbox) return [[-500, -500], [500, 500]]
     const PAD_X = 320
     const PAD_Y = 240
     return [
-      [minX - PAD_X, minY - PAD_Y],
-      [maxX + PAD_X, maxY + PAD_Y],
+      [bbox.minX - PAD_X, bbox.minY - PAD_Y],
+      [bbox.maxX + PAD_X, bbox.maxY + PAD_Y],
     ]
-  }, [nodes])
+  }, [bbox])
 
+  // Keep the canvas in sync with the data and re-frame when it actually changes
+  // (e.g. a filter is applied) — but not on the first sync, which the initial
+  // framing effect handles.
+  const firstSync = useRef(true)
   useEffect(() => {
     setRfNodes(nodes)
     setRfEdges(edges)
-    // Refit after the data changes (e.g. filter applied).
-    const t = setTimeout(
-      () => fitView({ padding: 0.2, duration: 300, minZoom: FIT_MIN_ZOOM, maxZoom: 1 }),
-      50,
-    )
+    if (firstSync.current) {
+      firstSync.current = false
+      return
+    }
+    const t = setTimeout(() => frameTop(300), 50)
     return () => clearTimeout(t)
-  }, [nodes, edges, setRfNodes, setRfEdges, fitView])
+  }, [nodes, edges, setRfNodes, setRfEdges, frameTop])
 
   const onNodeClick: NodeMouseHandler = (_e, node) => {
     const id = (node.data as { empId?: string })?.empId
@@ -149,6 +228,7 @@ function Flow({
       onEdgesChange={onEdgesChange}
       onNodeClick={onNodeClick}
       onMoveStart={() => setInteracted(true)}
+      onMoveEnd={(_e, vp) => saveViewport(vp)}
       nodeTypes={nodeTypes}
       nodesDraggable={false}
       nodesConnectable={false}
@@ -160,8 +240,6 @@ function Flow({
       translateExtent={translateExtent}
       minZoom={0.2}
       maxZoom={2.5}
-      fitView
-      fitViewOptions={{ padding: 0.2, minZoom: FIT_MIN_ZOOM, maxZoom: 1 }}
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
@@ -174,7 +252,7 @@ function Flow({
           Scroll to move the page · drag to explore the chart
         </div>
       </Panel>
-      <Controls showInteractive={false} />
+      <Controls showInteractive={false} onFitView={() => frameTop(300)} />
       <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable />
     </ReactFlow>
   )
@@ -292,11 +370,13 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
     )
 
     const empById = new Map(employees.map((e) => [e.id, e]))
+    const deptName = new Map(departments.map((d) => [d.id, d.name]))
     const toData = (emp: EmployeeProfile, freeRadical: boolean): EmployeeNodeData & { empId: string } => ({
       empId: emp.id,
       name: emp.user?.name ?? 'Unknown',
       roleTitle: emp.role?.title,
       level: emp.role?.level,
+      department: emp.department?.name ?? deptName.get(emp.department_id),
       status: emp.status,
       color: colorFor(emp.department_id),
       freeRadical,

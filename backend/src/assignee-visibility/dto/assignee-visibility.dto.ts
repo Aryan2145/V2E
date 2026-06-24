@@ -20,16 +20,6 @@ export class UpdateAssigneeSettingsDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  exclude_departments?: string[];
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  exclude_roles?: string[];
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
   full_visibility_roles?: string[];
 
   @IsOptional()

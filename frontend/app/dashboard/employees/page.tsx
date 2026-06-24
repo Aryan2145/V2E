@@ -47,7 +47,6 @@ function avatarColor(name: string): string {
 const statusConfig: Record<EmployeeStatus, { bg: string; text: string; label: string }> = {
   active: { bg: 'bg-[#DCFCE7]', text: 'text-[#16A34A]', label: 'Active' },
   inactive: { bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]', label: 'Inactive' },
-  on_leave: { bg: 'bg-[#FEF9C3]', text: 'text-[#CA8A04]', label: 'On Leave' },
 }
 
 function StatusBadge({ status }: { status: EmployeeStatus }) {
@@ -109,6 +108,27 @@ export default function EmployeesPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [view, setView] = useState<EmployeeView>('table')
+
+  // Restore the view + filters when returning here (e.g. browser back from a
+  // profile), so the user lands on the same screen they left rather than the
+  // default table.
+  useEffect(() => {
+    const v = sessionStorage.getItem('employees-view')
+    if (v === 'tree' || v === 'table') setView(v)
+    const s = sessionStorage.getItem('employees-search')
+    if (s) setSearch(s)
+    const d = sessionStorage.getItem('employees-dept')
+    if (d) setDeptFilter(d)
+  }, [])
+  useEffect(() => {
+    sessionStorage.setItem('employees-view', view)
+  }, [view])
+  useEffect(() => {
+    sessionStorage.setItem('employees-search', search)
+  }, [search])
+  useEffect(() => {
+    sessionStorage.setItem('employees-dept', deptFilter)
+  }, [deptFilter])
 
   const reloadEmployees = useCallback(() => {
     if (!orgId) return

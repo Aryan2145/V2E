@@ -79,7 +79,6 @@ function formatDate(dateStr?: string): string {
 const statusConfig: Record<EmployeeStatus, { bg: string; text: string; label: string }> = {
   active: { bg: 'bg-[#DCFCE7]', text: 'text-[#16A34A]', label: 'Active' },
   inactive: { bg: 'bg-[#FEE2E2]', text: 'text-[#DC2626]', label: 'Inactive' },
-  on_leave: { bg: 'bg-[#FEF9C3]', text: 'text-[#CA8A04]', label: 'On Leave' },
 }
 
 function StatusBadge({ status }: { status: EmployeeStatus }) {
@@ -276,7 +275,6 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
               <select value={form.status} onChange={(e) => set('status', e.target.value)} className={selectClass}>
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
-                <option value="on_leave">On Leave</option>
               </select>
             </div>
 

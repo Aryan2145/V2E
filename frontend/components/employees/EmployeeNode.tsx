@@ -11,6 +11,7 @@ export interface EmployeeNodeData {
   name: string
   roleTitle?: string
   level?: RoleLevel
+  department?: string
   status: EmployeeStatus
   color: string // department base hue
   freeRadical?: boolean
@@ -19,7 +20,6 @@ export interface EmployeeNodeData {
 const statusDot: Record<EmployeeStatus, string> = {
   active: 'bg-[#16A34A]',
   inactive: 'bg-[#DC2626]',
-  on_leave: 'bg-[#CA8A04]',
 }
 
 function initials(name: string): string {
@@ -28,15 +28,50 @@ function initials(name: string): string {
 }
 
 function EmployeeNode({ data }: { data: EmployeeNodeData }) {
-  const { name, roleTitle, level, status, color, freeRadical } = data
+  const { name, roleTitle, level, department, status, color, freeRadical } = data
   return (
     <div
-      className={`relative rounded-[12px] bg-white border shadow-[0_1px_3px_rgba(0,0,0,0.08)] ${
+      className={`group relative rounded-[12px] bg-white border shadow-[0_1px_3px_rgba(0,0,0,0.08)] ${
         freeRadical ? 'border-dashed border-[#CBD5E1]' : 'border-[#E2E8F0]'
       }`}
       style={{ width: NODE_W, borderLeft: `4px solid ${color}` }}
     >
       <Handle type="target" position={Position.Top} className="!bg-[#94A3B8] !w-2 !h-2 !border-0" />
+
+      {/* Hover details card */}
+      <div className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-[220px] -translate-x-1/2 scale-95 rounded-[10px] border border-[#E2E8F0] bg-white p-3 opacity-0 shadow-[0_8px_24px_rgba(15,23,42,0.14)] transition-all duration-150 group-hover:scale-100 group-hover:opacity-100">
+        <div className="flex items-center gap-1.5">
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot[status]}`} />
+          <p className="text-sm font-semibold text-[#0F172A]">{name}</p>
+        </div>
+        <dl className="mt-2 space-y-1.5 text-xs">
+          <div className="flex items-start gap-2">
+            <dt className="w-20 shrink-0 text-[#94A3B8]">Department</dt>
+            <dd className="flex-1 font-medium text-[#475569]">
+              <span className="inline-flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                {department ?? '—'}
+              </span>
+            </dd>
+          </div>
+          <div className="flex items-start gap-2">
+            <dt className="w-20 shrink-0 text-[#94A3B8]">Role</dt>
+            <dd className="flex-1 font-medium text-[#475569]">{roleTitle ?? 'No role'}</dd>
+          </div>
+          {level && (
+            <div className="flex items-start gap-2">
+              <dt className="w-20 shrink-0 text-[#94A3B8]">Level</dt>
+              <dd className="flex-1">
+                <span
+                  className={`inline-flex items-center rounded-[999px] px-1.5 py-px text-[10px] font-semibold capitalize ${levelColors[level]}`}
+                >
+                  {level}
+                </span>
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
 
       <div className="flex items-center gap-2.5 px-3 py-2.5">
         <span

@@ -271,6 +271,8 @@ export interface EligibleAssigneeUser {
   active_task_count: number
   frequency_count: number
   is_frequent: boolean
+  on_leave_today?: boolean
+  leave_until?: string | null
 }
 
 export interface EligibleAssigneeGroup {
@@ -292,8 +294,6 @@ export type BridgeDepth = 'head_senior' | 'whole_dept'
 
 export interface AssigneeVisibilitySettings {
   master_override: boolean
-  exclude_departments: string[]
-  exclude_roles: string[]
   full_visibility_roles: string[]
   full_visibility_users: string[]
   config_roles: string[]
@@ -342,7 +342,7 @@ export interface AssigneeExplainResult {
     exception_id?: string
     exception_scope?: string
     bridges_used?: { to_department_id: string; depth: string; match_count: number }[]
-    excluded_count?: number
+    direct_manager_included?: boolean
   }
   users: {
     user_id: string

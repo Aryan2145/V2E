@@ -8,7 +8,7 @@ export type RoleLevel = 'junior' | 'mid' | 'senior' | 'lead' | 'head';
 
 export type EmploymentType = 'full_time' | 'part_time' | 'contract';
 
-export type EmployeeStatus = 'active' | 'inactive' | 'on_leave';
+export type EmployeeStatus = 'active' | 'inactive';
 
 // ─── Core Entities ─────────────────────────────────────────────────────────────
 

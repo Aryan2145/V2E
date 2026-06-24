@@ -252,6 +252,50 @@ export class EmployeesService {
     return updated;
   }
 
+  // ─── Self-service ────────────────────────────────────────────────────────────────
+
+  /** The caller's own profile (resolved from their user id), with reporting chain. */
+  async findMine(orgId: string, userId: string) {
+    const profile = await this.prisma.employeeProfile.findFirst({
+      where: { organization_id: orgId, user_id: userId },
+      select: { id: true },
+    });
+    if (!profile) {
+      throw new NotFoundException('You do not have an employee profile in this organization');
+    }
+    return this.findOne(profile.id, orgId);
+  }
+
+  /**
+   * Self-edit of PERSONAL fields only. Org-structural fields (role, department,
+   * manager, employment type, status) are intentionally not editable here.
+   */
+  async updateMine(
+    orgId: string,
+    userId: string,
+    dto: { date_of_birth?: string | null; marriage_date?: string | null },
+  ) {
+    const profile = await this.prisma.employeeProfile.findFirst({
+      where: { organization_id: orgId, user_id: userId },
+      select: { id: true },
+    });
+    if (!profile) {
+      throw new NotFoundException('You do not have an employee profile in this organization');
+    }
+    const data: { date_of_birth?: Date | null; marriage_date?: Date | null } = {};
+    if (dto.date_of_birth !== undefined) {
+      data.date_of_birth = dto.date_of_birth ? new Date(dto.date_of_birth) : null;
+    }
+    if (dto.marriage_date !== undefined) {
+      data.marriage_date = dto.marriage_date ? new Date(dto.marriage_date) : null;
+    }
+    return this.prisma.employeeProfile.update({
+      where: { id: profile.id },
+      data,
+      include: PROFILE_INCLUDE,
+    });
+  }
+
   async getPeopleEvents(orgId: string, windowDays = 30) {
     const profiles = await this.prisma.employeeProfile.findMany({
       where: { organization_id: orgId, status: 'active' },

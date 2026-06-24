@@ -35,7 +35,22 @@ enum EmploymentType {
 enum EmployeeStatus {
   active
   inactive
-  on_leave
+}
+
+// Availability (leave) is a separate, dated concept — see the Leave model. A leave's
+// approval state; availability is computed from this (see LeaveState effectiveness rules).
+enum LeaveState {
+  pending
+  approved
+  rejected
+  cancelled
+}
+
+// How a leave came to exist: a normal request that goes through approval, or one the
+// employee declared directly (e.g. an unplanned sick day) with no prior approval.
+enum LeaveOrigin {
+  requested
+  self_declared
 }
 
 enum AnnouncementType {
@@ -755,12 +770,56 @@ model TaskMaster {
   assignee_master_override         Boolean  @default(false)
   assignee_full_visibility_roles   Json     @default("[\"org_admin\",\"hr_manager\"]")
   assignee_full_visibility_users   Json     @default("[]")
-  assignee_exclude_departments     Json     @default("[]")
-  assignee_exclude_roles           Json     @default("[]")
   created_at                  DateTime @default(now())
   updated_at                  DateTime @updatedAt
 
   @@map("task_masters")
+}
+
+// ─── Leave (employee availability) ───────────────────────────────────────────────
+// A dated leave record. "On leave on date D" is computed by checking for an EFFECTIVE
+// leave covering D (see LeaveService.isEffective): approved, pending, self_declared, or
+// rejected-but-overridden. Availability is intentionally DECOUPLED from approval — a
+// rejected-then-overridden or self-declared leave still makes the person unavailable, it
+// is just flagged. Leave never removes a name from the assignee picker (only an INACTIVE
+// employment status does); it only annotates and warns.
+model Leave {
+  id                 String      @id @default(uuid())
+  organization_id    String
+  user_id            String // the employee who is on leave
+  start_date         DateTime // inclusive, date-only (midnight)
+  end_date           DateTime // inclusive, date-only (midnight)
+  reason             String?     @db.Text
+  state              LeaveState  @default(pending)
+  origin             LeaveOrigin @default(requested)
+  overridden         Boolean     @default(false) // taken despite a rejection
+  decided_by_user_id String?
+  decided_at         DateTime?
+  decision_note      String?
+  created_by_user_id String // usually the employee; an admin may create on their behalf
+  created_at         DateTime    @default(now())
+  updated_at         DateTime    @updatedAt
+
+  @@index([organization_id, user_id, start_date, end_date])
+  @@index([organization_id, state])
+  @@map("leaves")
+}
+
+// Per-org leave policy (one row per org — mirrors TaskMaster/HolidayMaster).
+model LeaveMaster {
+  id                  String   @id @default(uuid())
+  organization_id     String   @unique
+  // self_mark | manager | approvers | manager_or_approvers
+  approval_mode       String   @default("manager")
+  approver_user_ids   Json     @default("[]") // explicitly named approvers (no HR role exists)
+  any_one_can_approve Boolean  @default(true)
+  allow_override      Boolean  @default(true) // may an employee self-declare / override a rejection
+  recurring_notice_days Int    @default(3) // look-ahead lead time for recurring-task leave warnings
+  config_manage_roles Json     @default("[\"org_admin\"]") // who may edit these rules
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+
+  @@map("leave_masters")
 }
 
 // ─── Assignee Visibility (who appears in the assign-to / CC picker) ──────────────
@@ -2243,6 +2302,7 @@ enum NotificationModule {
   system
   meetings
   work_logs
+  leave
 }
 
 model Notification {

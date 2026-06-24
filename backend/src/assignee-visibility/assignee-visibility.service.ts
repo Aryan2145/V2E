@@ -58,8 +58,6 @@ interface OrgConfig {
   masterOverride: boolean;
   fullVisRoles: string[];
   fullVisUsers: string[];
-  excludeDepts: string[];
-  excludeRoles: string[];
   configRoles: string[];
 }
 
@@ -73,18 +71,18 @@ export interface ResolveTrace {
   exception_id?: string;
   exception_scope?: string;
   bridges_used?: { to_department_id: string; depth: string; match_count: number }[];
-  excluded_count?: number;
+  direct_manager_included?: boolean;
 }
 
 /**
  * Resolves the assignee picker pool for a user, following the deterministic pipeline:
- *   1 master override → all (bypasses excludes)
- *   2 full-visibility list (users+roles) → all (bypasses excludes)
+ *   1 master override → all
+ *   2 full-visibility list (users+roles) → all
  *   3 governing exception, most-specific wins (user > role > department):
- *       narrow → shortlist + self (excludes do NOT apply); widen → all (excludes apply)
- *       none   → base default = own dept (±upward switch) + subordinates + self
- *   4 cross-dept bridges from the user's dept (base default only)
- *   5 excludes (sensitive groups) — not for steps 1/2 or a narrow shortlist
+ *       narrow → shortlist + self; widen → all
+ *       none   → base default = own dept (±upward switch) + subordinates + direct manager + self
+ *   4 direct reporting manager always assignable (even cross-department)
+ *   5 cross-dept bridges from the user's dept (base default only)
  *   6 self always included
  *
  * @Global so employees/departments/roles services can call invalidate() without circular deps.
@@ -113,7 +111,7 @@ export class AssigneeVisibilityService {
       return { pool: all, trace: { reason: 'master_override' } };
     }
 
-    // 2 — full-visibility list (bypasses excludes)
+    // 2 — full-visibility list
     const memberRole = g.memberRoleOf.get(userId) ?? null;
     if ((memberRole && cfg.fullVisRoles.includes(memberRole)) || cfg.fullVisUsers.includes(userId)) {
       all.add(userId);
@@ -146,7 +144,9 @@ export class AssigneeVisibilityService {
       trace.exception_scope = exc.scope;
     } else {
       base = this.computeBaseDefault(g, userId, deptId);
-      // 4 — cross-department bridges from this user's department
+      // 4 — direct reporting manager is folded into the base default above
+      if ((g.directManagerOf.get(userId) ?? null)) trace.direct_manager_included = true;
+      // 5 — cross-department bridges from this user's department
       const bridgesUsed: { to_department_id: string; depth: string; match_count: number }[] = [];
       if (deptId) {
         for (const b of g.bridgesFrom.get(deptId) ?? []) {
@@ -159,24 +159,9 @@ export class AssigneeVisibilityService {
       if (bridgesUsed.length) trace.bridges_used = bridgesUsed;
     }
 
-    // 5 — excludes (sensitive groups); self is re-added in step 6 so it always survives
-    const excludeDepts = new Set(cfg.excludeDepts);
-    const excludeRoles = new Set(cfg.excludeRoles);
-    const pool = new Set<string>();
-    let excludedCount = 0;
-    for (const id of base) {
-      if (id === userId) continue; // handled by step 6
-      const dOf = g.deptOf.get(id);
-      const rOf = g.memberRoleOf.get(id);
-      if ((dOf && excludeDepts.has(dOf)) || (rOf && excludeRoles.has(rOf))) {
-        excludedCount++;
-        continue;
-      }
-      pool.add(id);
-    }
-    pool.add(userId); // 6 — self always
-    if (excludedCount) trace.excluded_count = excludedCount;
-    return { pool, trace };
+    // 6 — self always assignable (the base default already includes it; guard anyway).
+    base.add(userId);
+    return { pool: base, trace };
   }
 
   /** Profile data for the org (active employees) — used to render picker items / explain. */
@@ -236,6 +221,13 @@ export class AssigneeVisibilityService {
     const s = new Set<string>([userId]);
     for (const sub of this.getSubordinates(g, userId)) s.add(sub);
 
+    // Your direct reporting manager is always assignable, even when they sit in a
+    // different (e.g. parent) department — you fundamentally report to them. The
+    // own-department + upward rules below only ever reach managers inside your own
+    // department, so without this a cross-department manager would be invisible.
+    const directManager = g.directManagerOf.get(userId) ?? null;
+    if (directManager) s.add(directManager);
+
     if (deptId) {
       const members = g.deptMembers.get(deptId) ?? new Set<string>();
       const allowUpward = g.deptAllowUpward.get(deptId) ?? true;
@@ -290,8 +282,6 @@ export class AssigneeVisibilityService {
       masterOverride: tm?.assignee_master_override ?? false,
       fullVisRoles: asArr(tm?.assignee_full_visibility_roles, DEFAULT_FULL_VISIBILITY_ROLES),
       fullVisUsers: asArr(tm?.assignee_full_visibility_users, []),
-      excludeDepts: asArr(tm?.assignee_exclude_departments, []),
-      excludeRoles: asArr(tm?.assignee_exclude_roles, []),
       configRoles: asArr(tm?.assignee_visibility_config_roles, DEFAULT_FULL_VISIBILITY_ROLES),
     };
     this.configCache.set(orgId, { value, expires: Date.now() + CONFIG_TTL_MS });
@@ -332,8 +322,8 @@ export class AssigneeVisibilityService {
     ]);
 
     // MemberRole was removed; collapse to an admin/member pseudo-role so the legacy
-    // role-keyed visibility configs (full_visibility_roles, exclude_roles, role
-    // exceptions) still target admins. Non-admins all map to 'employee'.
+    // role-keyed visibility configs (full_visibility_roles, role exceptions) still
+    // target admins. Non-admins all map to 'employee'.
     const memberRoleOf = new Map<string, string>(members.map((m) => [m.user_id, m.is_admin ? 'org_admin' : 'employee']));
     const profileMap = new Map<string, ProfileLite>();
     const deptOf = new Map<string, string>();
@@ -494,8 +484,6 @@ export class AssigneeVisibilityService {
     return {
       settings: {
         master_override: tm.assignee_master_override,
-        exclude_departments: tm.assignee_exclude_departments,
-        exclude_roles: tm.assignee_exclude_roles,
         full_visibility_roles: tm.assignee_full_visibility_roles,
         full_visibility_users: tm.assignee_full_visibility_users,
         config_roles: tm.assignee_visibility_config_roles,
@@ -531,9 +519,6 @@ export class AssigneeVisibilityService {
     const before = await this.ensureMaster(orgId);
     const data: Record<string, unknown> = {};
     if (dto.master_override !== undefined) data.assignee_master_override = dto.master_override;
-    if (dto.exclude_departments !== undefined)
-      data.assignee_exclude_departments = dto.exclude_departments;
-    if (dto.exclude_roles !== undefined) data.assignee_exclude_roles = dto.exclude_roles;
     if (dto.full_visibility_roles !== undefined)
       data.assignee_full_visibility_roles = dto.full_visibility_roles;
     if (dto.full_visibility_users !== undefined)
@@ -551,8 +536,6 @@ export class AssigneeVisibilityService {
     this.invalidate(orgId);
     const subset = (m: typeof updated) => ({
       master_override: m.assignee_master_override,
-      exclude_departments: m.assignee_exclude_departments,
-      exclude_roles: m.assignee_exclude_roles,
       full_visibility_roles: m.assignee_full_visibility_roles,
       full_visibility_users: m.assignee_full_visibility_users,
       config_roles: m.assignee_visibility_config_roles,

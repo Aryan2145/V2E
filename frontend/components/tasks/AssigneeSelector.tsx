@@ -72,6 +72,14 @@ function UserRow({
 
       {/* Badges */}
       <div className="flex items-center gap-1.5 shrink-0">
+        {user.on_leave_today && (
+          <span
+            title={user.leave_until ? `On leave until ${user.leave_until}` : 'On leave'}
+            className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E]"
+          >
+            On leave
+          </span>
+        )}
         {user.is_frequent && (
           <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#2563EB]">
             <Zap size={9} />

@@ -212,3 +212,25 @@ export async function updateEmployee(
   );
   return data.data;
 }
+
+// ─── Self-service ────────────────────────────────────────────────────────────────
+
+/** The caller's own employee profile (resolved server-side from the JWT). */
+export async function getMyProfile(orgId: string): Promise<EmployeeProfile> {
+  const { data } = await apiClient.get<ApiResponse<EmployeeProfile>>(
+    `/api/v1/org/${orgId}/employees/me`
+  );
+  return data.data;
+}
+
+/** Self-edit personal fields only (date of birth, marriage date). */
+export async function updateMyProfile(
+  orgId: string,
+  body: Partial<{ date_of_birth: string | null; marriage_date: string | null }>
+): Promise<EmployeeProfile> {
+  const { data } = await apiClient.patch<ApiResponse<EmployeeProfile>>(
+    `/api/v1/org/${orgId}/employees/me`,
+    body
+  );
+  return data.data;
+}

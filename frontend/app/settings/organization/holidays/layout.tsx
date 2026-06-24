@@ -16,6 +16,7 @@ const HOLIDAY_TABS: HolidayTab[] = [
   { label: 'Departments', href: '/settings/organization/holidays/departments' },
   { label: 'Individuals', href: '/settings/organization/holidays/individuals', adminOnly: true },
   { label: 'Configurations', href: '/settings/organization/holidays/configurations' },
+  { label: 'Leave Rules', href: '/settings/organization/holidays/leave-rules', adminOnly: true },
 ]
 
 /**
