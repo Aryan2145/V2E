@@ -1,8 +1,9 @@
 'use client'
 
 import React, { useState } from 'react'
-import { X, Clock } from 'lucide-react'
+import { X } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
+import TimeField from '@/components/ui/TimeField'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
 import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
@@ -163,14 +164,12 @@ export default function DemandModal({ orgId, onClose, onCreated }: Props) {
                   />
                 </div>
                 {/* Time — always present, disabled until a date is picked */}
-                <div className="flex-1 relative">
-                  <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                  <input
-                    type="time"
+                <div className="flex-1">
+                  <TimeField
                     value={deadlineTime}
-                    onChange={(e) => setDeadlineTime(e.target.value)}
+                    onChange={setDeadlineTime}
                     disabled={!deadlineDate}
-                    className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-2.5 text-[15px] text-[#0F172A] bg-white focus:border-2 focus:border-[#2563EB] focus:outline-none disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
+                    label="Deadline time"
                   />
                 </div>
               </div>
