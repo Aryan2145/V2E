@@ -209,10 +209,10 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   const otherEmployees = allEmployees.filter((e) => e.id !== employee.id)
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 bg-black/40">
-      <div className="bg-white rounded-[16px] w-full max-w-lg shadow-xl flex flex-col max-h-[90vh]">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-4 bg-black/40">
+      <div className="bg-white rounded-[16px] w-full max-w-lg shadow-xl flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] shrink-0">
           <h2 className="text-lg font-bold text-[#0F172A]">Edit Employee</h2>
           <button onClick={onClose} className="p-1.5 text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-[6px] transition-colors">
             <X size={18} />
@@ -220,7 +220,7 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
         </div>
 
         {/* Body */}
-        <div className="overflow-y-auto px-6 py-5 flex flex-col gap-4">
+        <div className="overflow-y-auto px-6 py-5 flex flex-col gap-4 flex-1 min-h-0">
           {error && (
             <div className="text-sm text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3">
               {error}
@@ -326,7 +326,7 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0] shrink-0">
           <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold text-[#475569] hover:text-[#0F172A] transition-colors">
             Cancel
           </button>
