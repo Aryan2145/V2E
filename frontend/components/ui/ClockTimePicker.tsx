@@ -2,6 +2,7 @@
 
 import { useState, useRef } from "react";
 import { createPortal } from "react-dom";
+import { X } from "lucide-react";
 
 interface Props {
   value:    string;               // "HH:MM" 24-h
@@ -149,6 +150,23 @@ export default function ClockTimePicker({ value, label, onChange, onClose }: Pro
         userSelect: "none",
         WebkitUserSelect: "none",
       }}>
+
+        {/* Close (top-right) */}
+        <button
+          onClick={onClose}
+          aria-label="Close"
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "#F1F5F9"; e.currentTarget.style.color = "#0F172A"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = "#94A3B8"; }}
+          style={{
+            position: "absolute", top: "14px", right: "14px",
+            width: "28px", height: "28px",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            borderRadius: "8px", border: "none", background: "transparent",
+            color: "#94A3B8", cursor: "pointer",
+          }}
+        >
+          <X size={16} />
+        </button>
 
         {/* Label */}
         <p style={{
