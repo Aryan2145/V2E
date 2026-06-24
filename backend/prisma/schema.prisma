@@ -269,6 +269,10 @@ model Department {
   // Assignee-visibility: when false, members of this dept can assign to their direct
   // manager and below, but not above the manager. Default true = no restriction.
   assignee_allow_upward Boolean @default(true)
+  // Assignee-visibility: when true, this department and ALL its descendant departments
+  // are treated as one pool — every member can assign to every other member of the
+  // subtree. The flag highest in the chain wins. Default false.
+  assignee_unify_subtree Boolean @default(false)
   created_at           DateTime @default(now())
   updated_at           DateTime @updatedAt
 
@@ -879,6 +883,9 @@ model AssigneeCrossDeptBridge {
   from_department_id String
   to_department_id   String
   depth              BridgeDepth @default(head_senior)
+  // When true the bridge also reaches every descendant department of to_department
+  // (at the same depth), so a single bridge can cover a whole sub-tree.
+  include_sub_departments Boolean @default(false)
   created_by         String?
   created_at         DateTime    @default(now())
 

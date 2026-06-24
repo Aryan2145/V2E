@@ -68,6 +68,10 @@ export class CreateBridgeDto {
 
   @IsEnum(BridgeDepth)
   depth: BridgeDepth;
+
+  @IsOptional()
+  @IsBoolean()
+  include_sub_departments?: boolean;
 }
 
 export class SetDeptUpwardDto {
@@ -76,4 +80,12 @@ export class SetDeptUpwardDto {
 
   @IsBoolean()
   allow: boolean;
+}
+
+export class SetDeptUnifyDto {
+  @IsString()
+  department_id: string;
+
+  @IsBoolean()
+  unify: boolean;
 }

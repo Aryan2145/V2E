@@ -1,13 +1,14 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { descendantIds, ancestorChain, DeptNode } from '../holidays/dept-tree.util';
 import {
   CreateBridgeDto,
   CreateExceptionDto,
+  SetDeptUnifyDto,
   SetDeptUpwardDto,
   UpdateAssigneeSettingsDto,
 } from './dto/assignee-visibility.dto';
@@ -48,7 +49,14 @@ interface OrgGraph {
   deptMembers: Map<string, Set<string>>;
   deptSeniors: Map<string, Set<string>>; // head_user + senior/lead/head roles
   deptAllowUpward: Map<string, boolean>;
-  bridgesFrom: Map<string, { to: string; depth: 'head_senior' | 'whole_dept' }[]>;
+  // dept → every member of its enclosing unified subtree (Feature: treat sub-departments
+  // as one pool). Absent when the dept is not inside any unify-flagged subtree.
+  unifyPoolOf: Map<string, Set<string>>;
+  // from-dept → bridges, each with its precomputed reach (cascade-aware) member set.
+  bridgesFrom: Map<
+    string,
+    { to: string; depth: 'head_senior' | 'whole_dept'; includeSub: boolean; reach: Set<string> }[]
+  >;
   excByUser: Map<string, VisException>;
   excByRole: Map<string, VisException>;
   excByDept: Map<string, VisException>;
@@ -70,7 +78,7 @@ export interface ResolveTrace {
     | 'base_default';
   exception_id?: string;
   exception_scope?: string;
-  bridges_used?: { to_department_id: string; depth: string; match_count: number }[];
+  bridges_used?: { to_department_id: string; depth: string; match_count: number; include_sub?: boolean }[];
   direct_manager_included?: boolean;
 }
 
@@ -81,8 +89,9 @@ export interface ResolveTrace {
  *   3 governing exception, most-specific wins (user > role > department):
  *       narrow → shortlist + self; widen → all
  *       none   → base default = own dept (±upward switch) + subordinates + direct manager + self
+ *                + unified subtree pool (when the dept sits inside a unify-flagged subtree)
  *   4 direct reporting manager always assignable (even cross-department)
- *   5 cross-dept bridges from the user's dept (base default only)
+ *   5 cross-dept bridges from the user's dept (cascade-aware; base default only)
  *   6 self always included
  *
  * @Global so employees/departments/roles services can call invalidate() without circular deps.
@@ -146,14 +155,13 @@ export class AssigneeVisibilityService {
       base = this.computeBaseDefault(g, userId, deptId);
       // 4 — direct reporting manager is folded into the base default above
       if ((g.directManagerOf.get(userId) ?? null)) trace.direct_manager_included = true;
-      // 5 — cross-department bridges from this user's department
-      const bridgesUsed: { to_department_id: string; depth: string; match_count: number }[] = [];
+      // 5 — cross-department bridges from this user's department (reach is precomputed,
+      // and already includes descendant departments when the bridge cascades).
+      const bridgesUsed: { to_department_id: string; depth: string; match_count: number; include_sub?: boolean }[] = [];
       if (deptId) {
         for (const b of g.bridgesFrom.get(deptId) ?? []) {
-          const slice = b.depth === 'whole_dept' ? g.deptMembers.get(b.to) : g.deptSeniors.get(b.to);
-          const ids = slice ? [...slice] : [];
-          ids.forEach((id) => base.add(id));
-          bridgesUsed.push({ to_department_id: b.to, depth: b.depth, match_count: ids.length });
+          b.reach.forEach((id) => base.add(id));
+          bridgesUsed.push({ to_department_id: b.to, depth: b.depth, match_count: b.reach.size, include_sub: b.includeSub });
         }
       }
       if (bridgesUsed.length) trace.bridges_used = bridgesUsed;
@@ -242,6 +250,12 @@ export class AssigneeVisibilityService {
           s.add(id);
         });
       }
+
+      // Unified subtree: when this dept sits inside a unify-flagged subtree, everyone in
+      // that subtree assigns to everyone (one big department) — added on top, bypassing
+      // the upward switch within the pool.
+      const unify = g.unifyPoolOf.get(deptId);
+      if (unify) unify.forEach((id) => s.add(id));
     }
     return s;
   }
@@ -288,11 +302,6 @@ export class AssigneeVisibilityService {
     return value;
   }
 
-  /** Roles permitted to edit visibility settings (used by the controller for auth). */
-  async getConfigRoles(orgId: string): Promise<string[]> {
-    return (await this.getConfig(orgId)).configRoles;
-  }
-
   private async getGraph(orgId: string): Promise<OrgGraph> {
     const cached = this.graphCache.get(orgId);
     if (cached && cached.expires > Date.now()) return cached.value;
@@ -308,7 +317,13 @@ export class AssigneeVisibilityService {
       }),
       this.prisma.department.findMany({
         where: { organization_id: orgId },
-        select: { id: true, head_user_id: true, assignee_allow_upward: true },
+        select: {
+          id: true,
+          parent_department_id: true,
+          head_user_id: true,
+          assignee_allow_upward: true,
+          assignee_unify_subtree: true,
+        },
       }),
       this.prisma.organizationMember.findMany({
         where: { organization_id: orgId, is_active: true },
@@ -371,11 +386,53 @@ export class AssigneeVisibilityService {
       }
     }
 
-    const bridgesFrom = new Map<string, { to: string; depth: 'head_senior' | 'whole_dept' }[]>();
+    // Department tree (for unify pools + cascading bridge reach). deptSeniors is now
+    // complete (heads folded in above), so reach sets can be precomputed here.
+    const deptNodes: DeptNode[] = departments.map((d) => ({
+      id: d.id,
+      parent_department_id: d.parent_department_id ?? null,
+    }));
+    const sliceOf = (deptId: string, depth: 'head_senior' | 'whole_dept') =>
+      depth === 'whole_dept' ? deptMembers.get(deptId) : deptSeniors.get(deptId);
+    const bridgeReach = (toId: string, depth: 'head_senior' | 'whole_dept', includeSub: boolean) => {
+      const targets = includeSub ? [toId, ...descendantIds(deptNodes, toId)] : [toId];
+      const out = new Set<string>();
+      for (const t of targets) sliceOf(t, depth)?.forEach((id) => out.add(id));
+      return out;
+    };
+
+    const bridgesFrom: OrgGraph['bridgesFrom'] = new Map();
     for (const b of bridges) {
       const arr = bridgesFrom.get(b.from_department_id) ?? [];
-      arr.push({ to: b.to_department_id, depth: b.depth as 'head_senior' | 'whole_dept' });
+      const depth = b.depth as 'head_senior' | 'whole_dept';
+      arr.push({
+        to: b.to_department_id,
+        depth,
+        includeSub: b.include_sub_departments,
+        reach: bridgeReach(b.to_department_id, depth, b.include_sub_departments),
+      });
       bridgesFrom.set(b.from_department_id, arr);
+    }
+
+    // Unify pools: each dept maps to the member set of its *highest* unify-flagged ancestor's
+    // subtree (self + all descendants). Computed once per distinct root.
+    const unifyEnabled = new Set(departments.filter((d) => d.assignee_unify_subtree).map((d) => d.id));
+    const unifyPoolOf = new Map<string, Set<string>>();
+    if (unifyEnabled.size) {
+      const poolByRoot = new Map<string, Set<string>>();
+      for (const d of departments) {
+        const root = ancestorChain(deptNodes, d.id).find((id) => unifyEnabled.has(id));
+        if (!root) continue;
+        let pool = poolByRoot.get(root);
+        if (!pool) {
+          pool = new Set<string>();
+          for (const dz of [root, ...descendantIds(deptNodes, root)]) {
+            deptMembers.get(dz)?.forEach((id) => pool!.add(id));
+          }
+          poolByRoot.set(root, pool);
+        }
+        unifyPoolOf.set(d.id, pool);
+      }
     }
 
     const excByUser = new Map<string, VisException>();
@@ -403,6 +460,7 @@ export class AssigneeVisibilityService {
       deptMembers,
       deptSeniors,
       deptAllowUpward,
+      unifyPoolOf,
       bridgesFrom,
       excByUser,
       excByRole,
@@ -413,20 +471,9 @@ export class AssigneeVisibilityService {
   }
 
   // ─── Admin: edit config / exceptions / bridges / upward switch ───────────────────
-
-  /** Throws unless the actor may edit visibility config (employee-inclusive config → any member; else admin). */
-  async assertCanEdit(orgId: string, userId: string): Promise<void> {
-    const roles = await this.getConfigRoles(orgId);
-    const member = await this.prisma.organizationMember.findUnique({
-      where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-      select: { is_admin: true },
-    });
-    if (!member || !(roles.includes('employee') || member.is_admin)) {
-      throw new ForbiddenException(
-        'You do not have permission to edit assignee visibility settings',
-      );
-    }
-  }
+  // Authorization is enforced at the route layer via
+  // @RequirePermission('tasks.config.assignee_visibility.manage', …); the actorUserId
+  // params below are retained for audit logging.
 
   private async ensureMaster(orgId: string) {
     return this.prisma.taskMaster.upsert({
@@ -471,15 +518,34 @@ export class AssigneeVisibilityService {
       }),
       this.prisma.department.findMany({
         where: { organization_id: orgId },
-        select: { id: true, name: true, assignee_allow_upward: true },
+        select: {
+          id: true,
+          name: true,
+          parent_department_id: true,
+          color: true,
+          assignee_allow_upward: true,
+          assignee_unify_subtree: true,
+        },
         orderBy: { name: 'asc' },
       }),
       this.getGraph(orgId),
     ]);
     const nameOf = (id: string) => g.profiles.get(id)?.name ?? null;
     const deptName = new Map(departments.map((d) => [d.id, d.name]));
-    const sliceSize = (toId: string, depth: string) =>
-      (depth === 'whole_dept' ? g.deptMembers.get(toId) : g.deptSeniors.get(toId))?.size ?? 0;
+    const deptNodes: DeptNode[] = departments.map((d) => ({
+      id: d.id,
+      parent_department_id: d.parent_department_id ?? null,
+    }));
+    // Cascade-aware reach size: a bridge that includes sub-departments counts the union
+    // across the target and all its descendants.
+    const reachSize = (toId: string, depth: string, includeSub: boolean) => {
+      const targets = includeSub ? [toId, ...descendantIds(deptNodes, toId)] : [toId];
+      const set = new Set<string>();
+      for (const t of targets) {
+        (depth === 'whole_dept' ? g.deptMembers.get(t) : g.deptSeniors.get(t))?.forEach((id) => set.add(id));
+      }
+      return set.size;
+    };
 
     return {
       settings: {
@@ -508,14 +574,14 @@ export class AssigneeVisibilityService {
         to_department_id: b.to_department_id,
         to_department_name: deptName.get(b.to_department_id) ?? null,
         depth: b.depth,
-        match_count: sliceSize(b.to_department_id, b.depth),
+        include_sub_departments: b.include_sub_departments,
+        match_count: reachSize(b.to_department_id, b.depth, b.include_sub_departments),
       })),
       departments,
     };
   }
 
   async updateSettings(orgId: string, actorUserId: string, dto: UpdateAssigneeSettingsDto) {
-    await this.assertCanEdit(orgId, actorUserId);
     const before = await this.ensureMaster(orgId);
     const data: Record<string, unknown> = {};
     if (dto.master_override !== undefined) data.assignee_master_override = dto.master_override;
@@ -548,7 +614,6 @@ export class AssigneeVisibilityService {
   }
 
   async createException(orgId: string, actorUserId: string, dto: CreateExceptionDto) {
-    await this.assertCanEdit(orgId, actorUserId);
     if (dto.scope === 'user' && !dto.scope_user_id)
       throw new BadRequestException('scope_user_id is required for a user-scoped exception');
     if (dto.scope === 'role' && !dto.scope_role)
@@ -578,7 +643,6 @@ export class AssigneeVisibilityService {
   }
 
   async deleteException(orgId: string, actorUserId: string, id: string) {
-    await this.assertCanEdit(orgId, actorUserId);
     const exc = await this.prisma.assigneeVisibilityException.findFirst({
       where: { id, organization_id: orgId },
     });
@@ -590,7 +654,6 @@ export class AssigneeVisibilityService {
   }
 
   async createBridge(orgId: string, actorUserId: string, dto: CreateBridgeDto) {
-    await this.assertCanEdit(orgId, actorUserId);
     if (dto.from_department_id === dto.to_department_id)
       throw new BadRequestException('A bridge must connect two different departments');
     const depts = await this.prisma.department.findMany({
@@ -613,6 +676,7 @@ export class AssigneeVisibilityService {
         from_department_id: dto.from_department_id,
         to_department_id: dto.to_department_id,
         depth: dto.depth,
+        include_sub_departments: dto.include_sub_departments ?? false,
         created_by: actorUserId,
       },
     });
@@ -625,7 +689,6 @@ export class AssigneeVisibilityService {
   }
 
   async deleteBridge(orgId: string, actorUserId: string, id: string) {
-    await this.assertCanEdit(orgId, actorUserId);
     const bridge = await this.prisma.assigneeCrossDeptBridge.findFirst({
       where: { id, organization_id: orgId },
     });
@@ -637,7 +700,6 @@ export class AssigneeVisibilityService {
   }
 
   async setDepartmentUpward(orgId: string, actorUserId: string, dto: SetDeptUpwardDto) {
-    await this.assertCanEdit(orgId, actorUserId);
     const dept = await this.prisma.department.findFirst({
       where: { id: dto.department_id, organization_id: orgId },
     });
@@ -653,5 +715,23 @@ export class AssigneeVisibilityService {
       after: { allow: dto.allow },
     });
     return { id: updated.id, assignee_allow_upward: updated.assignee_allow_upward };
+  }
+
+  async setDepartmentUnify(orgId: string, actorUserId: string, dto: SetDeptUnifyDto) {
+    const dept = await this.prisma.department.findFirst({
+      where: { id: dto.department_id, organization_id: orgId },
+    });
+    if (!dept) throw new NotFoundException('Department not found');
+    const updated = await this.prisma.department.update({
+      where: { id: dto.department_id },
+      data: { assignee_unify_subtree: dto.unify },
+    });
+    this.invalidate(orgId);
+    await this.audit(orgId, actorUserId, 'unify_subtree_changed', {
+      target: { department_id: dto.department_id },
+      before: { unify: dept.assignee_unify_subtree },
+      after: { unify: dto.unify },
+    });
+    return { id: updated.id, assignee_unify_subtree: updated.assignee_unify_subtree };
   }
 }

@@ -13,20 +13,27 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { AssigneeVisibilityService } from './assignee-visibility.service';
 import {
   CreateBridgeDto,
   CreateExceptionDto,
+  SetDeptUnifyDto,
   SetDeptUpwardDto,
   UpdateAssigneeSettingsDto,
 } from './dto/assignee-visibility.dto';
 
+/** Single leaf governing every assignee-visibility mutation. */
+const AV = 'tasks.config.assignee_visibility.manage';
+
 @ApiTags('assignee-visibility')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/tasks/masters/assignee-visibility')
 export class AssigneeVisibilityController {
   constructor(private readonly service: AssigneeVisibilityService) {}
@@ -45,6 +52,7 @@ export class AssigneeVisibilityController {
   }
 
   @Put('settings')
+  @RequirePermission(AV, PermissionAction.edit)
   @ApiOperation({ summary: 'Update override / excludes / full-visibility / config roles' })
   updateSettings(
     @Param('orgId') orgId: string,
@@ -55,6 +63,7 @@ export class AssigneeVisibilityController {
   }
 
   @Post('exceptions')
+  @RequirePermission(AV, PermissionAction.write)
   @ApiOperation({ summary: 'Create a scoped widen/narrow exception' })
   createException(
     @Param('orgId') orgId: string,
@@ -65,6 +74,7 @@ export class AssigneeVisibilityController {
   }
 
   @Delete('exceptions/:id')
+  @RequirePermission(AV, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete an exception' })
   deleteException(
     @Param('orgId') orgId: string,
@@ -75,18 +85,21 @@ export class AssigneeVisibilityController {
   }
 
   @Post('bridges')
+  @RequirePermission(AV, PermissionAction.write)
   @ApiOperation({ summary: 'Create a one-directional cross-department bridge' })
   createBridge(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateBridgeDto) {
     return this.service.createBridge(orgId, req.user.id, dto);
   }
 
   @Delete('bridges/:id')
+  @RequirePermission(AV, PermissionAction.delete)
   @ApiOperation({ summary: 'Delete a bridge' })
   deleteBridge(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
     return this.service.deleteBridge(orgId, req.user.id, id);
   }
 
   @Patch('department-upward')
+  @RequirePermission(AV, PermissionAction.edit)
   @ApiOperation({ summary: 'Toggle a department\'s upward-assignment switch' })
   setDepartmentUpward(
     @Param('orgId') orgId: string,
@@ -94,5 +107,16 @@ export class AssigneeVisibilityController {
     @Body() dto: SetDeptUpwardDto,
   ) {
     return this.service.setDepartmentUpward(orgId, req.user.id, dto);
+  }
+
+  @Patch('department-unify')
+  @RequirePermission(AV, PermissionAction.edit)
+  @ApiOperation({ summary: 'Toggle treating a department + its sub-departments as one pool' })
+  setDepartmentUnify(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Body() dto: SetDeptUnifyDto,
+  ) {
+    return this.service.setDepartmentUnify(orgId, req.user.id, dto);
   }
 }

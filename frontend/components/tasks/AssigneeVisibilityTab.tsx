@@ -10,6 +10,8 @@ import {
   Search,
   ArrowRight,
   ArrowLeftRight,
+  CornerDownRight,
+  Lock,
   Eye,
   ShieldAlert,
   Info,
@@ -18,6 +20,10 @@ import {
 import { tasksApi } from '@/lib/api/tasks'
 import { getEmployees } from '@/lib/api/employees'
 import { useToast } from '@/components/ui/Toast'
+import { computeNodeColors } from '@/lib/org-chart-colors'
+import { flattenTree } from '@/lib/dept-tree'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import type { Department } from '@/lib/types'
 import type {
   AssigneeVisibilityAdminView,
   AssigneeVisibilitySettings,
@@ -300,15 +306,18 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
         {/* 3 — Per-department upward switch */}
         <UpwardSection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
 
-        {/* 4 — Cross-department bridges */}
+        {/* 4 — Unify sub-departments */}
+        <UnifySection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
+
+        {/* 5 — Cross-department bridges */}
         <BridgeSection orgId={orgId} view={view} deptName={deptName} onChange={reload} apiError={apiError} />
 
-        {/* 5 — Exceptions */}
+        {/* 6 — Exceptions */}
         <ExceptionSection orgId={orgId} view={view} people={people} onChange={reload} apiError={apiError} />
       </div>
 
       {/* Who can edit */}
-      <Card title="Who can change these settings" description="Member roles allowed to edit assignee visibility (override, exceptions, bridges, upward switch).">
+      <Card title="Who can change these settings" description="Member roles allowed to edit assignee visibility (override, exceptions, bridges, upward switch, sub-department unify).">
         <div className="flex flex-wrap gap-2">
           {MEMBER_ROLES.map((r) => (
             <Chip key={r} label={roleLabel(r)} active={settings.config_roles.includes(r)} onClick={() => patch({ config_roles: toggleIn(settings.config_roles, r) })} />
@@ -359,14 +368,157 @@ function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; vie
   )
 }
 
+// ─── Section: unify sub-departments ──────────────────────────────────────────────
+
+function UnifySection({ orgId, view, onChange, apiError }: { orgId: string; view: AssigneeVisibilityAdminView; onChange: () => Promise<void>; apiError: (e: any, f: string) => void }) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const depts = view.departments
+  const byId = useMemo(() => new Map(depts.map((d) => [d.id, d])), [depts])
+  // Reuse the org-chart hue scheme so swatches here match the chart (branch hue,
+  // faded by depth, honouring explicit per-department color overrides).
+  const colors = useMemo(() => computeNodeColors(depts as unknown as Department[]), [depts])
+  const colorOf = (id: string) => colors[id]?.base || '#94A3B8'
+  // Whole department forest in pre-order (root → branch → leaves), indented by depth —
+  // so the list follows the hierarchy instead of being a flat alphabetical list.
+  const rows = useMemo(() => flattenTree(depts as unknown as Department[]), [depts])
+
+  const childIds = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const d of depts) {
+      if (d.parent_department_id && byId.has(d.parent_department_id)) {
+        const arr = m.get(d.parent_department_id) ?? []
+        arr.push(d.id)
+        m.set(d.parent_department_id, arr)
+      }
+    }
+    return m
+  }, [depts, byId])
+  const hasChildren = (id: string) => (childIds.get(id)?.length ?? 0) > 0
+  const descendantCount = (id: string) => {
+    let n = 0
+    const stack = [...(childIds.get(id) ?? [])]
+    while (stack.length) {
+      const c = stack.pop()!
+      n++
+      for (const cc of childIds.get(c) ?? []) stack.push(cc)
+    }
+    return n
+  }
+
+  // Nearest ancestor (excluding self) that already has unify on — self is then covered by it
+  // (and the highest such flag governs the pool, so toggling the child would be redundant).
+  const coveringAncestor = (id: string) => {
+    let cur = byId.get(id)?.parent_department_id ?? null
+    const seen = new Set<string>()
+    while (cur && byId.has(cur) && !seen.has(cur)) {
+      seen.add(cur)
+      const d = byId.get(cur)!
+      if (d.assignee_unify_subtree) return d
+      cur = d.parent_department_id ?? null
+    }
+    return null
+  }
+
+  const anyParent = childIds.size > 0
+
+  async function toggle(deptId: string, unify: boolean) {
+    setBusy(deptId)
+    try {
+      await tasksApi.setDepartmentUnify(orgId, { department_id: deptId, unify })
+      await onChange()
+    } catch (e) {
+      apiError(e, 'Could not update department')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const plural = (n: number) => `${n} sub-department${n === 1 ? '' : 's'}`
+
+  return (
+    <Card title="Treat sub-departments as one" description="Turn a department on to merge it with everything beneath it into one pool — everyone in the sub-tree can assign to everyone else. Sub-departments are then covered automatically (shown locked under the one you switched on).">
+      {depts.length === 0 ? (
+        <p className="text-xs text-[#94A3B8] py-1">No departments configured.</p>
+      ) : !anyParent ? (
+        <p className="text-xs text-[#94A3B8] py-1">No departments have sub-departments to unify.</p>
+      ) : (
+        <div className="max-h-[320px] overflow-y-auto -mr-1 pr-1 divide-y divide-[#F1F5F9]">
+          {rows.map(({ dept, depth }) => {
+            const d = byId.get(dept.id)!
+            const covered = coveringAncestor(dept.id)
+            const parent = hasChildren(dept.id)
+            const unified = d.assignee_unify_subtree && !covered
+            return (
+              <div key={dept.id} className="flex items-center justify-between gap-3 py-2">
+                <div className="flex items-center gap-2 min-w-0" style={{ paddingLeft: depth * 18 }}>
+                  {depth > 0 && <CornerDownRight size={13} className="shrink-0 text-[#CBD5E1] -mr-0.5" />}
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorOf(dept.id) }} />
+                  <div className="min-w-0">
+                    <p className={`text-sm truncate ${unified ? 'font-semibold text-[#0F172A]' : covered ? 'text-[#475569]' : parent ? 'font-medium text-[#0F172A]' : 'text-[#64748B]'}`}>
+                      {dept.name}
+                    </p>
+                    <p className="text-xs text-[#94A3B8]">
+                      {covered
+                        ? `In ${covered.name}'s pool`
+                        : unified
+                          ? `Unified — ${plural(descendantCount(dept.id))} assign as one`
+                          : parent
+                            ? plural(descendantCount(dept.id))
+                            : 'No sub-departments'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {busy === dept.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
+                  {covered ? (
+                    <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]" title={`Locked — controlled by ${covered.name}`}>
+                      <Lock size={12} />
+                      <Toggle on disabled onChange={() => {}} />
+                    </span>
+                  ) : parent ? (
+                    <Toggle on={d.assignee_unify_subtree} disabled={busy === dept.id} onChange={() => toggle(dept.id, !d.assignee_unify_subtree)} />
+                  ) : (
+                    <span className="text-[11px] text-[#CBD5E1] pr-1">—</span>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 // ─── Section: bridges ────────────────────────────────────────────────────────────
 
 function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: string; view: AssigneeVisibilityAdminView; deptName: (id: string) => string; onChange: () => Promise<void>; apiError: (e: any, f: string) => void }) {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [depth, setDepth] = useState<BridgeDepth>('whole_dept')
+  const [includeSub, setIncludeSub] = useState(false)
   const [adding, setAdding] = useState(false)
   const [bothBusy, setBothBusy] = useState<string | null>(null)
+
+  // Map the view's departments into the Department shape DepartmentSelect expects,
+  // so the From/Into pickers match the Add Employee dropdown (branch colors,
+  // indented cascade, search). Only id/name/parent/color are read downstream.
+  const deptOptions = useMemo<Department[]>(
+    () =>
+      view.departments.map((d) => ({
+        id: d.id,
+        name: d.name,
+        parent_department_id: d.parent_department_id ?? undefined,
+        color: d.color,
+        organization_id: orgId,
+        position_x: 0,
+        position_y: 0,
+        created_at: '',
+        updated_at: '',
+      })),
+    [view.departments, orgId],
+  )
+  const toOptions = useMemo(() => deptOptions.filter((d) => d.id !== from), [deptOptions, from])
 
   // Reverse direction of a bridge, if it already exists as its own entry.
   const reverseOf = (b: AssigneeVisibilityAdminView['bridges'][number]) =>
@@ -385,6 +537,7 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
           from_department_id: b.to_department_id,
           to_department_id: b.from_department_id,
           depth: b.depth,
+          include_sub_departments: b.include_sub_departments,
         })
       } else if (!on && reverse) {
         await tasksApi.deleteAssigneeBridge(orgId, reverse.id)
@@ -401,8 +554,8 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
     if (!from || !to) return
     setAdding(true)
     try {
-      await tasksApi.createAssigneeBridge(orgId, { from_department_id: from, to_department_id: to, depth })
-      setFrom(''); setTo(''); setDepth('whole_dept')
+      await tasksApi.createAssigneeBridge(orgId, { from_department_id: from, to_department_id: to, depth, include_sub_departments: includeSub })
+      setFrom(''); setTo(''); setDepth('whole_dept'); setIncludeSub(false)
       await onChange()
     } catch (e) {
       apiError(e, 'Could not create bridge')
@@ -428,17 +581,16 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end pt-1">
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">From</label>
-          <select value={from} onChange={(e) => setFrom(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB]">
-            <option value="">Select…</option>
-            {view.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          <DepartmentSelect
+            value={from}
+            onChange={(id) => { setFrom(id); if (id === to) setTo('') }}
+            departments={deptOptions}
+            placeholder="Select…"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">Into</label>
-          <select value={to} onChange={(e) => setTo(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB]">
-            <option value="">Select…</option>
-            {view.departments.filter((d) => d.id !== from).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          <DepartmentSelect value={to} onChange={setTo} departments={toOptions} placeholder="Select…" />
         </div>
         <button type="button" onClick={add} disabled={!from || !to || adding} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors h-[38px]">
           {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
@@ -450,6 +602,13 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
           <Chip label="Whole department" active={depth === 'whole_dept'} onClick={() => setDepth('whole_dept')} />
           <Chip label="Head & senior roles" active={depth === 'head_senior'} onClick={() => setDepth('head_senior')} />
         </div>
+      </div>
+      <div className="flex items-center justify-between gap-3 p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC]">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-[#0F172A]">Include sub-departments</p>
+          <p className="text-xs text-[#475569]">Also reach every department beneath the target — adapts automatically as sub-departments change.</p>
+        </div>
+        <Toggle on={includeSub} onChange={() => setIncludeSub((v) => !v)} />
       </div>
       {view.bridges.length > 0 && (
         <div className="max-h-[300px] overflow-y-auto -mr-1 pr-1 space-y-2 border-t border-[#F1F5F9] pt-4">
@@ -467,6 +626,11 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-full px-2 py-0.5">
                     {b.depth === 'whole_dept' ? 'Whole dept' : 'Head & seniors'}
                   </span>
+                  {b.include_sub_departments && (
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-[#7C3AED] bg-[#F5F3FF] border border-[#DDD6FE] rounded-full px-2 py-0.5">
+                      + sub-depts
+                    </span>
+                  )}
                 </div>
                 {b.match_count === 0 ? (
                   <p className="flex items-center gap-1 text-xs text-[#B45309] mt-1">

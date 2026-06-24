@@ -318,13 +318,17 @@ export interface AssigneeBridge {
   to_department_id: string
   to_department_name: string | null
   depth: BridgeDepth
+  include_sub_departments: boolean
   match_count: number
 }
 
 export interface AssigneeDeptUpward {
   id: string
   name: string
+  parent_department_id: string | null
+  color: string | null
   assignee_allow_upward: boolean
+  assignee_unify_subtree: boolean
 }
 
 export interface AssigneeVisibilityAdminView {
@@ -341,7 +345,7 @@ export interface AssigneeExplainResult {
     reason: string
     exception_id?: string
     exception_scope?: string
-    bridges_used?: { to_department_id: string; depth: string; match_count: number }[]
+    bridges_used?: { to_department_id: string; depth: string; match_count: number; include_sub?: boolean }[]
     direct_manager_included?: boolean
   }
   users: {

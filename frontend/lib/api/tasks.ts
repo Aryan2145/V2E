@@ -384,6 +384,7 @@ export const tasksApi = {
       from_department_id: string
       to_department_id: string
       depth: import('@/lib/types/tasks').BridgeDepth
+      include_sub_departments?: boolean
     },
   ): Promise<void> => {
     await apiClient.post(`${base(orgId)}/masters/assignee-visibility/bridges`, dto)
@@ -398,6 +399,13 @@ export const tasksApi = {
     dto: { department_id: string; allow: boolean },
   ): Promise<void> => {
     await apiClient.patch(`${base(orgId)}/masters/assignee-visibility/department-upward`, dto)
+  },
+
+  setDepartmentUnify: async (
+    orgId: string,
+    dto: { department_id: string; unify: boolean },
+  ): Promise<void> => {
+    await apiClient.patch(`${base(orgId)}/masters/assignee-visibility/department-unify`, dto)
   },
 
   explainAssignee: async (
