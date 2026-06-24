@@ -190,7 +190,10 @@ export class AuditService {
     const [items, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { occurred_at: 'desc' },
+        // Business time first; physical write time breaks ties so ordering and
+        // pagination stay deterministic even when a test org's clock has jumped
+        // around (many rows can share an occurred_at, or land out of write order).
+        orderBy: [{ occurred_at: 'desc' }, { created_at: 'desc' }],
         skip,
         take,
         include: { actor: { select: { id: true, name: true, email: true } } },
