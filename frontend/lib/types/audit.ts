@@ -33,7 +33,20 @@ export interface AuditListResponse {
   take: number
 }
 
+export interface AuditResourceFacet {
+  key: string
+  label: string
+  /** Legacy/derived alias — categorized for filtering & labels, hidden from the Type dropdown. */
+  hidden?: boolean
+}
+
+export interface AuditModuleFacet {
+  key: string
+  label: string
+  resources: AuditResourceFacet[]
+}
+
 export interface AuditResourcesResponse {
-  resources: string[]
+  modules: AuditModuleFacet[]
   trigger_sources: string[]
 }

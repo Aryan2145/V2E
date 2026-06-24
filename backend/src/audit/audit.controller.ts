@@ -21,6 +21,7 @@ export class AuditController {
   list(
     @Param('orgId') orgId: string,
     @Query('resource') resource?: string,
+    @Query('module') module?: string,
     @Query('entity_id') entity_id?: string,
     @Query('action') action?: string,
     @Query('actor_user_id') actor_user_id?: string,
@@ -34,6 +35,7 @@ export class AuditController {
   ) {
     return this.audit.list(orgId, {
       resource,
+      module,
       entity_id,
       action,
       actor_user_id,
@@ -49,12 +51,12 @@ export class AuditController {
 
   @Get('resources')
   @RequirePermission(ACCESS_RIGHTS_RESOURCE, PermissionAction.read)
-  @ApiOperation({ summary: 'Distinct resources + trigger sources for filters' })
+  @ApiOperation({ summary: 'Modules (grouped resources) + trigger sources for filters' })
   async resources(@Param('orgId') orgId: string) {
-    const [resources, trigger_sources] = await Promise.all([
-      this.audit.resources(orgId),
+    const [modules, trigger_sources] = await Promise.all([
+      this.audit.resourceModules(orgId),
       this.audit.triggerSources(orgId),
     ]);
-    return { resources, trigger_sources };
+    return { modules, trigger_sources };
   }
 }

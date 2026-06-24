@@ -3,6 +3,14 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditContextService, ActorType } from '../common/cls/audit-context.service';
 import { AuditEnrichmentService } from './audit-enrichment.service';
+import {
+  AUDIT_MODULES,
+  MAPPED_RESOURCES,
+  OTHER_MODULE_KEY,
+  resourcesForModule,
+  humanizeResource,
+  type AuditResourceFacet,
+} from './auditable-models';
 
 export type AuditAction = string; // create | update | delete | <semantic verb>
 
@@ -27,7 +35,10 @@ export interface RecordAuditInput {
 }
 
 export interface AuditListFilters {
+  /** Specific entity type (e.g. `task_status`). Wins over `module`. */
   resource?: string;
+  /** Module key (e.g. `tasks`) — expands to all its resource keys. */
+  module?: string;
   entity_id?: string;
   action?: string;
   actor_user_id?: string;
@@ -147,7 +158,15 @@ export class AuditService {
 
   async list(orgId: string, filters: AuditListFilters = {}) {
     const where: Prisma.AuditLogWhereInput = { organization_id: orgId };
-    if (filters.resource) where.resource = filters.resource;
+    if (filters.resource) {
+      where.resource = filters.resource;
+    } else if (filters.module) {
+      // A module spans several resource keys; the Other bucket is "everything unmapped".
+      where.resource =
+        filters.module === OTHER_MODULE_KEY
+          ? { notIn: MAPPED_RESOURCES }
+          : { in: resourcesForModule(filters.module) };
+    }
     if (filters.entity_id) where.entity_id = filters.entity_id;
     if (filters.action) where.action = filters.action;
     if (filters.actor_user_id) where.actor_user_id = filters.actor_user_id;
@@ -182,7 +201,7 @@ export class AuditService {
     return { items: enriched, total, skip, take };
   }
 
-  /** Distinct resource keys present for an org — drives the filter dropdown. */
+  /** Distinct resource keys present for an org. */
   async resources(orgId: string): Promise<string[]> {
     const rows = await this.prisma.auditLog.findMany({
       where: { organization_id: orgId },
@@ -191,6 +210,31 @@ export class AuditService {
       orderBy: { resource: 'asc' },
     });
     return rows.map((r) => r.resource);
+  }
+
+  /**
+   * The full module taxonomy, grouped (Module → Type), driving the two-tier
+   * filter. All canonical modules are always returned so the dropdown shows the
+   * complete auditable scope, not just modules that happen to have activity.
+   * Any present-but-unmapped resource is collected into a dynamic "Other" bucket.
+   */
+  async resourceModules(orgId: string): Promise<
+    { key: string; label: string; resources: AuditResourceFacet[] }[]
+  > {
+    const modules: { key: string; label: string; resources: AuditResourceFacet[] }[] =
+      AUDIT_MODULES.map((m) => ({ key: m.key, label: m.label, resources: m.resources }));
+
+    const present = await this.resources(orgId);
+    const mapped = new Set(MAPPED_RESOURCES);
+    const other = present.filter((r) => !mapped.has(r)).sort();
+    if (other.length) {
+      modules.push({
+        key: OTHER_MODULE_KEY,
+        label: 'Other',
+        resources: other.map((r) => ({ key: r, label: humanizeResource(r) })),
+      });
+    }
+    return modules;
   }
 
   /** Distinct trigger sources for system entries — drives the trigger filter. */

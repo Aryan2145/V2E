@@ -10,6 +10,7 @@ function unwrap<T>(res: { data: { data: T } | T }): T {
 
 export interface AuditFilters {
   resource?: string
+  module?: string
   action?: string
   actor_user_id?: string
   actor_type?: string

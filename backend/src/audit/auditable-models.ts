@@ -193,6 +193,163 @@ const EXPLICIT: Record<string, ModelAuditConfig> = {
   DailyUpdate: { resource: 'work_log', labelFields: [] },
 };
 
+// ─── Module grouping (drives the audit filter UI) ──────────────────────────────
+//
+// `resource` keys are entity-level (task, task_status, …). Users navigate by
+// MODULE — the top-nav / permission-registry concept (Tasks, Tickets, …). This
+// map groups resources under their module so the audit filter can offer a clean
+// Module dropdown, with a dependent Type dropdown only where a module spans more
+// than one entity. Mirrors PERMISSION_REGISTRY's module taxonomy.
+
+export interface AuditResourceFacet {
+  /** resource key as stored in audit_logs.resource. */
+  key: string;
+  /** Human label, shown in the Type dropdown (scoped to its module). */
+  label: string;
+  /**
+   * Legacy / derived alias kept for filtering + table labels but hidden from the
+   * Type dropdown — e.g. pre-consolidation `role_permission` rows that now write
+   * `access_right`. Keeps old entries categorized without cluttering the UI.
+   */
+  hidden?: boolean;
+}
+
+export interface AuditModuleDef {
+  /** Stable module key. */
+  key: string;
+  /** Human label, shown in the Module dropdown. */
+  label: string;
+  /** Entity types that roll up to this module. */
+  resources: AuditResourceFacet[];
+}
+
+export const AUDIT_MODULES: AuditModuleDef[] = [
+  {
+    key: 'goals',
+    label: 'Goals',
+    resources: [
+      { key: 'goal', label: 'Goals' },
+      { key: 'goal_measure', label: 'Measures' },
+    ],
+  },
+  {
+    key: 'tasks',
+    label: 'Tasks',
+    resources: [
+      { key: 'task', label: 'Tasks' },
+      { key: 'task_status', label: 'Statuses' },
+      { key: 'task_priority', label: 'Priorities' },
+      { key: 'task_category', label: 'Categories' },
+    ],
+  },
+  {
+    key: 'tickets',
+    label: 'Tickets',
+    resources: [
+      { key: 'ticket', label: 'Tickets' },
+      { key: 'ticket_status', label: 'Statuses' },
+      { key: 'ticket_priority', label: 'Priorities' },
+      { key: 'ticket_category', label: 'Categories' },
+      { key: 'ticket_type', label: 'Types' },
+    ],
+  },
+  {
+    key: 'projects',
+    label: 'Projects',
+    resources: [{ key: 'project', label: 'Projects' }],
+  },
+  {
+    key: 'governance',
+    label: 'Governance',
+    resources: [
+      { key: 'meeting', label: 'Meetings' },
+      { key: 'work_log', label: 'Work logs' },
+      { key: 'workflow', label: 'Workflows' },
+    ],
+  },
+  {
+    key: 'communication',
+    label: 'Communication',
+    resources: [
+      { key: 'announcement', label: 'Announcements' },
+      { key: 'bulletin', label: 'Bulletin posts' },
+      { key: 'knowledge', label: 'Knowledge base' },
+    ],
+  },
+  {
+    key: 'learning',
+    label: 'Learning',
+    resources: [
+      { key: 'learning_path', label: 'Learning paths' },
+      { key: 'learning_item', label: 'Learning items', hidden: true },
+    ],
+  },
+  {
+    key: 'ecs',
+    label: 'ECS',
+    resources: [{ key: 'company_policy', label: 'Company policies' }],
+  },
+  {
+    key: 'holidays',
+    label: 'Holidays',
+    resources: [{ key: 'holiday', label: 'Holidays & working days' }],
+  },
+  {
+    key: 'people',
+    label: 'People',
+    resources: [{ key: 'employee', label: 'Employees' }],
+  },
+  {
+    key: 'organization',
+    label: 'Organization',
+    resources: [
+      { key: 'organization', label: 'Company profile' },
+      { key: 'department', label: 'Departments' },
+      { key: 'role', label: 'Job roles' },
+      { key: 'culture', label: 'Culture standards' },
+    ],
+  },
+  {
+    key: 'administration',
+    label: 'Administration',
+    resources: [
+      { key: 'system_role', label: 'System roles' },
+      { key: 'access_right', label: 'Access rights' },
+      // Legacy keys written before access-right consolidation.
+      { key: 'role_permission', label: 'Access rights', hidden: true },
+      { key: 'user_permission_override', label: 'Access rights', hidden: true },
+      { key: 'org_module_entitlement', label: 'Access rights', hidden: true },
+      { key: 'system_role_module_scope', label: 'Access rights', hidden: true },
+    ],
+  },
+];
+
+/** Bucket for present-but-unmapped resources (derived-default models). */
+export const OTHER_MODULE_KEY = '__other';
+
+const RESOURCE_TO_MODULE = new Map<string, string>();
+for (const m of AUDIT_MODULES) {
+  for (const r of m.resources) RESOURCE_TO_MODULE.set(r.key, m.key);
+}
+
+/** Every resource key explicitly mapped to a module. */
+export const MAPPED_RESOURCES: string[] = [...RESOURCE_TO_MODULE.keys()];
+
+/** Module key a resource rolls up to, or null if unmapped. */
+export function moduleForResource(resource: string): string | null {
+  return RESOURCE_TO_MODULE.get(resource) ?? null;
+}
+
+/** Resource keys belonging to a module (empty for unknown / Other). */
+export function resourcesForModule(moduleKey: string): string[] {
+  return AUDIT_MODULES.find((m) => m.key === moduleKey)?.resources.map((r) => r.key) ?? [];
+}
+
+/** Humanize a raw resource key for the Other bucket. */
+export function humanizeResource(resource: string): string {
+  return resource.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 /** PascalCase model name → snake_case default resource key. */
 function defaultResource(model: string): string {
   return model

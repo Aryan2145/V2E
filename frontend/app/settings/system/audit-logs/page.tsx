@@ -4,8 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ScrollText, ChevronDown, ChevronRight, Search } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { auditApi, type AuditFilters } from '@/lib/api/audit'
-import type { AuditEntry } from '@/lib/types/audit'
+import type { AuditEntry, AuditModuleFacet } from '@/lib/types/audit'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import SelectField from '@/components/ui/SelectField'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 import {
   ActorCell,
   ActionBadge,
@@ -15,8 +17,10 @@ import {
   triggerLabel,
 } from '@/components/audit/AuditDetail'
 
-const selectClass =
-  'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
+// Text inputs (search + dates) stay white to contrast the soft-filled dropdowns,
+// but share the dropdowns' height and radius so the filter row stays aligned.
+const inputClass =
+  'rounded-[8px] border border-[#CBD5E1] bg-white px-3.5 py-2.5 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors'
 
 export default function AuditLogsPage() {
   const { user } = useAuth()
@@ -27,9 +31,10 @@ export default function AuditLogsPage() {
   const [denied, setDenied] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
 
-  const [resources, setResources] = useState<string[]>([])
+  const [modules, setModules] = useState<AuditModuleFacet[]>([])
   const [triggerSources, setTriggerSources] = useState<string[]>([])
 
+  const [module, setModule] = useState('')
   const [resource, setResource] = useState('')
   const [action, setAction] = useState('')
   const [actorType, setActorType] = useState('')
@@ -44,11 +49,37 @@ export default function AuditLogsPage() {
     auditApi
       .resources(orgId)
       .then((res) => {
-        setResources(res.resources)
+        setModules(res.modules)
         setTriggerSources(res.trigger_sources)
       })
       .catch(() => {})
   }, [orgId])
+
+  // Entity types within the selected module — drives the dependent Type dropdown.
+  // Hidden aliases (legacy/derived keys) are kept for labels but excluded here.
+  const selectedModule = useMemo(() => modules.find((m) => m.key === module), [modules, module])
+  const typeOptions = useMemo(
+    () => selectedModule?.resources.filter((r) => !r.hidden) ?? [],
+    [selectedModule],
+  )
+  // The Type dropdown stays in place but goes inactive when there's nothing to
+  // narrow (no module chosen, or a single-entity module) — avoids layout shift.
+  const typeDisabled = typeOptions.length <= 1
+
+  // Cap the date range at today (audit entries are never in the future).
+  const todayIso = useMemo(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }, [])
+
+  // resource key → { module label, type label } for the table's Module column.
+  const resourceLabels = useMemo(() => {
+    const map = new Map<string, { module: string; type: string }>()
+    for (const m of modules) {
+      for (const r of m.resources) map.set(r.key, { module: m.label, type: r.label })
+    }
+    return map
+  }, [modules])
 
   const load = useCallback(() => {
     if (!orgId) {
@@ -57,7 +88,9 @@ export default function AuditLogsPage() {
     }
     setLoading(true)
     const filters: AuditFilters = {}
+    // A specific Type wins; otherwise filter by the whole module.
     if (resource) filters.resource = resource
+    else if (module) filters.module = module
     if (action) filters.action = action
     if (actorType) filters.actor_type = actorType
     if (triggerSource) filters.trigger_source = triggerSource
@@ -75,7 +108,7 @@ export default function AuditLogsPage() {
         if (err?.response?.status === 403) setDenied(true)
       })
       .finally(() => setLoading(false))
-  }, [orgId, resource, action, actorType, triggerSource, fromDate, toDate, search])
+  }, [orgId, module, resource, action, actorType, triggerSource, fromDate, toDate, search])
 
   useEffect(() => {
     const t = setTimeout(load, search ? 300 : 0)
@@ -114,8 +147,18 @@ export default function AuditLogsPage() {
       {
         key: 'module',
         header: 'Module',
-        cellClassName: 'align-top capitalize',
-        render: (e) => <span className="text-sm text-[#475569]">{e.resource.replace(/_/g, ' ')}</span>,
+        cellClassName: 'align-top',
+        render: (e) => {
+          const lbl = resourceLabels.get(e.resource)
+          return (
+            <div className="leading-tight">
+              <span className="text-sm text-[#0F172A]">{lbl?.module ?? e.resource.replace(/_/g, ' ')}</span>
+              {lbl && lbl.type !== lbl.module && (
+                <span className="block text-xs text-[#94A3B8]">{lbl.type}</span>
+              )}
+            </div>
+          )
+        },
       },
       {
         key: 'entity',
@@ -124,7 +167,7 @@ export default function AuditLogsPage() {
         render: (e) => <span className="text-sm text-[#0F172A]">{e.entity_label ?? e.entity_id}</span>,
       },
     ],
-    [expanded],
+    [expanded, resourceLabels],
   )
 
   const toggleRow = useCallback((e: AuditEntry) => {
@@ -150,62 +193,99 @@ export default function AuditLogsPage() {
         </p>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative flex-1 min-w-[200px]">
+      {/* Filters — search spans the full width; controls sit in an even row below */}
+      <div className="mb-4 space-y-2">
+        <div className="relative w-full">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
           <input
-            className={`${selectClass} w-full pl-9`}
+            className={`${inputClass} w-full pl-9`}
             placeholder="Search by entity or action…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <select className={selectClass} value={resource} onChange={(e) => setResource(e.target.value)}>
-          <option value="">All modules</option>
-          {resources.map((r) => (
-            <option key={r} value={r}>
-              {r.replace(/_/g, ' ')}
-            </option>
-          ))}
-        </select>
-        <select className={selectClass} value={action} onChange={(e) => setAction(e.target.value)}>
-          <option value="">All actions</option>
-          <option value="create">Create</option>
-          <option value="update">Update</option>
-          <option value="delete">Delete</option>
-        </select>
-        <select className={selectClass} value={actorType} onChange={(e) => setActorType(e.target.value)}>
-          <option value="">User &amp; System</option>
-          <option value="user">User</option>
-          <option value="system">System</option>
-        </select>
-        {triggerSources.length > 0 && (
-          <select className={selectClass} value={triggerSource} onChange={(e) => setTriggerSource(e.target.value)}>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 1 — Module: the primary, navigation-level filter */}
+          <SelectField
+            wrapperClassName="flex-1 min-w-[150px]"
+            value={module}
+            onChange={(e) => {
+              setModule(e.target.value)
+              setResource('') // reset the dependent Type when the module changes
+            }}
+          >
+            <option value="">All modules</option>
+            {modules.map((m) => (
+              <option key={m.key} value={m.key}>
+                {m.label}
+              </option>
+            ))}
+          </SelectField>
+
+          {/* 2 — Type: stays in place, inactive when the module has no sub-types */}
+          <SelectField
+            wrapperClassName="flex-1 min-w-[150px]"
+            value={resource}
+            disabled={typeDisabled}
+            onChange={(e) => setResource(e.target.value)}
+          >
+            {typeDisabled ? (
+              <option value="">Category</option>
+            ) : (
+              <>
+                <option value="">All {selectedModule!.label.toLowerCase()}</option>
+                {typeOptions.map((r) => (
+                  <option key={r.key} value={r.key}>
+                    {r.label}
+                  </option>
+                ))}
+              </>
+            )}
+          </SelectField>
+
+          {/* 3 — Action */}
+          <SelectField wrapperClassName="flex-1 min-w-[140px]" value={action} onChange={(e) => setAction(e.target.value)}>
+            <option value="">All actions</option>
+            <option value="create">Create</option>
+            <option value="update">Update</option>
+            <option value="delete">Delete</option>
+          </SelectField>
+
+          {/* 4 — Actor */}
+          <SelectField wrapperClassName="flex-1 min-w-[140px]" value={actorType} onChange={(e) => setActorType(e.target.value)}>
+            <option value="">User &amp; System</option>
+            <option value="user">User</option>
+            <option value="system">System</option>
+          </SelectField>
+
+          {/* 5 — Trigger (only when system entries with a known trigger exist) */}
+          <SelectField
+            wrapperClassName="flex-1 min-w-[140px]"
+            value={triggerSource}
+            disabled={triggerSources.length === 0}
+            onChange={(e) => setTriggerSource(e.target.value)}
+          >
             <option value="">All triggers</option>
             {triggerSources.map((t) => (
               <option key={t} value={t}>
                 {triggerLabel(t)}
               </option>
             ))}
-          </select>
-        )}
-        <input
-          type="date"
-          className={selectClass}
-          value={fromDate}
-          max={toDate || undefined}
-          onChange={(e) => setFromDate(e.target.value)}
-          aria-label="From date"
-        />
-        <input
-          type="date"
-          className={selectClass}
-          value={toDate}
-          min={fromDate || undefined}
-          onChange={(e) => setToDate(e.target.value)}
-          aria-label="To date"
-        />
+          </SelectField>
+
+          {/* Date range — single tab, opens a calendar with quick presets */}
+          <DateRangePicker
+            wrapperClassName="flex-1 min-w-[190px]"
+            from={fromDate}
+            to={toDate}
+            max={todayIso}
+            onChange={(f, t) => {
+              setFromDate(f)
+              setToDate(t)
+            }}
+          />
+        </div>
       </div>
 
       {/* Table */}
