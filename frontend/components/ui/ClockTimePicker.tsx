@@ -217,7 +217,7 @@ export default function ClockTimePicker({ value, label, onChange, onClose }: Pro
             onPointerDown={onDown}
             onPointerMove={onMove}
             onPointerUp={onUp}
-            style={{ cursor: "crosshair", touchAction: "none", display: "block" }}
+            style={{ cursor: "pointer", touchAction: "none", display: "block" }}
           >
             {/* Background circle */}
             <circle cx={CX} cy={CY} r={CX - 1} fill="#F1F5F9" />
