@@ -39,6 +39,10 @@ interface Props {
   onClose: () => void
   onAdd: (data: HolidayFormData) => Promise<void>
   title?: string
+  /** Show the single/range duration selector. Off for single-day-only contexts (individuals). */
+  allowRange?: boolean
+  /** Pre-selected holiday type — e.g. "personal" for an individual's calendar. */
+  defaultType?: HolidayType
   /** Pass these (dept context) to show the cascade control for sub-departments. */
   departments?: Department[]
   originDeptId?: string
@@ -51,12 +55,14 @@ export default function HolidayFormModal({
   onClose,
   onAdd,
   title = 'New Holiday',
+  allowRange = true,
+  defaultType = 'company',
   departments,
   originDeptId,
   originDeptName,
 }: Props) {
   const [span, setSpan] = useState<Span>('single')
-  const [form, setForm] = useState<HolidayFormData>(DEFAULT)
+  const [form, setForm] = useState<HolidayFormData>({ ...DEFAULT, type: defaultType })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -67,7 +73,7 @@ export default function HolidayFormModal({
   }
 
   function reset() {
-    setForm(DEFAULT)
+    setForm({ ...DEFAULT, type: defaultType })
     setSpan('single')
     setError('')
   }
@@ -111,24 +117,26 @@ export default function HolidayFormModal({
     <Modal isOpen={isOpen} onClose={close} title={title} size="md" closeOnEscape={!saving}>
       <div className="space-y-4">
         {/* Span selector — single day vs range */}
-        <div>
-          <label className="block text-xs font-medium text-[#374151] mb-1.5">Duration</label>
-          <div className="inline-flex p-0.5 rounded-[8px] bg-[#F1F5F9] border border-[#E2E8F0]">
-            {(['single', 'range'] as Span[]).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSpan(s)}
-                className={[
-                  'px-3 py-1.5 rounded-[6px] text-sm font-medium transition-colors',
-                  span === s ? 'bg-white text-[#2563EB] shadow-[0_1px_2px_rgba(0,0,0,0.06)]' : 'text-[#64748B] hover:text-[#0F172A]',
-                ].join(' ')}
-              >
-                {s === 'single' ? 'Single day' : 'Range'}
-              </button>
-            ))}
+        {allowRange && (
+          <div>
+            <label className="block text-xs font-medium text-[#374151] mb-1.5">Duration</label>
+            <div className="inline-flex p-0.5 rounded-[8px] bg-[#F1F5F9] border border-[#E2E8F0]">
+              {(['single', 'range'] as Span[]).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setSpan(s)}
+                  className={[
+                    'px-3 py-1.5 rounded-[6px] text-sm font-medium transition-colors',
+                    span === s ? 'bg-white text-[#2563EB] shadow-[0_1px_2px_rgba(0,0,0,0.06)]' : 'text-[#64748B] hover:text-[#0F172A]',
+                  ].join(' ')}
+                >
+                  {s === 'single' ? 'Single day' : 'Range'}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">Name *</label>

@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { HolidayMasterConfig, HolidayOnTaskAction, HolidayPriorityLevel } from '@/lib/types/holidays'
+import type { HolidayMasterConfig, HolidayOnTaskAction } from '@/lib/types/holidays'
 import { Loader2, Save } from 'lucide-react'
 import HolidayConfigCard from '@/components/holidays/HolidayConfigCard'
 
@@ -27,7 +27,6 @@ export default function HolidayConfigurationsPage() {
     try {
       const updated = await holidaysApi.updateConfig(orgId, {
         holiday_on_task_action: config.holiday_on_task_action,
-        priority_level: config.priority_level,
       })
       setConfig(updated)
     } finally {
@@ -57,9 +56,7 @@ export default function HolidayConfigurationsPage() {
 
         <HolidayConfigCard
           action={config.holiday_on_task_action}
-          priority={config.priority_level}
           onActionChange={(a: HolidayOnTaskAction) => setConfig((c) => c ? { ...c, holiday_on_task_action: a } : c)}
-          onPriorityChange={(p: HolidayPriorityLevel) => setConfig((c) => c ? { ...c, priority_level: p } : c)}
           disabled={!isAdmin}
         />
 

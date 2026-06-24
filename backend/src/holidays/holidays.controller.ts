@@ -23,6 +23,9 @@ import {
   CreateIndividualHolidayDto, UpdateIndividualHolidayDto,
   CreateIndividualWorkingDaysDto, UpdateIndividualWorkingDaysDto,
 } from './dto/create-individual-holiday.dto'
+import {
+  OptOutOrgHolidaysDto, UndoOptOutOrgHolidaysDto, OptOutUserHolidaysDto,
+} from './dto/opt-out.dto'
 
 @ApiTags('holidays')
 @ApiBearerAuth()
@@ -103,6 +106,12 @@ export class HolidaysController {
   @ApiOperation({ summary: 'Delete org holiday' })
   deleteOrgHoliday(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.deleteOrgHoliday(orgId, id)
+  }
+
+  @Get('org/holidays/discrepancies')
+  @ApiOperation({ summary: 'Departments out of sync with the org calendar (org holidays they removed)' })
+  getOrgHolidayDiscrepancies(@Param('orgId') orgId: string) {
+    return this.service.getOrgHolidayDiscrepancies(orgId)
   }
 
   // ─── Dept working days ────────────────────────────────────────────────────────
@@ -201,6 +210,30 @@ export class HolidaysController {
     return this.service.undoOptOutDeptHoliday(orgId, deptId, id, req.user.id)
   }
 
+  @Post('dept/:deptId/org-holidays/opt-out')
+  @RequirePermission(DEPT, PermissionAction.edit)
+  @ApiOperation({ summary: 'Remove org holidays for this department (optionally cascading to sub-departments)' })
+  optOutOrgHolidaysForDept(
+    @Param('orgId') orgId: string,
+    @Param('deptId') deptId: string,
+    @Body() dto: OptOutOrgHolidaysDto,
+    @Request() req: any,
+  ) {
+    return this.service.optOutOrgHolidaysForDept(orgId, deptId, dto.org_holiday_ids, dto.applies_to_subtree ?? true, req.user.id)
+  }
+
+  @Delete('dept/:deptId/org-holidays/opt-out')
+  @RequirePermission(DEPT, PermissionAction.edit)
+  @ApiOperation({ summary: 'Re-enforce (restore) removed org holidays for this department' })
+  undoOptOutOrgHolidaysForDept(
+    @Param('orgId') orgId: string,
+    @Param('deptId') deptId: string,
+    @Body() dto: UndoOptOutOrgHolidaysDto,
+    @Request() req: any,
+  ) {
+    return this.service.undoOptOutOrgHolidaysForDept(orgId, deptId, dto.org_holiday_ids, req.user.id)
+  }
+
   // ─── Individual working days ──────────────────────────────────────────────────
 
   @Get('user/:userId/working-days')
@@ -264,6 +297,31 @@ export class HolidaysController {
     @Body() dto: CreateIndividualHolidayDto,
   ) {
     return this.service.createUserHoliday(orgId, userId, dto)
+  }
+
+  // Registered before the `:id` routes so the literal "opt-out" segment is not captured as an id.
+  @Post('user/:userId/holidays/opt-out')
+  @RequirePermission(INDIV, PermissionAction.edit)
+  @ApiOperation({ summary: 'Remove inherited holidays (org/department) for this employee' })
+  optOutHolidaysForUser(
+    @Param('orgId') orgId: string,
+    @Param('userId') userId: string,
+    @Body() dto: OptOutUserHolidaysDto,
+    @Request() req: any,
+  ) {
+    return this.service.optOutHolidaysForUser(orgId, userId, dto.items, req.user.id)
+  }
+
+  @Delete('user/:userId/holidays/opt-out')
+  @RequirePermission(INDIV, PermissionAction.edit)
+  @ApiOperation({ summary: 'Restore inherited holidays for this employee' })
+  undoOptOutHolidaysForUser(
+    @Param('orgId') orgId: string,
+    @Param('userId') userId: string,
+    @Body() dto: OptOutUserHolidaysDto,
+    @Request() req: any,
+  ) {
+    return this.service.undoOptOutHolidaysForUser(orgId, userId, dto.items, req.user.id)
   }
 
   @Patch('user/:userId/holidays/:id')

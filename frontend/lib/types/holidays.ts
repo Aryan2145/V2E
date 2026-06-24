@@ -50,15 +50,18 @@ export interface IndividualWorkingDays {
   organization_id: string
   user_id: string
   working_days: number[]
-  valid_from: string | null
-  valid_to: string | null
+  effective_from: string | null
+  effective_to: string | null
   created_at: string
   updated_at: string
 }
 
 // ─── Holidays ─────────────────────────────────────────────────────────────────
 
-/** Minimal shape the holiday list + month calendar components render (org or dept). */
+/** Which level an opt-out (removal) of an inherited holiday is recorded against. */
+export type HolidayOptOutSource = 'org' | 'department'
+
+/** Minimal shape the holiday list + month calendar components render (org, dept or individual). */
 export interface CalendarHoliday {
   id: string
   name: string
@@ -67,14 +70,42 @@ export interface CalendarHoliday {
   type: HolidayType
   status: HolidayStatus
   is_recurring_yearly: boolean
-  /** Set on a dept calendar when the holiday is inherited from an ancestor (a link, not a copy). */
+  /**
+   * Where this row comes from relative to the viewing context:
+   *   'own'        — created at this level (this dept's, or the employee's personal, holiday)
+   *   'department' — inherited from an ancestor department
+   *   'org'        — inherited from the organization-wide baseline
+   */
+  origin?: 'own' | 'department' | 'org'
+  /** Set when the row is inherited (origin 'department' or 'org') — a link, not a copy. */
   inherited?: boolean
   source_department_id?: string | null
   source_department_name?: string | null
   source_department_head_user_id?: string | null
   source_department_head_name?: string | null
+  /** Human label for the source ("Organization" for org-origin); null for own rows. */
+  source_label?: string | null
   /** For an own holiday: how many descendant departments it cascades to. */
   cascade_target_count?: number
+}
+
+/** A single org holiday a department has removed (for the discrepancy panel). */
+export interface RemovedOrgHoliday {
+  org_holiday_id: string
+  name: string
+  date: string | null
+  type: HolidayType | null
+  applies_to_subtree: boolean
+  opted_out_by_user_id: string
+  opted_out_by_name: string | null
+  created_at: string
+}
+
+/** A department that is out of sync with the org calendar, and what it removed. */
+export interface HolidayDiscrepancy {
+  department_id: string
+  department_name: string
+  removed: RemovedOrgHoliday[]
 }
 
 export interface OrgHoliday {

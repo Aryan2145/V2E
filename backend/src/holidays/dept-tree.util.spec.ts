@@ -1,4 +1,12 @@
-import { ancestorChain, descendantIds, holidayReaches, type DeptNode, type CascadeReach } from './dept-tree.util'
+import {
+  ancestorChain,
+  descendantIds,
+  holidayReaches,
+  orgHolidaySuppressed,
+  type DeptNode,
+  type CascadeReach,
+  type OrgOptOutAnchor,
+} from './dept-tree.util'
 
 /**
  * Sample department tree (mirrors the brief's example shape):
@@ -92,5 +100,39 @@ describe('holidayReaches — a non-target department never inherits', () => {
     const some: CascadeReach = { originId: 'sales', targetIds: ['north', 'raj', 'jod'], optOutIds: [] }
     expect(holidayReaches(chainOf('west'), 'west', some)).toBe(false) // not chosen
     expect(holidayReaches(chainOf('raj'), 'raj', some)).toBe(true) // chosen subtree
+  })
+})
+
+describe('orgHolidaySuppressed — org holiday removed at a department', () => {
+  it('is not suppressed anywhere when there are no opt-outs', () => {
+    for (const id of ['sales', 'west', 'guj', 'vad', 'mah', 'north', 'raj', 'jod']) {
+      expect(orgHolidaySuppressed(chainOf(id), id, [])).toBe(false)
+    }
+  })
+
+  it('"just this department" (applies_to_subtree=false) suppresses only the anchor', () => {
+    const anchors: OrgOptOutAnchor[] = [{ departmentId: 'west', appliesToSubtree: false }]
+    expect(orgHolidaySuppressed(chainOf('west'), 'west', anchors)).toBe(true) // the anchor itself
+    expect(orgHolidaySuppressed(chainOf('guj'), 'guj', anchors)).toBe(false) // child keeps it
+    expect(orgHolidaySuppressed(chainOf('vad'), 'vad', anchors)).toBe(false) // grandchild keeps it
+    expect(orgHolidaySuppressed(chainOf('sales'), 'sales', anchors)).toBe(false) // parent keeps it
+    expect(orgHolidaySuppressed(chainOf('north'), 'north', anchors)).toBe(false) // sibling branch keeps it
+  })
+
+  it('"this department + sub-departments" (applies_to_subtree=true) cascades DOWN only', () => {
+    const anchors: OrgOptOutAnchor[] = [{ departmentId: 'west', appliesToSubtree: true }]
+    expect(orgHolidaySuppressed(chainOf('west'), 'west', anchors)).toBe(true) // anchor
+    expect(orgHolidaySuppressed(chainOf('guj'), 'guj', anchors)).toBe(true) // descendant
+    expect(orgHolidaySuppressed(chainOf('vad'), 'vad', anchors)).toBe(true) // deep descendant
+    expect(orgHolidaySuppressed(chainOf('mah'), 'mah', anchors)).toBe(true) // descendant
+    expect(orgHolidaySuppressed(chainOf('sales'), 'sales', anchors)).toBe(false) // parent unaffected
+    expect(orgHolidaySuppressed(chainOf('north'), 'north', anchors)).toBe(false) // sibling unaffected
+    expect(orgHolidaySuppressed(chainOf('jod'), 'jod', anchors)).toBe(false) // other branch unaffected
+  })
+
+  it('a child opt-out does not bubble up to its parent', () => {
+    const anchors: OrgOptOutAnchor[] = [{ departmentId: 'vad', appliesToSubtree: true }]
+    expect(orgHolidaySuppressed(chainOf('guj'), 'guj', anchors)).toBe(false) // parent keeps it
+    expect(orgHolidaySuppressed(chainOf('vad'), 'vad', anchors)).toBe(true) // anchor removes it
   })
 })

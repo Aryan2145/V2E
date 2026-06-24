@@ -24,11 +24,6 @@ export class UpsertOrgIdentityDto {
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()
-  philosophy?: string;
-
-  @ApiPropertyOptional()
-  @IsString()
-  @IsOptional()
   vision?: string;
 
   @ApiPropertyOptional()

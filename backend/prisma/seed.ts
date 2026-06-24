@@ -77,7 +77,6 @@ async function main() {
     update: {},
     create: {
       organization_id: org.id,
-      philosophy: 'We believe in building products that make people\'s lives simpler and more productive.',
       vision: 'To become the world\'s most trusted platform for organizational excellence.',
       mission: 'Empower every team with the tools and clarity they need to do their best work.',
       purpose: 'We exist to eliminate organizational chaos and replace it with clarity, alignment, and purpose.',

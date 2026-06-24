@@ -10,6 +10,7 @@ import OrgHolidayList from '@/components/holidays/OrgHolidayList'
 import OrgHolidayCalendar from '@/components/holidays/OrgHolidayCalendar'
 import HolidayFormModal, { type HolidayFormData } from '@/components/holidays/HolidayFormModal'
 import ImportHolidaysModal from '@/components/holidays/ImportHolidaysModal'
+import HolidayDiscrepancyPanel from '@/components/holidays/HolidayDiscrepancyPanel'
 
 export default function OrgCalendarPage() {
   const { user } = useAuth()
@@ -77,10 +78,10 @@ export default function OrgCalendarPage() {
     <div className="space-y-5 pb-12">
       <div>
         <h1 className="text-[28px] font-bold text-[#0F172A]">Org Calendar</h1>
-        <p className="text-[15px] text-[#475569] mt-1">Set your working week and holidays. They drive deadlines, leave, and reports.</p>
+        <p className="text-[15px] text-[#475569] mt-1">Set your working days and holidays. They drive deadlines, leave, and reports.</p>
       </div>
 
-      {/* Working week — slim, auto-saving strip */}
+      {/* Working days — slim, auto-saving strip */}
       <WorkingWeekStrip value={localDays} onSave={saveWorkingDays} disabled={!isAdmin} />
 
       {/* Holidays + calendar, side by side */}
@@ -154,6 +155,9 @@ export default function OrgCalendarPage() {
           holidays={holidays}
         />
       </div>
+
+      {/* Department sync — who's removed org holidays, with re-enforce */}
+      <HolidayDiscrepancyPanel orgId={orgId} isAdmin={isAdmin} />
 
       <HolidayFormModal
         isOpen={showAdd}

@@ -115,7 +115,6 @@ export interface ValueItem {
 export interface OrgIdentity {
   id: string;
   organization_id: string;
-  philosophy?: string;
   vision?: string;
   mission?: string;
   purpose?: string;

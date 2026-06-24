@@ -13,7 +13,6 @@ export async function getOrgIdentity(orgId: string): Promise<OrgIdentity> {
 export async function upsertOrgIdentity(
   orgId: string,
   identityData: Partial<{
-    philosophy: string;
     vision: string;
     mission: string;
     purpose: string;

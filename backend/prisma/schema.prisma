@@ -215,7 +215,6 @@ model User {
 model OrgIdentity {
   id              String   @id @default(uuid())
   organization_id String   @unique
-  philosophy      String?  @db.Text
   vision          String?  @db.Text
   mission         String?  @db.Text
   purpose         String?  @db.Text
@@ -1739,7 +1738,35 @@ model OrgHoliday {
   created_at           DateTime      @default(now())
   updated_at           DateTime      @updatedAt
 
+  opt_outs OrgHolidayOptOut[]
+
   @@map("org_holidays")
+}
+
+/**
+ * Department-level suppression of an ORG holiday. Org holidays are a baseline that
+ * cascades to every department; this row removes one for a department. The remover
+ * chooses the reach via `applies_to_subtree`:
+ *   - false → suppress at this department only (children still observe it).
+ *   - true  → suppress at this department AND all its descendants (parent's call is
+ *             authoritative; a descendant cannot re-add it).
+ * Resolution: an org holiday is suppressed for dept D if any anchor A in D's ancestor
+ * chain (D included) has `A === D || applies_to_subtree`. Reversible (delete the row).
+ */
+model OrgHolidayOptOut {
+  id                   String   @id @default(uuid())
+  organization_id      String
+  org_holiday_id       String
+  department_id        String // the department that removed it (anchor)
+  applies_to_subtree   Boolean  @default(true)
+  opted_out_by_user_id String
+  created_at           DateTime @default(now())
+
+  holiday OrgHoliday @relation(fields: [org_holiday_id], references: [id], onDelete: Cascade)
+
+  @@unique([org_holiday_id, department_id])
+  @@index([organization_id, department_id])
+  @@map("org_holiday_opt_outs")
 }
 
 model DepartmentWorkingDays {
@@ -1847,6 +1874,33 @@ model IndividualHoliday {
   updated_at          DateTime    @updatedAt
 
   @@map("individual_holidays")
+}
+
+enum HolidayOptOutSource {
+  org
+  department
+}
+
+/**
+ * Individual-level suppression of an inherited holiday. An employee's effective set is
+ * their department's effective set (org baseline + dept holidays − dept opt-outs) plus
+ * personal holidays; this row removes one inherited holiday for that user only. The
+ * holiday may originate at the org or a department, so `holiday_source` discriminates and
+ * `holiday_id` references the corresponding row (no FK — cross-type; orphans are cleaned
+ * up when the source holiday is deleted). Reversible (delete the row).
+ */
+model IndividualHolidayOptOut {
+  id                   String              @id @default(uuid())
+  organization_id      String
+  user_id              String
+  holiday_source       HolidayOptOutSource
+  holiday_id           String
+  opted_out_by_user_id String
+  created_at           DateTime            @default(now())
+
+  @@unique([user_id, holiday_source, holiday_id])
+  @@index([organization_id, user_id])
+  @@map("individual_holiday_opt_outs")
 }
 
 // ─── Projects ─────────────────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ function calcSetupProgress(
   employees: EmployeeProfile[]
 ): number {
   let score = 0
-  if (identity?.philosophy || identity?.vision || identity?.mission || identity?.purpose) score += 25
+  if (identity?.vision || identity?.mission || identity?.purpose) score += 25
   if (departments.length > 0) score += 25
   if (roles.length > 0) score += 25
   if (employees.length > 0) score += 25
@@ -200,7 +200,7 @@ export default function DashboardPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           <QuickNavCard
             label="Identity"
-            description="Company philosophy, vision, mission, purpose and values."
+            description="Company vision, mission, purpose and values."
             href="/settings/organization/company"
             icon={<BookOpen size={18} className="text-[#2563EB]" />}
             iconBg="bg-[#EFF6FF]"

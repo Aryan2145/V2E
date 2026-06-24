@@ -50,7 +50,7 @@ export default function WorkingWeekStrip({ value, onSave, disabled }: Props) {
 
   return (
     <div className="flex items-center gap-4 bg-white border border-[#E2E8F0] rounded-[12px] px-4 py-3 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
-      <span className="text-sm font-semibold text-[#0F172A] shrink-0">Working week</span>
+      <span className="text-sm font-semibold text-[#0F172A] shrink-0">Working Days</span>
       <div className="flex items-center gap-1.5">
         {DAY_PILLS.map((label, index) => {
           const active = days.includes(index)

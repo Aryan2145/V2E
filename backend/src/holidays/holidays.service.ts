@@ -1,16 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
-import { HolidayOnTaskAction, HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
+import { HolidayOnTaskAction, HolidayEntityType, HolidayStatus, HolidayType, HolidayOptOutSource } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditService } from '../audit/audit.service'
 import { NotificationsService } from '../notifications/notifications.service'
-import { ancestorChain, descendantIds, holidayReaches, type DeptNode } from './dept-tree.util'
+import { ancestorChain, descendantIds, holidayReaches, orgHolidaySuppressed, type DeptNode } from './dept-tree.util'
 import type { UpdateHolidayMasterDto } from './dto/update-holiday-master.dto'
 import type { UpdateWorkingDaysDto } from './dto/update-working-days.dto'
 import type { CreateOrgHolidayDto, UpdateOrgHolidayDto } from './dto/create-org-holiday.dto'
 import type { CreateDepartmentHolidayDto, UpdateDepartmentHolidayDto } from './dto/create-department-holiday.dto'
 import type { CreateIndividualHolidayDto, UpdateIndividualHolidayDto, CreateIndividualWorkingDaysDto, UpdateIndividualWorkingDaysDto } from './dto/create-individual-holiday.dto'
 
-/** A department holiday plus where-it-came-from metadata for the dept calendar UI. */
+/** A resolved holiday plus where-it-came-from metadata for a calendar UI (dept or individual). */
 export interface ResolvedDeptHoliday {
   id: string
   organization_id: string
@@ -25,14 +25,23 @@ export interface ResolvedDeptHoliday {
   year: number
   created_at: Date
   updated_at: Date
-  /** True when this department inherits the holiday from an ancestor (a link, not a copy). */
+  /**
+   * Where this entry comes from relative to the viewing context:
+   *   'own'        — created at this level (this department's, or the user's personal, holiday)
+   *   'department' — inherited from an ancestor department's holiday
+   *   'org'        — inherited from the organization-wide baseline
+   */
+  origin: 'own' | 'department' | 'org'
+  /** True when this entry is inherited (origin 'department' or 'org'), i.e. a link not a copy. */
   inherited: boolean
-  /** Origin department of an inherited holiday (the cascade source); null for own holidays. */
+  /** Origin department of an inherited dept holiday (the cascade source); null otherwise. */
   source_department_id: string | null
   source_department_name: string | null
   source_department_head_user_id: string | null
   source_department_head_name: string | null
-  /** For an own holiday: how many descendant departments it currently cascades to. */
+  /** Human label for the source ("Organization" for org-origin); null for own holidays. */
+  source_label: string | null
+  /** For an own dept holiday: how many descendant departments it currently cascades to. */
   cascade_target_count: number
 }
 
@@ -87,80 +96,57 @@ export class HolidaysService {
   // ─── Working Day Calculation ──────────────────────────────────────────────────
 
   async isWorkingDay(date: Date, orgId: string, deptId?: string, userId?: string): Promise<boolean> {
-    const master = await this.prisma.holidayMaster.findUnique({ where: { organization_id: orgId } })
-    const priority = master?.priority_level ?? 'individual_first'
+    // Weekly schedule via the override chain (individual ⟶ dept ⟶ org default)…
+    const workingDays = await this.effectiveWorkingDays(date, orgId, deptId, userId)
+    if (!workingDays.includes(date.getDay())) return false
+    // …then the unioned holiday set (org baseline + dept + individual, minus opt-outs).
+    const holidays = await this.effectiveHolidays(orgId, deptId ?? null, userId ?? null, { activeOnly: true })
+    return !this.matchesAnyHoliday(date, holidays)
+  }
 
-    if (priority === 'org_first') {
-      return this.checkOrgWorkingDay(date, orgId)
-    }
-
-    if (priority === 'individual_first') {
-      if (userId) {
-        const result = await this.checkIndividualWorkingDay(date, orgId, userId)
-        if (result !== null) return result
-      }
-      if (deptId) {
-        const result = await this.checkDeptWorkingDay(date, orgId, deptId)
-        if (result !== null) return result
-      }
-      return this.checkOrgWorkingDay(date, orgId)
-    }
-
-    // department_first
-    if (deptId) {
-      const result = await this.checkDeptWorkingDay(date, orgId, deptId)
-      if (result !== null) return result
-    }
+  /** Effective weekly working-day indices: individual override ?? dept override ?? org default. */
+  private async effectiveWorkingDays(date: Date, orgId: string, deptId?: string, userId?: string): Promise<number[]> {
     if (userId) {
-      const result = await this.checkIndividualWorkingDay(date, orgId, userId)
-      if (result !== null) return result
+      // Most recently created individual schedule that covers this date.
+      const schedule = await this.prisma.individualWorkingDays.findFirst({
+        where: {
+          organization_id: orgId,
+          user_id: userId,
+          effective_from: { lte: date },
+          OR: [{ effective_to: null }, { effective_to: { gte: date } }],
+        },
+        orderBy: { created_at: 'desc' },
+      })
+      if (schedule) return schedule.working_days as number[]
     }
-    return this.checkOrgWorkingDay(date, orgId)
+    if (deptId) {
+      const wd = await this.prisma.departmentWorkingDays.findUnique({
+        where: { organization_id_department_id: { organization_id: orgId, department_id: deptId } },
+      })
+      if (wd) return wd.working_days as number[]
+    }
+    const org = await this.prisma.orgWorkingDays.findUnique({ where: { organization_id: orgId } })
+    return (org?.working_days as number[]) ?? [1, 2, 3, 4, 5]
   }
 
-  private async checkOrgWorkingDay(date: Date, orgId: string): Promise<boolean> {
-    const wd = await this.prisma.orgWorkingDays.findUnique({ where: { organization_id: orgId } })
-    const workingDays = (wd?.working_days as number[]) ?? [1, 2, 3, 4, 5]
-    if (!workingDays.includes(date.getDay())) return false
-
-    const holidays = await this.prisma.orgHoliday.findMany({
-      where: { organization_id: orgId, status: HolidayStatus.active },
-    })
-    return !this.matchesAnyHoliday(date, holidays)
-  }
-
-  private async checkDeptWorkingDay(date: Date, orgId: string, deptId: string): Promise<boolean | null> {
-    const wd = await this.prisma.departmentWorkingDays.findUnique({
-      where: { organization_id_department_id: { organization_id: orgId, department_id: deptId } },
-    })
-    // Effective holidays = this dept's own + any inherited from ancestors (minus
-    // local opt-outs). So a cascaded holiday blocks task scheduling here too,
-    // not just the calendar display.
-    const holidays = await this.resolveDeptHolidays(orgId, deptId, { activeOnly: true })
-    if (!wd && holidays.length === 0) return null
-    const workingDays = wd ? (wd.working_days as number[]) : [1, 2, 3, 4, 5]
-    if (!workingDays.includes(date.getDay())) return false
-    return !this.matchesAnyHoliday(date, holidays)
-  }
-
-  private async checkIndividualWorkingDay(date: Date, orgId: string, userId: string): Promise<boolean | null> {
-    // Use most recently created schedule that covers this date
-    const schedule = await this.prisma.individualWorkingDays.findFirst({
-      where: {
-        organization_id: orgId,
-        user_id: userId,
-        effective_from: { lte: date },
-        OR: [{ effective_to: null }, { effective_to: { gte: date } }],
-      },
-      orderBy: { created_at: 'desc' },
-    })
-    const holidays = await this.prisma.individualHoliday.findMany({
-      where: { organization_id: orgId, user_id: userId },
-    })
-    if (!schedule && holidays.length === 0) return null
-    const workingDays = schedule ? (schedule.working_days as number[]) : [1, 2, 3, 4, 5]
-    if (!workingDays.includes(date.getDay())) return false
-    return !this.matchesAnyHoliday(date, holidays)
+  /**
+   * The unioned effective holiday set for a context. Holidays are no longer resolved by
+   * priority/override: an org holiday is a baseline that every department and individual
+   * observes unless explicitly opted out, and each level adds its own on top:
+   *   individual → org (minus dept & individual opt-outs) ∪ dept holidays (minus opt-outs) ∪ personal
+   *   department → org (minus dept opt-outs) ∪ dept own/inherited (minus opt-outs)
+   *   org-only   → all active org holidays
+   * Feeds both the calendar UIs and the scheduling engine.
+   */
+  private async effectiveHolidays(
+    orgId: string,
+    deptId: string | null,
+    userId: string | null,
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<ResolvedDeptHoliday[]> {
+    if (userId) return this.effectiveIndividualHolidays(orgId, userId, deptId, opts)
+    if (deptId) return this.effectiveDeptHolidays(orgId, deptId, opts)
+    return this.resolveOrgHolidaysForDept(orgId, null, opts)
   }
 
   /**
@@ -263,32 +249,13 @@ export class HolidaysService {
   }
 
   private async getHolidayNameForDate(date: Date, orgId: string, deptId?: string, userId?: string): Promise<string> {
-    // Check org holidays first
-    const orgHolidays = await this.prisma.orgHoliday.findMany({
-      where: { organization_id: orgId, status: HolidayStatus.active },
-    })
-    const orgMatch = orgHolidays.find((h) => this.dateMatchesHoliday(date, h))
-    if (orgMatch) return orgMatch.name
+    // Name comes from the same unioned effective set used for scheduling.
+    const holidays = await this.effectiveHolidays(orgId, deptId ?? null, userId ?? null, { activeOnly: true })
+    const match = holidays.find((h) => this.dateMatchesHoliday(date, h))
+    if (match) return match.name
 
-    if (deptId) {
-      const deptHolidays = await this.resolveDeptHolidays(orgId, deptId, { activeOnly: true })
-      const deptMatch = deptHolidays.find((h) => this.dateMatchesHoliday(date, h))
-      if (deptMatch) return deptMatch.name
-    }
-
-    if (userId) {
-      const userHolidays = await this.prisma.individualHoliday.findMany({
-        where: { organization_id: orgId, user_id: userId },
-      })
-      const userMatch = userHolidays.find((h) => this.dateMatchesHoliday(date, h))
-      if (userMatch) return userMatch.name
-    }
-
-    // Check if it's a weekend
     const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-    const master = await this.prisma.holidayMaster.findUnique({ where: { organization_id: orgId } })
-    const wd = await this.prisma.orgWorkingDays.findUnique({ where: { organization_id: orgId } })
-    const workingDays = (wd?.working_days as number[]) ?? [1, 2, 3, 4, 5]
+    const workingDays = await this.effectiveWorkingDays(date, orgId, deptId, userId)
     if (!workingDays.includes(date.getDay())) return `${dayNames[date.getDay()]} (non-working day)`
 
     return 'Holiday'
@@ -484,6 +451,10 @@ export class HolidaysService {
 
   async deleteOrgHoliday(orgId: string, id: string) {
     await this.findOrgHolidayOrFail(orgId, id)
+    // Dept opt-outs cascade via FK; individual opt-outs reference by id with no FK, so clean up.
+    await this.prisma.individualHolidayOptOut.deleteMany({
+      where: { organization_id: orgId, holiday_source: HolidayOptOutSource.org, holiday_id: id },
+    })
     await this.prisma.orgHoliday.delete({ where: { id } })
     return { ok: true }
   }
@@ -572,11 +543,13 @@ export class HolidaysService {
 
     const out: ResolvedDeptHoliday[] = ownRows.map((h) => ({
       ...h,
+      origin: 'own' as const,
       inherited: false,
       source_department_id: null,
       source_department_name: null,
       source_department_head_user_id: null,
       source_department_head_name: null,
+      source_label: null,
       cascade_target_count: h._count.targets,
     }))
 
@@ -611,11 +584,13 @@ export class HolidaysService {
           year: h.year,
           created_at: h.created_at,
           updated_at: h.updated_at,
+          origin: 'department' as const,
           inherited: true,
           source_department_id: h.department_id,
           source_department_name: src?.name ?? null,
           source_department_head_user_id: src?.head_user_id ?? null,
           source_department_head_name: src?.head_user?.name ?? null,
+          source_label: src?.name ?? null,
           cascade_target_count: 0,
         })
       }
@@ -623,6 +598,150 @@ export class HolidaysService {
 
     out.sort((a, b) => a.date.getTime() - b.date.getTime())
     return out
+  }
+
+  /**
+   * Active (or all) ORG holidays as the baseline for a department, dropping those the
+   * department has opted out of. With `deptId` null this is simply every org holiday
+   * (the org-only context). Org holidays are surfaced as inherited entries with
+   * `origin:'org'` and source label "Organization".
+   */
+  private async resolveOrgHolidaysForDept(
+    orgId: string,
+    deptId: string | null,
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<ResolvedDeptHoliday[]> {
+    const statusFilter = opts.activeOnly ? { status: HolidayStatus.active } : {}
+    const orgHolidays = await this.prisma.orgHoliday.findMany({
+      where: { organization_id: orgId, ...statusFilter },
+      orderBy: { date: 'asc' },
+    })
+
+    const suppressed = new Set<string>()
+    if (deptId) {
+      const chain = ancestorChain(await this.getDeptNodes(orgId), deptId)
+      const optOuts = await this.prisma.orgHolidayOptOut.findMany({
+        where: { organization_id: orgId, department_id: { in: chain } },
+      })
+      const byHoliday = new Map<string, { departmentId: string; appliesToSubtree: boolean }[]>()
+      for (const o of optOuts) {
+        const arr = byHoliday.get(o.org_holiday_id) ?? []
+        arr.push({ departmentId: o.department_id, appliesToSubtree: o.applies_to_subtree })
+        byHoliday.set(o.org_holiday_id, arr)
+      }
+      for (const h of orgHolidays) {
+        const anchors = byHoliday.get(h.id)
+        if (anchors && orgHolidaySuppressed(chain, deptId, anchors)) suppressed.add(h.id)
+      }
+    }
+
+    return orgHolidays
+      .filter((h) => !suppressed.has(h.id))
+      .map((h) => ({
+        id: h.id,
+        organization_id: h.organization_id,
+        department_id: '',
+        name: h.name,
+        date: h.date,
+        end_date: h.end_date,
+        type: h.type,
+        is_recurring_yearly: h.is_recurring_yearly,
+        description: h.description,
+        status: h.status,
+        year: h.year,
+        created_at: h.created_at,
+        updated_at: h.updated_at,
+        origin: 'org' as const,
+        inherited: true,
+        source_department_id: null,
+        source_department_name: null,
+        source_department_head_user_id: null,
+        source_department_head_name: null,
+        source_label: 'Organization',
+        cascade_target_count: 0,
+      }))
+  }
+
+  /** A department's full effective set: org baseline (minus dept opt-outs) ∪ its own/inherited dept holidays. */
+  private async effectiveDeptHolidays(
+    orgId: string,
+    deptId: string,
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<ResolvedDeptHoliday[]> {
+    const [org, dept] = await Promise.all([
+      this.resolveOrgHolidaysForDept(orgId, deptId, opts),
+      this.resolveDeptHolidays(orgId, deptId, opts),
+    ])
+    return [...org, ...dept].sort((a, b) => a.date.getTime() - b.date.getTime())
+  }
+
+  /**
+   * An individual's full effective set: the department's effective set (or the org baseline
+   * if they belong to no department), minus the user's personal opt-outs, plus their own
+   * personal holidays. An inherited entry is matched to an opt-out by (source, holiday id),
+   * where source is 'org' for org-origin entries and 'department' for everything else.
+   */
+  private async effectiveIndividualHolidays(
+    orgId: string,
+    userId: string,
+    deptId: string | null,
+    opts: { activeOnly?: boolean } = {},
+  ): Promise<ResolvedDeptHoliday[]> {
+    const base = deptId
+      ? await this.effectiveDeptHolidays(orgId, deptId, opts)
+      : await this.resolveOrgHolidaysForDept(orgId, null, opts)
+
+    // From the employee's vantage point everything from the department layer is inherited —
+    // including the department's OWN holidays (origin 'own' in the dept context). Re-tag so
+    // they render as inherited (not personal) and carry the department's name as the source.
+    const dept = deptId
+      ? await this.prisma.department.findUnique({ where: { id: deptId }, select: { name: true } })
+      : null
+    const optOuts = await this.prisma.individualHolidayOptOut.findMany({
+      where: { organization_id: orgId, user_id: userId },
+    })
+    const suppressed = new Set(optOuts.map((o) => `${o.holiday_source}:${o.holiday_id}`))
+    const inherited = base
+      .filter((h) => !suppressed.has(`${h.origin === 'org' ? 'org' : 'department'}:${h.id}`))
+      .map((h) =>
+        h.origin === 'org'
+          ? h
+          : {
+              ...h,
+              origin: 'department' as const,
+              inherited: true,
+              source_label: h.source_label ?? h.source_department_name ?? dept?.name ?? 'Department',
+            },
+      )
+
+    const ownRows = await this.prisma.individualHoliday.findMany({
+      where: { organization_id: orgId, user_id: userId },
+    })
+    const own: ResolvedDeptHoliday[] = ownRows.map((h) => ({
+      id: h.id,
+      organization_id: h.organization_id,
+      department_id: '',
+      name: h.name,
+      date: h.date,
+      end_date: null,
+      type: h.type,
+      is_recurring_yearly: h.is_recurring_yearly,
+      description: h.description,
+      status: HolidayStatus.active,
+      year: h.year,
+      created_at: h.created_at,
+      updated_at: h.updated_at,
+      origin: 'own' as const,
+      inherited: false,
+      source_department_id: null,
+      source_department_name: null,
+      source_department_head_user_id: null,
+      source_department_head_name: null,
+      source_label: null,
+      cascade_target_count: 0,
+    }))
+
+    return [...inherited, ...own].sort((a, b) => a.date.getTime() - b.date.getTime())
   }
 
   /** Keep only ids that are genuine descendants of the origin department. */
@@ -633,7 +752,8 @@ export class HolidaysService {
   }
 
   async listDeptHolidays(orgId: string, deptId: string, year?: number) {
-    const resolved = await this.resolveDeptHolidays(orgId, deptId)
+    // Effective set = org baseline (minus this dept's opt-outs) ∪ own/inherited dept holidays.
+    const resolved = await this.effectiveDeptHolidays(orgId, deptId)
     // Match by exact year, but always surface recurring-yearly holidays.
     return year ? resolved.filter((h) => h.year === year || h.is_recurring_yearly) : resolved
   }
@@ -701,7 +821,11 @@ export class HolidaysService {
   async deleteDeptHoliday(orgId: string, deptId: string, id: string) {
     const existing = await this.prisma.departmentHoliday.findFirst({ where: { id, organization_id: orgId, department_id: deptId } })
     if (!existing) throw new NotFoundException(`Department holiday ${id} not found`)
-    await this.prisma.departmentHoliday.delete({ where: { id } }) // targets + opt-outs cascade
+    // Targets + dept opt-outs cascade via FK; individual opt-outs reference by id with no FK.
+    await this.prisma.individualHolidayOptOut.deleteMany({
+      where: { organization_id: orgId, holiday_source: HolidayOptOutSource.department, holiday_id: id },
+    })
+    await this.prisma.departmentHoliday.delete({ where: { id } })
     return { ok: true }
   }
 
@@ -790,6 +914,209 @@ export class HolidaysService {
     return { ok: true }
   }
 
+  // ─── Org-holiday opt-out (a department removes an org-wide holiday) ────────────
+
+  /**
+   * Remove (opt out of) one or more ORG holidays for a department. `appliesToSubtree`
+   * captures the remover's choice: false suppresses only this department, true cascades
+   * to every descendant (and a descendant cannot re-add it — the parent's call is
+   * authoritative). Reversible suppression records; surfaced in the org discrepancy panel
+   * and the shared audit log.
+   */
+  async optOutOrgHolidaysForDept(
+    orgId: string,
+    deptId: string,
+    orgHolidayIds: string[],
+    appliesToSubtree: boolean,
+    actorId: string,
+  ) {
+    const dept = await this.prisma.department.findFirst({
+      where: { id: deptId, organization_id: orgId },
+      select: { name: true },
+    })
+    if (!dept) throw new NotFoundException(`Department ${deptId} not found`)
+    const holidays = await this.prisma.orgHoliday.findMany({
+      where: { id: { in: orgHolidayIds }, organization_id: orgId },
+    })
+    if (!holidays.length) throw new BadRequestException('No matching org holidays to remove.')
+
+    for (const h of holidays) {
+      await this.prisma.orgHolidayOptOut.upsert({
+        where: { org_holiday_id_department_id: { org_holiday_id: h.id, department_id: deptId } },
+        create: {
+          organization_id: orgId,
+          org_holiday_id: h.id,
+          department_id: deptId,
+          applies_to_subtree: appliesToSubtree,
+          opted_out_by_user_id: actorId,
+        },
+        update: { applies_to_subtree: appliesToSubtree, opted_out_by_user_id: actorId },
+      })
+      await this.audit.record({
+        orgId,
+        actorId,
+        action: 'update',
+        resource: 'org_holiday',
+        entityId: h.id,
+        entityLabel: h.name,
+        changes: {
+          removed_by_department: {
+            before: null,
+            after: `${dept.name} (${deptId})${appliesToSubtree ? ' + sub-departments' : ''}`,
+          },
+        },
+      })
+    }
+    return { ok: true }
+  }
+
+  /** Reverse a department's org-holiday removal (re-enforce the org baseline for it). */
+  async undoOptOutOrgHolidaysForDept(orgId: string, deptId: string, orgHolidayIds: string[], actorId: string) {
+    const holidays = await this.prisma.orgHoliday.findMany({
+      where: { id: { in: orgHolidayIds }, organization_id: orgId },
+    })
+    const removed = await this.prisma.orgHolidayOptOut.deleteMany({
+      where: { organization_id: orgId, department_id: deptId, org_holiday_id: { in: orgHolidayIds } },
+    })
+    if (removed.count > 0) {
+      const dept = await this.prisma.department.findUnique({ where: { id: deptId }, select: { name: true } })
+      for (const h of holidays) {
+        await this.audit.record({
+          orgId,
+          actorId,
+          action: 'update',
+          resource: 'org_holiday',
+          entityId: h.id,
+          entityLabel: h.name,
+          changes: { removed_by_department: { before: `${dept?.name ?? deptId} (${deptId})`, after: null } },
+        })
+      }
+    }
+    return { ok: true }
+  }
+
+  /**
+   * Per-department report of org holidays that have been removed (out of sync with the org
+   * calendar). Powers the org-page discrepancy panel and the "re-enforce" affordance.
+   */
+  async getOrgHolidayDiscrepancies(orgId: string) {
+    const optOuts = await this.prisma.orgHolidayOptOut.findMany({
+      where: { organization_id: orgId },
+      include: { holiday: { select: { id: true, name: true, date: true, type: true } } },
+      orderBy: { created_at: 'desc' },
+    })
+    if (!optOuts.length) return []
+
+    const deptIds = [...new Set(optOuts.map((o) => o.department_id))]
+    const userIds = [...new Set(optOuts.map((o) => o.opted_out_by_user_id))]
+    const [depts, users] = await Promise.all([
+      this.prisma.department.findMany({ where: { id: { in: deptIds } }, select: { id: true, name: true } }),
+      this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }),
+    ])
+    const deptName = new Map(depts.map((d) => [d.id, d.name]))
+    const userName = new Map(users.map((u) => [u.id, u.name]))
+
+    const byDept = new Map<
+      string,
+      { department_id: string; department_name: string; removed: unknown[] }
+    >()
+    for (const o of optOuts) {
+      const entry =
+        byDept.get(o.department_id) ??
+        { department_id: o.department_id, department_name: deptName.get(o.department_id) ?? 'Unknown department', removed: [] }
+      entry.removed.push({
+        org_holiday_id: o.org_holiday_id,
+        name: o.holiday?.name ?? '',
+        date: o.holiday?.date ?? null,
+        type: o.holiday?.type ?? null,
+        applies_to_subtree: o.applies_to_subtree,
+        opted_out_by_user_id: o.opted_out_by_user_id,
+        opted_out_by_name: userName.get(o.opted_out_by_user_id) ?? null,
+        created_at: o.created_at,
+      })
+      byDept.set(o.department_id, entry)
+    }
+    return Array.from(byDept.values()).sort((a, b) => a.department_name.localeCompare(b.department_name))
+  }
+
+  // ─── Individual holiday opt-out (an employee removes an inherited holiday) ─────
+
+  /**
+   * Remove (opt out of) one or more inherited holidays for a single employee. Each item
+   * names the source ('org' or 'department') and the underlying holiday id. The employee's
+   * own personal holidays are deleted via `deleteUserHoliday`, not opted out. Reversible.
+   */
+  async optOutHolidaysForUser(
+    orgId: string,
+    userId: string,
+    items: { holiday_source: HolidayOptOutSource; holiday_id: string }[],
+    actorId: string,
+  ) {
+    if (!items.length) throw new BadRequestException('No holidays to remove.')
+    for (const it of items) {
+      await this.prisma.individualHolidayOptOut.upsert({
+        where: {
+          user_id_holiday_source_holiday_id: {
+            user_id: userId,
+            holiday_source: it.holiday_source,
+            holiday_id: it.holiday_id,
+          },
+        },
+        create: {
+          organization_id: orgId,
+          user_id: userId,
+          holiday_source: it.holiday_source,
+          holiday_id: it.holiday_id,
+          opted_out_by_user_id: actorId,
+        },
+        update: {},
+      })
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } })
+    await this.audit.record({
+      orgId,
+      actorId,
+      action: 'update',
+      resource: 'individual_holiday',
+      entityId: userId,
+      entityType: 'user',
+      entityLabel: user?.name ?? userId,
+      changes: { removed_holidays: { before: null, after: items.length } },
+    })
+    return { ok: true }
+  }
+
+  /** Reverse one or more of an employee's holiday removals (re-attach the inherited holidays). */
+  async undoOptOutHolidaysForUser(
+    orgId: string,
+    userId: string,
+    items: { holiday_source: HolidayOptOutSource; holiday_id: string }[],
+    actorId: string,
+  ) {
+    if (!items.length) return { ok: true }
+    const removed = await this.prisma.individualHolidayOptOut.deleteMany({
+      where: {
+        organization_id: orgId,
+        user_id: userId,
+        OR: items.map((it) => ({ holiday_source: it.holiday_source, holiday_id: it.holiday_id })),
+      },
+    })
+    if (removed.count > 0) {
+      const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } })
+      await this.audit.record({
+        orgId,
+        actorId,
+        action: 'update',
+        resource: 'individual_holiday',
+        entityId: userId,
+        entityType: 'user',
+        entityLabel: user?.name ?? userId,
+        changes: { restored_holidays: { before: null, after: removed.count } },
+      })
+    }
+    return { ok: true }
+  }
+
   // ─── Individual working days & holidays ──────────────────────────────────────
 
   async listUserWorkingDays(orgId: string, userId: string) {
@@ -832,10 +1159,14 @@ export class HolidaysService {
   }
 
   async listUserHolidays(orgId: string, userId: string, year?: number) {
-    return this.prisma.individualHoliday.findMany({
-      where: { organization_id: orgId, user_id: userId, ...(year && { year }) },
-      orderBy: { date: 'asc' },
+    // Effective set = the user's department's effective set (org baseline + dept, minus
+    // dept opt-outs) minus the user's personal opt-outs, plus their personal holidays.
+    const profile = await this.prisma.employeeProfile.findFirst({
+      where: { organization_id: orgId, user_id: userId },
+      select: { department_id: true },
     })
+    const resolved = await this.effectiveIndividualHolidays(orgId, userId, profile?.department_id ?? null)
+    return year ? resolved.filter((h) => h.year === year || h.is_recurring_yearly) : resolved
   }
 
   async createUserHoliday(orgId: string, userId: string, dto: CreateIndividualHolidayDto) {

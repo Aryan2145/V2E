@@ -81,3 +81,24 @@ export function holidayReaches(chain: string[], deptId: string, h: CascadeReach)
   const pathNodes = chain.slice(originIdx + 1) // child-of-origin … deptId (inclusive)
   return !h.optOutIds.some((o) => pathNodes.includes(o))
 }
+
+/** A department's opt-out of an ORG holiday: the anchor department and whether it reaches descendants. */
+export interface OrgOptOutAnchor {
+  departmentId: string
+  appliesToSubtree: boolean
+}
+
+/**
+ * Whether an org holiday is suppressed for `deptId`, given that department's ancestor
+ * chain (root → … → deptId) and the org-holiday opt-outs anchored anywhere in the org.
+ * It is suppressed iff some anchor `A` lies on this department's chain (deptId included)
+ * with `A === deptId` (a same-department opt-out always suppresses the anchor) OR
+ * `appliesToSubtree` (an ancestor's opt-out that the remover chose to cascade down).
+ * A sibling's opt-out never appears on this chain, so the effect flows DOWN only.
+ */
+export function orgHolidaySuppressed(chain: string[], deptId: string, optOuts: OrgOptOutAnchor[]): boolean {
+  const chainSet = new Set(chain)
+  return optOuts.some(
+    (o) => chainSet.has(o.departmentId) && (o.departmentId === deptId || o.appliesToSubtree),
+  )
+}

@@ -1,18 +1,19 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { Loader2, Plus, ChevronLeft, ChevronRight, Unlink, Undo2 } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Loader2, Plus, ChevronLeft, ChevronRight, ChevronDown, Trash2, Undo2, RotateCcw, X } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { holidaysApi } from '@/lib/api/holidays'
 import { getDepartments } from '@/lib/api/departments'
-import type { DepartmentHoliday, CalendarHoliday } from '@/lib/types/holidays'
+import type { CalendarHoliday, RemovedOrgHoliday } from '@/lib/types/holidays'
 import type { Department } from '@/lib/types'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
-import DeptWorkingWeekStrip from './DeptWorkingWeekStrip'
+import WorkingDaysStrip from './WorkingDaysStrip'
 import OrgHolidayList from './OrgHolidayList'
 import OrgHolidayCalendar from './OrgHolidayCalendar'
 import HolidayFormModal, { type HolidayFormData } from './HolidayFormModal'
+import { parseLocalDate } from '@/lib/date'
 
 const YEARS_BASE = new Date().getFullYear()
 
@@ -31,19 +32,30 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
   const [deptDays, setDeptDays] = useState<number[]>([1, 2, 3, 4, 5])
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
-  const [holidays, setHolidays] = useState<DepartmentHoliday[]>([])
+  const [holidays, setHolidays] = useState<CalendarHoliday[]>([])
+  const [removedOrg, setRemovedOrg] = useState<RemovedOrgHoliday[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [selectedYear, setSelectedYear] = useState(YEARS_BASE)
   const [loading, setLoading] = useState(true)
   const [holidaysLoading, setHolidaysLoading] = useState(false)
   const [showAdd, setShowAdd] = useState(false)
 
-  // Opt-out (local detach of an inherited holiday) — confirm dialog + undo toast.
-  const [optOutTarget, setOptOutTarget] = useState<CalendarHoliday | null>(null)
-  const [optingOut, setOptingOut] = useState(false)
-  const [undoToast, setUndoToast] = useState<{ id: string; name: string } | null>(null)
+  // Bulk removal (opt-out) of inherited holidays — selection, confirm + scope, undo.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [scopeSubtree, setScopeSubtree] = useState(true)
+  const [removing, setRemoving] = useState(false)
+  const [undoToast, setUndoToast] = useState<{ items: { holiday_source: 'org' | 'department'; holiday_id: string }[]; count: number } | null>(null)
+  const [showRemoved, setShowRemoved] = useState(false)
 
   const effectiveDays = override ? deptDays : orgWorkingDays
+  const hasDescendants = useMemo(
+    () => departments.some((d) => d.parent_department_id === deptId),
+    [departments, deptId],
+  )
+  const selected = useMemo(() => holidays.filter((h) => selectedIds.has(h.id)), [holidays, selectedIds])
+  const selectedHasOrg = selected.some((h) => h.origin === 'org')
+  const selectableCount = useMemo(() => holidays.filter((h) => h.inherited).length, [holidays])
 
   const loadBase = useCallback(async () => {
     setLoading(true)
@@ -70,8 +82,14 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
   const loadHolidays = useCallback(async () => {
     setHolidaysLoading(true)
     try {
-      const hols = await holidaysApi.listDeptHolidays(orgId, deptId, { year: selectedYear })
+      const [hols, discrepancies] = await Promise.all([
+        holidaysApi.listDeptHolidays(orgId, deptId, { year: selectedYear }),
+        holidaysApi.getHolidayDiscrepancies(orgId),
+      ])
       setHolidays(hols)
+      // Org holidays this department itself removed (anchored here, restorable here).
+      setRemovedOrg(discrepancies.find((d) => d.department_id === deptId)?.removed ?? [])
+      setSelectedIds(new Set())
     } finally {
       setHolidaysLoading(false)
     }
@@ -149,24 +167,61 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
     await loadHolidays()
   }
 
-  async function confirmOptOut() {
-    if (!optOutTarget) return
-    setOptingOut(true)
+  function toggleSelect(h: CalendarHoliday) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(h.id)) next.delete(h.id)
+      else next.add(h.id)
+      return next
+    })
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(holidays.filter((h) => h.inherited).map((h) => h.id)))
+  }
+
+  /** Remove (opt out of) the currently selected inherited holidays. */
+  async function confirmRemove() {
+    if (!selected.length) return
+    setRemoving(true)
     try {
-      await holidaysApi.optOutDeptHoliday(orgId, deptId, optOutTarget.id)
-      setUndoToast({ id: optOutTarget.id, name: optOutTarget.name })
-      setOptOutTarget(null)
+      const orgIds = selected.filter((h) => h.origin === 'org').map((h) => h.id)
+      const deptOnes = selected.filter((h) => h.origin === 'department')
+      if (orgIds.length) {
+        await holidaysApi.optOutOrgHolidaysForDept(orgId, deptId, orgIds, hasDescendants ? scopeSubtree : false)
+      }
+      for (const h of deptOnes) {
+        await holidaysApi.optOutDeptHoliday(orgId, deptId, h.id)
+      }
+      setUndoToast({
+        count: selected.length,
+        items: [
+          ...orgIds.map((id) => ({ holiday_source: 'org' as const, holiday_id: id })),
+          ...deptOnes.map((h) => ({ holiday_source: 'department' as const, holiday_id: h.id })),
+        ],
+      })
+      setConfirmOpen(false)
       await loadHolidays()
     } finally {
-      setOptingOut(false)
+      setRemoving(false)
     }
   }
 
-  async function undoOptOut() {
+  /** Undo the most recent removal batch (org + dept origins). */
+  async function undoRemoval() {
     if (!undoToast) return
-    const id = undoToast.id
+    const { items } = undoToast
     setUndoToast(null)
-    await holidaysApi.undoOptOutDeptHoliday(orgId, deptId, id)
+    const orgIds = items.filter((i) => i.holiday_source === 'org').map((i) => i.holiday_id)
+    const deptIds = items.filter((i) => i.holiday_source === 'department').map((i) => i.holiday_id)
+    if (orgIds.length) await holidaysApi.undoOptOutOrgHolidaysForDept(orgId, deptId, orgIds)
+    for (const id of deptIds) await holidaysApi.undoOptOutDeptHoliday(orgId, deptId, id)
+    await loadHolidays()
+  }
+
+  /** Restore a single org holiday this department had removed (from the Removed drawer). */
+  async function restoreOrgHoliday(orgHolidayId: string) {
+    await holidaysApi.undoOptOutOrgHolidaysForDept(orgId, deptId, [orgHolidayId])
     await loadHolidays()
   }
 
@@ -189,15 +244,19 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
     <div className="space-y-5">
       <div>
         <h3 className="text-[18px] font-semibold text-[#0F172A]">{deptName}</h3>
-        <p className="text-sm text-[#475569] mt-0.5">Set this department&apos;s working week and holidays. They override the org defaults.</p>
+        <p className="text-sm text-[#475569] mt-0.5">
+          Org holidays apply here by default; add department holidays on top, or remove any you don&apos;t observe.
+        </p>
       </div>
 
-      {/* Working week — slim strip with override switch */}
-      <DeptWorkingWeekStrip
+      {/* Working days — slim strip with override switch */}
+      <WorkingDaysStrip
         days={effectiveDays}
         override={override}
         status={status}
         disabled={!isAdmin}
+        overrideLabel="Override org defaults"
+        followingLabel="Following org days"
         onToggleDay={toggleDay}
         onToggleOverride={toggleOverride}
       />
@@ -241,6 +300,34 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
             )}
           </div>
 
+          {/* Bulk-selection action bar — appears when inherited holidays are selected. */}
+          {isAdmin && selectedIds.size > 0 && (
+            <div className="flex items-center justify-between gap-3 mb-3 px-3 py-2 rounded-[8px] bg-[#EFF6FF] border border-[#BFDBFE] shrink-0">
+              <span className="text-sm font-medium text-[#1E3A8A]">{selectedIds.size} selected</span>
+              <div className="flex items-center gap-2">
+                {selectedIds.size < selectableCount && (
+                  <button type="button" onClick={selectAll} className="text-sm font-medium text-[#2563EB] hover:underline">
+                    Select all {selectableCount}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setSelectedIds(new Set())}
+                  className="text-sm font-medium text-[#475569] hover:underline"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setScopeSubtree(true); setConfirmOpen(true) }}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-sm font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C] transition-colors"
+                >
+                  <Trash2 size={14} /> Remove selected
+                </button>
+              </div>
+            </div>
+          )}
+
           {holidaysLoading ? (
             <div className="flex items-center justify-center h-16"><Loader2 size={18} className="animate-spin text-[#94A3B8]" /></div>
           ) : (
@@ -249,9 +336,50 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
                 holidays={holidays}
                 onDelete={deleteHoliday}
                 onUpdate={updateHoliday}
-                onOptOut={(h) => setOptOutTarget(h)}
-                emptyText="No department-specific holidays."
+                onOptOut={(h) => { setSelectedIds(new Set([h.id])); setScopeSubtree(true); setConfirmOpen(true) }}
+                selectable={isAdmin}
+                selectedIds={selectedIds}
+                onToggleSelect={toggleSelect}
+                emptyText="No holidays for this department."
               />
+            </div>
+          )}
+
+          {/* Removed drawer — org holidays this department took out of its calendar. */}
+          {removedOrg.length > 0 && (
+            <div className="mt-3 border-t border-[#E2E8F0] pt-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowRemoved((s) => !s)}
+                className="flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A]"
+              >
+                {showRemoved ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                Removed holidays ({removedOrg.length})
+              </button>
+              {showRemoved && (
+                <div className="mt-2 space-y-1.5">
+                  {removedOrg.map((r) => (
+                    <div key={r.org_holiday_id} className="flex items-center gap-3 py-1.5 px-2 rounded-[8px] bg-[#F8FAFC]">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-[#475569] line-through truncate">{r.name}</p>
+                        <p className="text-[11px] text-[#94A3B8]">
+                          {r.date ? parseLocalDate(r.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : ''}
+                          {r.applies_to_subtree ? ' · also removed for sub-departments' : ''}
+                        </p>
+                      </div>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => restoreOrgHoliday(r.org_holiday_id)}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-[8px] text-sm font-medium text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+                        >
+                          <RotateCcw size={13} /> Restore
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -269,61 +397,57 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
         originDeptName={deptName}
       />
 
-      {/* Opt-out (local detach) confirmation — amber, because it's reversible. */}
+      {/* Bulk removal confirmation — firm, with the parent's scope choice for org holidays. */}
       <Modal
-        isOpen={!!optOutTarget}
-        onClose={() => !optingOut && setOptOutTarget(null)}
-        title="Opt out of inherited holiday"
+        isOpen={confirmOpen}
+        onClose={() => !removing && setConfirmOpen(false)}
+        title={selected.length === 1 ? 'Remove holiday' : `Remove ${selected.length} holidays`}
         size="sm"
       >
-        {optOutTarget && (
-          <div className="space-y-3">
-            <div className="flex items-start gap-2.5 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A] p-3">
-              <Unlink size={16} className="text-[#D97706] mt-0.5 shrink-0" />
-              <p className="text-sm text-[#1E293B]">
-                Remove <span className="font-semibold">{optOutTarget.name}</span>, inherited from{' '}
-                <span className="font-semibold">{optOutTarget.source_department_name}</span>, from{' '}
-                <span className="font-semibold">{deptName}</span>?
-              </p>
+        <div className="space-y-3">
+          <p className="text-sm text-[#1E293B]">
+            Remove {selected.length === 1 ? <><span className="font-semibold">{selected[0]?.name}</span></> : <><span className="font-semibold">{selected.length} holidays</span></>} from <span className="font-semibold">{deptName}</span>?
+          </p>
+          <ul className="text-sm text-[#475569] space-y-1.5 list-disc pl-5">
+            <li>These dates will be treated as <span className="font-medium text-[#0F172A]">normal working days</span> for this department{scopeSubtree && selectedHasOrg && hasDescendants ? ' and its sub-departments' : ''}.</li>
+            <li>Nothing is deleted — you can restore them later from <span className="font-medium text-[#0F172A]">Removed holidays</span>.</li>
+          </ul>
+
+          {selectedHasOrg && hasDescendants && (
+            <div className="rounded-[8px] border border-[#E2E8F0] p-3 space-y-2">
+              <p className="text-[13px] font-medium text-[#374151]">Apply this removal to:</p>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="radio" className="mt-0.5 accent-[#2563EB]" checked={!scopeSubtree} onChange={() => setScopeSubtree(false)} />
+                <span className="text-sm text-[#1E293B]">Just <span className="font-medium">{deptName}</span> <span className="text-[#94A3B8]">— sub-departments keep these holidays</span></span>
+              </label>
+              <label className="flex items-start gap-2 cursor-pointer">
+                <input type="radio" className="mt-0.5 accent-[#2563EB]" checked={scopeSubtree} onChange={() => setScopeSubtree(true)} />
+                <span className="text-sm text-[#1E293B]"><span className="font-medium">{deptName}</span> and all sub-departments <span className="text-[#94A3B8]">— they can&apos;t re-add them</span></span>
+              </label>
             </div>
-            <ul className="text-sm text-[#475569] space-y-1.5 list-disc pl-5">
-              <li>It applies only to <span className="font-medium text-[#0F172A]">{deptName}</span> and the departments under it.</li>
-              <li><span className="font-medium text-[#0F172A]">{optOutTarget.source_department_name}</span> and all other departments keep it.</li>
-              <li>
-                {optOutTarget.source_department_head_name
-                  ? <>{optOutTarget.source_department_head_name}, head of {optOutTarget.source_department_name}, will be notified</>
-                  : <>The head of {optOutTarget.source_department_name} will be notified</>}
-                {' '}and it will be recorded in the audit log.
-              </li>
-              <li>Nothing is deleted — you can re-attach it any time.</li>
-            </ul>
-            <div className="flex items-center justify-end gap-2 pt-1">
-              <Button variant="secondary" onClick={() => setOptOutTarget(null)} disabled={optingOut}>Cancel</Button>
-              <Button
-                variant="primary"
-                onClick={confirmOptOut}
-                isLoading={optingOut}
-                disabled={optingOut}
-                className="!bg-[#D97706] hover:!bg-[#B45309]"
-              >
-                Opt out
-              </Button>
-            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <Button variant="secondary" onClick={() => setConfirmOpen(false)} disabled={removing}>Cancel</Button>
+            <Button variant="danger" onClick={confirmRemove} isLoading={removing} disabled={removing}>
+              {selected.length === 1 ? 'Remove' : `Remove ${selected.length}`}
+            </Button>
           </div>
-        )}
+        </div>
       </Modal>
 
-      {/* Undo toast — a few seconds to reverse an accidental opt-out. */}
+      {/* Undo toast — a few seconds to reverse an accidental removal. */}
       {undoToast && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[90] flex items-center gap-3 rounded-[10px] bg-[#0F172A] text-white px-4 py-3 shadow-[0_8px_28px_rgba(0,0,0,0.25)]">
-          <span className="text-sm">Opted out of <span className="font-semibold">{undoToast.name}</span></span>
+          <span className="text-sm">Removed <span className="font-semibold">{undoToast.count}</span> holiday{undoToast.count === 1 ? '' : 's'}</span>
           <button
             type="button"
-            onClick={undoOptOut}
+            onClick={undoRemoval}
             className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#93C5FD] hover:text-white transition-colors"
           >
             <Undo2 size={14} /> Undo
           </button>
+          <button type="button" onClick={() => setUndoToast(null)} className="text-[#64748B] hover:text-white transition-colors"><X size={14} /></button>
         </div>
       )}
     </div>

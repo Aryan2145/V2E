@@ -7,6 +7,9 @@ import type {
   DepartmentHoliday,
   IndividualWorkingDays,
   IndividualHoliday,
+  CalendarHoliday,
+  HolidayDiscrepancy,
+  HolidayOptOutSource,
   HolidayCheckResult,
   NonWorkingDate,
   HolidayStatus,
@@ -97,9 +100,10 @@ export const holidaysApi = {
 
   // ─── Dept holidays ─────────────────────────────────────────────────────────
 
-  listDeptHolidays: async (orgId: string, deptId: string, params?: { year?: number }): Promise<DepartmentHoliday[]> => {
+  // Effective set: org baseline (minus this dept's opt-outs) ∪ own/inherited dept holidays.
+  listDeptHolidays: async (orgId: string, deptId: string, params?: { year?: number }): Promise<CalendarHoliday[]> => {
     const res = await apiClient.get(`${base(orgId)}/dept/${deptId}/holidays`, { params })
-    return unwrap<DepartmentHoliday[]>(res)
+    return unwrap<CalendarHoliday[]>(res)
   },
 
   createDeptHoliday: async (
@@ -136,6 +140,34 @@ export const holidaysApi = {
     await apiClient.delete(`${base(orgId)}/dept/${deptId}/holidays/${id}/opt-out`)
   },
 
+  // ─── Org-holiday removal for a department ────────────────────────────────────
+
+  /** Remove org holidays for this department; appliesToSubtree cascades the removal to sub-departments. */
+  optOutOrgHolidaysForDept: async (
+    orgId: string,
+    deptId: string,
+    orgHolidayIds: string[],
+    appliesToSubtree: boolean,
+  ): Promise<void> => {
+    await apiClient.post(`${base(orgId)}/dept/${deptId}/org-holidays/opt-out`, {
+      org_holiday_ids: orgHolidayIds,
+      applies_to_subtree: appliesToSubtree,
+    })
+  },
+
+  /** Re-enforce (restore) removed org holidays for this department. */
+  undoOptOutOrgHolidaysForDept: async (orgId: string, deptId: string, orgHolidayIds: string[]): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/dept/${deptId}/org-holidays/opt-out`, {
+      data: { org_holiday_ids: orgHolidayIds },
+    })
+  },
+
+  /** Departments out of sync with the org calendar, and what they removed. */
+  getHolidayDiscrepancies: async (orgId: string): Promise<HolidayDiscrepancy[]> => {
+    const res = await apiClient.get(`${base(orgId)}/org/holidays/discrepancies`)
+    return unwrap<HolidayDiscrepancy[]>(res)
+  },
+
   // ─── Individual working days ───────────────────────────────────────────────
 
   listUserWorkingDays: async (orgId: string, userId: string): Promise<IndividualWorkingDays[]> => {
@@ -159,9 +191,12 @@ export const holidaysApi = {
 
   // ─── Individual holidays ───────────────────────────────────────────────────
 
-  listUserHolidays: async (orgId: string, userId: string, params?: { year?: number }): Promise<IndividualHoliday[]> => {
+  // Effective set: the employee's department's effective holidays (minus the user's
+  // opt-outs) plus their personal holidays. Origin-tagged so the UI can split inherited
+  // (origin 'org'/'department') from personal (origin 'own').
+  listUserHolidays: async (orgId: string, userId: string, params?: { year?: number }): Promise<CalendarHoliday[]> => {
     const res = await apiClient.get(`${base(orgId)}/user/${userId}/holidays`, { params })
-    return unwrap<IndividualHoliday[]>(res)
+    return unwrap<CalendarHoliday[]>(res)
   },
 
   createUserHoliday: async (orgId: string, userId: string, dto: Omit<IndividualHoliday, 'id' | 'organization_id' | 'user_id' | 'created_at' | 'updated_at'>): Promise<IndividualHoliday> => {
@@ -176,6 +211,24 @@ export const holidaysApi = {
 
   deleteUserHoliday: async (orgId: string, userId: string, id: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/user/${userId}/holidays/${id}`)
+  },
+
+  /** Remove inherited holidays for this employee (each item: source + underlying holiday id). */
+  optOutUserHolidays: async (
+    orgId: string,
+    userId: string,
+    items: { holiday_source: HolidayOptOutSource; holiday_id: string }[],
+  ): Promise<void> => {
+    await apiClient.post(`${base(orgId)}/user/${userId}/holidays/opt-out`, { items })
+  },
+
+  /** Restore previously removed inherited holidays for this employee. */
+  undoOptOutUserHolidays: async (
+    orgId: string,
+    userId: string,
+    items: { holiday_source: HolidayOptOutSource; holiday_id: string }[],
+  ): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/user/${userId}/holidays/opt-out`, { data: { items } })
   },
 
   // ─── Utility ───────────────────────────────────────────────────────────────

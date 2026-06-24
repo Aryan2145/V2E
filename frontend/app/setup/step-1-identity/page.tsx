@@ -14,7 +14,6 @@ import Button from '@/components/ui/Button'
 // ─── Schema ────────────────────────────────────────────────────────────────────
 
 const schema = z.object({
-  philosophy: z.string().optional(),
   vision: z.string().optional(),
   mission: z.string().optional(),
   purpose: z.string().optional(),
@@ -29,7 +28,6 @@ const schema = z.object({
 })
 
 type FormValues = {
-  philosophy?: string
   vision?: string
   mission?: string
   purpose?: string
@@ -85,7 +83,6 @@ export default function Step1IdentityPage() {
     getOrgIdentity(orgId)
       .then((data) => {
         reset({
-          philosophy: data.philosophy ?? '',
           vision: data.vision ?? '',
           mission: data.mission ?? '',
           purpose: data.purpose ?? '',
@@ -143,7 +140,7 @@ export default function Step1IdentityPage() {
           )}
           <h1 className="text-[26px] font-bold text-[#0F172A]">Company Identity</h1>
           <p className="text-sm text-[#475569] mt-1">
-            Define the foundational philosophy, vision, mission, and values that guide your organization.
+            Define the vision, mission, purpose, and values that guide your organization.
           </p>
         </div>
         {saveStatus === 'saving' && <span className="text-xs text-[#94A3B8]">Auto-saving…</span>}
@@ -152,22 +149,13 @@ export default function Step1IdentityPage() {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
-        {/* Philosophy */}
+        {/* Core pillars */}
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6">
           <SectionHeading
             label="Core Pillars"
             description="Define the foundational statements that drive your organization."
           />
           <div className="grid grid-cols-1 gap-5">
-            <div>
-              <label className={labelCls}>Philosophy</label>
-              <textarea
-                {...register('philosophy')}
-                rows={3}
-                placeholder="What fundamental beliefs guide the way your organization operates?"
-                className={textareaCls}
-              />
-            </div>
             <div>
               <label className={labelCls}>Vision</label>
               <textarea

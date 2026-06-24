@@ -21,7 +21,6 @@ interface IdentityFormDrawerProps {
 // ─── Schema (mirrors setup step-1) ──────────────────────────────────────────────
 
 const schema = z.object({
-  philosophy: z.string().optional(),
   vision: z.string().optional(),
   mission: z.string().optional(),
   purpose: z.string().optional(),
@@ -31,7 +30,6 @@ const schema = z.object({
 })
 
 type FormValues = {
-  philosophy?: string
   vision?: string
   mission?: string
   purpose?: string
@@ -45,7 +43,7 @@ const inputCls =
   'w-full rounded-[8px] border border-[#CBD5E1] bg-white px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 focus:border-[#2563EB] transition-colors'
 
 /**
- * Edit organization identity (philosophy, vision, mission, purpose, values) from
+ * Edit organization identity (vision, mission, purpose, values) from
  * a right-hand drawer — so admins edit in place in Settings instead of being sent
  * to the setup wizard. One PUT saves the whole record (upsertOrgIdentity).
  */
@@ -80,7 +78,6 @@ export default function IdentityFormDrawer({
     if (!open) return
     setFormError(null)
     reset({
-      philosophy: initial?.philosophy ?? '',
       vision: initial?.vision ?? '',
       mission: initial?.mission ?? '',
       purpose: initial?.purpose ?? '',
@@ -126,15 +123,6 @@ export default function IdentityFormDrawer({
           <div className="px-5 py-5 flex flex-col gap-5">
             {/* Core pillars */}
             <div className="flex flex-col gap-4">
-              <div>
-                <label className={labelCls}>Philosophy</label>
-                <textarea
-                  {...register('philosophy')}
-                  rows={3}
-                  placeholder="What fundamental beliefs guide the way your organization operates?"
-                  className={textareaCls}
-                />
-              </div>
               <div>
                 <label className={labelCls}>Vision</label>
                 <textarea

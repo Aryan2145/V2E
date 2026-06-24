@@ -59,7 +59,7 @@ export function useSetupProgress(orgId: string): SetupProgress & { isLoading: bo
 
       const identityCompleted =
         identityResult.status === 'fulfilled' &&
-        !!(identityResult.value?.philosophy || identityResult.value?.vision);
+        !!identityResult.value?.vision;
 
       const cultureCompleted =
         cultureResult.status === 'fulfilled' &&

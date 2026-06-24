@@ -16,7 +16,7 @@ interface Props {
 }
 
 /**
- * Org-calendar month grid. Weekends (days of week outside the working week) and
+ * Org-calendar month grid. Weekends (days of week outside the working days) and
  * holidays render in distinct styles with a legend. Use the arrows to navigate months.
  */
 export default function OrgHolidayCalendar({ workingDays, holidays }: Props) {

@@ -33,9 +33,13 @@ interface Props {
   emptyText?: string
   /**
    * When provided, inherited (cascaded) holidays show an "Inherited from …" badge
-   * and an unlink action that calls this instead of edit/delete — a local opt-out.
+   * and a remove action that calls this instead of edit/delete — a local opt-out.
    */
   onOptOut?: (h: CalendarHoliday) => void
+  /** Enable per-row checkboxes on inherited (removable) rows for bulk removal. */
+  selectable?: boolean
+  selectedIds?: Set<string>
+  onToggleSelect?: (h: CalendarHoliday) => void
 }
 
 /**
@@ -43,7 +47,7 @@ interface Props {
  * stacked over the day/month (e.g. "MON / 26 Jan") — then the name, a type tag, and
  * bare pencil/trash actions.
  */
-export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText = 'No holidays added.', onOptOut }: Props) {
+export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText = 'No holidays added.', onOptOut, selectable = false, selectedIds, onToggleSelect }: Props) {
   const [editing, setEditing] = useState<EditState | null>(null)
   const [toDelete, setToDelete] = useState<CalendarHoliday | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -121,6 +125,16 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
             key={h.id}
             className="group flex items-center gap-3 py-2.5 px-1 rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
           >
+            {selectable && h.inherited && (
+              <input
+                type="checkbox"
+                className="shrink-0 w-4 h-4 accent-[#2563EB] cursor-pointer"
+                checked={selectedIds?.has(h.id) ?? false}
+                onChange={() => onToggleSelect?.(h)}
+                title="Select for bulk removal"
+              />
+            )}
+
             {/* Date chip — weekday over day/month (start date) */}
             <div className="shrink-0 w-14 flex flex-col items-center justify-center rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC] py-1">
               <span className="text-[10px] font-semibold tracking-wide text-[#94A3B8] leading-tight">{weekday}</span>
@@ -132,10 +146,16 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
               {isRange && (
                 <p className="text-xs text-[#94A3B8] truncate">{dayMonth} – {endDayMonth}</p>
               )}
-              {h.inherited && h.source_department_name && (
-                <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-[#0369A1] bg-[#E0F2FE] border border-[#BAE6FD] rounded-full px-2 py-0.5">
+              {h.inherited && (
+                <span
+                  className={`mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 border ${
+                    h.origin === 'org'
+                      ? 'text-[#7C3AED] bg-[#F3E8FF] border-[#E9D5FF]'
+                      : 'text-[#0369A1] bg-[#E0F2FE] border-[#BAE6FD]'
+                  }`}
+                >
                   <GitBranch size={11} />
-                  Inherited from {h.source_department_name}
+                  Inherited from {h.origin === 'org' ? 'Organization' : (h.source_department_name ?? h.source_label ?? 'parent department')}
                 </span>
               )}
               {!h.inherited && (h.cascade_target_count ?? 0) > 0 && (
