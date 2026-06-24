@@ -5,6 +5,7 @@ import { Plus, Trash2, Eye, EyeOff } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
+import TimeField from '@/components/ui/TimeField'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi, type CreateMeetingInput } from '@/lib/api/meetings'
 import { goalsApi } from '@/lib/api/goals'
@@ -250,11 +251,11 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
             </div>
             <div>
               <label className={labelClass}>Start</label>
-              <input type="time" className={inputClass} value={startTime} onChange={(e) => setStartTime(e.target.value)} />
+              <TimeField value={startTime} onChange={setStartTime} />
             </div>
             <div>
               <label className={labelClass}>End</label>
-              <input type="time" className={inputClass} value={endTime} onChange={(e) => setEndTime(e.target.value)} />
+              <TimeField value={endTime} onChange={setEndTime} />
             </div>
           </div>
         )}
@@ -287,8 +288,8 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
                 {slots.map((s, i) => (
                   <div key={i} className="flex items-center gap-2">
                     <DatePicker value={s.date} onChange={(iso) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, date: iso } : r))} placeholder="Select date" />
-                    <input type="time" className={`${inputClass} w-28`} value={s.start} onChange={(e) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, start: e.target.value } : r))} />
-                    <input type="time" className={`${inputClass} w-28`} value={s.end} onChange={(e) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, end: e.target.value } : r))} />
+                    <div className="w-28"><TimeField value={s.start} onChange={(v) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, start: v } : r))} /></div>
+                    <div className="w-28"><TimeField value={s.end} onChange={(v) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, end: v } : r))} /></div>
                     <button type="button" onClick={() => setSlots((rows) => rows.filter((_, idx) => idx !== i))} className="text-[#94A3B8] hover:text-[#DC2626]"><Trash2 size={16} /></button>
                   </div>
                 ))}
@@ -305,11 +306,11 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
             </div>
             <div>
               <label className={labelClass}>Started</label>
-              <input type="time" className={inputClass} value={actualStart} onChange={(e) => setActualStart(e.target.value)} />
+              <TimeField value={actualStart} onChange={setActualStart} />
             </div>
             <div>
               <label className={labelClass}>Ended</label>
-              <input type="time" className={inputClass} value={actualEnd} onChange={(e) => setActualEnd(e.target.value)} />
+              <TimeField value={actualEnd} onChange={setActualEnd} />
             </div>
             <div className="col-span-3">
               <label className={labelClass}>Minutes (what happened)</label>

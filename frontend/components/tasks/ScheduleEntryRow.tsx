@@ -4,6 +4,7 @@ import React from 'react'
 import { X } from 'lucide-react'
 import type { RecurringScheduleType, RecurringEndCondition, YearlyDate } from '@/lib/types/tasks'
 import DatePicker from '@/components/ui/DatePicker'
+import TimeField from '@/components/ui/TimeField'
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -239,12 +240,9 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={`${labelCls} block mb-1.5`}>Time</label>
-          <input
-            type="time"
-            value={entry.time}
-            onChange={(e) => onUpdate({ time: e.target.value })}
-            className={`w-full ${inputCls}`}
-          />
+          <div className="w-full">
+            <TimeField value={entry.time} onChange={(v) => onUpdate({ time: v })} />
+          </div>
         </div>
         <div>
           <label className={`${labelCls} block mb-1.5`}>Starting</label>

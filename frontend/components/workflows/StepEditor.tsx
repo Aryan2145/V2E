@@ -6,6 +6,7 @@ import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 import type { WorkflowStep, WorkflowNature, WorkflowRecurringType, DeadlineConfig } from '@/lib/types/workflows'
 import DatePicker from '@/components/ui/DatePicker'
+import TimeField from '@/components/ui/TimeField'
 
 // ─── Avatar helpers ───────────────────────────────────────────────────────────
 
@@ -164,7 +165,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
           </div>
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>
-            <input type="time" value={(config as { time?: string }).time ?? '09:00'} onChange={(e) => update({ time: e.target.value })} className={inputCls} />
+            <TimeField value={(config as { time?: string }).time ?? '09:00'} onChange={(v) => update({ time: v })} />
           </div>
         </div>
       )}
@@ -181,7 +182,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
           </div>
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>
-            <input type="time" value={(config as { time?: string }).time ?? '09:00'} onChange={(e) => update({ time: e.target.value })} className={inputCls} />
+            <TimeField value={(config as { time?: string }).time ?? '09:00'} onChange={(v) => update({ time: v })} />
           </div>
         </div>
       )}
@@ -189,7 +190,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
       {type === 'daily' && (
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>
-          <input type="time" value={(config as { time?: string }).time ?? '09:00'} onChange={(e) => update({ time: e.target.value })} className={inputCls} />
+          <TimeField value={(config as { time?: string }).time ?? '09:00'} onChange={(v) => update({ time: v })} />
         </div>
       )}
 
@@ -203,7 +204,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
           </div>
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>
-            <input type="time" value={(config as { time?: string }).time ?? '09:00'} onChange={(e) => update({ time: e.target.value })} className={inputCls} />
+            <TimeField value={(config as { time?: string }).time ?? '09:00'} onChange={(v) => update({ time: v })} />
           </div>
         </div>
       )}
@@ -216,7 +217,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
           </div>
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>
-            <input type="time" value={(config as { time?: string }).time ?? '09:00'} onChange={(e) => update({ time: e.target.value })} className={inputCls} />
+            <TimeField value={(config as { time?: string }).time ?? '09:00'} onChange={(v) => update({ time: v })} />
           </div>
         </div>
       )}
@@ -235,7 +236,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
           </div>
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>
-            <input type="time" value={(config as { time?: string }).time ?? '09:00'} onChange={(e) => update({ time: e.target.value })} className={inputCls} />
+            <TimeField value={(config as { time?: string }).time ?? '09:00'} onChange={(v) => update({ time: v })} />
           </div>
         </div>
       )}
