@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Search, X, Plus, Check, Zap, Briefcase, UserPlus } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneesResponse, EligibleAssigneeUser, SelectedAssignee } from '@/lib/types/tasks'
@@ -154,15 +155,16 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
   const [sort, setSort] = useState<SortMode>('frequency')
   const [data, setData] = useState<EligibleAssigneesResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  // Desktop placement: flip up when the field sits low, and cap the panel to the
-  // taller side so the list always shows as many rows as the space allows.
-  const [drop, setDrop] = useState<{ up: boolean; maxH: number; desktop: boolean }>({
-    up: false,
-    maxH: 384,
-    desktop: false,
-  })
+  // The panel is rendered in a portal (escapes the modal's overflow clipping) and
+  // positioned against the viewport: flip up when the field sits low, and cap the
+  // height to the taller side so the list always shows as many rows as will fit.
+  const [pos, setPos] = useState<
+    { left: number; top?: number; bottom?: number; width: number; maxH: number } | null
+  >(null)
+  const [isDesktop, setIsDesktop] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -198,37 +200,50 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Outside click to close
+  // Outside click to close — the panel lives in a portal, so check it separately.
   useEffect(() => {
     if (!open) return
     function handle(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      const t = e.target as Node
+      if (containerRef.current?.contains(t)) return
+      if (panelRef.current?.contains(t)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
   }, [open])
 
-  // Decide whether to drop up or down (desktop only — mobile is a bottom sheet)
-  // and how tall the panel can be, based on live space around the trigger.
+  // Position the portaled panel against the viewport: flip up when the field sits
+  // low, align to the trigger, and cap the height to the taller side so the list
+  // shows as many rows as fit. Mobile (< md) uses a full-width bottom sheet.
   const computePlacement = useCallback(() => {
     const el = containerRef.current
     if (!el || typeof window === 'undefined') return
     const desktop = window.matchMedia('(min-width: 768px)').matches
+    setIsDesktop(desktop)
     if (!desktop) {
-      setDrop((d) => (d.desktop ? { ...d, desktop: false } : d))
+      setPos(null)
       return
     }
     const rect = el.getBoundingClientRect()
-    const GAP = 8 // matches the mt-1.5/mb-1.5 offset
-    const MARGIN = 12 // breathing room from the viewport edge
-    const spaceBelow = window.innerHeight - rect.bottom - GAP - MARGIN
+    const GAP = 6
+    const MARGIN = 12 // keep clear of the viewport edges
+    const vw = window.innerWidth
+    const vh = window.innerHeight
+    const spaceBelow = vh - rect.bottom - GAP - MARGIN
     const spaceAbove = rect.top - GAP - MARGIN
-    const DESIRED = 384 // the comfortable max (md:max-h-96)
+    const DESIRED = 420
     const up = spaceBelow < DESIRED && spaceAbove > spaceBelow
-    const maxH = Math.max(180, Math.min(DESIRED, up ? spaceAbove : spaceBelow))
-    setDrop({ up, maxH, desktop: true })
+    const maxH = Math.max(220, Math.min(DESIRED, up ? spaceAbove : spaceBelow))
+    const width = Math.min(384, vw - 2 * MARGIN)
+    let left = rect.left
+    if (left + width > vw - MARGIN) left = vw - MARGIN - width
+    if (left < MARGIN) left = MARGIN
+    setPos(
+      up
+        ? { left, width, maxH, bottom: vh - rect.top + GAP }
+        : { left, width, maxH, top: rect.bottom + GAP },
+    )
   }, [])
 
   // Re-measure while open so the panel tracks scrolling/resizing of the page.
@@ -305,21 +320,29 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
         </button>
       </div>
 
-      {/* Dropdown panel */}
-      {open && (
+      {/* Dropdown panel — portaled to <body> so it is never clipped by a modal's
+          overflow; positioned against the viewport (flips up when low on space). */}
+      {open && typeof document !== 'undefined' && createPortal(
         <>
           {/* Mobile overlay */}
-          <div className="fixed inset-0 bg-black/20 z-40 md:hidden" onClick={() => setOpen(false)} />
+          {!isDesktop && (
+            <div className="fixed inset-0 bg-black/20 z-[90]" onClick={() => setOpen(false)} />
+          )}
 
           {/* Panel */}
           <div
-            style={drop.desktop ? { maxHeight: drop.maxH } : undefined}
+            ref={panelRef}
+            style={
+              isDesktop && pos
+                ? { left: pos.left, top: pos.top, bottom: pos.bottom, width: pos.width, maxHeight: pos.maxH }
+                : undefined
+            }
             className={`
-            z-50 bg-white border border-[#E2E8F0] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
-            fixed bottom-0 left-0 right-0 rounded-t-[16px] max-h-[75vh]
-            md:absolute md:left-0 md:right-auto md:w-96 md:rounded-[12px]
-            ${drop.up ? 'md:top-auto md:bottom-full md:mb-1.5' : 'md:bottom-auto md:top-full md:mt-1.5'}
+            fixed z-[100] bg-white border border-[#E2E8F0] shadow-[0_8px_32px_rgba(0,0,0,0.16)]
             flex flex-col overflow-hidden
+            ${isDesktop && pos
+              ? 'rounded-[12px]'
+              : 'bottom-0 left-0 right-0 rounded-t-[16px] max-h-[75vh]'}
           `}
           >
             {/* Panel header */}
@@ -433,7 +456,8 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
               </div>
             )}
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   )
