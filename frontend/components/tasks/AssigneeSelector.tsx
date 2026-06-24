@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { Search, X, Plus, Check, Zap, Briefcase, UserPlus } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneesResponse, EligibleAssigneeUser, SelectedAssignee } from '@/lib/types/tasks'
@@ -191,16 +192,13 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Outside click to close — the panel renders inline inside containerRef.
+  // The picker opens as a centered dialog (own backdrop). Close on Escape;
+  // outside-click is handled by the backdrop in the portal below.
   useEffect(() => {
     if (!open) return
-    function handle(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
   // Focus search on open
@@ -230,9 +228,13 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
     onChange(value.filter((a) => a.user_id !== userId))
   }
 
-  // ── Flatten all users (for rendering) ───────────────────────────────────────
-
-  const allUsers: EligibleAssigneeUser[] = data?.departments.flatMap((d) => d.users) ?? []
+  // ── Departments for rendering ────────────────────────────────────────────────
+  // The current user is offered via the dedicated "Assign to me" shortcut, so
+  // drop them from the searchable list to avoid showing their own name twice.
+  const departments = (data?.departments ?? [])
+    .map((d) => ({ ...d, users: d.users.filter((u) => u.user_id !== currentUser?.user_id) }))
+    .filter((d) => d.users.length > 0)
+  const visibleTotal = departments.reduce((n, d) => n + d.users.length, 0)
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -259,14 +261,29 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
         </button>
       </div>
 
-      {/* Dropdown panel — rendered inline (normal flow) below the trigger so it can
-          never be clipped by, nor float out of, a parent modal. It grows this
-          field's height; the surrounding form scrolls to reveal it. The list body
-          scrolls internally, keeping the panel a stable size. */}
-      {open && (
-        <div className="mt-1.5 w-full rounded-[12px] bg-white border border-[#E2E8F0] shadow-[0_4px_16px_rgba(0,0,0,0.08)] flex flex-col overflow-hidden max-h-[360px]">
-            {/* Panel header */}
-            <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-[#F1F5F9] shrink-0">
+      {/* Picker — centered dialog over the page (own backdrop). Being fixed &
+          centered it never drifts on scroll nor escapes the parent modal. */}
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
+          <div className="w-[440px] max-w-full max-h-[80vh] rounded-[12px] bg-white border border-[#E2E8F0] shadow-[0_12px_40px_rgba(0,0,0,0.20)] flex flex-col overflow-hidden">
+            {/* Title row */}
+            <div className="flex items-center justify-between px-4 pt-3.5 pb-2.5 border-b border-[#F1F5F9] shrink-0">
+              <h3 className="text-sm font-semibold text-[#0F172A]">Assignees &amp; CC</h3>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Search + sort */}
+            <div className="flex items-center gap-2 px-4 pt-3 pb-2 shrink-0">
               {/* Search */}
               <div className="relative flex-1">
                 <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
@@ -295,15 +312,6 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
                   </button>
                 ))}
               </div>
-
-              {/* Close on mobile */}
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors md:hidden"
-              >
-                <X size={14} />
-              </button>
             </div>
 
             {/* Assign to me shortcut */}
@@ -326,7 +334,7 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
                 <div className="py-1">
                   {[1, 2, 3, 4, 5].map((i) => <SkeletonRow key={i} />)}
                 </div>
-              ) : !data || data.total === 0 ? (
+              ) : !data || visibleTotal === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-center px-4">
                   <div className="w-10 h-10 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-3">
                     <Search size={16} className="text-[#94A3B8]" />
@@ -340,7 +348,7 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
                 </div>
               ) : (
                 <div>
-                  {data.departments.map((dept) => (
+                  {departments.map((dept) => (
                     <div key={dept.department_id}>
                       {/* Department header (hidden for search flat list) */}
                       {dept.department_id !== 'search' && (
@@ -365,17 +373,31 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
               )}
             </div>
 
-            {/* Footer: selected count */}
-            {value.length > 0 && (
-              <div className="px-3 py-2.5 border-t border-[#F1F5F9] bg-[#F8FAFC] shrink-0">
-                <p className="text-xs text-[#475569]">
-                  <span className="font-semibold text-[#0F172A]">{value.filter((a) => !a.is_cc).length}</span> assignee{value.filter((a) => !a.is_cc).length !== 1 ? 's' : ''},&nbsp;
-                  <span className="font-semibold text-[#0F172A]">{value.filter((a) => a.is_cc).length}</span> CC
-                  <span className="text-[#64748B]"> · Click badge to toggle CC</span>
-                </p>
-              </div>
-            )}
-        </div>
+            {/* Footer: selected count + confirm (tick) */}
+            <div className="px-4 py-2.5 border-t border-[#F1F5F9] bg-[#F8FAFC] shrink-0 flex items-center justify-between gap-3">
+              <p className="text-xs text-[#475569] min-w-0 truncate">
+                {value.length > 0 ? (
+                  <>
+                    <span className="font-semibold text-[#0F172A]">{value.filter((a) => !a.is_cc).length}</span> assignee{value.filter((a) => !a.is_cc).length !== 1 ? 's' : ''},&nbsp;
+                    <span className="font-semibold text-[#0F172A]">{value.filter((a) => a.is_cc).length}</span> CC
+                    <span className="text-[#64748B]"> · Click badge to toggle CC</span>
+                  </>
+                ) : (
+                  <span className="text-[#64748B]">Select assignees, then confirm</span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors shrink-0"
+              >
+                <Check size={15} strokeWidth={3} />
+                Done
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
