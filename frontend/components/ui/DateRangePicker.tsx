@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
@@ -64,9 +64,6 @@ export default function DateRangePicker({
   const [open, setOpen] = useState(false)
   const [hover, setHover] = useState<Date | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
 
   const fromD = useMemo(() => parseIso(from), [from])
   const toD = useMemo(() => parseIso(to), [to])
@@ -79,49 +76,16 @@ export default function DateRangePicker({
 
   const isDisabledDay = (d: Date): boolean => !!(maxD && dayDiff(d, maxD) > 0)
 
-  // ── Positioning (portal, fixed) ──────────────────────────────────────────────
-  const place = () => {
-    const t = triggerRef.current
-    if (!t) return
-    const r = t.getBoundingClientRect()
-    const PANEL_H = 430
-    const PANEL_W = 300
-    const below = window.innerHeight - r.bottom
-    const openUp = below < PANEL_H + 12 && r.top > below
-    const top = openUp ? Math.max(8, r.top - PANEL_H - 6) : r.bottom + 6
-    let left = r.right - PANEL_W // right-align to the trigger
-    if (left < 8) left = 8
-    if (left + PANEL_W > window.innerWidth - 8) left = window.innerWidth - PANEL_W - 8
-    setPos({ top, left: Math.max(8, left), width: PANEL_W })
-  }
-
-  useLayoutEffect(() => {
-    if (open) place()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-
+  // Opens as a centered dialog over the page (own backdrop). Being centered &
+  // fixed, it never drifts on scroll nor escapes a parent. Close on Escape;
+  // outside-click is handled by the backdrop below.
   useEffect(() => {
     if (!open) return
-    const onScroll = () => place()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (wrapRef.current?.contains(target) || panelRef.current?.contains(target)) return
-      setOpen(false)
-    }
-    window.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', onScroll)
     window.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDown)
-    return () => {
-      window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', onScroll)
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDown)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
   // ── Day grid (6 weeks) ───────────────────────────────────────────────────────
@@ -193,7 +157,7 @@ export default function DateRangePicker({
 
   return (
     <div ref={wrapRef} className={wrapperClassName}>
-      <button ref={triggerRef} type="button" onClick={() => setOpen((o) => !o)} className={triggerCls}>
+      <button type="button" onClick={() => setOpen((o) => !o)} className={triggerCls}>
         <span className="flex items-center px-2.5 py-2.5 border-r border-[#E2E8F0] rounded-l-[8px] text-[#64748B]">
           <Calendar size={15} />
         </span>
@@ -216,13 +180,13 @@ export default function DateRangePicker({
         )}
       </button>
 
-      {open &&
-        pos &&
-        createPortal(
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
           <div
-            ref={panelRef}
-            style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
-            className="z-[80] rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] p-3"
+            className="w-[340px] max-w-full rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_12px_40px_rgba(0,0,0,0.20)] p-3"
           >
             {/* Quick presets */}
             <div className="flex flex-wrap gap-1.5 mb-3">
@@ -342,9 +306,10 @@ export default function DateRangePicker({
                 Done
               </button>
             </div>
-          </div>,
-          document.body,
-        )}
+          </div>
+        </div>,
+        document.body,
+      )}
     </div>
   )
 }

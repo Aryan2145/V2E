@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
 interface DatePickerProps {
@@ -80,22 +81,16 @@ export default function DatePicker({
   const isDisabledDay = (d: Date): boolean =>
     !!((minD && dayDiff(d, minD) < 0) || (maxD && dayDiff(d, maxD) > 0))
 
-  // Close on Escape / outside click. The calendar renders inline (in normal
-  // flow) inside wrapRef, so it can never float or escape a scrolling modal.
+  // The calendar opens as a centered dialog over the page (own backdrop). Being
+  // centered & fixed, it never drifts on scroll nor escapes a parent. Close on
+  // Escape; outside-click is handled by the backdrop below.
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
-    const onDown = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
-    }
     window.addEventListener('keydown', onKey)
-    document.addEventListener('mousedown', onDown)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('mousedown', onDown)
-    }
+    return () => window.removeEventListener('keydown', onKey)
   }, [open])
 
   // ── Day grid (6 weeks) ───────────────────────────────────────────────────────
@@ -161,9 +156,13 @@ export default function DatePicker({
         )}
       </button>
 
-      {open && (
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
           <div
-            className="mt-1.5 w-full rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-3"
+            className="w-[320px] max-w-full rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_12px_40px_rgba(0,0,0,0.20)] p-3"
           >
             {/* Header */}
             <div className="flex items-center justify-between mb-2">
@@ -286,6 +285,8 @@ export default function DatePicker({
               </button>
             </div>
           </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
