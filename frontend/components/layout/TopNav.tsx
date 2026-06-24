@@ -17,7 +17,7 @@ const NAV_ITEMS: { label: string; href: string; module?: string }[] = [
   { label: 'Goals', href: '/goals', module: 'goals' },
   { label: 'Learning', href: '/learning', module: 'learning' },
   { label: 'Communication', href: '/communication', module: 'communication' },
-  { label: 'Tasks', href: '/dashboard/tasks', module: 'tasks' },
+  { label: 'Work', href: '/dashboard/tasks', module: 'tasks' },
   { label: 'ESS', href: '/dashboard/ecs', module: 'ecs' },
   { label: 'Governance', href: '/dashboard/governance', module: 'governance' },
   { label: 'Performance', href: '/dashboard/performance', module: 'performance' },

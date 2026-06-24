@@ -138,7 +138,7 @@ export default function TaskModuleSidebar() {
             collapsed ? 'hidden' : 'block',
           ].join(' ')}
         >
-          Task Management
+          Work
         </span>
         <button
           onClick={toggleCollapsed}
