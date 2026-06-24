@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
@@ -173,6 +174,15 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [mounted, setMounted] = useState(false)
+
+  // Portal-safe mount + lock background scroll while open.
+  useEffect(() => {
+    setMounted(true)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [])
 
   function set(field: string, value: string) {
     setForm((f) => ({ ...f, [field]: value }))
@@ -208,8 +218,10 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
 
   const otherEmployees = allEmployees.filter((e) => e.id !== employee.id)
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-4 bg-black/40">
+  if (!mounted) return null
+
+  return createPortal(
+    <div className="fixed inset-0 z-[60] flex items-center justify-center px-4 py-4 bg-black/40">
       <div className="bg-white rounded-[16px] w-full max-w-lg shadow-xl flex flex-col max-h-[90vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0] shrink-0">
@@ -340,7 +352,8 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
