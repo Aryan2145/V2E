@@ -301,32 +301,33 @@ export default function CreateTaskModal({
               )}
             </div>
 
-            <div className="space-y-2">
+            <div className="flex gap-2">
               {/* Date picker — shared calendar component (opens on click) */}
-              <DatePicker
-                value={deadlineDate}
-                onChange={handleDeadlineDateChange}
-                min={todayStr}
-                max="2100-12-31"
-                placeholder="Select date"
-              />
+              <div className="flex-1">
+                <DatePicker
+                  value={deadlineDate}
+                  onChange={handleDeadlineDateChange}
+                  min={todayStr}
+                  max="2100-12-31"
+                  placeholder="Select date"
+                />
+              </div>
 
-              {/* Time picker — appears after date is selected */}
-              {deadlineDate && (
-                <div className="relative">
-                  <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                  <input
-                    type="time"
-                    value={deadlineTime}
-                    onChange={(e) => setDeadlineTime(e.target.value)}
-                    className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-base sm:text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
-                  />
-                  {!deadlineTime && (
-                    <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
-                  )}
-                </div>
-              )}
+              {/* Time picker — always present, disabled until a date is picked */}
+              <div className="flex-1 relative">
+                <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+                <input
+                  type="time"
+                  value={deadlineTime}
+                  onChange={(e) => setDeadlineTime(e.target.value)}
+                  disabled={!deadlineDate}
+                  className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-2.5 text-[15px] text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none transition-colors disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
+                />
+              </div>
             </div>
+            {deadlineDate && !deadlineTime && (
+              <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
+            )}
 
             <HolidayWarningBadge check={holidayCheck} />
           </div>
