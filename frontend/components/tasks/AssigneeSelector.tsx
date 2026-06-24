@@ -1,7 +1,6 @@
 'use client'
 
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { createPortal } from 'react-dom'
 import { Search, X, Plus, Check, Zap, Briefcase, UserPlus } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneesResponse, EligibleAssigneeUser, SelectedAssignee } from '@/lib/types/tasks'
@@ -155,16 +154,8 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
   const [sort, setSort] = useState<SortMode>('frequency')
   const [data, setData] = useState<EligibleAssigneesResponse | null>(null)
   const [loading, setLoading] = useState(false)
-  // The panel is rendered in a portal (escapes the modal's overflow clipping) and
-  // positioned against the viewport: flip up when the field sits low, and cap the
-  // height to the taller side so the list always shows as many rows as will fit.
-  const [pos, setPos] = useState<
-    { left: number; top?: number; bottom?: number; width: number; maxH: number } | null
-  >(null)
-  const [isDesktop, setIsDesktop] = useState(false)
 
   const containerRef = useRef<HTMLDivElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -200,63 +191,17 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
   }, [search]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Outside click to close — the panel lives in a portal, so check it separately.
+  // Outside click to close — the panel renders inline inside containerRef.
   useEffect(() => {
     if (!open) return
     function handle(e: MouseEvent) {
-      const t = e.target as Node
-      if (containerRef.current?.contains(t)) return
-      if (panelRef.current?.contains(t)) return
-      setOpen(false)
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
     }
     document.addEventListener('mousedown', handle)
     return () => document.removeEventListener('mousedown', handle)
   }, [open])
-
-  // Position the portaled panel against the viewport: flip up when the field sits
-  // low, align to the trigger, and cap the height to the taller side so the list
-  // shows as many rows as fit. Mobile (< md) uses a full-width bottom sheet.
-  const computePlacement = useCallback(() => {
-    const el = containerRef.current
-    if (!el || typeof window === 'undefined') return
-    const desktop = window.matchMedia('(min-width: 768px)').matches
-    setIsDesktop(desktop)
-    if (!desktop) {
-      setPos(null)
-      return
-    }
-    const rect = el.getBoundingClientRect()
-    const GAP = 6
-    const MARGIN = 12 // keep clear of the viewport edges
-    const vw = window.innerWidth
-    const vh = window.innerHeight
-    const spaceBelow = vh - rect.bottom - GAP - MARGIN
-    const spaceAbove = rect.top - GAP - MARGIN
-    const DESIRED = 420
-    const up = spaceBelow < DESIRED && spaceAbove > spaceBelow
-    const maxH = Math.max(220, Math.min(DESIRED, up ? spaceAbove : spaceBelow))
-    const width = Math.min(384, vw - 2 * MARGIN)
-    let left = rect.left
-    if (left + width > vw - MARGIN) left = vw - MARGIN - width
-    if (left < MARGIN) left = MARGIN
-    setPos(
-      up
-        ? { left, width, maxH, bottom: vh - rect.top + GAP }
-        : { left, width, maxH, top: rect.bottom + GAP },
-    )
-  }, [])
-
-  // Re-measure while open so the panel tracks scrolling/resizing of the page.
-  useEffect(() => {
-    if (!open) return
-    computePlacement()
-    window.addEventListener('resize', computePlacement)
-    window.addEventListener('scroll', computePlacement, true)
-    return () => {
-      window.removeEventListener('resize', computePlacement)
-      window.removeEventListener('scroll', computePlacement, true)
-    }
-  }, [open, computePlacement])
 
   // Focus search on open
   useEffect(() => {
@@ -306,13 +251,7 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
         <button
           type="button"
           disabled={disabled}
-          onClick={() =>
-            setOpen((v) => {
-              const next = !v
-              if (next) computePlacement() // place correctly on the first paint
-              return next
-            })
-          }
+          onClick={() => setOpen((v) => !v)}
           className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-[#2563EB] hover:bg-[#EFF6FF] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus size={12} />
@@ -320,31 +259,12 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
         </button>
       </div>
 
-      {/* Dropdown panel — portaled to <body> so it is never clipped by a modal's
-          overflow; positioned against the viewport (flips up when low on space). */}
-      {open && typeof document !== 'undefined' && createPortal(
-        <>
-          {/* Mobile overlay */}
-          {!isDesktop && (
-            <div className="fixed inset-0 bg-black/20 z-[90]" onClick={() => setOpen(false)} />
-          )}
-
-          {/* Panel */}
-          <div
-            ref={panelRef}
-            style={
-              isDesktop && pos
-                ? { left: pos.left, top: pos.top, bottom: pos.bottom, width: pos.width, maxHeight: pos.maxH }
-                : undefined
-            }
-            className={`
-            fixed z-[100] bg-white border border-[#E2E8F0] shadow-[0_8px_32px_rgba(0,0,0,0.16)]
-            flex flex-col overflow-hidden
-            ${isDesktop && pos
-              ? 'rounded-[12px]'
-              : 'bottom-0 left-0 right-0 rounded-t-[16px] max-h-[75vh]'}
-          `}
-          >
+      {/* Dropdown panel — rendered inline (normal flow) below the trigger so it can
+          never be clipped by, nor float out of, a parent modal. It grows this
+          field's height; the surrounding form scrolls to reveal it. The list body
+          scrolls internally, keeping the panel a stable size. */}
+      {open && (
+        <div className="mt-1.5 w-full rounded-[12px] bg-white border border-[#E2E8F0] shadow-[0_4px_16px_rgba(0,0,0,0.08)] flex flex-col overflow-hidden max-h-[360px]">
             {/* Panel header */}
             <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-[#F1F5F9] shrink-0">
               {/* Search */}
@@ -455,9 +375,7 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
                 </p>
               </div>
             )}
-          </div>
-        </>,
-        document.body,
+        </div>
       )}
     </div>
   )
