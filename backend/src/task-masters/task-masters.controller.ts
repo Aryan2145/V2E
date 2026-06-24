@@ -10,9 +10,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { TaskMastersService } from './task-masters.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -22,7 +25,7 @@ import { CreateChecklistTemplateDto } from './dto/create-checklist-template.dto'
 
 @ApiTags('task-masters')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/tasks/masters')
 export class TaskMastersController {
   constructor(private readonly service: TaskMastersService) {}
@@ -30,6 +33,7 @@ export class TaskMastersController {
   // ─── Config ─────────────────────────────────────────────────────────────────
 
   @Patch('assignee-visibility')
+  @RequirePermission('tasks.config.assignee_visibility.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update assignee visibility configuration' })
   updateAssigneeVisibility(
     @Param('orgId') orgId: string,
@@ -46,6 +50,7 @@ export class TaskMastersController {
   }
 
   @Patch('config')
+  @RequirePermission('tasks.config.settings.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update task master config' })
   updateConfig(@Param('orgId') orgId: string, @Body() dto: UpdateConfigDto) {
     return this.service.updateConfig(orgId, dto);
@@ -60,6 +65,7 @@ export class TaskMastersController {
   }
 
   @Post('categories')
+  @RequirePermission('tasks.config.categories.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a task category' })
   createCategory(
     @Param('orgId') orgId: string,
@@ -70,6 +76,7 @@ export class TaskMastersController {
   }
 
   @Patch('categories/:id')
+  @RequirePermission('tasks.config.categories.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a task category' })
   updateCategory(
     @Param('orgId') orgId: string,
@@ -80,6 +87,7 @@ export class TaskMastersController {
   }
 
   @Delete('categories/:id')
+  @RequirePermission('tasks.config.categories.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Deactivate a task category' })
   deleteCategory(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.deactivateCategory(orgId, id);
@@ -95,12 +103,14 @@ export class TaskMastersController {
   }
 
   @Post('priorities')
+  @RequirePermission('tasks.config.priorities.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a task priority' })
   createPriority(@Param('orgId') orgId: string, @Body() dto: CreatePriorityDto) {
     return this.service.createPriority(orgId, dto);
   }
 
   @Patch('priorities/reorder')
+  @RequirePermission('tasks.config.priorities.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Reorder task priorities' })
   reorderPriorities(
     @Param('orgId') orgId: string,
@@ -110,6 +120,7 @@ export class TaskMastersController {
   }
 
   @Patch('priorities/:id')
+  @RequirePermission('tasks.config.priorities.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a task priority' })
   updatePriority(
     @Param('orgId') orgId: string,
@@ -120,6 +131,7 @@ export class TaskMastersController {
   }
 
   @Delete('priorities/:id')
+  @RequirePermission('tasks.config.priorities.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Deactivate a task priority' })
   deletePriority(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.deactivatePriority(orgId, id);
@@ -135,12 +147,14 @@ export class TaskMastersController {
   }
 
   @Post('statuses')
+  @RequirePermission('tasks.config.statuses.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a task status' })
   createStatus(@Param('orgId') orgId: string, @Body() dto: CreateStatusDto) {
     return this.service.createStatus(orgId, dto);
   }
 
   @Patch('statuses/reorder')
+  @RequirePermission('tasks.config.statuses.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Reorder task statuses' })
   reorderStatuses(
     @Param('orgId') orgId: string,
@@ -150,6 +164,7 @@ export class TaskMastersController {
   }
 
   @Patch('statuses/:id')
+  @RequirePermission('tasks.config.statuses.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a task status' })
   updateStatus(
     @Param('orgId') orgId: string,
@@ -160,6 +175,7 @@ export class TaskMastersController {
   }
 
   @Delete('statuses/:id')
+  @RequirePermission('tasks.config.statuses.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Deactivate a task status (cannot delete default status)' })
   deleteStatus(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.deactivateStatus(orgId, id);
@@ -174,6 +190,7 @@ export class TaskMastersController {
   }
 
   @Post('checklist-templates')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Create a checklist template' })
   createTemplate(
     @Param('orgId') orgId: string,
@@ -184,6 +201,7 @@ export class TaskMastersController {
   }
 
   @Patch('checklist-templates/:id')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a checklist template' })
   updateTemplate(
     @Param('orgId') orgId: string,
@@ -194,6 +212,7 @@ export class TaskMastersController {
   }
 
   @Delete('checklist-templates/:id')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Delete a checklist template' })
   deleteTemplate(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.deleteChecklistTemplate(orgId, id);

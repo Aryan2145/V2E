@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
+import { usePermissions } from '@/lib/auth/use-permissions'
 import { tasksApi } from '@/lib/api/tasks'
 import { ticketsApi } from '@/lib/api/tickets'
 import type {
@@ -22,7 +23,7 @@ import type {
   TicketStatusType,
   TicketTemplateType,
 } from '@/lib/types/tickets'
-import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell } from 'lucide-react'
+import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2 } from 'lucide-react'
 import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
 import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
 
@@ -1120,6 +1121,18 @@ const taskTabs: { key: TaskMasterTab; label: string; icon: React.ReactNode }[] =
   { key: 'assignee_visibility', label: 'Assignee Visibility', icon: <Users size={15} /> },
 ]
 
+// Each Task Masters tab is gated by the matching access-rights leaf. A user sees a
+// tab only if they (or admin) hold any manage action on it; the backend re-enforces
+// each action. Ticket Masters / Notifications remain admin-only as before.
+const TASK_TAB_LEAF: Record<TaskMasterTab, string> = {
+  config: 'tasks.config.settings.manage',
+  categories: 'tasks.config.categories.manage',
+  priorities: 'tasks.config.priorities.manage',
+  statuses: 'tasks.config.statuses.manage',
+  checklists: 'tasks.config.checklist_templates.manage',
+  assignee_visibility: 'tasks.config.assignee_visibility.manage',
+}
+
 const ticketTabs: { key: TicketMasterTab; label: string; icon: React.ReactNode }[] = [
   { key: 'config', label: 'Configuration', icon: <Settings2 size={15} /> },
   { key: 'types', label: 'Types', icon: <TicketIcon size={15} /> },
@@ -1131,6 +1144,7 @@ const ticketTabs: { key: TicketMasterTab; label: string; icon: React.ReactNode }
 
 export default function MastersPage() {
   const { user } = useAuth()
+  const { can, isAdmin, loading: permsLoading } = usePermissions()
   const orgId = user?.organizationId ?? ''
   const [masterSection, setMasterSection] = useState<'tasks' | 'tickets' | 'notifications'>('tasks')
   const [taskTab, setTaskTab] = useState<TaskMasterTab>('config')
@@ -1144,10 +1158,52 @@ export default function MastersPage() {
     )
   }
 
+  if (permsLoading) {
+    return (
+      <div className="flex items-center justify-center h-64 text-[#64748B]">
+        <Loader2 size={20} className="animate-spin" />
+      </div>
+    )
+  }
+
+  const canManage = (leaf: string) =>
+    isAdmin || can(leaf, 'write') || can(leaf, 'edit') || can(leaf, 'delete')
+
+  // Task Masters tabs the user may configure; Ticket Masters / Notifications stay admin-only.
+  const visibleTaskTabs = taskTabs.filter((t) => canManage(TASK_TAB_LEAF[t.key]))
+  const canViewTaskMasters = visibleTaskTabs.length > 0
+
+  const availableSections = (
+    [
+      canViewTaskMasters ? (['tasks', 'Task Masters'] as const) : null,
+      isAdmin ? (['tickets', 'Ticket Masters'] as const) : null,
+      isAdmin ? (['notifications', 'Notifications'] as const) : null,
+    ].filter(Boolean) as ReadonlyArray<readonly ['tasks' | 'tickets' | 'notifications', string]>
+  )
+
+  if (availableSections.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 text-center">
+        <p className="font-semibold text-[#0F172A]">No access to task configuration</p>
+        <p className="mt-1 text-sm text-[#64748B]">
+          You don&apos;t have permission to configure task masters. Contact an administrator.
+        </p>
+      </div>
+    )
+  }
+
+  // Clamp the active section/tab to what's actually available for this user.
+  const effectiveSection = availableSections.some(([k]) => k === masterSection)
+    ? masterSection
+    : availableSections[0][0]
+  const effectiveTaskTab = visibleTaskTabs.some((t) => t.key === taskTab)
+    ? taskTab
+    : (visibleTaskTabs[0]?.key ?? 'config')
+
   const notifTabs: { key: string; label: string; icon: React.ReactNode }[] = [
     { key: 'config', label: 'Notification Settings', icon: <Bell size={15} /> },
   ]
-  const activeTabs = masterSection === 'tasks' ? taskTabs : masterSection === 'tickets' ? ticketTabs : notifTabs
+  const activeTabs = effectiveSection === 'tasks' ? visibleTaskTabs : effectiveSection === 'tickets' ? ticketTabs : notifTabs
 
   return (
     <div className="space-y-6">
@@ -1158,13 +1214,13 @@ export default function MastersPage() {
 
       {/* Top-level switcher */}
       <div className="flex gap-2 p-1 bg-[#F1F5F9] rounded-[10px] w-fit">
-        {([['tasks', 'Task Masters'], ['tickets', 'Ticket Masters'], ['notifications', 'Notifications']] as const).map(([key, label]) => (
+        {availableSections.map(([key, label]) => (
           <button
             key={key}
             onClick={() => setMasterSection(key)}
             className={[
               'px-4 py-2 rounded-[8px] text-sm font-semibold transition-colors',
-              masterSection === key ? 'bg-white text-[#0F172A] shadow-[0_1px_3px_rgba(0,0,0,0.1)]' : 'text-[#475569] hover:text-[#0F172A]',
+              effectiveSection === key ? 'bg-white text-[#0F172A] shadow-[0_1px_3px_rgba(0,0,0,0.1)]' : 'text-[#475569] hover:text-[#0F172A]',
             ].join(' ')}
           >
             {label}
@@ -1179,12 +1235,12 @@ export default function MastersPage() {
             <button
               key={t.key}
               onClick={() => {
-                if (masterSection === 'tasks') setTaskTab(t.key as TaskMasterTab)
-                else if (masterSection === 'tickets') setTicketTab(t.key as TicketMasterTab)
+                if (effectiveSection === 'tasks') setTaskTab(t.key as TaskMasterTab)
+                else if (effectiveSection === 'tickets') setTicketTab(t.key as TicketMasterTab)
               }}
               className={[
                 'flex items-center gap-2 px-5 py-3.5 text-sm font-medium transition-colors whitespace-nowrap border-b-2',
-                (masterSection === 'tasks' ? taskTab : masterSection === 'tickets' ? ticketTab : 'config') === t.key
+                (effectiveSection === 'tasks' ? effectiveTaskTab : effectiveSection === 'tickets' ? ticketTab : 'config') === t.key
                   ? 'text-[#2563EB] border-[#2563EB]'
                   : 'text-[#475569] border-transparent hover:text-[#0F172A]',
               ].join(' ')}
@@ -1197,17 +1253,17 @@ export default function MastersPage() {
 
         {/* Content */}
         <div className="p-6">
-          {masterSection === 'tasks' && (
+          {effectiveSection === 'tasks' && (
             <>
-              {taskTab === 'config' && <ConfigTab orgId={orgId} />}
-              {taskTab === 'categories' && <CategoriesTab orgId={orgId} />}
-              {taskTab === 'priorities' && <PrioritiesTab orgId={orgId} />}
-              {taskTab === 'statuses' && <StatusesTab orgId={orgId} />}
-              {taskTab === 'checklists' && <ChecklistTemplatesTab orgId={orgId} />}
-              {taskTab === 'assignee_visibility' && <AssigneeVisibilityTab orgId={orgId} />}
+              {effectiveTaskTab === 'config' && <ConfigTab orgId={orgId} />}
+              {effectiveTaskTab === 'categories' && <CategoriesTab orgId={orgId} />}
+              {effectiveTaskTab === 'priorities' && <PrioritiesTab orgId={orgId} />}
+              {effectiveTaskTab === 'statuses' && <StatusesTab orgId={orgId} />}
+              {effectiveTaskTab === 'checklists' && <ChecklistTemplatesTab orgId={orgId} />}
+              {effectiveTaskTab === 'assignee_visibility' && <AssigneeVisibilityTab orgId={orgId} />}
             </>
           )}
-          {masterSection === 'tickets' && (
+          {effectiveSection === 'tickets' && (
             <>
               {ticketTab === 'config' && <TktConfigTab orgId={orgId} />}
               {ticketTab === 'types' && <TktTypesTab orgId={orgId} />}
@@ -1217,7 +1273,7 @@ export default function MastersPage() {
               {ticketTab === 'templates' && <TktTemplatesTab orgId={orgId} />}
             </>
           )}
-          {masterSection === 'notifications' && <NotificationsMasterTab orgId={orgId} />}
+          {effectiveSection === 'notifications' && <NotificationsMasterTab orgId={orgId} />}
         </div>
       </div>
     </div>

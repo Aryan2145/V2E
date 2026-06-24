@@ -64,21 +64,15 @@ export class TaskMastersService {
     });
   }
 
-  async updateAssigneeVisibility(orgId: string, userId: string, dto: {
+  // Authorization is enforced at the route layer via
+  // @RequirePermission('tasks.config.assignee_visibility.manage', edit). The _userId
+  // param is retained for call-site compatibility.
+  async updateAssigneeVisibility(orgId: string, _userId: string, dto: {
     assignee_visibility_mode?: string;
     assignee_custom_rules?: Record<string, unknown>;
     assignee_visibility_config_roles?: string[];
   }) {
-    const config = await this.getOrCreateConfig(orgId);
-    const configRoles = config.assignee_visibility_config_roles as string[];
-    const member = await this.prisma.organizationMember.findUnique({
-      where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
-      select: { is_admin: true },
-    });
-    // MemberRole-collapse translation: employee-inclusive config → any member; else admin only.
-    if (!member || !Array.isArray(configRoles) || !(configRoles.includes('employee') || member.is_admin)) {
-      throw new Error('You do not have permission to update assignee visibility settings');
-    }
+    await this.getOrCreateConfig(orgId);
     return this.prisma.taskMaster.update({
       where: { organization_id: orgId },
       data: {

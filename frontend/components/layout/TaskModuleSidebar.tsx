@@ -5,6 +5,7 @@ import React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
+import { usePermissions } from '@/lib/auth/use-permissions'
 import {
   LayoutDashboard,
   CheckSquare,
@@ -28,8 +29,20 @@ interface NavItem {
   href: string
   Icon: React.ElementType
   adminOnly?: boolean
+  /** Visible to admins OR any role granted a task-configuration permission. */
+  taskConfigGated?: boolean
   disabled?: boolean
 }
+
+/** Leaves that grant access to the Task Masters configuration page. */
+const TASK_CONFIG_LEAVES = [
+  'tasks.config.settings.manage',
+  'tasks.config.categories.manage',
+  'tasks.config.priorities.manage',
+  'tasks.config.statuses.manage',
+  'tasks.config.checklist_templates.manage',
+  'tasks.config.assignee_visibility.manage',
+]
 
 interface NavGroup {
   label?: string
@@ -78,7 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Config',
     items: [
-      { label: 'Masters', href: '/dashboard/tasks/masters', Icon: Settings2, adminOnly: true },
+      { label: 'Masters', href: '/dashboard/tasks/masters', Icon: Settings2, taskConfigGated: true },
     ],
   },
 ]
@@ -93,12 +106,18 @@ const COLLAPSE_KEY = 'task-sidebar-collapsed'
 export default function TaskModuleSidebar() {
   const pathname = usePathname()
   const { user } = useAuth()
+  const { can, isAdmin } = usePermissions()
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'
   })
 
   const isAdminOrHR = !!user?.is_admin
+  const canSeeMasters =
+    isAdmin ||
+    TASK_CONFIG_LEAVES.some(
+      (k) => can(k, 'write') || can(k, 'edit') || can(k, 'delete'),
+    )
 
   function toggleCollapsed() {
     setCollapsed((c) => {
@@ -152,9 +171,10 @@ export default function TaskModuleSidebar() {
       {/* Nav groups */}
       <nav className="sidebar-scroll flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
         {NAV_GROUPS.map((group, gi) => {
-          const visibleItems = group.items.filter(
-            (item) => !(item.adminOnly && !isAdminOrHR)
-          )
+          const visibleItems = group.items.filter((item) => {
+            if (item.taskConfigGated) return canSeeMasters
+            return !(item.adminOnly && !isAdminOrHR)
+          })
           if (visibleItems.length === 0) return null
 
           return (
