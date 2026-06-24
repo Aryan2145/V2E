@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Plus, Trash2, Calendar, Clock } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
@@ -74,6 +75,9 @@ export default function CreateTaskModal({
   const [error, setError] = useState<string | null>(null)
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
   const holidayDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Portal target only exists on the client — guard against SSR mismatch.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   const primaryAssigneeCount = assignees.filter((a) => !a.is_cc).length
 
@@ -205,11 +209,11 @@ export default function CreateTaskModal({
     }
   }
 
-  if (!isOpen) return null
+  if (!isOpen || !mounted) return null
 
-  return (
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) handleClose() }}
       role="dialog"
       aria-modal="true"
@@ -498,6 +502,7 @@ export default function CreateTaskModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

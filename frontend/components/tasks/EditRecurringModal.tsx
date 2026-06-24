@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X, Info } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import type {
@@ -72,6 +73,9 @@ export default function EditRecurringModal({ template, orgId, categories, priori
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Portal target only exists on the client — guard against SSR mismatch.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
 
   useEffect(() => {
     function handle(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
@@ -136,9 +140,11 @@ export default function EditRecurringModal({ template, orgId, categories, priori
     }
   }
 
-  return (
+  if (!mounted) return null
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="relative w-full max-w-2xl bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[92vh] flex flex-col">
@@ -243,6 +249,7 @@ export default function EditRecurringModal({ template, orgId, categories, priori
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
