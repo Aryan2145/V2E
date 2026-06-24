@@ -9,6 +9,7 @@ import { getEmployees } from '@/lib/api/employees'
 import type { MeetingDecision } from '@/lib/types/meetings'
 import { fmtDate } from '@/components/meetings/shared'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
 const inputClass = 'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]'
 
@@ -80,8 +81,9 @@ export default function DecisionLogPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
           <input className={`${inputClass} w-full pl-9`} placeholder="Search decisions…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <input type="date" className={inputClass} value={from} onChange={(e) => setFrom(e.target.value)} />
-        <input type="date" className={inputClass} value={to} onChange={(e) => setTo(e.target.value)} />
+        <div className="w-[220px]">
+          <DateRangePicker from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t) }} />
+        </div>
       </div>
 
       <ResponsiveTable

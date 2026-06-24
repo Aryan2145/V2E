@@ -8,6 +8,7 @@ import { projectsApi } from '@/lib/api/projects'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
 import TemplatePicker from './TemplatePicker'
+import DatePicker from '@/components/ui/DatePicker'
 import type { ProjectTemplate } from '@/lib/types/projects'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 
@@ -374,11 +375,11 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Start date</label>
-              <input type="date" value={startDate} min="2000-01-01" max="2100-12-31" onChange={(e) => handleDateChange(e.target.value, setStartDate)} className={inputCls} />
+              <DatePicker value={startDate} onChange={(iso) => handleDateChange(iso, setStartDate)} min="2000-01-01" max="2100-12-31" placeholder="Select date" />
             </div>
             <div>
               <label className={labelCls}>End date</label>
-              <input type="date" value={endDate} min={endDateMin} max="2100-12-31" onChange={(e) => handleDateChange(e.target.value, setEndDate)} className={inputCls} />
+              <DatePicker value={endDate} onChange={(iso) => handleDateChange(iso, setEndDate)} min={endDateMin} max="2100-12-31" placeholder="Select date" />
             </div>
           </div>
           <div>

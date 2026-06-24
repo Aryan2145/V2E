@@ -19,6 +19,7 @@ import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { workLogApi, type UpsertDailyPayload } from '@/lib/api/workLogs'
 import type { DailyUpdateView, DayContext } from '@/lib/types/workLogs'
+import DatePicker from '@/components/ui/DatePicker'
 
 // Local YYYY-MM-DD (avoids UTC drift from toISOString).
 function localDate(d: Date): string {
@@ -152,13 +153,7 @@ export default function DailyUpdatePage() {
           >
             <ChevronLeft size={18} />
           </button>
-          <input
-            type="date"
-            value={date}
-            max={today}
-            onChange={(e) => setDate(e.target.value || today)}
-            className="border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:border-2 focus:border-[#2563EB] focus:outline-none"
-          />
+          <DatePicker value={date} max={today} onChange={(v) => setDate(v || today)} placeholder="Select date" />
           <button
             type="button"
             onClick={() => setDate((d) => (d < today ? shiftDate(d, 1) : d))}

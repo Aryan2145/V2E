@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Plus, Trash2, Eye, EyeOff } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
+import DatePicker from '@/components/ui/DatePicker'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi, type CreateMeetingInput } from '@/lib/api/meetings'
 import { goalsApi } from '@/lib/api/goals'
@@ -245,7 +246,7 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelClass}>Date *</label>
-              <input type="date" className={inputClass} value={date} min={todayStr()} onChange={(e) => setDate(e.target.value)} />
+              <DatePicker value={date} onChange={setDate} min={todayStr()} placeholder="Select date" />
             </div>
             <div>
               <label className={labelClass}>Start</label>
@@ -263,11 +264,11 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className={labelClass}>Window from *</label>
-                <input type="date" className={inputClass} value={windowStart} min={todayStr()} onChange={(e) => setWindowStart(e.target.value)} />
+                <DatePicker value={windowStart} onChange={setWindowStart} min={todayStr()} placeholder="Select date" />
               </div>
               <div>
                 <label className={labelClass}>Window to *</label>
-                <input type="date" className={inputClass} value={windowEnd} min={windowStart || todayStr()} onChange={(e) => setWindowEnd(e.target.value)} />
+                <DatePicker value={windowEnd} onChange={setWindowEnd} min={windowStart || todayStr()} placeholder="Select date" />
               </div>
               <div>
                 <label className={labelClass}>Duration (min)</label>
@@ -285,7 +286,7 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
               <div className="flex flex-col gap-2">
                 {slots.map((s, i) => (
                   <div key={i} className="flex items-center gap-2">
-                    <input type="date" className={inputClass} value={s.date} onChange={(e) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, date: e.target.value } : r))} />
+                    <DatePicker value={s.date} onChange={(iso) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, date: iso } : r))} placeholder="Select date" />
                     <input type="time" className={`${inputClass} w-28`} value={s.start} onChange={(e) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, start: e.target.value } : r))} />
                     <input type="time" className={`${inputClass} w-28`} value={s.end} onChange={(e) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, end: e.target.value } : r))} />
                     <button type="button" onClick={() => setSlots((rows) => rows.filter((_, idx) => idx !== i))} className="text-[#94A3B8] hover:text-[#DC2626]"><Trash2 size={16} /></button>
@@ -300,7 +301,7 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className={labelClass}>Date *</label>
-              <input type="date" className={inputClass} value={actualDate} max={todayStr()} onChange={(e) => setActualDate(e.target.value)} />
+              <DatePicker value={actualDate} onChange={setActualDate} max={todayStr()} placeholder="Select date" />
             </div>
             <div>
               <label className={labelClass}>Started</label>

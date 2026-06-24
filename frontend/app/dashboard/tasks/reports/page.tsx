@@ -10,6 +10,7 @@ import {
 } from 'recharts'
 import { Download, Users, Building2, Tag, CheckCircle2, RotateCcw, BarChart2, AlertTriangle } from 'lucide-react'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
 // Flatten the ResponsiveTable card so it blends into the section card it lives in.
 const FLAT_TABLE = 'border-0 shadow-none rounded-none'
@@ -568,19 +569,9 @@ export default function ReportsPage() {
 
         {/* Date range filter */}
         <div className="flex items-center gap-2 shrink-0">
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => setFromDate(e.target.value)}
-            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-          />
-          <span className="text-[#475569] text-sm">to</span>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => setToDate(e.target.value)}
-            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-          />
+          <div className="w-[220px]">
+            <DateRangePicker from={fromDate} to={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} />
+          </div>
           {(fromDate || toDate) && (
             <button
               onClick={() => { setFromDate(''); setToDate('') }}

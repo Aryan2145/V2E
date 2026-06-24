@@ -13,6 +13,7 @@ import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissio
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
 import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X } from 'lucide-react'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import DatePicker from '@/components/ui/DatePicker'
 
 type Kpi = NonNullable<Role['kpi']>[number]
 
@@ -282,33 +283,30 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
             {/* Date of Joining */}
             <div>
               <label className={labelClass}>Date of Joining</label>
-              <input
-                type="date"
+              <DatePicker
                 value={form.date_of_joining}
-                onChange={(e) => set('date_of_joining', e.target.value)}
-                className={selectClass}
+                onChange={(iso) => set('date_of_joining', iso)}
+                placeholder="Select date"
               />
             </div>
 
             {/* Date of Birth */}
             <div>
               <label className={labelClass}>Date of Birth</label>
-              <input
-                type="date"
+              <DatePicker
                 value={form.date_of_birth}
-                onChange={(e) => set('date_of_birth', e.target.value)}
-                className={selectClass}
+                onChange={(iso) => set('date_of_birth', iso)}
+                placeholder="Select date"
               />
             </div>
 
             {/* Marriage Date */}
             <div>
               <label className={labelClass}>Marriage Date</label>
-              <input
-                type="date"
+              <DatePicker
                 value={form.marriage_date}
-                onChange={(e) => set('marriage_date', e.target.value)}
-                className={selectClass}
+                onChange={(iso) => set('marriage_date', iso)}
+                placeholder="Select date"
               />
             </div>
           </div>

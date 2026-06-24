@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react'
 import { Check, X, CalendarClock, ThumbsUp, ThumbsDown, HelpCircle, Trash2, Plus, Sparkles, ArrowRightLeft } from 'lucide-react'
 import Button from '@/components/ui/Button'
+import DatePicker from '@/components/ui/DatePicker'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi } from '@/lib/api/meetings'
 import type { Meeting, MeetingSlot, MeetingVote } from '@/lib/types/meetings'
@@ -186,7 +187,7 @@ function AddSlot({ orgId, meetingId, busy, onChanged }: { orgId: string; meeting
   }
   return (
     <div className="flex flex-wrap items-end gap-2 mt-4 pt-4 border-t border-[#E2E8F0]">
-      <input type="date" className={inputClass} value={date} onChange={(e) => setDate(e.target.value)} />
+      <DatePicker value={date} onChange={setDate} placeholder="Select date" />
       <input type="time" className={inputClass} value={start} onChange={(e) => setStart(e.target.value)} />
       <input type="time" className={inputClass} value={end} onChange={(e) => setEnd(e.target.value)} />
       <button onClick={add} disabled={busy || !date} className="inline-flex items-center gap-1 px-3 py-2 text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px]"><Plus size={15} /> Propose slot</button>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
+import DatePicker from '@/components/ui/DatePicker'
 import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
 
@@ -85,7 +86,7 @@ export default function AddInitiativeModal({ isOpen, onClose, orgId, goalId, emp
         </div>
         <div>
           <label className={labelClass}>Deadline</label>
-          <input type="date" className={inputClass} value={deadline} onChange={(e) => setDeadline(e.target.value)} />
+          <DatePicker value={deadline} onChange={setDeadline} placeholder="Select date" />
         </div>
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
           <Button variant="secondary" type="button" onClick={onClose}>

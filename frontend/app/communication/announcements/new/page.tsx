@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth/context'
 import { createAnnouncement, publishAnnouncement } from '@/lib/api/announcements'
 import Link from 'next/link'
 import { ArrowLeft } from 'lucide-react'
+import DatePicker from '@/components/ui/DatePicker'
 
 export default function NewAnnouncementPage() {
   const { user } = useAuth()
@@ -134,11 +135,10 @@ export default function NewAnnouncementPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1">Expires At (optional)</label>
-                <input
-                  type="date"
+                <DatePicker
                   value={form.expires_at}
-                  onChange={e => set('expires_at', e.target.value)}
-                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB]"
+                  onChange={(iso) => set('expires_at', iso)}
+                  placeholder="Select date"
                 />
               </div>
             </div>

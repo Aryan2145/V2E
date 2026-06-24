@@ -15,6 +15,7 @@ import {
 } from 'recharts'
 import { Download, Clock, Tag, BarChart2, AlertTriangle, Star, Activity } from 'lucide-react'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
 // Flatten the ResponsiveTable card so it blends into the tab content panel.
 const FLAT_TABLE = 'border-0 shadow-none rounded-none'
@@ -457,19 +458,9 @@ export default function TicketReportsPage() {
           <p className="text-sm text-[#475569] mt-0.5">Analytics and insights for your ticket system</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-          />
-          <span className="text-[#475569] text-sm">to</span>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-          />
+          <div className="w-[220px]">
+            <DateRangePicker from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t) }} />
+          </div>
           {(from || to) && (
             <button
               onClick={() => { setFrom(''); setTo('') }}

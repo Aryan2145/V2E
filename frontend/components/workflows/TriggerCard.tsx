@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { X, Calendar, MousePointer, CheckSquare, AlertTriangle, Plus } from 'lucide-react'
 import type { WorkflowTrigger } from '@/lib/types/workflows'
+import DatePicker from '@/components/ui/DatePicker'
 
 const TRIGGER_META: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
   date_trigger: { label: 'Date trigger', icon: <Calendar size={14} />, color: 'text-[#2563EB] bg-[#EFF6FF]' },
@@ -86,7 +87,7 @@ export function TriggerConfigModal({ onSave, onClose }: TriggerConfigModalProps)
           {type === 'date_trigger' && (
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Date</label>
-              <input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} className="w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-base sm:text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white" />
+              <DatePicker value={dateValue} onChange={setDateValue} placeholder="Select date" />
             </div>
           )}
 

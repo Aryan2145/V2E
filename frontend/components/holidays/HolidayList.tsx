@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Pencil, Trash2, RefreshCw, Check, X } from 'lucide-react'
 import type { OrgHoliday, DepartmentHoliday, IndividualHoliday, HolidayType } from '@/lib/types/holidays'
 import { parseLocalDate, dateOnly } from '@/lib/date'
+import DatePicker from '@/components/ui/DatePicker'
 
 type AnyHoliday = OrgHoliday | DepartmentHoliday | IndividualHoliday
 
@@ -66,11 +67,10 @@ export default function HolidayList({ holidays, onDelete, onUpdate, emptyText = 
           <div key={h.id} className="flex items-center gap-3 py-3 px-1">
             {isEditing ? (
               <>
-                <input
+                <DatePicker
                   value={editing.date}
-                  type="date"
-                  onChange={(e) => setEditing((s) => s ? { ...s, date: e.target.value } : s)}
-                  className="w-36 h-8 px-2 rounded-[6px] border border-[#CBD5E1] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] outline-none"
+                  onChange={(iso) => setEditing((s) => s ? { ...s, date: iso } : s)}
+                  placeholder="Select date"
                 />
                 <input
                   value={editing.name}

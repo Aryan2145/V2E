@@ -12,6 +12,7 @@ import { useAuth } from '@/lib/auth/context'
 import { meetingsApi } from '@/lib/api/meetings'
 import { getEmployees } from '@/lib/api/employees'
 import Button from '@/components/ui/Button'
+import DatePicker from '@/components/ui/DatePicker'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { LINK_TYPE_LABEL, TYPE_LABEL, type Meeting, type MeetingAnalytics } from '@/lib/types/meetings'
@@ -299,7 +300,7 @@ function ActionItemsTab({ meeting, orgId, people, nameOf, onChanged }: { meeting
             <option value="">Owner</option>
             {people.map((p) => <option key={p.user_id} value={p.user_id}>{p.name}</option>)}
           </select>
-          <input type="date" className={inputClass} value={due} onChange={(e) => setDue(e.target.value)} />
+          <DatePicker value={due} onChange={setDue} placeholder="Select date" />
           <button onClick={() => { if (!text.trim()) return; run(() => meetingsApi.addActionItem(orgId, meeting.id, { text: text.trim(), owner_user_id: owner || undefined, due_date: due ? new Date(due).toISOString() : undefined })); setText(''); setOwner(''); setDue('') }} className="inline-flex items-center gap-1 px-3 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px]"><Plus size={15} /> Add</button>
         </div>
       )}

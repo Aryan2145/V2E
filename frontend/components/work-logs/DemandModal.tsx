@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState } from 'react'
-import { X } from 'lucide-react'
+import { X, Clock } from 'lucide-react'
+import DatePicker from '@/components/ui/DatePicker'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
 import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
@@ -39,7 +40,12 @@ export default function DemandModal({ orgId, onClose, onCreated }: Props) {
   const [description, setDescription] = useState('')
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
   const [kind, setKind] = useState<'one_time' | 'recurring'>('one_time')
-  const [deadline, setDeadline] = useState('')
+  const [deadlineDate, setDeadlineDate] = useState('')
+  const [deadlineTime, setDeadlineTime] = useState('')
+  // Combine local date+time into an ISO instant. No time → end of day (23:59).
+  const deadline = deadlineDate
+    ? new Date(deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`).toISOString()
+    : ''
   const [schedules, setSchedules] = useState<ScheduleEntryDraft[]>([defaultSchedule()])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -63,7 +69,7 @@ export default function DemandModal({ orgId, onClose, onCreated }: Props) {
       assignee_user_id: assignee.user_id,
       kind,
       ...(kind === 'one_time'
-        ? { deadline: new Date(deadline).toISOString() }
+        ? { deadline }
         : {
             schedule_entries: schedules.map((s, i) => ({
               schedule_type: s.schedule_type,
@@ -144,7 +150,27 @@ export default function DemandModal({ orgId, onClose, onCreated }: Props) {
           {kind === 'one_time' ? (
             <div>
               <label className={labelCls}>Deadline</label>
-              <input type="datetime-local" value={deadline} onChange={(e) => setDeadline(e.target.value)} className={`${inputCls} mt-1.5`} />
+              <div className="mt-1.5 space-y-2">
+                <DatePicker
+                  value={deadlineDate}
+                  onChange={(iso) => { setDeadlineDate(iso); if (!iso) setDeadlineTime('') }}
+                  placeholder="Select date"
+                />
+                {deadlineDate && (
+                  <div className="relative">
+                    <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
+                    <input
+                      type="time"
+                      value={deadlineTime}
+                      onChange={(e) => setDeadlineTime(e.target.value)}
+                      className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-2 text-sm text-[#0F172A] bg-white focus:border-2 focus:border-[#2563EB] focus:outline-none"
+                    />
+                    {!deadlineTime && (
+                      <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           ) : (
             <div>

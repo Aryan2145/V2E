@@ -8,8 +8,8 @@ import { meetingsApi } from '@/lib/api/meetings'
 import { getEmployees } from '@/lib/api/employees'
 import { goalsApi } from '@/lib/api/goals'
 import type { MeetingReport } from '@/lib/types/meetings'
+import DateRangePicker from '@/components/ui/DateRangePicker'
 
-const inputClass = 'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]'
 const PIE = ['#2563EB', '#16A34A', '#D97706', '#7C3AED', '#0891B2']
 const LINK_LABEL: Record<string, string> = { goal: 'Goal', project: 'Project', task: 'Task', ticket: 'Ticket', ad_hoc: 'Ad-hoc' }
 
@@ -88,8 +88,9 @@ export default function MeetingReportsPage() {
           <p className="text-sm text-[#475569] mt-1">Scoped to what you can see. Reports are only as honest as the capture.</p>
         </div>
         <div className="flex items-center gap-2">
-          <input type="date" className={inputClass} value={from} onChange={(e) => setFrom(e.target.value)} />
-          <input type="date" className={inputClass} value={to} onChange={(e) => setTo(e.target.value)} />
+          <div className="w-[220px]">
+            <DateRangePicker from={from} to={to} onChange={(f, t) => { setFrom(f); setTo(t) }} />
+          </div>
           <button onClick={exportCsv} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px]"><Download size={15} /> CSV</button>
         </div>
       </div>

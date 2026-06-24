@@ -3,6 +3,7 @@
 import React from 'react'
 import { X } from 'lucide-react'
 import type { RecurringScheduleType, RecurringEndCondition, YearlyDate } from '@/lib/types/tasks'
+import DatePicker from '@/components/ui/DatePicker'
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -247,11 +248,10 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
         </div>
         <div>
           <label className={`${labelCls} block mb-1.5`}>Starting</label>
-          <input
-            type="date"
+          <DatePicker
             value={entry.start_date}
-            onChange={(e) => onUpdate({ start_date: e.target.value })}
-            className={`w-full ${inputCls}`}
+            onChange={(iso) => onUpdate({ start_date: iso })}
+            placeholder="Select date"
           />
         </div>
       </div>
@@ -277,11 +277,10 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
           ))}
         </div>
         {entry.end_condition === 'on_date' && (
-          <input
-            type="date"
+          <DatePicker
             value={entry.end_date}
-            onChange={(e) => onUpdate({ end_date: e.target.value })}
-            className={`w-full ${inputCls}`}
+            onChange={(iso) => onUpdate({ end_date: iso })}
+            placeholder="Select date"
           />
         )}
         {entry.end_condition === 'after_n' && (

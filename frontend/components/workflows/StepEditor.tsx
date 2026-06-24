@@ -5,6 +5,7 @@ import { Trash2, Plus, X, ChevronUp, ChevronDown, Search } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 import type { WorkflowStep, WorkflowNature, WorkflowRecurringType, DeadlineConfig } from '@/lib/types/workflows'
+import DatePicker from '@/components/ui/DatePicker'
 
 // ─── Avatar helpers ───────────────────────────────────────────────────────────
 
@@ -159,7 +160,7 @@ function DeadlineConfigField({ config, onChange, nature }: DeadlineConfigFieldPr
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Date</label>
-            <input type="date" value={(config as { date?: string }).date ?? ''} onChange={(e) => update({ date: e.target.value })} className={inputCls} />
+            <DatePicker value={(config as { date?: string }).date ?? ''} onChange={(iso) => update({ date: iso })} placeholder="Select date" />
           </div>
           <div>
             <label className="block text-xs font-medium text-[#374151] mb-1">Time</label>

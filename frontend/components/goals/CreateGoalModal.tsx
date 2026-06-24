@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2, Loader2 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
+import DatePicker from '@/components/ui/DatePicker'
 import { useToast } from '@/components/ui/Toast'
 import { goalsApi } from '@/lib/api/goals'
 import {
@@ -294,24 +295,22 @@ export default function CreateGoalModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelClass}>Start date</label>
-            <input
-              type="date"
-              className={inputClass}
+            <DatePicker
               value={startDate}
+              onChange={setStartDate}
               min={minDate}
               max={maxDate || undefined}
-              onChange={(e) => setStartDate(e.target.value)}
+              placeholder="Select date"
             />
           </div>
           <div>
             <label className={labelClass}>Target / due date *</label>
-            <input
-              type="date"
-              className={inputClass}
+            <DatePicker
               value={dueDate}
+              onChange={setDueDate}
               min={minDate}
               max={maxDate || undefined}
-              onChange={(e) => setDueDate(e.target.value)}
+              placeholder="Select date"
             />
             {maxDate && (
               <p className="text-xs text-[#64748B] mt-1">
