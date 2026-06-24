@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Calendar, Clock } from 'lucide-react'
+import { X, Clock } from 'lucide-react'
+import DatePicker from '@/components/ui/DatePicker'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
@@ -166,17 +167,14 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
               )}
             </div>
             <div className="space-y-2">
-              <div className="relative">
-                <Calendar size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                <input
-                  type="date"
-                  value={deadlineDate}
-                  onChange={(e) => setDeadlineDate(e.target.value)}
-                  min={todayStr}
-                  max="2100-12-31"
-                  className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-base sm:text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-                />
-              </div>
+              {/* Date picker — shared calendar component (opens on click) */}
+              <DatePicker
+                value={deadlineDate}
+                onChange={(iso) => { if (!iso) { setDeadlineDate(''); setDeadlineTime('') } else setDeadlineDate(iso) }}
+                min={todayStr}
+                max="2100-12-31"
+                placeholder="Select date"
+              />
               {deadlineDate && (
                 <div className="relative">
                   <Clock size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />

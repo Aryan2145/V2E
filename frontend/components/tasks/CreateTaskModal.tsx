@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Plus, Trash2, Calendar, Clock } from 'lucide-react'
+import { X, Plus, Trash2, Clock } from 'lucide-react'
+import DatePicker from '@/components/ui/DatePicker'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
@@ -160,15 +161,9 @@ export default function CreateTaskModal({
   }
 
   function handleDeadlineDateChange(val: string) {
+    // Clearing the date also clears the time. Range is enforced by the DatePicker.
     if (!val) { setDeadlineDate(''); setDeadlineTime(''); return }
-    if (val > '2100-12-31') return   // reject years beyond 2100 while typing
     setDeadlineDate(val)
-  }
-
-  function handleDeadlineDateBlur(val: string) {
-    if (!val) return
-    if (val < todayStr) setDeadlineDate(todayStr)
-    else if (val > '2100-12-31') setDeadlineDate('2100-12-31')
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -307,19 +302,14 @@ export default function CreateTaskModal({
             </div>
 
             <div className="space-y-2">
-              {/* Date picker */}
-              <div className="relative">
-                <Calendar size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none" />
-                <input
-                  type="date"
-                  value={deadlineDate}
-                  onChange={(e) => handleDeadlineDateChange(e.target.value)}
-                  onBlur={(e) => handleDeadlineDateBlur(e.target.value)}
-                  min={todayStr}
-                  max="2100-12-31"
-                  className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-[10px] text-base sm:text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
-                />
-              </div>
+              {/* Date picker — shared calendar component (opens on click) */}
+              <DatePicker
+                value={deadlineDate}
+                onChange={handleDeadlineDateChange}
+                min={todayStr}
+                max="2100-12-31"
+                placeholder="Select date"
+              />
 
               {/* Time picker — appears after date is selected */}
               {deadlineDate && (
