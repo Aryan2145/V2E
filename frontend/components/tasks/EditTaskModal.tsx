@@ -171,7 +171,11 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
               <div className="flex-1">
                 <DatePicker
                   value={deadlineDate}
-                  onChange={(iso) => { if (!iso) { setDeadlineDate(''); setDeadlineTime('') } else setDeadlineDate(iso) }}
+                  onChange={(iso) => {
+                    if (!iso) { setDeadlineDate(''); setDeadlineTime(''); return }
+                    setDeadlineDate(iso)
+                    if (!deadlineTime) setDeadlineTime('23:59')
+                  }}
                   min={todayStr}
                   max="2100-12-31"
                   placeholder="Select date"
@@ -189,9 +193,6 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
                 />
               </div>
             </div>
-            {deadlineDate && !deadlineTime && (
-              <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
-            )}
             <HolidayWarningBadge check={holidayCheck} />
           </div>
 

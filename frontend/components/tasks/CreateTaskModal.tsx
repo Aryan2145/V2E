@@ -164,6 +164,8 @@ export default function CreateTaskModal({
     // Clearing the date also clears the time. Range is enforced by the DatePicker.
     if (!val) { setDeadlineDate(''); setDeadlineTime(''); return }
     setDeadlineDate(val)
+    // Surface the end-of-day default on the clock once a date is picked.
+    if (!deadlineTime) setDeadlineTime('23:59')
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -325,9 +327,6 @@ export default function CreateTaskModal({
                 />
               </div>
             </div>
-            {deadlineDate && !deadlineTime && (
-              <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
-            )}
 
             <HolidayWarningBadge check={holidayCheck} />
           </div>

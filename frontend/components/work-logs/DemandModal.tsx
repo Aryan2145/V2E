@@ -154,7 +154,11 @@ export default function DemandModal({ orgId, onClose, onCreated }: Props) {
                 <div className="flex-1">
                   <DatePicker
                     value={deadlineDate}
-                    onChange={(iso) => { setDeadlineDate(iso); if (!iso) setDeadlineTime('') }}
+                    onChange={(iso) => {
+                      if (!iso) { setDeadlineDate(''); setDeadlineTime(''); return }
+                      setDeadlineDate(iso)
+                      if (!deadlineTime) setDeadlineTime('23:59')
+                    }}
                     placeholder="Select date"
                   />
                 </div>
@@ -170,9 +174,6 @@ export default function DemandModal({ orgId, onClose, onCreated }: Props) {
                   />
                 </div>
               </div>
-              {deadlineDate && !deadlineTime && (
-                <p className="text-[11px] text-[#94A3B8] mt-1 ml-0.5">No time selected — defaults to end of day (23:59)</p>
-              )}
             </div>
           ) : (
             <div>
