@@ -154,6 +154,13 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
   const [sort, setSort] = useState<SortMode>('frequency')
   const [data, setData] = useState<EligibleAssigneesResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  // Desktop placement: flip up when the field sits low, and cap the panel to the
+  // taller side so the list always shows as many rows as the space allows.
+  const [drop, setDrop] = useState<{ up: boolean; maxH: number; desktop: boolean }>({
+    up: false,
+    maxH: 384,
+    desktop: false,
+  })
 
   const containerRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -203,6 +210,39 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
     return () => document.removeEventListener('mousedown', handle)
   }, [open])
 
+  // Decide whether to drop up or down (desktop only — mobile is a bottom sheet)
+  // and how tall the panel can be, based on live space around the trigger.
+  const computePlacement = useCallback(() => {
+    const el = containerRef.current
+    if (!el || typeof window === 'undefined') return
+    const desktop = window.matchMedia('(min-width: 768px)').matches
+    if (!desktop) {
+      setDrop((d) => (d.desktop ? { ...d, desktop: false } : d))
+      return
+    }
+    const rect = el.getBoundingClientRect()
+    const GAP = 8 // matches the mt-1.5/mb-1.5 offset
+    const MARGIN = 12 // breathing room from the viewport edge
+    const spaceBelow = window.innerHeight - rect.bottom - GAP - MARGIN
+    const spaceAbove = rect.top - GAP - MARGIN
+    const DESIRED = 384 // the comfortable max (md:max-h-96)
+    const up = spaceBelow < DESIRED && spaceAbove > spaceBelow
+    const maxH = Math.max(180, Math.min(DESIRED, up ? spaceAbove : spaceBelow))
+    setDrop({ up, maxH, desktop: true })
+  }, [])
+
+  // Re-measure while open so the panel tracks scrolling/resizing of the page.
+  useEffect(() => {
+    if (!open) return
+    computePlacement()
+    window.addEventListener('resize', computePlacement)
+    window.addEventListener('scroll', computePlacement, true)
+    return () => {
+      window.removeEventListener('resize', computePlacement)
+      window.removeEventListener('scroll', computePlacement, true)
+    }
+  }, [open, computePlacement])
+
   // Focus search on open
   useEffect(() => {
     if (open) {
@@ -251,7 +291,13 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
         <button
           type="button"
           disabled={disabled}
-          onClick={() => setOpen((v) => !v)}
+          onClick={() =>
+            setOpen((v) => {
+              const next = !v
+              if (next) computePlacement() // place correctly on the first paint
+              return next
+            })
+          }
           className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-[#2563EB] hover:bg-[#EFF6FF] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           <Plus size={12} />
@@ -266,12 +312,16 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
           <div className="fixed inset-0 bg-black/20 z-40 md:hidden" onClick={() => setOpen(false)} />
 
           {/* Panel */}
-          <div className={`
+          <div
+            style={drop.desktop ? { maxHeight: drop.maxH } : undefined}
+            className={`
             z-50 bg-white border border-[#E2E8F0] shadow-[0_8px_32px_rgba(0,0,0,0.12)]
             fixed bottom-0 left-0 right-0 rounded-t-[16px] max-h-[75vh]
-            md:absolute md:bottom-auto md:left-0 md:top-full md:mt-1.5 md:right-auto md:w-96 md:rounded-[12px] md:max-h-96
+            md:absolute md:left-0 md:right-auto md:w-96 md:rounded-[12px]
+            ${drop.up ? 'md:top-auto md:bottom-full md:mb-1.5' : 'md:bottom-auto md:top-full md:mt-1.5'}
             flex flex-col overflow-hidden
-          `}>
+          `}
+          >
             {/* Panel header */}
             <div className="flex items-center gap-2 px-3 pt-3 pb-2 border-b border-[#F1F5F9] shrink-0">
               {/* Search */}
