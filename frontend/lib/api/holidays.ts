@@ -7,10 +7,8 @@ import type {
   DepartmentHoliday,
   IndividualWorkingDays,
   IndividualHoliday,
-  HolidayAuditLog,
   HolidayCheckResult,
   NonWorkingDate,
-  HolidayEntityType,
   HolidayStatus,
   HolidayType,
 } from '@/lib/types/holidays'
@@ -190,10 +188,5 @@ export const holidaysApi = {
   getRange: async (orgId: string, from: string, to: string, params?: { userId?: string; deptId?: string }): Promise<{ non_working_dates: NonWorkingDate[] }> => {
     const res = await apiClient.get(`${base(orgId)}/range`, { params: { from, to, ...params } })
     return unwrap<{ non_working_dates: NonWorkingDate[] }>(res)
-  },
-
-  getAuditLog: async (orgId: string, params?: { year?: number; entity_type?: HolidayEntityType; from?: string; to?: string }): Promise<HolidayAuditLog[]> => {
-    const res = await apiClient.get(`${base(orgId)}/audit`, { params })
-    return unwrap<HolidayAuditLog[]>(res)
   },
 }

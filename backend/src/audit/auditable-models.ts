@@ -41,7 +41,6 @@ export const AUDIT_DENYLIST = new Set<string>([
   'TaskActivityLog',
   'TicketActivityLog',
   'ProjectActivityLog',
-  'HolidayAuditLog',
   'AssigneeVisibilityAuditLog',
   // Reactions / read-receipts / chat — high churn, low audit value
   'AnnouncementRead',

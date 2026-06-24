@@ -1693,13 +1693,6 @@ enum HolidayStatus {
   pending_review
 }
 
-enum HolidayAuditAction {
-  moved_forward
-  moved_backward
-  skipped
-  created_anyway
-}
-
 enum HolidayEntityType {
   task
   recurring_task
@@ -1747,23 +1740,6 @@ model OrgHoliday {
   updated_at           DateTime      @updatedAt
 
   @@map("org_holidays")
-}
-
-model HolidayAuditLog {
-  id              String             @id @default(uuid())
-  organization_id String
-  entity_type     HolidayEntityType
-  entity_id       String
-  entity_title    String
-  original_date   DateTime           @db.Date
-  adjusted_date   DateTime?          @db.Date
-  action_taken    HolidayAuditAction
-  holiday_name    String
-  holiday_date    DateTime           @db.Date
-  year            Int
-  created_at      DateTime           @default(now())
-
-  @@map("holiday_audit_logs")
 }
 
 model DepartmentWorkingDays {

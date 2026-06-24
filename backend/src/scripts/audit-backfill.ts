@@ -108,25 +108,9 @@ async function main() {
     });
   }
 
-  // ── Holiday audit log (system-driven date adjustments) ───────────────────────
-  const holidayLogs = await prisma.holidayAuditLog.findMany();
-  for (const l of holidayLogs) {
-    out.push({
-      organization_id: l.organization_id,
-      actor_user_id: null,
-      actor_type: 'system',
-      action: l.action_taken,
-      resource: 'holiday',
-      entity_id: l.entity_id,
-      entity_type: l.entity_type,
-      entity_label: l.entity_title,
-      changes: { date: { before: l.original_date, after: l.adjusted_date } },
-      trigger_source: 'holiday_adjustment',
-      occurred_at: l.created_at,
-      created_at: l.created_at,
-      request_id: `backfill:holiday_audit:${l.id}`,
-    });
-  }
+  // Holiday-driven date adjustments now write directly to the shared audit log
+  // (resource "holiday", system actor) — there is no separate holiday audit
+  // store to backfill.
 
   console.log(`Inserting ${out.length} backfilled audit rows…`);
   // Chunk to keep the parameter count sane.
@@ -137,7 +121,6 @@ async function main() {
     task: taskLogs.length,
     ticket: ticketLogs.length,
     project: projectLogs.length,
-    holiday: holidayLogs.length,
     total: out.length,
   });
   await prisma.$disconnect();

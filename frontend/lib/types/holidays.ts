@@ -12,10 +12,6 @@ export type HolidayType = 'national' | 'company' | 'regional' | 'team' | 'person
 
 export type HolidayStatus = 'active' | 'pending_review'
 
-export type HolidayAuditAction = 'moved_forward' | 'moved_backward' | 'skipped' | 'created_anyway'
-
-export type HolidayEntityType = 'task' | 'recurring_task' | 'workflow_step' | 'ticket'
-
 // ─── Master config ────────────────────────────────────────────────────────────
 
 export interface HolidayMasterConfig {
@@ -134,21 +130,6 @@ export interface IndividualHoliday {
   description: string | null
   created_at: string
   updated_at: string
-}
-
-// ─── Audit log ────────────────────────────────────────────────────────────────
-
-export interface HolidayAuditLog {
-  id: string
-  organization_id: string
-  entity_type: HolidayEntityType
-  entity_id: string
-  entity_title: string | null
-  original_date: string
-  adjusted_date: string | null
-  action: HolidayAuditAction
-  holiday_name: string | null
-  created_at: string
 }
 
 // ─── Nager.Date ───────────────────────────────────────────────────────────────

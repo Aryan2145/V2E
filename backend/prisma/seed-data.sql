@@ -623,12 +623,6 @@ INSERT INTO public.goal_measures (id, organization_id, goal_id, name, target_val
 
 
 --
--- Data for Name: holiday_audit_logs; Type: TABLE DATA; Schema: public; Owner: -
---
-
-
-
---
 -- Data for Name: holiday_masters; Type: TABLE DATA; Schema: public; Owner: -
 --
 

@@ -2,7 +2,7 @@ import {
   Body, Controller, Delete, Get, Param, Patch, Post, Query, Request, UseGuards,
 } from '@nestjs/common'
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger'
-import { HolidayEntityType, HolidayStatus, HolidayType, PermissionAction } from '@prisma/client'
+import { HolidayStatus, HolidayType, PermissionAction } from '@prisma/client'
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { OrgScopeGuard } from '../common/guards/org-scope.guard'
@@ -312,24 +312,5 @@ export class HolidaysController {
     @Query('deptId') deptId?: string,
   ) {
     return this.service.getHolidaysInRange(orgId, new Date(from), new Date(to), deptId, userId)
-  }
-
-  // ─── Audit log ────────────────────────────────────────────────────────────────
-
-  @Get('audit')
-  @ApiOperation({ summary: 'Get holiday adjustment audit log' })
-  getAuditLog(
-    @Param('orgId') orgId: string,
-    @Query('year') year?: string,
-    @Query('entity_type') entity_type?: HolidayEntityType,
-    @Query('from') from?: string,
-    @Query('to') to?: string,
-  ) {
-    return this.service.getAuditLog(orgId, {
-      year: year ? parseInt(year) : undefined,
-      entity_type,
-      from,
-      to,
-    })
   }
 }

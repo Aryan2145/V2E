@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
-import { HolidayOnTaskAction, HolidayAuditAction, HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
+import { HolidayOnTaskAction, HolidayEntityType, HolidayStatus, HolidayType } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { AuditService } from '../audit/audit.service'
 import { NotificationsService } from '../notifications/notifications.service'
@@ -219,42 +219,43 @@ export class HolidaysService {
     const holidayName = await this.getHolidayNameForDate(date, orgId, deptId, userId)
 
     let adjusted: Date | null
-    let auditAction: HolidayAuditAction
+    let auditAction: string
 
     switch (action) {
       case HolidayOnTaskAction.skip_create:
         adjusted = null
-        auditAction = HolidayAuditAction.skipped
+        auditAction = 'skipped'
         break
       case HolidayOnTaskAction.create_anyway:
         adjusted = date
-        auditAction = HolidayAuditAction.created_anyway
+        auditAction = 'created_anyway'
         break
       case HolidayOnTaskAction.move_to_prev_working_day:
         adjusted = await this.getPrevWorkingDay(date, orgId, deptId, userId)
-        auditAction = HolidayAuditAction.moved_backward
+        auditAction = 'moved_backward'
         break
       case HolidayOnTaskAction.move_to_next_working_day:
       default:
         adjusted = await this.getNextWorkingDay(date, orgId, deptId, userId)
-        auditAction = HolidayAuditAction.moved_forward
+        auditAction = 'moved_forward'
         break
     }
 
+    // Holiday-driven deadline adjustments are recorded in the shared audit log
+    // (resource "holiday", system actor) — there is no separate holiday audit
+    // store. This mirrors the federation done by the audit backfill script.
     if (entityType && entityId && entityTitle) {
-      await this.prisma.holidayAuditLog.create({
-        data: {
-          organization_id: orgId,
-          entity_type: entityType,
-          entity_id: entityId,
-          entity_title: entityTitle,
-          original_date: date,
-          adjusted_date: adjusted,
-          action_taken: auditAction,
-          holiday_name: holidayName,
-          holiday_date: date,
-          year: date.getFullYear(),
-        },
+      await this.audit.record({
+        orgId,
+        actorType: 'system',
+        action: auditAction,
+        resource: 'holiday',
+        entityId,
+        entityType,
+        entityLabel: entityTitle,
+        changes: { date: { before: date, after: adjusted } },
+        triggerSource: 'holiday_adjustment',
+        triggerContext: { holiday_name: holidayName, holiday_date: date },
       })
     }
 
@@ -876,18 +877,4 @@ export class HolidaysService {
     return { ok: true }
   }
 
-  // ─── Audit log ────────────────────────────────────────────────────────────────
-
-  async getAuditLog(orgId: string, filters: { year?: number; entity_type?: HolidayEntityType; from?: string; to?: string }) {
-    return this.prisma.holidayAuditLog.findMany({
-      where: {
-        organization_id: orgId,
-        ...(filters.year && { year: filters.year }),
-        ...(filters.entity_type && { entity_type: filters.entity_type }),
-        ...(filters.from && { created_at: { gte: new Date(filters.from) } }),
-        ...(filters.to && { created_at: { lte: new Date(filters.to) } }),
-      },
-      orderBy: { created_at: 'desc' },
-    })
-  }
 }
