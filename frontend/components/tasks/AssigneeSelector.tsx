@@ -314,6 +314,21 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
               </div>
             </div>
 
+            {/* Selected chips — so the current selection is visible inside the
+                dialog (toggle CC / remove right here). */}
+            {value.length > 0 && (
+              <div className="px-4 py-2.5 border-b border-[#F1F5F9] shrink-0 flex flex-wrap gap-1.5 max-h-[104px] overflow-y-auto">
+                {value.map((a) => (
+                  <AssigneeChip
+                    key={a.user_id}
+                    assignee={a}
+                    onToggleCC={() => toggleCC(a.user_id)}
+                    onRemove={() => removeAssignee(a.user_id)}
+                  />
+                ))}
+              </div>
+            )}
+
             {/* Assign to me shortcut */}
             {currentUser && !selectedIds.has(currentUser.user_id) && (
               <button
