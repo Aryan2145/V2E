@@ -329,22 +329,22 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
               </div>
             )}
 
-            {/* Assign to me shortcut */}
-            {currentUser && !selectedIds.has(currentUser.user_id) && (
-              <button
-                type="button"
-                onClick={() => {
-                  onChange([...value, { user_id: currentUser.user_id, name: currentUser.name, is_cc: false }])
-                }}
-                className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium text-[#2563EB] hover:bg-[#EFF6FF] border-b border-[#F1F5F9] transition-colors shrink-0"
-              >
-                <UserPlus size={13} />
-                Assign to me
-              </button>
-            )}
-
             {/* Panel body */}
             <div className="overflow-y-auto flex-1">
+              {/* Assign to me shortcut — scrolls with the list */}
+              {currentUser && !selectedIds.has(currentUser.user_id) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange([...value, { user_id: currentUser.user_id, name: currentUser.name, is_cc: false }])
+                  }}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium text-[#2563EB] hover:bg-[#EFF6FF] border-b border-[#F1F5F9] transition-colors"
+                >
+                  <UserPlus size={13} />
+                  Assign to me
+                </button>
+              )}
+
               {loading ? (
                 <div className="py-1">
                   {[1, 2, 3, 4, 5].map((i) => <SkeletonRow key={i} />)}
