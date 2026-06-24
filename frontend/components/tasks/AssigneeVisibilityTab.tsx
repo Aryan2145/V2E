@@ -586,11 +586,12 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
             onChange={(id) => { setFrom(id); if (id === to) setTo('') }}
             departments={deptOptions}
             placeholder="Select…"
+            inline
           />
         </div>
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">Into</label>
-          <DepartmentSelect value={to} onChange={setTo} departments={toOptions} placeholder="Select…" />
+          <DepartmentSelect value={to} onChange={setTo} departments={toOptions} placeholder="Select…" inline />
         </div>
         <button type="button" onClick={add} disabled={!from || !to || adding} className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors h-[38px]">
           {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add
