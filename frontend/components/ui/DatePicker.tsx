@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
 
 interface DatePickerProps {
@@ -64,9 +63,6 @@ export default function DatePicker({
   const [open, setOpen] = useState(false)
   const [mode, setMode] = useState<'days' | 'years'>('days')
   const wrapRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const panelRef = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState<{ top: number; left: number; width: number } | null>(null)
 
   const selected = useMemo(() => parseIso(value), [value])
   const minD = useMemo(() => (min ? parseIso(min) : null), [min])
@@ -84,48 +80,22 @@ export default function DatePicker({
   const isDisabledDay = (d: Date): boolean =>
     !!((minD && dayDiff(d, minD) < 0) || (maxD && dayDiff(d, maxD) > 0))
 
-  // ── Positioning (portal, fixed) ──────────────────────────────────────────────
-  const place = () => {
-    const t = triggerRef.current
-    if (!t) return
-    const r = t.getBoundingClientRect()
-    const PANEL_H = 340
-    const PANEL_W = 300
-    const below = window.innerHeight - r.bottom
-    const openUp = below < PANEL_H + 12 && r.top > below
-    const top = openUp ? Math.max(8, r.top - PANEL_H - 6) : r.bottom + 6
-    let left = r.left
-    if (left + PANEL_W > window.innerWidth - 8) left = window.innerWidth - PANEL_W - 8
-    setPos({ top, left: Math.max(8, left), width: PANEL_W })
-  }
-
-  useLayoutEffect(() => {
-    if (open) place()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
-
+  // Close on Escape / outside click. The calendar renders inline (in normal
+  // flow) inside wrapRef, so it can never float or escape a scrolling modal.
   useEffect(() => {
     if (!open) return
-    const onScroll = () => place()
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') setOpen(false)
     }
     const onDown = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (wrapRef.current?.contains(target) || panelRef.current?.contains(target)) return
-      setOpen(false)
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
     }
-    window.addEventListener('scroll', onScroll, true)
-    window.addEventListener('resize', onScroll)
     window.addEventListener('keydown', onKey)
     document.addEventListener('mousedown', onDown)
     return () => {
-      window.removeEventListener('scroll', onScroll, true)
-      window.removeEventListener('resize', onScroll)
       window.removeEventListener('keydown', onKey)
       document.removeEventListener('mousedown', onDown)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   // ── Day grid (6 weeks) ───────────────────────────────────────────────────────
@@ -163,7 +133,6 @@ export default function DatePicker({
   return (
     <div ref={wrapRef}>
       <button
-        ref={triggerRef}
         type="button"
         id={id}
         disabled={disabled}
@@ -192,13 +161,9 @@ export default function DatePicker({
         )}
       </button>
 
-      {open &&
-        pos &&
-        createPortal(
+      {open && (
           <div
-            ref={panelRef}
-            style={{ position: 'fixed', top: pos.top, left: pos.left, width: pos.width }}
-            className="z-[80] rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] p-3"
+            className="mt-1.5 w-full rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_4px_16px_rgba(0,0,0,0.08)] p-3"
           >
             {/* Header */}
             <div className="flex items-center justify-between mb-2">
@@ -320,9 +285,8 @@ export default function DatePicker({
                 Clear
               </button>
             </div>
-          </div>,
-          document.body,
-        )}
+          </div>
+      )}
     </div>
   )
 }
