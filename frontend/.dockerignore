@@ -1,0 +1,21 @@
+# Never ship host node_modules — it would clobber the image's clean install and
+# can carry wrong-arch native binaries (@next/swc, sharp, etc.).
+node_modules
+.next
+out
+
+# VCS / local tooling
+.git
+.gitignore
+.vscode
+.idea
+
+# Local env & logs (provided at build/runtime, not baked into the image)
+.env
+.env.*
+npm-debug.log*
+*.log
+
+# Docker meta
+Dockerfile
+.dockerignore

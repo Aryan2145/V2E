@@ -1,0 +1,23 @@
+# Never ship host node_modules — it would clobber the image's freshly installed
+# deps + generated Prisma client (and may carry wrong-arch native binaries).
+node_modules
+dist
+
+# VCS / local tooling
+.git
+.gitignore
+.vscode
+.idea
+
+# Local env & logs (provided at runtime via compose, not baked into the image)
+.env
+.env.*
+npm-debug.log*
+*.log
+
+# Docker meta
+Dockerfile
+.dockerignore
+
+# Keep prisma/ (schema + migrations) — required for `prisma generate` and
+# `prisma migrate deploy` at runtime.
