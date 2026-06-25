@@ -24,7 +24,7 @@ import type {
   TicketStatusType,
   TicketTemplateType,
 } from '@/lib/types/tickets'
-import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown } from 'lucide-react'
 import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
 import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
 
@@ -219,36 +219,87 @@ function PrioritiesTab({ orgId }: { orgId: string }) {
   const [items, setItems] = useState<TaskPriority[]>([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({ label: '', color: '#DC2626', order_index: 0 })
+  const [form, setForm] = useState({ label: '', color: '#DC2626' })
   const [submitting, setSubmitting] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [overIndex, setOverIndex] = useState<number | null>(null)
 
   useEffect(() => {
     setLoading(true)
-    tasksApi.getPriorities(orgId).then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
+    tasksApi.getPriorities(orgId)
+      .then((p) => {
+        const sorted = [...p].sort((a, b) => a.order_index - b.order_index)
+        // Legacy rows may share an order or have gaps. Heal them to a clean 0..N-1 sequence once.
+        const needsNormalize = sorted.some((it, i) => it.order_index !== i)
+        if (needsNormalize && sorted.length > 0) {
+          const fixed = sorted.map((it, i) => ({ ...it, order_index: i }))
+          setItems(fixed)
+          tasksApi.reorderPriorities(orgId, fixed.map((it) => ({ id: it.id, order_index: it.order_index }))).catch(() => { /* read-only viewer or offline — display stays correct */ })
+        } else {
+          setItems(sorted)
+        }
+      })
+      .catch(() => setItems([]))
+      .finally(() => setLoading(false))
   }, [orgId])
 
   async function handleCreate() {
     if (!form.label.trim()) return
     setSubmitting(true)
     try {
-      const item = await tasksApi.createPriority(orgId, { label: form.label.trim(), color: form.color, order_index: form.order_index, is_active: true })
-      setItems((prev) => [...prev, item].sort((a, b) => a.order_index - b.order_index))
-      setForm({ label: '', color: '#DC2626', order_index: 0 })
+      // New priorities go to the bottom of the list; rank is derived from position, never typed.
+      const item = await tasksApi.createPriority(orgId, { label: form.label.trim(), color: form.color, order_index: items.length, is_active: true })
+      setItems((prev) => [...prev, item])
+      setForm({ label: '', color: '#DC2626' })
       setCreating(false)
     } catch { /* ignore */ } finally { setSubmitting(false) }
+  }
+
+  // Renumber the whole list 0..N-1 (so two priorities can never share a rank) and persist it.
+  // Optimistic update with rollback if the reorder call fails.
+  async function persistOrder(next: TaskPriority[]) {
+    const renumbered = next.map((it, i) => ({ ...it, order_index: i }))
+    const previous = items
+    setItems(renumbered)
+    setSavingOrder(true)
+    try {
+      await tasksApi.reorderPriorities(orgId, renumbered.map((it) => ({ id: it.id, order_index: it.order_index })))
+    } catch {
+      setItems(previous)
+    } finally {
+      setSavingOrder(false)
+    }
+  }
+
+  function move(from: number, to: number) {
+    if (to < 0 || to >= items.length || from === to) return
+    const next = [...items]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    persistOrder(next)
+  }
+
+  function handleDrop(target: number) {
+    if (dragIndex !== null) move(dragIndex, target)
+    setDragIndex(null)
+    setOverIndex(null)
   }
 
   if (loading) return <Spinner />
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[#475569]">{items.length} priorit{items.length !== 1 ? 'ies' : 'y'}</p>
-        <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Priority</button>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm text-[#475569]">{items.length} priorit{items.length !== 1 ? 'ies' : 'y'}</p>
+          {items.length > 1 && <p className="text-xs text-[#94A3B8] mt-0.5">Ordered highest → lowest. Drag the handle or use the arrows to rearrange.</p>}
+        </div>
+        <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors shrink-0"><Plus size={14} /> Add Priority</button>
       </div>
       {creating && (
         <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-4 space-y-3">
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-2 gap-3">
             <FormField label="Label"><input type="text" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. High" className={inputCls} /></FormField>
             <FormField label="Color">
               <div className="flex gap-2 items-center">
@@ -256,8 +307,8 @@ function PrioritiesTab({ orgId }: { orgId: string }) {
                 <input type="text" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className={inputCls} />
               </div>
             </FormField>
-            <FormField label="Order"><input type="number" value={form.order_index} onChange={(e) => setForm({ ...form, order_index: parseInt(e.target.value) || 0 })} className={inputCls} /></FormField>
           </div>
+          <p className="text-xs text-[#64748B]">Added to the bottom of the list. Drag it into position afterwards — the rank number updates automatically.</p>
           <div className="flex gap-2">
             <button onClick={handleCreate} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">{submitting ? 'Creating...' : 'Create'}</button>
             <button onClick={() => setCreating(false)} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
@@ -266,14 +317,32 @@ function PrioritiesTab({ orgId }: { orgId: string }) {
       )}
       {items.length === 0 && !creating && <div className="text-center py-12 text-[#475569] text-sm">No priorities yet.</div>}
       <div className="space-y-2">
-        {items.map((item) => (
-          <div key={item.id} className="bg-white border border-[#E2E8F0] rounded-[8px] px-4 py-3 flex items-center gap-3">
-            <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-            <span className="flex-1 text-sm font-semibold text-[#0F172A]">{item.label}</span>
-            <span className="text-xs text-[#475569]">Order: {item.order_index}</span>
-            <span className={`text-[11px] font-medium rounded-[999px] px-2 py-0.5 ${item.is_active ? 'bg-[#DCFCE7] text-[#16A34A]' : 'bg-[#FEE2E2] text-[#DC2626]'}`}>{item.is_active ? 'Active' : 'Inactive'}</span>
-          </div>
-        ))}
+        {items.map((item, idx) => {
+          const rankLabel = items.length > 1 ? (idx === 0 ? 'Highest' : idx === items.length - 1 ? 'Lowest' : null) : null
+          const isDropTarget = overIndex === idx && dragIndex !== null && dragIndex !== idx
+          return (
+            <div
+              key={item.id}
+              draggable
+              onDragStart={() => setDragIndex(idx)}
+              onDragOver={(e) => { e.preventDefault(); if (overIndex !== idx) setOverIndex(idx) }}
+              onDragEnd={() => { setDragIndex(null); setOverIndex(null) }}
+              onDrop={(e) => { e.preventDefault(); handleDrop(idx) }}
+              className={`bg-white border rounded-[8px] pl-2 pr-3 py-3 flex items-center gap-2.5 transition-colors ${isDropTarget ? 'border-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0]'} ${dragIndex === idx ? 'opacity-50' : ''}`}
+            >
+              <span className="cursor-grab active:cursor-grabbing text-[#94A3B8] hover:text-[#475569] shrink-0" aria-label="Drag to reorder" title="Drag to reorder"><GripVertical size={16} /></span>
+              <span className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] text-xs font-bold">{idx + 1}</span>
+              <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+              <span className="flex-1 min-w-0 truncate text-sm font-semibold text-[#0F172A]">{item.label}</span>
+              {rankLabel && <span className="hidden sm:inline text-[11px] font-medium text-[#475569]">{rankLabel}</span>}
+              <span className={`text-[11px] font-medium rounded-[999px] px-2 py-0.5 ${item.is_active ? 'bg-[#DCFCE7] text-[#16A34A]' : 'bg-[#FEE2E2] text-[#DC2626]'}`}>{item.is_active ? 'Active' : 'Inactive'}</span>
+              <div className="flex flex-col shrink-0">
+                <button type="button" disabled={idx === 0 || savingOrder} onClick={() => move(idx, idx - 1)} aria-label="Move up" className="w-7 h-5 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors"><ChevronUp size={15} /></button>
+                <button type="button" disabled={idx === items.length - 1 || savingOrder} onClick={() => move(idx, idx + 1)} aria-label="Move down" className="w-7 h-5 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors"><ChevronDown size={15} /></button>
+              </div>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
