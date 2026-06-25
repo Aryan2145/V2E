@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
@@ -359,6 +359,7 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
 
 export default function EmployeeDetailPage() {
   const params = useParams()
+  const router = useRouter()
   const employeeId = params?.employeeId as string
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
@@ -388,6 +389,18 @@ export default function EmployeeDetailPage() {
   }, [orgId, employeeId])
 
   const isHR = !!user?.is_admin
+
+  // Return to wherever the user came from — the department structure panel, the
+  // employees tree/table view, a reporting chain, etc. — rather than always the
+  // flat employees list. Falls back to that list only on a direct load (no
+  // in-app history to step back into).
+  function handleBack() {
+    if (typeof window !== 'undefined' && window.history.length > 1) {
+      router.back()
+    } else {
+      router.push('/settings/organization/employees')
+    }
+  }
 
   if (loading) {
     return (
@@ -420,10 +433,10 @@ export default function EmployeeDetailPage() {
 
   return (
     <div className="space-y-6 max-w-4xl">
-      <Link href="/settings/organization/employees" className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors">
+      <button onClick={handleBack} className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#0F172A] transition-colors">
         <ArrowLeft size={15} />
-        All Employees
-      </Link>
+        Back
+      </button>
 
       {/* Profile header */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">

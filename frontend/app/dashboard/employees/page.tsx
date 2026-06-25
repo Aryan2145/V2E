@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { getEmployees } from '@/lib/api/employees'
 import { getDepartments } from '@/lib/api/departments'
@@ -95,6 +96,7 @@ function EmptyState({ filtered }: { filtered: boolean }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function EmployeesPage() {
+  const router = useRouter()
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
   const canManage = !!user?.is_admin
@@ -108,6 +110,7 @@ export default function EmployeesPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [view, setView] = useState<EmployeeView>('table')
+  const tableScrollRef = useRef<HTMLDivElement>(null)
 
   // Restore the view + filters when returning here (e.g. browser back from a
   // profile), so the user lands on the same screen they left rather than the
@@ -129,6 +132,93 @@ export default function EmployeesPage() {
   useEffect(() => {
     sessionStorage.setItem('employees-dept', deptFilter)
   }, [deptFilter])
+
+  // ── Card (inner) scroll: save + restore ──────────────────────────────────────
+  // Persist the table's own scroll position so returning from a profile keeps the
+  // card where the user left it. rAF-throttled; re-attaches when the table mounts.
+  useEffect(() => {
+    if (loading || view !== 'table') return
+    const el = tableScrollRef.current
+    if (!el) return
+    let raf = 0
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        sessionStorage.setItem('employees-scroll', String(el.scrollTop))
+      })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [loading, view])
+
+  useEffect(() => {
+    if (loading || view !== 'table') return
+    const y = Number(sessionStorage.getItem('employees-scroll'))
+    if (!Number.isFinite(y) || y <= 0) return
+    let frame = 0
+    let tries = 0
+    const apply = () => {
+      const el = tableScrollRef.current
+      if (!el) return
+      el.scrollTop = y
+      tries += 1
+      if (Math.abs(el.scrollTop - y) > 2 && tries < 40) {
+        frame = requestAnimationFrame(apply)
+      }
+    }
+    frame = requestAnimationFrame(apply)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [loading, view])
+
+  // ── Page (window) scroll: save + restore ─────────────────────────────────────
+  // The page can still scroll because the header + filters + capped card exceed
+  // the viewport. Kept fully independent of the card restore above so the two
+  // never interfere — they target different scrollers and different storage keys.
+  useEffect(() => {
+    let raf = 0
+    const onScroll = () => {
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        sessionStorage.setItem(
+          'employees-page-scroll',
+          String(window.scrollY || document.documentElement.scrollTop || 0),
+        )
+      })
+    }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (loading) return
+    const y = Number(sessionStorage.getItem('employees-page-scroll'))
+    if (!Number.isFinite(y) || y <= 0) return
+    let frame = 0
+    let tries = 0
+    const apply = () => {
+      window.scrollTo(0, y)
+      tries += 1
+      const cur = window.scrollY || document.documentElement.scrollTop || 0
+      const maxY = document.documentElement.scrollHeight - window.innerHeight
+      if (Math.abs(cur - Math.min(y, maxY)) > 2 && tries < 40) {
+        frame = requestAnimationFrame(apply)
+      }
+    }
+    frame = requestAnimationFrame(apply)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [loading])
 
   const reloadEmployees = useCallback(() => {
     if (!orgId) return
@@ -308,8 +398,10 @@ export default function EmployeesPage() {
           columns={columns}
           rows={filtered}
           rowKey={(emp) => emp.id}
-          onRowClick={(emp) => { window.location.href = `/settings/organization/employees/${emp.id}` }}
+          onRowClick={(emp) => router.push(`/settings/organization/employees/${emp.id}`)}
           emptyState={<EmptyState filtered={isFiltered} />}
+          maxBodyHeight="min(60vh, 560px)"
+          scrollContainerRef={tableScrollRef}
         />
       ) : (
         <EmployeeTreeView employees={filtered} departments={departments} />

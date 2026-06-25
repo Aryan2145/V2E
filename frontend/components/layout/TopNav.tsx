@@ -191,6 +191,16 @@ export default function TopNav() {
             />
           </button>
 
+          {/* Backdrop — captures any outside click so the menu closes reliably,
+              even over elements (e.g. the ReactFlow canvas) that swallow mousedown. */}
+          {open && (
+            <div
+              className="fixed inset-0 z-40"
+              aria-hidden="true"
+              onClick={() => setOpen(false)}
+            />
+          )}
+
           {/* Dropdown */}
           {open && (
             <div className="absolute right-4 top-[calc(100%+6px)] w-64 bg-white rounded-[10px] border border-[#E2E8F0] shadow-lg overflow-hidden z-50">

@@ -34,6 +34,13 @@ interface ResponsiveTableProps<T> {
   isExpanded?: (row: T, index: number) => boolean
   /** Content of the expanded full-width region (desktop: colSpan row; mobile: under the card). */
   renderExpanded?: (row: T, index: number) => React.ReactNode
+  /**
+   * Cap the body height and scroll it internally (header stays pinned) instead of
+   * growing the page. Accepts a number (px) or any CSS length, e.g. 'min(60vh,560px)'.
+   */
+  maxBodyHeight?: number | string
+  /** Ref to the desktop scroll container — lets callers persist/restore its scroll position. */
+  scrollContainerRef?: React.Ref<HTMLDivElement>
 }
 
 const alignClass = {
@@ -60,12 +67,20 @@ export default function ResponsiveTable<T>({
   toolbar,
   isExpanded,
   renderExpanded,
+  maxBodyHeight,
+  scrollContainerRef,
 }: ResponsiveTableProps<T>) {
   const primaryIdx = Math.max(0, columns.findIndex((c) => c.primary))
   const primary = columns[primaryIdx]
   const cardColumns = columns.filter((c) => !c.hideOnMobile)
   const card =
     'bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden'
+  const bodyMaxHeight =
+    maxBodyHeight == null
+      ? undefined
+      : typeof maxBodyHeight === 'number'
+        ? `${maxBodyHeight}px`
+        : maxBodyHeight
 
   if (!loading && rows.length === 0 && emptyState) {
     return <>{emptyState}</>
@@ -80,15 +95,19 @@ export default function ResponsiveTable<T>({
       )}
 
       {/* Desktop / tablet: real table (md+) */}
-      <div className="hidden md:block overflow-x-auto">
+      <div
+        ref={scrollContainerRef}
+        className={`hidden md:block ${bodyMaxHeight ? 'overflow-auto' : 'overflow-x-auto'}`}
+        style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}
+      >
         <table className="w-full text-sm">
-          <thead className="bg-[#F8FAFC] border-b border-[#E2E8F0]">
+          <thead className={`bg-[#F8FAFC] border-b border-[#E2E8F0] ${bodyMaxHeight ? 'sticky top-0 z-10' : ''}`}>
             <tr>
               {columns.map((col) => (
                 <th
                   key={col.key}
                   className={[
-                    'px-4 py-3 text-xs font-semibold text-[#475569] uppercase tracking-wider whitespace-nowrap',
+                    'px-4 py-3 text-xs font-semibold text-[#475569] uppercase tracking-wider whitespace-nowrap bg-[#F8FAFC]',
                     alignClass[col.align ?? 'left'],
                     col.desktopHiddenBelow ? desktopHideClass[col.desktopHiddenBelow] : '',
                     col.headerClassName ?? '',
@@ -147,7 +166,10 @@ export default function ResponsiveTable<T>({
       </div>
 
       {/* Mobile: stacked cards (below md) */}
-      <div className="md:hidden divide-y divide-[#E2E8F0]">
+      <div
+        className={`md:hidden divide-y divide-[#E2E8F0] ${bodyMaxHeight ? 'overflow-auto' : ''}`}
+        style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}
+      >
         {loading
           ? Array.from({ length: skeletonRows }).map((_, r) => (
               <div key={r} className="p-4 space-y-2">

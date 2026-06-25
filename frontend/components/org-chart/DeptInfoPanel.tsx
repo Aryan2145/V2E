@@ -3,8 +3,18 @@
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, UserCircle2, Users, Network, ChevronRight, Pencil } from 'lucide-react'
+import { X, Users, Network, ChevronRight, Pencil, Crown } from 'lucide-react'
 import type { Department, EmployeeProfile } from '@/lib/types'
+
+/** Small pill that tags the department head wherever they appear. */
+function HeadBadge() {
+  return (
+    <span className="inline-flex items-center gap-1 shrink-0 rounded-full bg-[#2563EB] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+      <Crown size={10} />
+      Head
+    </span>
+  )
+}
 
 interface DeptInfoPanelProps {
   department: Department | null
@@ -42,6 +52,19 @@ export default function DeptInfoPanel({
   // Portal to <body> so the drawer is never clipped by the fixed top nav.
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
+
+  // Pin the department head to the top of the member roster and tag them. The
+  // head is matched by user id; if they aren't on the roster (e.g. they head this
+  // department from above), we surface a read-only row so they're never dropped.
+  const headUserId = department?.head_user_id
+  const sortedMembers = [...members].sort((a, b) => {
+    const aHead = !!headUserId && a.user_id === headUserId
+    const bHead = !!headUserId && b.user_id === headUserId
+    return aHead === bHead ? 0 : aHead ? -1 : 1
+  })
+  const headIsMember = !!headUserId && members.some((m) => m.user_id === headUserId)
+  const headOnlyName = !headIsMember ? department?.head_user?.name ?? null : null
+
   if (!mounted) return null
 
   return createPortal(
@@ -114,57 +137,63 @@ export default function DeptInfoPanel({
                 <p className="text-sm text-[#475569] leading-relaxed">{department.description}</p>
               )}
 
-              {/* Department head */}
-              <section>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[#64748B] mb-2">
-                  Department Head
-                </h4>
-                {department.head_user?.name ? (
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-9 h-9 rounded-full bg-[#EFF6FF] flex items-center justify-center text-[#2563EB] text-sm font-bold shrink-0">
-                      {department.head_user.name.charAt(0).toUpperCase()}
-                    </div>
-                    <span className="text-sm font-semibold text-[#0F172A]">
-                      {department.head_user.name}
-                    </span>
-                  </div>
-                ) : (
-                  <p className="text-sm text-[#94A3B8] flex items-center gap-1.5">
-                    <UserCircle2 size={15} /> No head assigned
-                  </p>
-                )}
-              </section>
-
-              {/* Members */}
+              {/* Members — the department head is pinned to the top and tagged. */}
               <section>
                 <h4 className="text-xs font-bold uppercase tracking-wider text-[#64748B] mb-2 flex items-center gap-1.5">
                   <Users size={13} /> Members ({members.length})
                 </h4>
-                {members.length === 0 ? (
+                {members.length === 0 && !headOnlyName ? (
                   <p className="text-sm text-[#94A3B8]">No one is in this department yet.</p>
                 ) : (
                   <div className="flex flex-col gap-1">
-                    {members.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => router.push(`/settings/organization/employees/${m.id}`)}
-                        className="group flex items-center gap-2.5 rounded-[8px] px-2 py-2 text-left hover:bg-[#F8FAFC] transition-colors"
-                      >
-                        <div className="w-8 h-8 rounded-full bg-[#F1F5F9] flex items-center justify-center text-[#475569] text-xs font-semibold shrink-0">
-                          {(m.user?.name ?? 'U').charAt(0).toUpperCase()}
+                    {/* Head who isn't on the member roster (e.g. heads from a parent
+                        department): show a read-only row so they're never lost. */}
+                    {headOnlyName && (
+                      <div className="flex items-center gap-2.5 rounded-[8px] px-2 py-2 bg-[#EFF6FF] ring-1 ring-inset ring-[#BFDBFE]">
+                        <div className="w-8 h-8 rounded-full bg-white flex items-center justify-center text-[#2563EB] text-xs font-bold shrink-0">
+                          {headOnlyName.charAt(0).toUpperCase()}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium text-[#0F172A] truncate">
-                            {m.user?.name ?? '—'}
+                          <p className="text-sm font-semibold text-[#0F172A] truncate flex items-center gap-1.5">
+                            <span className="truncate">{headOnlyName}</span>
+                            <HeadBadge />
                           </p>
-                          <p className="text-xs text-[#64748B] truncate">{m.role?.title ?? ''}</p>
                         </div>
-                        <ChevronRight
-                          size={14}
-                          className="text-[#CBD5E1] group-hover:text-[#94A3B8] shrink-0"
-                        />
-                      </button>
-                    ))}
+                      </div>
+                    )}
+                    {sortedMembers.map((m) => {
+                      const isHead = !!headUserId && m.user_id === headUserId
+                      return (
+                        <button
+                          key={m.id}
+                          onClick={() => router.push(`/settings/organization/employees/${m.id}`)}
+                          className={`group flex items-center gap-2.5 rounded-[8px] px-2 py-2 text-left transition-colors ${
+                            isHead
+                              ? 'bg-[#EFF6FF] ring-1 ring-inset ring-[#BFDBFE] hover:bg-[#DBEAFE]'
+                              : 'hover:bg-[#F8FAFC]'
+                          }`}
+                        >
+                          <div
+                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold shrink-0 ${
+                              isHead ? 'bg-white text-[#2563EB] font-bold' : 'bg-[#F1F5F9] text-[#475569]'
+                            }`}
+                          >
+                            {(m.user?.name ?? 'U').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium text-[#0F172A] truncate flex items-center gap-1.5">
+                              <span className="truncate">{m.user?.name ?? '—'}</span>
+                              {isHead && <HeadBadge />}
+                            </p>
+                            <p className="text-xs text-[#64748B] truncate">{m.role?.title ?? ''}</p>
+                          </div>
+                          <ChevronRight
+                            size={14}
+                            className="text-[#CBD5E1] group-hover:text-[#94A3B8] shrink-0"
+                          />
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </section>
