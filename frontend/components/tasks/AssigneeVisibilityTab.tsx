@@ -1,36 +1,30 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Save,
   Plus,
   Trash2,
   AlertTriangle,
   Loader2,
-  Search,
   ArrowRight,
   ArrowLeftRight,
   CornerDownRight,
   Lock,
-  Eye,
   ShieldAlert,
   Info,
   X,
 } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
-import { getEmployees } from '@/lib/api/employees'
 import { useToast } from '@/components/ui/Toast'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { flattenTree } from '@/lib/dept-tree'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import EmployeeAssigneeEditor from '@/components/tasks/EmployeeAssigneeEditor'
 import type { Department } from '@/lib/types'
 import type {
   AssigneeVisibilityAdminView,
   AssigneeVisibilitySettings,
-  AssigneeExceptionScope,
-  AssigneeExceptionKind,
   BridgeDepth,
-  AssigneeExplainResult,
 } from '@/lib/types/tasks'
 
 // Permissions collapsed to Administrators (is_admin) vs Members. 'org_admin'/'employee'
@@ -38,11 +32,6 @@ import type {
 const MEMBER_ROLES = ['org_admin', 'employee'] as const
 const roleLabel = (r: string) =>
   ({ org_admin: 'Administrators', employee: 'Members', hr_manager: 'HR Manager (legacy)' }[r] ?? r)
-
-interface Person {
-  user_id: string
-  name: string
-}
 
 // ─── Small shared controls ──────────────────────────────────────────────────────
 
@@ -76,6 +65,32 @@ function Chip({ label, active, color = 'blue', onClick }: { label: string; activ
   )
 }
 
+function SegTabs<T extends string>({ value, onChange, tabs }: { value: T; onChange: (v: T) => void; tabs: { value: T; label: string }[] }) {
+  return (
+    <div className="inline-flex gap-1 p-1 rounded-[10px] bg-[#2563EB]">
+      {tabs.map((t) => {
+        const active = value === t.value
+        return (
+          <button
+            key={t.value}
+            type="button"
+            onClick={() => onChange(t.value)}
+            aria-pressed={active}
+            className={[
+              'px-4 py-1.5 text-sm font-semibold rounded-[7px] transition-colors',
+              active
+                ? 'bg-white text-[#2563EB] shadow-sm'
+                : 'bg-transparent text-white hover:bg-[#1D4ED8]',
+            ].join(' ')}
+          >
+            {t.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function Card({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
     <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 space-y-4">
@@ -88,65 +103,23 @@ function Card({ title, description, children }: { title: string; description?: s
   )
 }
 
-function UserMultiSelect({ people, selected, onToggle }: { people: Person[]; selected: string[]; onToggle: (id: string) => void }) {
-  const [q, setQ] = useState('')
-  const filtered = useMemo(
-    () => people.filter((p) => p.name.toLowerCase().includes(q.toLowerCase())),
-    [people, q],
-  )
-  return (
-    <div className="border border-[#CBD5E1] rounded-[8px] overflow-hidden">
-      <div className="relative border-b border-[#E2E8F0]">
-        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search people…"
-          className="w-full pl-9 pr-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none"
-        />
-      </div>
-      <div className="max-h-48 overflow-y-auto divide-y divide-[#F1F5F9]">
-        {filtered.length === 0 && <p className="px-3 py-3 text-xs text-[#94A3B8]">No people found.</p>}
-        {filtered.map((p) => {
-          const on = selected.includes(p.user_id)
-          return (
-            <button
-              key={p.user_id}
-              type="button"
-              onClick={() => onToggle(p.user_id)}
-              className={`w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors ${on ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'}`}
-            >
-              <span className={`w-4 h-4 rounded-[4px] border flex items-center justify-center shrink-0 ${on ? 'bg-[#2563EB] border-[#2563EB]' : 'border-[#CBD5E1]'}`}>
-                {on && <span className="text-white text-[10px] leading-none">✓</span>}
-              </span>
-              <span className="text-[#0F172A]">{p.name}</span>
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ─── Main tab ───────────────────────────────────────────────────────────────────
 
 export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
   const { addToast } = useToast()
   const [view, setView] = useState<AssigneeVisibilityAdminView | null>(null)
   const [settings, setSettings] = useState<AssigneeVisibilitySettings | null>(null)
-  const [people, setPeople] = useState<Person[]>([])
   const [loading, setLoading] = useState(true)
-  const [savingSettings, setSavingSettings] = useState(false)
+  const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [showRules, setShowRules] = useState(false)
+  const [activeTab, setActiveTab] = useState<'department' | 'role' | 'employee'>('department')
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const latestSettings = useRef<AssigneeVisibilitySettings | null>(null)
 
   const reload = useCallback(async () => {
-    const [v, emps] = await Promise.all([
-      tasksApi.getAssigneeVisibility(orgId),
-      getEmployees(orgId).catch(() => []),
-    ])
+    const v = await tasksApi.getAssigneeVisibility(orgId)
     setView(v)
     setSettings(v.settings)
-    setPeople(emps.map((e) => ({ user_id: e.user_id, name: e.user?.name ?? 'Unknown' })))
   }, [orgId])
 
   useEffect(() => {
@@ -161,20 +134,47 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
     addToast(Array.isArray(m) ? m.join(', ') : m, 'error')
   }
 
-  async function saveSettings() {
-    if (!settings) return
-    setSavingSettings(true)
-    try {
-      const s = await tasksApi.updateAssigneeSettings(orgId, settings)
-      setSettings(s)
-      addToast('Settings saved', 'success')
-      reload().catch(() => null)
-    } catch (e) {
-      apiError(e, 'Could not save settings')
-    } finally {
-      setSavingSettings(false)
-    }
+  // ── Auto-save (no Save button). Settings persist as you edit. ──
+  function persist(next: AssigneeVisibilitySettings) {
+    latestSettings.current = next
+    setSaveState('saving')
+    tasksApi
+      .updateAssigneeSettings(orgId, next)
+      .then(() => setSaveState('saved'))
+      .catch((e) => {
+        setSaveState('saved')
+        apiError(e, 'Could not save settings')
+      })
   }
+  // Discrete clicks (override toggle, role chips) → save immediately.
+  function commitNow(next: AssigneeVisibilitySettings) {
+    setSettings(next)
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    persist(next)
+  }
+  // Rapid edits (people multiselect) → debounce so we don't spam the server.
+  function commitDebounced(next: AssigneeVisibilitySettings) {
+    setSettings(next)
+    latestSettings.current = next
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    saveTimer.current = setTimeout(() => {
+      saveTimer.current = null
+      persist(latestSettings.current!)
+    }, 500)
+  }
+  // Flush a pending debounced save when leaving the tab.
+  useEffect(
+    () => () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current)
+        if (latestSettings.current) tasksApi.updateAssigneeSettings(orgId, latestSettings.current).catch(() => {})
+      }
+    },
+    [orgId],
+  )
 
   if (loading || !view || !settings) {
     return (
@@ -187,7 +187,6 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
   const depts = view.departments
   const deptName = (id: string) => depts.find((d) => d.id === id)?.name ?? id
   const toggleIn = (arr: string[], v: string) => (arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v])
-  const patch = (p: Partial<AssigneeVisibilitySettings>) => setSettings({ ...settings, ...p })
   const overrideOn = settings.master_override
 
   return (
@@ -205,6 +204,17 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
           >
             <Info size={16} />
           </button>
+          <span className="ml-auto flex items-center gap-1.5 text-xs text-[#94A3B8]">
+            {saveState === 'saving' ? (
+              <>
+                <Loader2 size={12} className="animate-spin" /> Saving…
+              </>
+            ) : (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A]" /> All changes saved
+              </>
+            )}
+          </span>
         </div>
 
         {showRules && (
@@ -250,84 +260,83 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
         )}
       </div>
 
-      {/* 1 — Master override */}
+      {/* Master override — org-level, always interactive, auto-saves on toggle */}
       <Card
         title="Master override — open everything"
-        description="When on, every user can assign to every active employee. All rules below are ignored."
+        description="When on, every user can assign to every active employee. Department & role rules are ignored — except per-employee manual edits (Employee tab), which still apply on top."
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2 text-sm">
             <ShieldAlert size={16} className={overrideOn ? 'text-[#D97706]' : 'text-[#94A3B8]'} />
             <span className="text-[#1E293B]">{overrideOn ? 'Override is ON — everyone sees everyone.' : 'Override is off.'}</span>
           </div>
-          <Toggle on={overrideOn} onChange={() => patch({ master_override: !overrideOn })} />
+          <Toggle on={overrideOn} onChange={() => commitNow({ ...settings, master_override: !overrideOn })} />
         </div>
         {overrideOn && (
           <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#FEF3C7] border border-[#FCD34D] text-[13px] text-[#92400E]">
             <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-            <span>While the override is on, exceptions, bridges and the upward switch have no effect. Save to apply.</span>
+            <span>While the override is on, exceptions, bridges and the upward switch have no effect — but per-employee manual additions/removals (Employee tab) still apply.</span>
           </div>
         )}
       </Card>
 
-      <div className={overrideOn ? 'opacity-60 pointer-events-none space-y-5' : 'space-y-5'}>
-        {/* 2 — Full-visibility list */}
-        <Card
-          title="Full-visibility list (sees everyone)"
-          description="Roles or specific people who can assign to every active employee, beyond their default department + reports. Separate from admin powers."
-        >
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-2">Roles with full visibility</label>
-            <div className="flex flex-wrap gap-2">
-              {MEMBER_ROLES.map((r) => (
-                <Chip key={r} label={roleLabel(r)} active={settings.full_visibility_roles.includes(r)} onClick={() => patch({ full_visibility_roles: toggleIn(settings.full_visibility_roles, r) })} />
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-2">Specific people with full visibility</label>
-            <UserMultiSelect people={people} selected={settings.full_visibility_users} onToggle={(id) => patch({ full_visibility_users: toggleIn(settings.full_visibility_users, id) })} />
-          </div>
-        </Card>
-      </div>
-
-      {/* Save (settings group) */}
-      <button
-        type="button"
-        onClick={saveSettings}
-        disabled={savingSettings}
-        className="flex items-center gap-2 px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors"
-      >
-        {savingSettings ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-        {savingSettings ? 'Saving…' : 'Save settings'}
-      </button>
-
-      <div className={overrideOn ? 'opacity-60 pointer-events-none space-y-5' : 'space-y-5'}>
-        {/* 3 — Per-department upward switch */}
-        <UpwardSection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
-
-        {/* 4 — Unify sub-departments */}
-        <UnifySection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
-
-        {/* 5 — Cross-department bridges */}
-        <BridgeSection orgId={orgId} view={view} deptName={deptName} onChange={reload} apiError={apiError} />
-
-        {/* 6 — Exceptions */}
-        <ExceptionSection orgId={orgId} view={view} people={people} onChange={reload} apiError={apiError} />
-      </div>
-
-      {/* Who can edit */}
+      {/* Who can change these settings — org-level governance, auto-saves */}
       <Card title="Who can change these settings" description="Member roles allowed to edit assignee visibility (override, exceptions, bridges, upward switch, sub-department unify).">
         <div className="flex flex-wrap gap-2">
           {MEMBER_ROLES.map((r) => (
-            <Chip key={r} label={roleLabel(r)} active={settings.config_roles.includes(r)} onClick={() => patch({ config_roles: toggleIn(settings.config_roles, r) })} />
+            <Chip
+              key={r}
+              label={roleLabel(r)}
+              active={settings.config_roles.includes(r)}
+              onClick={() => {
+                const next = toggleIn(settings.config_roles, r)
+                if (next.length === 0) return // at least one role must keep edit rights
+                commitDebounced({ ...settings, config_roles: next })
+              }}
+            />
           ))}
         </div>
-        <p className="text-xs text-[#94A3B8]">Saved with "Save settings" above. At least one role is required.</p>
+        <p className="text-xs text-[#94A3B8]">At least one role is required. Saved automatically.</p>
       </Card>
 
-      {/* Explain / preview */}
-      <ExplainSection orgId={orgId} people={people} />
+      {/* Three configuration tabs + body — disabled + dimmed (values preserved) while the master override is on */}
+      <div className={overrideOn ? 'opacity-60 pointer-events-none space-y-5' : 'space-y-5'}>
+        <SegTabs
+          value={activeTab}
+          onChange={setActiveTab}
+          tabs={[
+            { value: 'department', label: 'Department configuration' },
+            { value: 'role', label: 'Role configuration' },
+            { value: 'employee', label: 'Employee configuration' },
+          ]}
+        />
+        {activeTab === 'department' && (
+          <>
+            <UnifySection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
+            <UpwardSection orgId={orgId} view={view} onChange={reload} apiError={apiError} />
+            <BridgeSection orgId={orgId} view={view} deptName={deptName} onChange={reload} apiError={apiError} />
+          </>
+        )}
+        {activeTab === 'role' && (
+          <>
+            {/* Roles with full visibility */}
+            <Card
+              title="Roles with full visibility (see everyone)"
+              description="Roles whose members can assign to every active employee, beyond their default department + reports. Separate from admin powers."
+            >
+              <div className="flex flex-wrap gap-2">
+                {MEMBER_ROLES.map((r) => (
+                  <Chip key={r} label={roleLabel(r)} active={settings.full_visibility_roles.includes(r)} onClick={() => commitNow({ ...settings, full_visibility_roles: toggleIn(settings.full_visibility_roles, r) })} />
+                ))}
+              </div>
+            </Card>
+          </>
+        )}
+        {activeTab === 'employee' && (
+          /* Per-employee editor — the most-granular layer (resolved list + manual add/remove + full visibility) */
+          <EmployeeAssigneeEditor orgId={orgId} view={view} />
+        )}
+      </div>
     </div>
   )
 }
@@ -336,6 +345,29 @@ export function AssigneeVisibilityTab({ orgId }: { orgId: string }) {
 
 function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; view: AssigneeVisibilityAdminView; onChange: () => Promise<void>; apiError: (e: any, f: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null)
+  const depts = view.departments
+  const byId = useMemo(() => new Map(depts.map((d) => [d.id, d])), [depts])
+  // Match the org-chart hue scheme and tree ordering used by the Unify card, so the two
+  // Department-rules cards read as parallel views of the same hierarchy.
+  const colors = useMemo(() => computeNodeColors(depts as unknown as Department[]), [depts])
+  const colorOf = (id: string) => colors[id]?.base || '#94A3B8'
+  const rows = useMemo(() => flattenTree(depts as unknown as Department[]), [depts])
+
+  // Nearest ancestor (excluding self) merged via "Merge a department with its sub-departments". When present,
+  // this department is inside a unified pool where everyone already assigns to everyone — so
+  // its upward switch has no effect and is shown locked (mirrors the Unify card's covered state).
+  const coveringAncestor = (id: string) => {
+    let cur = byId.get(id)?.parent_department_id ?? null
+    const seen = new Set<string>()
+    while (cur && byId.has(cur) && !seen.has(cur)) {
+      seen.add(cur)
+      const d = byId.get(cur)!
+      if (d.assignee_unify_subtree) return d
+      cur = d.parent_department_id ?? null
+    }
+    return null
+  }
+
   async function toggle(deptId: string, allow: boolean) {
     setBusy(deptId)
     try {
@@ -348,21 +380,42 @@ function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; vie
     }
   }
   return (
-    <Card title="Upward assignment by department" description="When off, members of that department can assign to their direct manager and below — but not higher up the chain.">
+    <Card title="Allow assigning up the reporting line" description="When off, members of that department can assign to their direct manager and below — but not higher up the chain. Departments inside a merged pool ignore this switch.">
       <div className="max-h-[280px] overflow-y-auto -mr-1 pr-1 divide-y divide-[#F1F5F9]">
-        {view.departments.map((d) => (
-          <div key={d.id} className="flex items-center justify-between py-2.5">
-            <div>
-              <p className="text-sm font-medium text-[#0F172A]">{d.name}</p>
-              <p className="text-xs text-[#475569]">{d.assignee_allow_upward ? 'Can assign up the chain' : 'Direct manager only (no higher)'}</p>
+        {rows.map(({ dept, depth }) => {
+          const d = byId.get(dept.id)!
+          const covered = coveringAncestor(dept.id)
+          return (
+            <div key={dept.id} className="flex items-center justify-between gap-3 py-2.5">
+              <div className="flex items-center gap-2 min-w-0" style={{ paddingLeft: depth * 18 }}>
+                {depth > 0 && <CornerDownRight size={13} className="shrink-0 text-[#CBD5E1] -mr-0.5" />}
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorOf(dept.id) }} />
+                <div className="min-w-0">
+                  <p className={`text-sm truncate ${covered ? 'text-[#475569]' : 'font-medium text-[#0F172A]'}`}>{dept.name}</p>
+                  <p className="text-xs text-[#94A3B8] truncate">
+                    {covered
+                      ? `Merged into ${covered.name} — upward not applied`
+                      : d.assignee_allow_upward
+                        ? 'Can assign up the chain'
+                        : 'Direct manager only (no higher)'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {busy === dept.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
+                {covered ? (
+                  <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]" title={`Locked — merged into ${covered.name}`}>
+                    <Lock size={12} />
+                    <Toggle on disabled onChange={() => {}} />
+                  </span>
+                ) : (
+                  <Toggle on={d.assignee_allow_upward} disabled={busy === dept.id} onChange={() => toggle(dept.id, !d.assignee_allow_upward)} />
+                )}
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {busy === d.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
-              <Toggle on={d.assignee_allow_upward} disabled={busy === d.id} onChange={() => toggle(d.id, !d.assignee_allow_upward)} />
-            </div>
-          </div>
-        ))}
-        {view.departments.length === 0 && <p className="text-xs text-[#94A3B8] py-2">No departments configured.</p>}
+          )
+        })}
+        {depts.length === 0 && <p className="text-xs text-[#94A3B8] py-2">No departments configured.</p>}
       </div>
     </Card>
   )
@@ -436,7 +489,7 @@ function UnifySection({ orgId, view, onChange, apiError }: { orgId: string; view
   const plural = (n: number) => `${n} sub-department${n === 1 ? '' : 's'}`
 
   return (
-    <Card title="Treat sub-departments as one" description="Turn a department on to merge it with everything beneath it into one pool — everyone in the sub-tree can assign to everyone else. Sub-departments are then covered automatically (shown locked under the one you switched on).">
+    <Card title="Merge a department with its sub-departments" description="Turn a department on to merge it with everything beneath it into one pool — everyone in the sub-tree can assign to everyone else. Sub-departments are then covered automatically (shown locked under the one you switched on).">
       {depts.length === 0 ? (
         <p className="text-xs text-[#94A3B8] py-1">No departments configured.</p>
       ) : !anyParent ? (
@@ -577,7 +630,7 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
   }
 
   return (
-    <Card title="Cross-department bridges" description="Let one department assign into another. One-directional by default — turn on “Both ways” on an entry to also open the reverse (B → A).">
+    <Card title="Cross-department assignment" description="Let one department assign into another. One-directional by default — turn on “Both ways” on an entry to also open the reverse (B → A).">
       <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2 items-end pt-1">
         <div>
           <label className="block text-xs font-medium text-[#374151] mb-1">From</label>
@@ -660,210 +713,6 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
             </div>
             )
           })}
-        </div>
-      )}
-    </Card>
-  )
-}
-
-// ─── Section: exceptions ─────────────────────────────────────────────────────────
-
-function ExceptionSection({ orgId, view, people, onChange, apiError }: { orgId: string; view: AssigneeVisibilityAdminView; people: Person[]; onChange: () => Promise<void>; apiError: (e: any, f: string) => void }) {
-  const [scope, setScope] = useState<AssigneeExceptionScope>('user')
-  const [kind, setKind] = useState<AssigneeExceptionKind>('widen')
-  const [scopeUserId, setScopeUserId] = useState('')
-  const [scopeRole, setScopeRole] = useState('employee')
-  const [scopeDeptId, setScopeDeptId] = useState('')
-  const [shortlist, setShortlist] = useState<string[]>([])
-  const [adding, setAdding] = useState(false)
-
-  function reset() {
-    setScope('user'); setKind('widen'); setScopeUserId(''); setScopeRole('employee'); setScopeDeptId(''); setShortlist([])
-  }
-
-  async function add() {
-    if (scope === 'user' && !scopeUserId) return
-    if (scope === 'department' && !scopeDeptId) return
-    setAdding(true)
-    try {
-      await tasksApi.createAssigneeException(orgId, {
-        scope,
-        kind,
-        scope_user_id: scope === 'user' ? scopeUserId : undefined,
-        scope_role: scope === 'role' ? scopeRole : undefined,
-        scope_department_id: scope === 'department' ? scopeDeptId : undefined,
-        member_user_ids: kind === 'narrow' ? shortlist : undefined,
-      })
-      reset()
-      await onChange()
-    } catch (e) {
-      apiError(e, 'Could not create exception')
-    } finally {
-      setAdding(false)
-    }
-  }
-  async function remove(id: string) {
-    try {
-      await tasksApi.deleteAssigneeException(orgId, id)
-      await onChange()
-    } catch (e) {
-      apiError(e, 'Could not delete exception')
-    }
-  }
-
-  const scopeLabel = (s: AssigneeVisibilityAdminView['exceptions'][number]) => {
-    if (s.scope === 'user') return s.scope_user_name ?? 'Unknown user'
-    if (s.scope === 'role') return roleLabel(s.scope_role ?? '')
-    return s.scope_department_name ?? 'Unknown dept'
-  }
-
-  return (
-    <Card title="Exceptions" description="Override the default for a specific person, role, or department. Widen = sees everyone (excludes still apply). Narrow = sees only a hand-picked shortlist.">
-      {view.exceptions.length > 0 && (
-        <div className="space-y-2">
-          {view.exceptions.map((e) => (
-            <div key={e.id} className="flex items-start justify-between gap-3 p-3 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC]">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap text-sm">
-                  <span className="text-[11px] font-semibold uppercase tracking-wide text-[#475569] bg-white border border-[#E2E8F0] rounded-full px-2 py-0.5">{e.scope}</span>
-                  <span className="font-medium text-[#0F172A]">{scopeLabel(e)}</span>
-                  <span className={`text-[11px] font-semibold uppercase tracking-wide rounded-full px-2 py-0.5 border ${e.kind === 'widen' ? 'text-[#2563EB] bg-[#EFF6FF] border-[#BFDBFE]' : 'text-[#7C3AED] bg-[#F5F3FF] border-[#DDD6FE]'}`}>{e.kind}</span>
-                </div>
-                {e.kind === 'narrow' && (
-                  <p className="text-xs text-[#475569] mt-1">
-                    Shortlist: {e.members.length ? e.members.map((m) => m.name ?? '—').join(', ') : 'empty (only themselves)'}
-                  </p>
-                )}
-              </div>
-              <button type="button" onClick={() => remove(e.id)} className="p-1.5 rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition-colors shrink-0">
-                <Trash2 size={15} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Add form */}
-      <div className="border border-[#E2E8F0] rounded-[10px] p-4 space-y-3 bg-[#F8FAFC]">
-        <p className="text-sm font-semibold text-[#0F172A]">Add exception</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-1">Applies to</label>
-            <select value={scope} onChange={(e) => setScope(e.target.value as AssigneeExceptionScope)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]">
-              <option value="user">A specific person</option>
-              <option value="role">A role</option>
-              <option value="department">A department</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-1">{scope === 'user' ? 'Person' : scope === 'role' ? 'Role' : 'Department'}</label>
-            {scope === 'user' && (
-              <select value={scopeUserId} onChange={(e) => setScopeUserId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]">
-                <option value="">Select…</option>
-                {people.map((p) => <option key={p.user_id} value={p.user_id}>{p.name}</option>)}
-              </select>
-            )}
-            {scope === 'role' && (
-              <select value={scopeRole} onChange={(e) => setScopeRole(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]">
-                {MEMBER_ROLES.map((r) => <option key={r} value={r}>{roleLabel(r)}</option>)}
-              </select>
-            )}
-            {scope === 'department' && (
-              <select value={scopeDeptId} onChange={(e) => setScopeDeptId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]">
-                <option value="">Select…</option>
-                {view.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            )}
-          </div>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-[#374151] mb-1">Rule</label>
-          <div className="flex gap-2">
-            <Chip label="Widen — sees everyone" active={kind === 'widen'} onClick={() => setKind('widen')} />
-            <Chip label="Narrow — only a shortlist" active={kind === 'narrow'} onClick={() => setKind('narrow')} />
-          </div>
-        </div>
-        {kind === 'narrow' && (
-          <div>
-            <label className="block text-xs font-medium text-[#374151] mb-1">Shortlist (who they can assign to)</label>
-            <UserMultiSelect people={people} selected={shortlist} onToggle={(id) => setShortlist((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))} />
-          </div>
-        )}
-        <button type="button" onClick={add} disabled={adding} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors">
-          {adding ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Add exception
-        </button>
-      </div>
-    </Card>
-  )
-}
-
-// ─── Section: explain / preview ──────────────────────────────────────────────────
-
-const REASON_LABEL: Record<string, string> = {
-  master_override: 'Master override is on',
-  full_visibility: 'On the full-visibility list',
-  exception_narrow: 'Narrow exception (shortlist)',
-  exception_widen: 'Widen exception (everyone)',
-  base_default: 'Base default (department + reports)',
-}
-
-function ExplainSection({ orgId, people }: { orgId: string; people: Person[] }) {
-  const [userId, setUserId] = useState('')
-  const [result, setResult] = useState<AssigneeExplainResult | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  async function run(id: string) {
-    setUserId(id)
-    setResult(null)
-    if (!id) return
-    setLoading(true)
-    try {
-      setResult(await tasksApi.explainAssignee(orgId, id))
-    } catch {
-      setResult(null)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <Card title="Preview — who can this person assign to?" description="Pick someone to see their resolved picker and which rule produced it.">
-      <select value={userId} onChange={(e) => run(e.target.value)} className="w-full sm:max-w-xs border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB]">
-        <option value="">Select a person…</option>
-        {people.map((p) => <option key={p.user_id} value={p.user_id}>{p.name}</option>)}
-      </select>
-
-      {loading && <div className="flex items-center gap-2 text-sm text-[#475569]"><Loader2 size={14} className="animate-spin" /> Resolving…</div>}
-
-      {result && (
-        <div className="space-y-3">
-          <div className="flex items-center gap-2 flex-wrap text-sm">
-            <Eye size={15} className="text-[#2563EB]" />
-            <span className="font-medium text-[#0F172A]">Can assign to {result.total} {result.total === 1 ? 'person' : 'people'}</span>
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-full px-2 py-0.5">
-              {REASON_LABEL[result.trace.reason] ?? result.trace.reason}
-            </span>
-          </div>
-          {!!result.trace.bridges_used?.length && (
-            <p className="text-xs text-[#475569]">
-              Includes {result.trace.bridges_used.length} bridge target group{result.trace.bridges_used.length !== 1 ? 's' : ''}
-              {result.trace.bridges_used.some((b) => b.match_count === 0) && (
-                <span className="text-[#B45309]"> — one bridge currently matches 0 people.</span>
-              )}
-            </p>
-          )}
-          {result.trace.direct_manager_included && (
-            <p className="text-xs text-[#475569]">Includes their direct reporting manager (always assignable, even cross-department).</p>
-          )}
-          <div className="border border-[#E2E8F0] rounded-[8px] max-h-56 overflow-y-auto divide-y divide-[#F1F5F9]">
-            {result.users.map((u) => (
-              <div key={u.user_id} className="px-3 py-2 text-sm">
-                <span className="font-medium text-[#0F172A]">{u.name}</span>
-                <span className="text-xs text-[#475569]"> · {u.role_title} · {u.department_name}</span>
-              </div>
-            ))}
-            {result.users.length === 0 && <p className="px-3 py-3 text-xs text-[#94A3B8]">Nobody (only themselves).</p>}
-          </div>
         </div>
       )}
     </Card>

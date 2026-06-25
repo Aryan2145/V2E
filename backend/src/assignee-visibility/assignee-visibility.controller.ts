@@ -22,9 +22,9 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 import { AssigneeVisibilityService } from './assignee-visibility.service';
 import {
   CreateBridgeDto,
-  CreateExceptionDto,
   SetDeptUnifyDto,
   SetDeptUpwardDto,
+  SetEmployeeManualOverrideDto,
   UpdateAssigneeSettingsDto,
 } from './dto/assignee-visibility.dto';
 
@@ -39,7 +39,7 @@ export class AssigneeVisibilityController {
   constructor(private readonly service: AssigneeVisibilityService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Full assignee-visibility config (settings, exceptions, bridges, depts)' })
+  @ApiOperation({ summary: 'Full assignee-visibility config (settings, bridges, depts)' })
   getAdminView(@Param('orgId') orgId: string) {
     return this.service.getAdminView(orgId);
   }
@@ -60,28 +60,6 @@ export class AssigneeVisibilityController {
     @Body() dto: UpdateAssigneeSettingsDto,
   ) {
     return this.service.updateSettings(orgId, req.user.id, dto);
-  }
-
-  @Post('exceptions')
-  @RequirePermission(AV, PermissionAction.write)
-  @ApiOperation({ summary: 'Create a scoped widen/narrow exception' })
-  createException(
-    @Param('orgId') orgId: string,
-    @Request() req: any,
-    @Body() dto: CreateExceptionDto,
-  ) {
-    return this.service.createException(orgId, req.user.id, dto);
-  }
-
-  @Delete('exceptions/:id')
-  @RequirePermission(AV, PermissionAction.delete)
-  @ApiOperation({ summary: 'Delete an exception' })
-  deleteException(
-    @Param('orgId') orgId: string,
-    @Param('id') id: string,
-    @Request() req: any,
-  ) {
-    return this.service.deleteException(orgId, req.user.id, id);
   }
 
   @Post('bridges')
@@ -118,5 +96,22 @@ export class AssigneeVisibilityController {
     @Body() dto: SetDeptUnifyDto,
   ) {
     return this.service.setDepartmentUnify(orgId, req.user.id, dto);
+  }
+
+  @Get('employee-override/:userId')
+  @ApiOperation({ summary: "Read an employee's stored manual override (adds/removes/full-visibility)" })
+  getEmployeeManualOverride(@Param('orgId') orgId: string, @Param('userId') userId: string) {
+    return this.service.getEmployeeManualOverride(orgId, userId);
+  }
+
+  @Patch('employee-override')
+  @RequirePermission(AV, PermissionAction.edit)
+  @ApiOperation({ summary: "Save an employee's manual override (the most-granular layer)" })
+  setEmployeeManualOverride(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Body() dto: SetEmployeeManualOverrideDto,
+  ) {
+    return this.service.setEmployeeManualOverride(orgId, req.user.id, dto);
   }
 }

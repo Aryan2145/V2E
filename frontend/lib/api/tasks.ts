@@ -360,24 +360,6 @@ export const tasksApi = {
     return unwrap(res)
   },
 
-  createAssigneeException: async (
-    orgId: string,
-    dto: {
-      scope: import('@/lib/types/tasks').AssigneeExceptionScope
-      kind: import('@/lib/types/tasks').AssigneeExceptionKind
-      scope_user_id?: string
-      scope_role?: string
-      scope_department_id?: string
-      member_user_ids?: string[]
-    },
-  ): Promise<void> => {
-    await apiClient.post(`${base(orgId)}/masters/assignee-visibility/exceptions`, dto)
-  },
-
-  deleteAssigneeException: async (orgId: string, id: string): Promise<void> => {
-    await apiClient.delete(`${base(orgId)}/masters/assignee-visibility/exceptions/${id}`)
-  },
-
   createAssigneeBridge: async (
     orgId: string,
     dto: {
@@ -415,6 +397,25 @@ export const tasksApi = {
     const res = await apiClient.get(
       `${base(orgId)}/masters/assignee-visibility/explain?userId=${encodeURIComponent(userId)}`,
     )
+    return unwrap(res)
+  },
+
+  // ── Per-employee assignee editor (most-granular layer) ──
+  getEmployeeAssigneePreview: async (
+    orgId: string,
+    userId: string,
+    search?: string,
+  ): Promise<import('@/lib/types/tasks').EmployeeAssigneePreview> => {
+    const qs = search ? `?search=${encodeURIComponent(search)}` : ''
+    const res = await apiClient.get(`${base(orgId)}/eligible-assignees-for/${encodeURIComponent(userId)}${qs}`)
+    return unwrap(res)
+  },
+
+  setEmployeeManualOverride: async (
+    orgId: string,
+    dto: { employee_user_id: string; added_user_ids: string[]; removed_user_ids: string[] },
+  ): Promise<import('@/lib/types/tasks').EmployeeManualOverride> => {
+    const res = await apiClient.patch(`${base(orgId)}/masters/assignee-visibility/employee-override`, dto)
     return unwrap(res)
   },
 }

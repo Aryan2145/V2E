@@ -51,7 +51,6 @@ export const AUDIT_DENYLIST = new Set<string>([
   // Internal counters / join bookkeeping
   'WorkflowRoundRobinTracker',
   'TicketRoundRobinTracker',
-  'AssigneeVisibilityExceptionMember',
 ]);
 
 /** Excluded from every diff — auto-managed or noise. */

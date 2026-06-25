@@ -267,8 +267,8 @@ model Department {
   position_x           Float    @default(0)
   position_y           Float    @default(0)
   // Assignee-visibility: when false, members of this dept can assign to their direct
-  // manager and below, but not above the manager. Default true = no restriction.
-  assignee_allow_upward Boolean @default(true)
+  // manager and below, but not above the manager. Default false = restrictive.
+  assignee_allow_upward Boolean @default(false)
   // Assignee-visibility: when true, this department and ALL its descendant departments
   // are treated as one pool — every member can assign to every other member of the
   // subtree. The flag highest in the chain wins. Default false.
@@ -828,52 +828,9 @@ model LeaveMaster {
 
 // ─── Assignee Visibility (who appears in the assign-to / CC picker) ──────────────
 
-enum AssigneeExceptionScope {
-  user
-  role
-  department
-}
-
-enum AssigneeExceptionKind {
-  widen // sees all active employees (excludes still apply)
-  narrow // sees only the hand-picked shortlist (+ self); excludes do NOT apply
-}
-
 enum BridgeDepth {
   head_senior // target dept head + roles with level senior/lead/head
   whole_dept // everyone in the target dept
-}
-
-// A scoped override of the base default. Most-specific wins: user > role > department.
-// References are plain ids (no FK) — the resolver skips orphans and dept deletion cleans up.
-model AssigneeVisibilityException {
-  id                  String                 @id @default(uuid())
-  organization_id     String
-  scope               AssigneeExceptionScope
-  scope_user_id       String?
-  scope_role          String?
-  scope_department_id String?
-  kind                AssigneeExceptionKind
-  created_by          String?
-  created_at          DateTime               @default(now())
-  updated_at          DateTime               @updatedAt
-
-  members AssigneeVisibilityExceptionMember[]
-
-  @@index([organization_id, scope])
-  @@map("assignee_visibility_exceptions")
-}
-
-// Hand-picked shortlist for a narrowing exception.
-model AssigneeVisibilityExceptionMember {
-  id           String                      @id @default(uuid())
-  exception_id String
-  user_id      String
-  exception    AssigneeVisibilityException @relation(fields: [exception_id], references: [id], onDelete: Cascade)
-
-  @@unique([exception_id, user_id])
-  @@index([exception_id])
-  @@map("assignee_visibility_exception_members")
 }
 
 // One-directional: members of from_department may additionally assign into to_department.
@@ -892,6 +849,25 @@ model AssigneeCrossDeptBridge {
   @@unique([organization_id, from_department_id, to_department_id])
   @@index([organization_id, from_department_id])
   @@map("assignee_cross_dept_bridges")
+}
+
+// The most-granular layer: a per-employee manual override applied on top of the live
+// rules. `full_visibility` makes the employee see everyone; `added`/`removed` are a sticky
+// delta (final = (rule base ∪ added) − removed, self always pinned). A removal persists
+// even if a rule later re-includes the person, until cleared. References are plain ids.
+model EmployeeAssigneeManualOverride {
+  id               String   @id @default(uuid())
+  organization_id  String
+  employee_user_id String
+  added_user_ids   Json     @default("[]")
+  removed_user_ids Json     @default("[]")
+  created_by       String?
+  created_at       DateTime @default(now())
+  updated_at       DateTime @updatedAt
+
+  @@unique([organization_id, employee_user_id])
+  @@index([organization_id])
+  @@map("employee_assignee_manual_overrides")
 }
 
 // Audit trail for every assignee-visibility change.

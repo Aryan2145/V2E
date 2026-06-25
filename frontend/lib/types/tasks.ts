@@ -288,8 +288,6 @@ export interface EligibleAssigneesResponse {
 
 // ─── Assignee Visibility (admin model) ──────────────────────────────────────────
 
-export type AssigneeExceptionScope = 'user' | 'role' | 'department'
-export type AssigneeExceptionKind = 'widen' | 'narrow'
 export type BridgeDepth = 'head_senior' | 'whole_dept'
 
 export interface AssigneeVisibilitySettings {
@@ -297,18 +295,6 @@ export interface AssigneeVisibilitySettings {
   full_visibility_roles: string[]
   full_visibility_users: string[]
   config_roles: string[]
-}
-
-export interface AssigneeException {
-  id: string
-  scope: AssigneeExceptionScope
-  kind: AssigneeExceptionKind
-  scope_user_id: string | null
-  scope_user_name: string | null
-  scope_role: string | null
-  scope_department_id: string | null
-  scope_department_name: string | null
-  members: { user_id: string; name: string | null }[]
 }
 
 export interface AssigneeBridge {
@@ -333,7 +319,6 @@ export interface AssigneeDeptUpward {
 
 export interface AssigneeVisibilityAdminView {
   settings: AssigneeVisibilitySettings
-  exceptions: AssigneeException[]
   bridges: AssigneeBridge[]
   departments: AssigneeDeptUpward[]
 }
@@ -364,4 +349,56 @@ export interface SelectedAssignee {
   user_id: string
   name: string
   is_cc: boolean
+}
+
+// ─── Per-employee assignee editor (most-granular layer) ─────────────────────────
+
+export type AssigneeReason =
+  | 'self'
+  | 'subordinate'
+  | 'direct_manager'
+  | 'department'
+  | 'unified_subtree'
+  | 'bridge'
+  | 'full_visibility'
+  | 'master_override'
+  | 'manual_add'
+
+export interface EmployeeAssigneeUser extends EligibleAssigneeUser {
+  reason: AssigneeReason
+  manually_added: boolean
+}
+
+export interface EmployeeAssigneeGroup {
+  department_id: string
+  department_name: string
+  users: EmployeeAssigneeUser[]
+}
+
+export interface EmployeeManualOverride {
+  employee_user_id: string
+  added_user_ids: string[]
+  removed_user_ids: string[]
+}
+
+export interface EmployeeAssigneeRemoved {
+  user_id: string
+  name: string
+  role_title: string
+  department_id: string
+  department_name: string
+  would_be_reason: AssigneeReason | null
+}
+
+export interface EmployeeAssigneePreview {
+  employee: { user_id: string; name: string; role_title: string; department_id: string; department_name: string }
+  trace: {
+    reason: string
+    manual_added_count?: number
+    manual_removed_count?: number
+  }
+  override: EmployeeManualOverride
+  departments: EmployeeAssigneeGroup[]
+  removed: EmployeeAssigneeRemoved[]
+  total: number
 }

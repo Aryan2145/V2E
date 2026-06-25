@@ -139,12 +139,9 @@ export class DepartmentsService {
     }
 
     // Clean up assignee-visibility rows that reference this department (no FK cascade
-    // on these plain-id columns). Exception members cascade via their FK.
+    // on these plain-id columns).
     await this.prisma.assigneeCrossDeptBridge.deleteMany({
       where: { organization_id: orgId, OR: [{ from_department_id: id }, { to_department_id: id }] },
-    });
-    await this.prisma.assigneeVisibilityException.deleteMany({
-      where: { organization_id: orgId, scope: 'department', scope_department_id: id },
     });
 
     await this.prisma.department.delete({ where: { id } });

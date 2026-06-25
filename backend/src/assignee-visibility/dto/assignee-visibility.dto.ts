@@ -1,8 +1,4 @@
-import {
-  AssigneeExceptionKind,
-  AssigneeExceptionScope,
-  BridgeDepth,
-} from '@prisma/client';
+import { BridgeDepth } from '@prisma/client';
 import {
   ArrayMaxSize,
   IsArray,
@@ -31,32 +27,6 @@ export class UpdateAssigneeSettingsDto {
   @IsArray()
   @IsString({ each: true })
   config_roles?: string[];
-}
-
-export class CreateExceptionDto {
-  @IsEnum(AssigneeExceptionScope)
-  scope: AssigneeExceptionScope;
-
-  @IsOptional()
-  @IsString()
-  scope_user_id?: string;
-
-  @IsOptional()
-  @IsString()
-  scope_role?: string;
-
-  @IsOptional()
-  @IsString()
-  scope_department_id?: string;
-
-  @IsEnum(AssigneeExceptionKind)
-  kind: AssigneeExceptionKind;
-
-  @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  @ArrayMaxSize(500)
-  member_user_ids?: string[];
 }
 
 export class CreateBridgeDto {
@@ -88,4 +58,21 @@ export class SetDeptUnifyDto {
 
   @IsBoolean()
   unify: boolean;
+}
+
+export class SetEmployeeManualOverrideDto {
+  @IsString()
+  employee_user_id: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(2000)
+  added_user_ids?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(2000)
+  removed_user_ids?: string[];
 }

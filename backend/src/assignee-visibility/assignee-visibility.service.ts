@@ -7,9 +7,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { descendantIds, ancestorChain, DeptNode } from '../holidays/dept-tree.util';
 import {
   CreateBridgeDto,
-  CreateExceptionDto,
   SetDeptUnifyDto,
   SetDeptUpwardDto,
+  SetEmployeeManualOverrideDto,
   UpdateAssigneeSettingsDto,
 } from './dto/assignee-visibility.dto';
 
@@ -32,13 +32,6 @@ export interface ProfileLite {
   reporting_to_user_id: string | null;
 }
 
-interface VisException {
-  id: string;
-  scope: 'user' | 'role' | 'department';
-  kind: 'widen' | 'narrow';
-  shortlist: Set<string>;
-}
-
 interface OrgGraph {
   activeUserIds: string[];
   profiles: Map<string, ProfileLite>;
@@ -57,9 +50,8 @@ interface OrgGraph {
     string,
     { to: string; depth: 'head_senior' | 'whole_dept'; includeSub: boolean; reach: Set<string> }[]
   >;
-  excByUser: Map<string, VisException>;
-  excByRole: Map<string, VisException>;
-  excByDept: Map<string, VisException>;
+  // Per-employee manual override (the most-granular layer), keyed by the target employee.
+  manualOverrideOf: Map<string, ManualOverride>;
 }
 
 interface OrgConfig {
@@ -70,16 +62,39 @@ interface OrgConfig {
 }
 
 export interface ResolveTrace {
-  reason:
-    | 'master_override'
-    | 'full_visibility'
-    | 'exception_narrow'
-    | 'exception_widen'
-    | 'base_default';
-  exception_id?: string;
-  exception_scope?: string;
+  reason: 'master_override' | 'full_visibility' | 'base_default';
   bridges_used?: { to_department_id: string; depth: string; match_count: number; include_sub?: boolean }[];
   direct_manager_included?: boolean;
+  // The most-granular per-employee override is applied on top of the above.
+  manual_added_count?: number;
+  manual_removed_count?: number;
+}
+
+// Why a single person ended up in (or was held out of) an employee's resolved pool.
+export type ReasonCode =
+  | 'self'
+  | 'subordinate'
+  | 'direct_manager'
+  | 'department'
+  | 'unified_subtree'
+  | 'bridge'
+  | 'full_visibility'
+  | 'master_override'
+  | 'manual_add';
+
+export interface ManualOverride {
+  added: Set<string>;
+  removed: Set<string>;
+}
+
+export interface ResolveResult {
+  pool: Set<string>;
+  trace: ResolveTrace;
+  // Per-person provenance for every id in `pool` (the strongest rule that included them).
+  provenance: Map<string, ReasonCode>;
+  // People a rule would have included but a manual removal holds out (would_be_reason = null
+  // when they weren't in the rule pool either — a no-op removal kept for transparency).
+  removed: { user_id: string; would_be_reason: ReasonCode | null }[];
 }
 
 /**
@@ -110,66 +125,67 @@ export class AssigneeVisibilityService {
 
   // ─── Public resolution ────────────────────────────────────────────────────────
 
-  async resolve(orgId: string, userId: string): Promise<{ pool: Set<string>; trace: ResolveTrace }> {
+  async resolve(orgId: string, userId: string): Promise<ResolveResult> {
     const [cfg, g] = await Promise.all([this.getConfig(orgId), this.getGraph(orgId)]);
     const all = new Set(g.activeUserIds);
-
-    // 1 — master override
-    if (cfg.masterOverride) {
-      all.add(userId);
-      return { pool: all, trace: { reason: 'master_override' } };
-    }
-
-    // 2 — full-visibility list
-    const memberRole = g.memberRoleOf.get(userId) ?? null;
-    if ((memberRole && cfg.fullVisRoles.includes(memberRole)) || cfg.fullVisUsers.includes(userId)) {
-      all.add(userId);
-      return { pool: all, trace: { reason: 'full_visibility' } };
-    }
-
-    // 3 — governing exception (most specific wins)
-    const deptId = g.deptOf.get(userId) ?? null;
-    const exc =
-      g.excByUser.get(userId) ??
-      (memberRole ? g.excByRole.get(memberRole) : undefined) ??
-      (deptId ? g.excByDept.get(deptId) : undefined);
-
-    if (exc?.kind === 'narrow') {
-      const pool = new Set<string>();
-      for (const id of exc.shortlist) if (all.has(id)) pool.add(id);
-      pool.add(userId);
-      return {
-        pool,
-        trace: { reason: 'exception_narrow', exception_id: exc.id, exception_scope: exc.scope },
-      };
-    }
-
-    let base: Set<string>;
+    const pool = new Set<string>();
+    const provenance = new Map<string, ReasonCode>();
     const trace: ResolveTrace = { reason: 'base_default' };
-    if (exc?.kind === 'widen') {
-      base = new Set(all);
-      trace.reason = 'exception_widen';
-      trace.exception_id = exc.id;
-      trace.exception_scope = exc.scope;
+    // First reason wins — branches below run in priority order, so a stronger reason is
+    // never clobbered by a weaker one.
+    const mark = (id: string, reason: ReasonCode) => {
+      pool.add(id);
+      if (!provenance.has(id)) provenance.set(id, reason);
+    };
+
+    // ── Rule pool (the live base, identical precedence to before) ──────────────────
+    const memberRole = g.memberRoleOf.get(userId) ?? null;
+    const deptId = g.deptOf.get(userId) ?? null;
+    if (cfg.masterOverride) {
+      // 1 — master override
+      all.forEach((id) => mark(id, 'master_override'));
+      trace.reason = 'master_override';
+    } else if ((memberRole && cfg.fullVisRoles.includes(memberRole)) || cfg.fullVisUsers.includes(userId)) {
+      // 2 — full-visibility list
+      all.forEach((id) => mark(id, 'full_visibility'));
+      trace.reason = 'full_visibility';
     } else {
-      base = this.computeBaseDefault(g, userId, deptId);
-      // 4 — direct reporting manager is folded into the base default above
-      if ((g.directManagerOf.get(userId) ?? null)) trace.direct_manager_included = true;
-      // 5 — cross-department bridges from this user's department (reach is precomputed,
-      // and already includes descendant departments when the bridge cascades).
-      const bridgesUsed: { to_department_id: string; depth: string; match_count: number; include_sub?: boolean }[] = [];
-      if (deptId) {
-        for (const b of g.bridgesFrom.get(deptId) ?? []) {
-          b.reach.forEach((id) => base.add(id));
-          bridgesUsed.push({ to_department_id: b.to, depth: b.depth, match_count: b.reach.size, include_sub: b.includeSub });
+      // 3 — base default (hierarchy + department ± upward, unify, bridges)
+      this.markBaseDefault(g, userId, deptId, mark, trace);
+    }
+
+    // self always assignable (and labelled as such).
+    pool.add(userId);
+    provenance.set(userId, 'self');
+
+    // ── Most-granular layer: per-employee manual override (wins over everything) ────
+    const removed: { user_id: string; would_be_reason: ReasonCode | null }[] = [];
+    const ov = g.manualOverrideOf.get(userId);
+    if (ov) {
+      let added = 0;
+      for (const id of ov.added) {
+        if (!all.has(id)) continue;
+        if (!pool.has(id)) mark(id, 'manual_add');
+        added++;
+      }
+      let removedCount = 0;
+      for (const id of ov.removed) {
+        if (id === userId) continue; // self can never be removed
+        if (pool.has(id)) {
+          removed.push({ user_id: id, would_be_reason: provenance.get(id) ?? null });
+          pool.delete(id);
+          provenance.delete(id);
+          removedCount++;
+        } else if (all.has(id)) {
+          removed.push({ user_id: id, would_be_reason: null });
+          removedCount++;
         }
       }
-      if (bridgesUsed.length) trace.bridges_used = bridgesUsed;
+      if (added) trace.manual_added_count = added;
+      if (removedCount) trace.manual_removed_count = removedCount;
     }
 
-    // 6 — self always assignable (the base default already includes it; guard anyway).
-    base.add(userId);
-    return { pool: base, trace };
+    return { pool, trace, provenance, removed };
   }
 
   /** Profile data for the org (active employees) — used to render picker items / explain. */
@@ -225,29 +241,37 @@ export class AssigneeVisibilityService {
 
   // ─── Base default (Hierarchy + Department, ± upward switch) ──────────────────────
 
-  private computeBaseDefault(g: OrgGraph, userId: string, deptId: string | null): Set<string> {
-    const s = new Set<string>([userId]);
-    for (const sub of this.getSubordinates(g, userId)) s.add(sub);
+  private markBaseDefault(
+    g: OrgGraph,
+    userId: string,
+    deptId: string | null,
+    mark: (id: string, reason: ReasonCode) => void,
+    trace: ResolveTrace,
+  ): void {
+    mark(userId, 'self');
+    for (const sub of this.getSubordinates(g, userId)) mark(sub, 'subordinate');
 
     // Your direct reporting manager is always assignable, even when they sit in a
     // different (e.g. parent) department — you fundamentally report to them. The
     // own-department + upward rules below only ever reach managers inside your own
     // department, so without this a cross-department manager would be invisible.
     const directManager = g.directManagerOf.get(userId) ?? null;
-    if (directManager) s.add(directManager);
+    if (directManager) {
+      mark(directManager, 'direct_manager');
+      trace.direct_manager_included = true;
+    }
 
     if (deptId) {
       const members = g.deptMembers.get(deptId) ?? new Set<string>();
-      const allowUpward = g.deptAllowUpward.get(deptId) ?? true;
+      const allowUpward = g.deptAllowUpward.get(deptId) ?? false;
       if (allowUpward) {
-        members.forEach((id) => s.add(id));
+        members.forEach((id) => mark(id, 'department'));
       } else {
         // Keep the direct manager; drop ancestors strictly above the manager.
-        const directManager = g.directManagerOf.get(userId) ?? null;
         const ancestors = this.getAncestors(g, userId);
         members.forEach((id) => {
           if (ancestors.has(id) && id !== directManager) return;
-          s.add(id);
+          mark(id, 'department');
         });
       }
 
@@ -255,9 +279,17 @@ export class AssigneeVisibilityService {
       // that subtree assigns to everyone (one big department) — added on top, bypassing
       // the upward switch within the pool.
       const unify = g.unifyPoolOf.get(deptId);
-      if (unify) unify.forEach((id) => s.add(id));
+      if (unify) unify.forEach((id) => mark(id, 'unified_subtree'));
+
+      // Cross-department bridges from this user's department (reach is precomputed, and
+      // already includes descendant departments when the bridge cascades).
+      const bridgesUsed: { to_department_id: string; depth: string; match_count: number; include_sub?: boolean }[] = [];
+      for (const b of g.bridgesFrom.get(deptId) ?? []) {
+        b.reach.forEach((id) => mark(id, 'bridge'));
+        bridgesUsed.push({ to_department_id: b.to, depth: b.depth, match_count: b.reach.size, include_sub: b.includeSub });
+      }
+      if (bridgesUsed.length) trace.bridges_used = bridgesUsed;
     }
-    return s;
   }
 
   private getSubordinates(g: OrgGraph, userId: string): Set<string> {
@@ -306,7 +338,7 @@ export class AssigneeVisibilityService {
     const cached = this.graphCache.get(orgId);
     if (cached && cached.expires > Date.now()) return cached.value;
 
-    const [profiles, departments, members, bridges, exceptions] = await Promise.all([
+    const [profiles, departments, members, bridges, overrides] = await Promise.all([
       this.prisma.employeeProfile.findMany({
         where: { organization_id: orgId, status: 'active' },
         include: {
@@ -330,9 +362,8 @@ export class AssigneeVisibilityService {
         select: { user_id: true, is_admin: true },
       }),
       this.prisma.assigneeCrossDeptBridge.findMany({ where: { organization_id: orgId } }),
-      this.prisma.assigneeVisibilityException.findMany({
+      this.prisma.employeeAssigneeManualOverride.findMany({
         where: { organization_id: orgId },
-        include: { members: { select: { user_id: true } } },
       }),
     ]);
 
@@ -435,19 +466,13 @@ export class AssigneeVisibilityService {
       }
     }
 
-    const excByUser = new Map<string, VisException>();
-    const excByRole = new Map<string, VisException>();
-    const excByDept = new Map<string, VisException>();
-    for (const e of exceptions) {
-      const v: VisException = {
-        id: e.id,
-        scope: e.scope as VisException['scope'],
-        kind: e.kind as VisException['kind'],
-        shortlist: new Set(e.members.map((m) => m.user_id)),
-      };
-      if (e.scope === 'user' && e.scope_user_id) excByUser.set(e.scope_user_id, v);
-      else if (e.scope === 'role' && e.scope_role) excByRole.set(e.scope_role, v);
-      else if (e.scope === 'department' && e.scope_department_id) excByDept.set(e.scope_department_id, v);
+    const asIds = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
+    const manualOverrideOf = new Map<string, ManualOverride>();
+    for (const o of overrides) {
+      manualOverrideOf.set(o.employee_user_id, {
+        added: new Set(asIds(o.added_user_ids)),
+        removed: new Set(asIds(o.removed_user_ids)),
+      });
     }
 
     const value: OrgGraph = {
@@ -462,9 +487,7 @@ export class AssigneeVisibilityService {
       deptAllowUpward,
       unifyPoolOf,
       bridgesFrom,
-      excByUser,
-      excByRole,
-      excByDept,
+      manualOverrideOf,
     };
     this.graphCache.set(orgId, { value, expires: Date.now() + GRAPH_TTL_MS });
     return value;
@@ -506,12 +529,7 @@ export class AssigneeVisibilityService {
   /** Full admin view for the masters UI. */
   async getAdminView(orgId: string) {
     const tm = await this.ensureMaster(orgId);
-    const [exceptions, bridges, departments, g] = await Promise.all([
-      this.prisma.assigneeVisibilityException.findMany({
-        where: { organization_id: orgId },
-        include: { members: { select: { user_id: true } } },
-        orderBy: { created_at: 'desc' },
-      }),
+    const [bridges, departments, g] = await Promise.all([
       this.prisma.assigneeCrossDeptBridge.findMany({
         where: { organization_id: orgId },
         orderBy: { created_at: 'desc' },
@@ -530,7 +548,6 @@ export class AssigneeVisibilityService {
       }),
       this.getGraph(orgId),
     ]);
-    const nameOf = (id: string) => g.profiles.get(id)?.name ?? null;
     const deptName = new Map(departments.map((d) => [d.id, d.name]));
     const deptNodes: DeptNode[] = departments.map((d) => ({
       id: d.id,
@@ -554,19 +571,6 @@ export class AssigneeVisibilityService {
         full_visibility_users: tm.assignee_full_visibility_users,
         config_roles: tm.assignee_visibility_config_roles,
       },
-      exceptions: exceptions.map((e) => ({
-        id: e.id,
-        scope: e.scope,
-        kind: e.kind,
-        scope_user_id: e.scope_user_id,
-        scope_user_name: e.scope_user_id ? nameOf(e.scope_user_id) : null,
-        scope_role: e.scope_role,
-        scope_department_id: e.scope_department_id,
-        scope_department_name: e.scope_department_id
-          ? deptName.get(e.scope_department_id) ?? null
-          : null,
-        members: e.members.map((m) => ({ user_id: m.user_id, name: nameOf(m.user_id) })),
-      })),
       bridges: bridges.map((b) => ({
         id: b.id,
         from_department_id: b.from_department_id,
@@ -611,46 +615,6 @@ export class AssigneeVisibilityService {
       after: subset(updated),
     });
     return subset(updated);
-  }
-
-  async createException(orgId: string, actorUserId: string, dto: CreateExceptionDto) {
-    if (dto.scope === 'user' && !dto.scope_user_id)
-      throw new BadRequestException('scope_user_id is required for a user-scoped exception');
-    if (dto.scope === 'role' && !dto.scope_role)
-      throw new BadRequestException('scope_role is required for a role-scoped exception');
-    if (dto.scope === 'department' && !dto.scope_department_id)
-      throw new BadRequestException('scope_department_id is required for a department-scoped exception');
-    const members = dto.kind === 'narrow' ? [...new Set(dto.member_user_ids ?? [])] : [];
-    const created = await this.prisma.assigneeVisibilityException.create({
-      data: {
-        organization_id: orgId,
-        scope: dto.scope,
-        kind: dto.kind,
-        scope_user_id: dto.scope === 'user' ? dto.scope_user_id : null,
-        scope_role: dto.scope === 'role' ? dto.scope_role : null,
-        scope_department_id: dto.scope === 'department' ? dto.scope_department_id : null,
-        created_by: actorUserId,
-        members: { create: members.map((uid) => ({ user_id: uid })) },
-      },
-      include: { members: { select: { user_id: true } } },
-    });
-    this.invalidate(orgId);
-    await this.audit(orgId, actorUserId, 'exception_created', {
-      target: { id: created.id },
-      after: dto as unknown,
-    });
-    return created;
-  }
-
-  async deleteException(orgId: string, actorUserId: string, id: string) {
-    const exc = await this.prisma.assigneeVisibilityException.findFirst({
-      where: { id, organization_id: orgId },
-    });
-    if (!exc) throw new NotFoundException('Exception not found');
-    await this.prisma.assigneeVisibilityException.delete({ where: { id } }); // members cascade
-    this.invalidate(orgId);
-    await this.audit(orgId, actorUserId, 'exception_deleted', { target: { id }, before: exc as unknown });
-    return { ok: true };
   }
 
   async createBridge(orgId: string, actorUserId: string, dto: CreateBridgeDto) {
@@ -733,5 +697,61 @@ export class AssigneeVisibilityService {
       after: { unify: dto.unify },
     });
     return { id: updated.id, assignee_unify_subtree: updated.assignee_unify_subtree };
+  }
+
+  // ─── Admin: per-employee manual override (the most-granular layer) ────────────────
+
+  /** The stored manual override for an employee (defaults when none exists yet). */
+  async getEmployeeManualOverride(orgId: string, employeeUserId: string) {
+    const row = await this.prisma.employeeAssigneeManualOverride.findUnique({
+      where: { organization_id_employee_user_id: { organization_id: orgId, employee_user_id: employeeUserId } },
+    });
+    const asIds = (v: unknown): string[] => (Array.isArray(v) ? (v as string[]) : []);
+    return {
+      employee_user_id: employeeUserId,
+      added_user_ids: asIds(row?.added_user_ids),
+      removed_user_ids: asIds(row?.removed_user_ids),
+    };
+  }
+
+  async setEmployeeManualOverride(orgId: string, actorUserId: string, dto: SetEmployeeManualOverrideDto) {
+    const exists = await this.prisma.employeeProfile.findFirst({
+      where: { organization_id: orgId, user_id: dto.employee_user_id },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('Employee not found in this organization');
+
+    const added = [...new Set(dto.added_user_ids ?? [])].filter((id) => id !== dto.employee_user_id);
+    // A person cannot be both added and removed; an explicit removal wins.
+    const removed = [...new Set(dto.removed_user_ids ?? [])].filter(
+      (id) => id !== dto.employee_user_id && !added.includes(id),
+    );
+
+    const before = await this.getEmployeeManualOverride(orgId, dto.employee_user_id);
+    const updated = await this.prisma.employeeAssigneeManualOverride.upsert({
+      where: { organization_id_employee_user_id: { organization_id: orgId, employee_user_id: dto.employee_user_id } },
+      create: {
+        organization_id: orgId,
+        employee_user_id: dto.employee_user_id,
+        added_user_ids: added as never,
+        removed_user_ids: removed as never,
+        created_by: actorUserId,
+      },
+      update: {
+        added_user_ids: added as never,
+        removed_user_ids: removed as never,
+      },
+    });
+    this.invalidate(orgId);
+    await this.audit(orgId, actorUserId, 'employee_manual_override_changed', {
+      target: { employee_user_id: dto.employee_user_id },
+      before,
+      after: { employee_user_id: dto.employee_user_id, added_user_ids: added, removed_user_ids: removed },
+    });
+    return {
+      employee_user_id: updated.employee_user_id,
+      added_user_ids: added,
+      removed_user_ids: removed,
+    };
   }
 }

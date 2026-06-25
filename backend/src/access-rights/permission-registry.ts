@@ -136,7 +136,7 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
           feature('tasks.config.checklist_templates.manage', 'Checklist templates', A_MANAGE,
             'Create, edit and delete task checklist templates'),
           feature('tasks.config.assignee_visibility.manage', 'Assignee visibility', A_MANAGE,
-            'Configure who each user can assign tasks to (overrides, exceptions, bridges, department switches)'),
+            'Configure who each user can assign tasks to (per-employee edits, bridges, department switches)'),
         ],
       },
     ],

@@ -76,6 +76,16 @@ export class TasksController {
     return this.service.getEligibleAssignees(orgId, req.user.id, search, sort ?? 'frequency');
   }
 
+  @Get('eligible-assignees-for/:userId')
+  @ApiOperation({ summary: "Admin preview: a given employee's resolved assignees with per-person reasons" })
+  getEmployeeAssigneePreview(
+    @Param('orgId') orgId: string,
+    @Param('userId') userId: string,
+    @Query('search') search?: string,
+  ) {
+    return this.service.getEmployeeAssigneePreview(orgId, userId, search);
+  }
+
   @Get('archive')
   @ApiOperation({ summary: 'Get archived (deleted) tasks' })
   getArchive(@Param('orgId') orgId: string, @Request() req: any) {
