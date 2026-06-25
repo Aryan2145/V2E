@@ -63,4 +63,8 @@ export class CreateChecklistTemplateDto {
   @ValidateNested({ each: true })
   @Type(() => AccessRuleDto)
   access_rules?: AccessRuleDto[];
+
+  @IsOptional()
+  @IsBoolean()
+  is_active?: boolean;
 }

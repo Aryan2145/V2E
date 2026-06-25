@@ -13,6 +13,11 @@ import type {
   TaskArchiveItem,
   ChecklistTemplate,
   ChecklistTemplateInput,
+  BulkImportChecklistRow,
+  ChecklistImportValidationResult,
+  ChecklistImportResult,
+  ChecklistImportBatchSummary,
+  ChecklistUndoImportResult,
   TaskReportData,
   CollectiveOrgTasks,
 } from '@/lib/types/tasks'
@@ -131,6 +136,28 @@ export const tasksApi = {
 
   deleteChecklistTemplate: async (orgId: string, id: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/masters/checklist-templates/${id}`)
+  },
+
+  // ── Checklist template bulk import ─────────────────────────────────────────────
+
+  validateChecklistImport: async (orgId: string, rows: BulkImportChecklistRow[]): Promise<ChecklistImportValidationResult> => {
+    const res = await apiClient.post(`${base(orgId)}/masters/checklist-templates/bulk-import/validate`, { rows })
+    return unwrap<ChecklistImportValidationResult>(res)
+  },
+
+  commitChecklistImport: async (orgId: string, rows: BulkImportChecklistRow[], fileName?: string): Promise<ChecklistImportResult> => {
+    const res = await apiClient.post(`${base(orgId)}/masters/checklist-templates/bulk-import/commit`, { rows, file_name: fileName })
+    return unwrap<ChecklistImportResult>(res)
+  },
+
+  listChecklistImportBatches: async (orgId: string): Promise<ChecklistImportBatchSummary[]> => {
+    const res = await apiClient.get(`${base(orgId)}/masters/checklist-templates/imports`)
+    return unwrap<ChecklistImportBatchSummary[]>(res)
+  },
+
+  undoChecklistImport: async (orgId: string, batchId: string): Promise<ChecklistUndoImportResult> => {
+    const res = await apiClient.post(`${base(orgId)}/masters/checklist-templates/imports/${batchId}/undo`, {})
+    return unwrap<ChecklistUndoImportResult>(res)
   },
 
   // ── Tasks ────────────────────────────────────────────────────────────────────

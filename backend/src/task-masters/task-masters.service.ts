@@ -373,6 +373,7 @@ export class TaskMastersService {
           name: dto.name,
           items: (dto.items ?? []) as any,
           access_mode: mode,
+          is_active: dto.is_active ?? true,
         },
       });
       if (mode === 'restricted') {
@@ -395,6 +396,7 @@ export class TaskMastersService {
           ...(dto.name !== undefined && { name: dto.name }),
           ...(dto.items !== undefined && { items: dto.items as any }),
           ...(dto.access_mode !== undefined && { access_mode: dto.access_mode }),
+          ...(dto.is_active !== undefined && { is_active: dto.is_active }),
         },
       });
       // Replace-all access rules whenever access_mode or access_rules are supplied.

@@ -30,9 +30,10 @@ import type {
   TicketStatusType,
   TicketTemplateType,
 } from '@/lib/types/tickets'
-import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown, ArrowLeft } from 'lucide-react'
+import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown, ArrowLeft, Upload } from 'lucide-react'
 import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
 import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
+import ImportChecklistsModal from '@/components/tasks/ImportChecklistsModal'
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -538,6 +539,8 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
   const [departments, setDepartments] = useState<Department[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
+  const [showImport, setShowImport] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
   const itemRefs = useRef<(HTMLInputElement | null)[]>([])
   const undoStack = useRef<string[][]>([])
   const itemsRef = useRef(templateItems)
@@ -598,13 +601,25 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
     })
   }
 
+  const reloadTemplates = useCallback(() => {
+    return tasksApi.getChecklistTemplates(orgId).then(setItems).catch(() => setItems([]))
+  }, [orgId])
+
   useEffect(() => {
     setLoading(true)
-    tasksApi.getChecklistTemplates(orgId).then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
+    reloadTemplates().finally(() => setLoading(false))
     getDepartments(orgId).then(setDepartments).catch(() => setDepartments([]))
     getRoles(orgId).then(setRoles).catch(() => setRoles([]))
     getEmployees(orgId).then(setEmployees).catch(() => setEmployees([]))
-  }, [orgId])
+  }, [orgId, reloadTemplates])
+
+  async function toggleActive(t: ChecklistTemplate) {
+    setTogglingId(t.id)
+    try {
+      const updated = await tasksApi.updateChecklistTemplate(orgId, t.id, { is_active: !t.is_active })
+      setItems((prev) => prev.map((x) => (x.id === t.id ? updated : x)))
+    } catch { /* ignore */ } finally { setTogglingId(null) }
+  }
 
   function resetForm() {
     setTemplateName(''); setTemplateItems(['']); setAccessMode('everyone'); setAccessRules([])
@@ -766,19 +781,30 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
 
   return (
     <div className="space-y-4">
+      {showImport && (
+        <ImportChecklistsModal
+          orgId={orgId}
+          onClose={() => setShowImport(false)}
+          onImported={reloadTemplates}
+        />
+      )}
       <div className="flex items-center justify-between">
         <p className="text-sm text-[#475569]">{items.length} template{items.length !== 1 ? 's' : ''}</p>
-        <button onClick={openCreate} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Template</button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowImport(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"><Upload size={14} /> Import Checklists</button>
+          <button onClick={openCreate} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Template</button>
+        </div>
       </div>
       {items.length === 0 && <div className="text-center py-12 text-[#475569] text-sm">No checklist templates yet.</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 items-start">
         {items.map((t) => {
           const count = (t.items ?? []).length
           const restricted = (t.access_mode ?? 'everyone') === 'restricted'
+          const active = t.is_active
           return (
-            <div key={t.id} className="bg-white border border-[#E2E8F0] rounded-[10px] p-4 hover:border-[#CBD5E1] hover:shadow-[0_1px_3px_rgba(0,0,0,0.08)] transition-all">
+            <div key={t.id} className={['bg-white border rounded-[10px] p-4 hover:shadow-[0_1px_3px_rgba(0,0,0,0.08)] transition-all', active ? 'border-[#E2E8F0] hover:border-[#CBD5E1]' : 'border-dashed border-[#CBD5E1] bg-[#F8FAFC]'].join(' ')}>
               <div className="flex items-start justify-between gap-2 mb-3">
-                <p className="text-sm font-semibold text-[#0F172A] leading-snug">{t.name}</p>
+                <p className={['text-sm font-semibold leading-snug', active ? 'text-[#0F172A]' : 'text-[#64748B]'].join(' ')}>{t.name}</p>
                 <div className="flex items-center gap-1 shrink-0">
                   <button onClick={() => openEdit(t)} aria-label="Edit" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"><Pencil size={13} /></button>
                   <button onClick={() => handleDelete(t.id)} aria-label="Delete" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"><Trash2 size={13} /></button>
@@ -792,9 +818,17 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
                   </div>
                 ))}
               </div>
-              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#F1F5F9]">
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#F1F5F9] flex-wrap">
                 <span className="text-[11px] font-medium rounded-[999px] px-2 py-0.5 bg-[#EFF6FF] text-[#2563EB]">{count} item{count !== 1 ? 's' : ''}</span>
                 <span className={['text-[11px] font-medium rounded-[999px] px-2 py-0.5', restricted ? 'bg-[#FEF3C7] text-[#B45309]' : 'bg-[#F1F5F9] text-[#475569]'].join(' ')}>{accessSummary(t)}</span>
+                <span className={['text-[11px] font-medium rounded-[999px] px-2 py-0.5', active ? 'bg-[#DCFCE7] text-[#166534]' : 'bg-[#F1F5F9] text-[#64748B]'].join(' ')}>{active ? 'Active' : 'Inactive'}</span>
+                <button
+                  onClick={() => toggleActive(t)}
+                  disabled={togglingId === t.id}
+                  className={['ml-auto text-[12px] font-semibold rounded-[6px] px-2.5 py-1 transition-colors disabled:opacity-60', active ? 'text-[#475569] bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9]' : 'text-white bg-[#16A34A] hover:bg-[#15803D]'].join(' ')}
+                >
+                  {togglingId === t.id ? '…' : active ? 'Deactivate' : 'Activate'}
+                </button>
               </div>
             </div>
           )

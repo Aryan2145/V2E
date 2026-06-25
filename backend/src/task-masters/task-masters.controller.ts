@@ -18,6 +18,8 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { TaskMastersService } from './task-masters.service';
 import { ChecklistAccessService } from './checklist-access.service';
+import { ChecklistImportService } from './checklist-import.service';
+import { BulkImportChecklistsDto } from './dto/bulk-import-checklist.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreatePriorityDto } from './dto/create-priority.dto';
@@ -32,6 +34,7 @@ export class TaskMastersController {
   constructor(
     private readonly service: TaskMastersService,
     private readonly checklistAccess: ChecklistAccessService,
+    private readonly checklistImport: ChecklistImportService,
   ) {}
 
   // ─── Config ─────────────────────────────────────────────────────────────────
@@ -197,6 +200,35 @@ export class TaskMastersController {
   @ApiOperation({ summary: 'List checklist templates the current user may use when creating a task' })
   listAccessibleTemplates(@Param('orgId') orgId: string, @Request() req: any) {
     return this.checklistAccess.listAccessibleTemplates(orgId, req.user.id);
+  }
+
+  // ── Bulk import (validate → commit → history → undo) ──
+  @Post('checklist-templates/bulk-import/validate')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Dry-run: validate checklist import rows (no writes)' })
+  validateImport(@Param('orgId') orgId: string, @Body() dto: BulkImportChecklistsDto) {
+    return this.checklistImport.validateImport(orgId, dto.rows);
+  }
+
+  @Post('checklist-templates/bulk-import/commit')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Commit a checklist import — creates inactive templates, records an undoable batch' })
+  commitImport(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: BulkImportChecklistsDto) {
+    return this.checklistImport.commitImport(orgId, req.user.id, dto.rows, dto.file_name);
+  }
+
+  @Get('checklist-templates/imports')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Checklist import history — past batches with undo eligibility' })
+  listImports(@Param('orgId') orgId: string) {
+    return this.checklistImport.listImportBatches(orgId);
+  }
+
+  @Post('checklist-templates/imports/:batchId/undo')
+  @RequirePermission('tasks.config.checklist_templates.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Undo a checklist import batch (deletes still-inactive imported templates)' })
+  undoImport(@Param('orgId') orgId: string, @Param('batchId') batchId: string) {
+    return this.checklistImport.undoImport(orgId, batchId);
   }
 
   @Post('checklist-templates')

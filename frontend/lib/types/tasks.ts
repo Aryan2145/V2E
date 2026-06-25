@@ -212,6 +212,7 @@ export interface ChecklistTemplate {
   items: { title: string; order_index: number }[]
   access_mode: ChecklistAccessMode
   access_rules: ChecklistAccessRule[]
+  is_active: boolean
   created_at: string
 }
 
@@ -228,6 +229,84 @@ export interface ChecklistTemplateInput {
   items: { title: string; order_index: number }[]
   access_mode?: ChecklistAccessMode
   access_rules?: ChecklistAccessRuleInput[]
+  is_active?: boolean
+}
+
+// ─── Checklist bulk import ──────────────────────────────────────────────────────
+
+export interface BulkImportChecklistRow {
+  checklist_name?: string
+  item?: string
+}
+
+export interface ChecklistImportRowIssue {
+  field?: string
+  message: string
+  severity: 'error' | 'warning'
+}
+
+export interface ChecklistImportRow {
+  row: number
+  checklist_name: string
+  item: string
+  status: 'ready' | 'error'
+  issues: ChecklistImportRowIssue[]
+}
+
+export interface ChecklistImportGroup {
+  name: string
+  items: string[]
+  already_exists: boolean
+}
+
+export interface ChecklistImportValidationResult {
+  total: number
+  ready: number
+  errors: number
+  warnings: number
+  templates: number
+  rows: ChecklistImportRow[]
+  groups: ChecklistImportGroup[]
+}
+
+export interface ChecklistImportGroupResult {
+  name: string
+  item_count: number
+  status: 'created' | 'failed'
+  error?: string
+}
+
+export interface ChecklistImportResult {
+  batch_id: string | null
+  created: number
+  failed: number
+  results: ChecklistImportGroupResult[]
+}
+
+export interface ChecklistUndoKeptRow {
+  name: string
+  reason: string
+}
+
+export interface ChecklistUndoImportResult {
+  batch_id: string
+  undone: number
+  kept: ChecklistUndoKeptRow[]
+  status: 'committed' | 'undone' | 'partially_undone'
+}
+
+export interface ChecklistImportBatchSummary {
+  id: string
+  file_name: string | null
+  imported_by: string
+  total_rows: number
+  created_count: number
+  failed_count: number
+  remaining: number
+  status: 'committed' | 'undone' | 'partially_undone'
+  can_undo: boolean
+  created_at: string
+  undone_at: string | null
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

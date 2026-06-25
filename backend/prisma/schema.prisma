@@ -1019,12 +1019,38 @@ model TaskChecklistTemplate {
   created_by_user_id String
   items              Json                @default("[]")
   access_mode        ChecklistAccessMode @default(everyone)
+  is_active          Boolean             @default(true)
+  import_batch_id    String? // set when created via bulk import; enables guarded undo
   created_at         DateTime            @default(now())
   updated_at         DateTime            @updatedAt
 
   access_rules ChecklistTemplateAccessRule[]
+  import_batch ChecklistTemplateImportBatch? @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
 
+  @@index([import_batch_id])
   @@map("task_checklist_templates")
+}
+
+// One bulk-import run of checklist templates. Kept for Import History; `status`
+// flips when undone. Undo deletes the batch's still-inactive templates and keeps
+// any the user has since activated (see ChecklistImportService.undoImport).
+model ChecklistTemplateImportBatch {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  imported_by_user_id String
+  file_name           String?
+  total_rows          Int // checklist groups submitted for commit
+  created_count       Int // templates actually created
+  failed_count        Int // groups rejected at commit time
+  status              ImportBatchStatus @default(committed)
+  undo_summary        Json? // { undone: number, kept: [{ name, reason }] }
+  created_at          DateTime          @default(now())
+  undone_at           DateTime?
+
+  templates TaskChecklistTemplate[]
+
+  @@index([organization_id])
+  @@map("checklist_template_import_batches")
 }
 
 enum ChecklistAccessMode {

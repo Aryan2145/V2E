@@ -56,7 +56,7 @@ export class ChecklistAccessService {
   /** Templates the user may pick when creating a task. */
   async listAccessibleTemplates(orgId: string, userId: string) {
     const templates = await this.prisma.taskChecklistTemplate.findMany({
-      where: { organization_id: orgId },
+      where: { organization_id: orgId, is_active: true },
       orderBy: { created_at: 'asc' },
       include: { access_rules: true },
     });
@@ -74,7 +74,7 @@ export class ChecklistAccessService {
   /** Whether a single template is usable by the user (enforcement gate). */
   async isAccessible(orgId: string, userId: string, templateId: string): Promise<boolean> {
     const template = await this.prisma.taskChecklistTemplate.findFirst({
-      where: { id: templateId, organization_id: orgId },
+      where: { id: templateId, organization_id: orgId, is_active: true },
       include: { access_rules: true },
     });
     if (!template) return false;
