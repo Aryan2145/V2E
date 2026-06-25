@@ -176,9 +176,10 @@ async function seedOrgDefaults(orgId: string, coName: string) {
   }
   if ((await prisma.taskStatus.count({ where: { organization_id: orgId } })) === 0) {
     await prisma.taskStatus.createMany({ data: [
-      { organization_id: orgId, label: 'To Do', type: 'todo', color: '#6B7280', order_index: 0, is_default: true },
+      { organization_id: orgId, label: 'Not Started', type: 'not_started', color: '#6B7280', order_index: 0, is_default: true },
       { organization_id: orgId, label: 'In Progress', type: 'in_progress', color: '#2563EB', order_index: 1 },
-      { organization_id: orgId, label: 'Done', type: 'completed', color: '#16A34A', order_index: 2 },
+      { organization_id: orgId, label: 'Completed', type: 'completed', color: '#16A34A', order_index: 2 },
+      { organization_id: orgId, label: 'Incomplete', type: 'incomplete', color: '#DC2626', order_index: 3 },
     ] });
   }
   if ((await prisma.taskCategory.count({ where: { organization_id: orgId } })) === 0) {

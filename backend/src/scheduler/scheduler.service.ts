@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuditWriterService } from '../audit/audit-writer.service';
 import { LeaveService } from '../leave/leave.service';
 import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
+import { isTerminal, TERMINAL_TYPES } from '../tasks/status-phase';
 
 @Injectable()
 export class SchedulerService {
@@ -479,7 +480,7 @@ export class SchedulerService {
 
     let escalated = 0;
     for (const task of overdueTasks) {
-      if (task.status?.type === 'completed') continue;
+      if (isTerminal(task.status?.type)) continue;
       const untriggered = task.escalations.find((e) => e.escalated_at === null);
       if (!untriggered) continue;
 
@@ -646,7 +647,7 @@ export class SchedulerService {
         is_deleted: false,
         is_overdue: false,
         deadline: { lt: now },
-        status: { type: { not: 'completed' } },
+        status: { type: { notIn: TERMINAL_TYPES } },
       },
       select: { id: true },
     });

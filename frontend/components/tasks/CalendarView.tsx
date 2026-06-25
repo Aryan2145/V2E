@@ -150,7 +150,7 @@ export default function CalendarView({ tasks, priorities, onTaskClick }: Props) 
                 <div className="flex flex-col gap-0.5">
                   {dayTasks.slice(0, 2).map((task) => {
                     const priority = task.priority_id ? priorityMap.get(task.priority_id) : null
-                    const isTaskOverdue = isPastDay && task.status?.type !== 'completed'
+                    const isTaskOverdue = isPastDay && task.status?.type !== 'completed' && task.status?.type !== 'incomplete'
                     const dotColor = isTaskOverdue
                       ? '#DC2626'
                       : priority?.color ?? '#2563EB'
@@ -203,7 +203,7 @@ export default function CalendarView({ tasks, priorities, onTaskClick }: Props) 
               const [sy, smo, sd] = selectedKey.split('-').map(Number)
               const selDate = new Date(sy, smo, sd)
               const isPast = selDate < new Date(today.getFullYear(), today.getMonth(), today.getDate())
-              const isOverdue = isPast && task.status?.type !== 'completed'
+              const isOverdue = isPast && task.status?.type !== 'completed' && task.status?.type !== 'incomplete'
 
               return (
                 <div

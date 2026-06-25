@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { isSingletonPhase } from '../tasks/status-phase';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreatePriorityDto } from './dto/create-priority.dto';
@@ -37,9 +38,10 @@ export class TaskMastersService {
     if (statusCount === 0) {
       await this.prisma.taskStatus.createMany({
         data: [
-          { organization_id: orgId, label: 'To Do', type: 'todo', color: '#6B7280', order_index: 0, is_default: true },
+          { organization_id: orgId, label: 'Not Started', type: 'not_started', color: '#6B7280', order_index: 0, is_default: true },
           { organization_id: orgId, label: 'In Progress', type: 'in_progress', color: '#2563EB', order_index: 1 },
-          { organization_id: orgId, label: 'Done', type: 'completed', color: '#16A34A', order_index: 2 },
+          { organization_id: orgId, label: 'Completed', type: 'completed', color: '#16A34A', order_index: 2 },
+          { organization_id: orgId, label: 'Incomplete', type: 'incomplete', color: '#DC2626', order_index: 3 },
         ],
       });
     }
@@ -229,6 +231,19 @@ export class TaskMastersService {
   }
 
   async createStatus(orgId: string, dto: CreateStatusDto) {
+    // Singleton phases (not_started / completed / incomplete) may exist only once per org.
+    // Only `in_progress` may have multiple statuses ("stages"). New statuses created from the
+    // config screen are always `in_progress`; the singletons come from the seed.
+    if (isSingletonPhase(dto.type)) {
+      const existing = await this.prisma.taskStatus.findFirst({
+        where: { organization_id: orgId, type: dto.type, is_active: true },
+      });
+      if (existing) {
+        throw new BadRequestException(
+          `A "${dto.type}" status already exists. Only "In Progress" stages can have more than one.`,
+        );
+      }
+    }
     return this.prisma.taskStatus.create({
       data: {
         organization_id: orgId,
@@ -236,7 +251,9 @@ export class TaskMastersService {
         type: dto.type,
         color: dto.color ?? '#2563EB',
         order_index: dto.order_index ?? 0,
-        is_default: dto.is_default ?? false,
+        // The default is implicit: it is always the single `not_started` status. The client
+        // never chooses it.
+        is_default: dto.type === 'not_started',
         is_active: dto.is_active ?? true,
       },
     });
@@ -244,38 +261,54 @@ export class TaskMastersService {
 
   async updateStatus(orgId: string, statusId: string, dto: Partial<CreateStatusDto>) {
     await this.findStatusOrFail(orgId, statusId);
+    // A status's phase (`type`) and its default-ness are immutable after creation — editing
+    // only touches the presentation (label / colour / order) and active flag. This keeps the
+    // phase invariants (one not_started/completed/incomplete, default == not_started) intact.
     return this.prisma.taskStatus.update({
       where: { id: statusId },
       data: {
         ...(dto.label !== undefined && { label: dto.label }),
-        ...(dto.type !== undefined && { type: dto.type }),
         ...(dto.color !== undefined && { color: dto.color }),
         ...(dto.order_index !== undefined && { order_index: dto.order_index }),
-        ...(dto.is_default !== undefined && { is_default: dto.is_default }),
         ...(dto.is_active !== undefined && { is_active: dto.is_active }),
       },
     });
   }
 
   async getDefaultStatus(orgId: string) {
-    const status = await this.prisma.taskStatus.findFirst({
+    // The single `not_started` status is the canonical birth state; fall back to the
+    // is_default flag, then the first active status.
+    const notStarted = await this.prisma.taskStatus.findFirst({
+      where: { organization_id: orgId, type: 'not_started', is_active: true },
+      orderBy: { order_index: 'asc' },
+    });
+    if (notStarted) return notStarted;
+    const flagged = await this.prisma.taskStatus.findFirst({
       where: { organization_id: orgId, is_default: true, is_active: true },
       orderBy: { order_index: 'asc' },
     });
-    if (!status) {
-      // Fall back to first active status
-      return this.prisma.taskStatus.findFirst({
-        where: { organization_id: orgId, is_active: true },
-        orderBy: { order_index: 'asc' },
-      });
-    }
-    return status;
+    if (flagged) return flagged;
+    return this.prisma.taskStatus.findFirst({
+      where: { organization_id: orgId, is_active: true },
+      orderBy: { order_index: 'asc' },
+    });
   }
 
   async deactivateStatus(orgId: string, statusId: string) {
     const status = await this.findStatusOrFail(orgId, statusId);
-    if (status.is_default) {
-      throw new Error('Cannot deactivate the default status. Set another status as default first.');
+    // The three singleton phases are structural — every board needs exactly one of each, so
+    // none of them can be removed.
+    if (isSingletonPhase(status.type)) {
+      throw new BadRequestException(
+        'Not Started, Completed and Incomplete are required statuses and cannot be removed.',
+      );
+    }
+    // A board must keep at least one active In Progress stage.
+    const activeInProgress = await this.prisma.taskStatus.count({
+      where: { organization_id: orgId, type: 'in_progress', is_active: true },
+    });
+    if (status.type === 'in_progress' && activeInProgress <= 1) {
+      throw new BadRequestException('At least one "In Progress" stage is required.');
     }
     return this.prisma.taskStatus.update({
       where: { id: statusId },
@@ -307,28 +340,76 @@ export class TaskMastersService {
     return this.prisma.taskChecklistTemplate.findMany({
       where: { organization_id: orgId },
       orderBy: { created_at: 'asc' },
+      include: { access_rules: true },
     });
   }
 
-  async createChecklistTemplate(orgId: string, userId: string, dto: CreateChecklistTemplateDto) {
-    return this.prisma.taskChecklistTemplate.create({
-      data: {
+  /** Build access-rule create rows from a DTO, dropping rules with no target. */
+  private buildAccessRuleRows(orgId: string, templateId: string, dto: Partial<CreateChecklistTemplateDto>) {
+    return (dto.access_rules ?? [])
+      .filter((r) =>
+        (r.kind === 'department' && r.department_id) ||
+        (r.kind === 'role' && r.role_id) ||
+        (r.kind === 'user' && r.user_id),
+      )
+      .map((r) => ({
         organization_id: orgId,
-        created_by_user_id: userId,
-        name: dto.name,
-        items: (dto.items ?? []) as any,
-      },
+        template_id: templateId,
+        kind: r.kind,
+        department_id: r.kind === 'department' ? r.department_id ?? null : null,
+        include_sub_departments: r.kind === 'department' ? r.include_sub_departments ?? true : true,
+        role_id: r.kind === 'role' ? r.role_id ?? null : null,
+        user_id: r.kind === 'user' ? r.user_id ?? null : null,
+      }));
+  }
+
+  async createChecklistTemplate(orgId: string, userId: string, dto: CreateChecklistTemplateDto) {
+    const mode = dto.access_mode ?? 'everyone';
+    return this.prisma.$transaction(async (tx) => {
+      const template = await tx.taskChecklistTemplate.create({
+        data: {
+          organization_id: orgId,
+          created_by_user_id: userId,
+          name: dto.name,
+          items: (dto.items ?? []) as any,
+          access_mode: mode,
+        },
+      });
+      if (mode === 'restricted') {
+        const rows = this.buildAccessRuleRows(orgId, template.id, dto);
+        if (rows.length > 0) await tx.checklistTemplateAccessRule.createMany({ data: rows });
+      }
+      return tx.taskChecklistTemplate.findUnique({
+        where: { id: template.id },
+        include: { access_rules: true },
+      });
     });
   }
 
   async updateChecklistTemplate(orgId: string, templateId: string, dto: Partial<CreateChecklistTemplateDto>) {
     await this.findTemplateOrFail(orgId, templateId);
-    return this.prisma.taskChecklistTemplate.update({
-      where: { id: templateId },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.items !== undefined && { items: dto.items as any }),
-      },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.taskChecklistTemplate.update({
+        where: { id: templateId },
+        data: {
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.items !== undefined && { items: dto.items as any }),
+          ...(dto.access_mode !== undefined && { access_mode: dto.access_mode }),
+        },
+      });
+      // Replace-all access rules whenever access_mode or access_rules are supplied.
+      if (dto.access_mode !== undefined || dto.access_rules !== undefined) {
+        await tx.checklistTemplateAccessRule.deleteMany({ where: { template_id: templateId } });
+        const restricted = (dto.access_mode ?? 'restricted') === 'restricted';
+        if (restricted) {
+          const rows = this.buildAccessRuleRows(orgId, templateId, dto);
+          if (rows.length > 0) await tx.checklistTemplateAccessRule.createMany({ data: rows });
+        }
+      }
+      return tx.taskChecklistTemplate.findUnique({
+        where: { id: templateId },
+        include: { access_rules: true },
+      });
     });
   }
 

@@ -9,6 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ClockService } from '../clock/clock.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateLeaveDto, DecideLeaveDto, UpdateLeaveMasterDto } from './dto/leave.dto';
+import { TERMINAL_TYPES } from '../tasks/status-phase';
 
 const CONFIG_TTL_MS = 5_000;
 
@@ -443,7 +444,7 @@ export class LeaveService {
         is_cc: false,
         task: {
           is_deleted: false,
-          status: { type: { not: 'completed' } },
+          status: { type: { notIn: TERMINAL_TYPES } },
           deadline: { gte: leave.start_date, lte: leave.end_date },
         },
       },

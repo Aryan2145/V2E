@@ -36,11 +36,17 @@ export interface TaskPriority {
   is_active: boolean
 }
 
+// The fixed phase a status belongs to. `completed` and `incomplete` are both terminal
+// (they close the task); only `completed` counts as a successful completion.
+export type TaskStatusPhase = 'not_started' | 'in_progress' | 'completed' | 'incomplete'
+
+export const TERMINAL_STATUS_PHASES: TaskStatusPhase[] = ['completed', 'incomplete']
+
 export interface TaskStatus {
   id: string
   organization_id: string
   label: string
-  type: string
+  type: TaskStatusPhase
   color: string
   order_index: number
   is_default: boolean

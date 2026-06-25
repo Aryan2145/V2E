@@ -134,7 +134,7 @@ export default function TasksPage() {
     tasks.filter((t) => t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) && t.deadline && isToday(t.deadline)).length,
     [tasks, myUserId])
   const overdue = useMemo(() =>
-    tasks.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed').length,
+    tasks.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed' && t.status?.type !== 'incomplete').length,
     [tasks])
   const dueThisWeek = useMemo(() =>
     tasks.filter((t) => t.deadline && isThisWeek(t.deadline)).length, [tasks])
@@ -146,7 +146,7 @@ export default function TasksPage() {
   const quickFiltered = useMemo(() => {
     if (!quickFilter) return tasks
     if (quickFilter === 'today') return tasks.filter((t) => t.assignees?.some((a) => a.user_id === myUserId && !a.is_cc) && t.deadline && isToday(t.deadline))
-    if (quickFilter === 'overdue') return tasks.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed')
+    if (quickFilter === 'overdue') return tasks.filter((t) => t.deadline && isPast(t.deadline) && t.status?.type !== 'completed' && t.status?.type !== 'incomplete')
     if (quickFilter === 'week') return tasks.filter((t) => t.deadline && isThisWeek(t.deadline))
     if (quickFilter === 'completed_month') return tasks.filter((t) => t.status?.type === 'completed' && isThisMonth(t.updated_at))
     return tasks

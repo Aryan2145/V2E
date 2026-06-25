@@ -1,11 +1,12 @@
-import { IsBoolean, IsInt, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength } from 'class-validator';
+import { STATUS_PHASES } from '../../tasks/status-phase';
 
 export class CreateStatusDto {
   @IsString()
   @MaxLength(50)
   label: string;
 
-  @IsString()
+  @IsIn(STATUS_PHASES as unknown as string[])
   type: string;
 
   @IsOptional()

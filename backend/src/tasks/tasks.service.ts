@@ -23,6 +23,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
+import { TERMINAL_TYPES, isSuccessful } from './status-phase';
 
 const TASK_INCLUDE = {
   status: true,
@@ -127,11 +128,18 @@ export class TasksService {
   }
 
   private async getDefaultStatusId(orgId: string): Promise<string> {
-    const status = await this.prisma.taskStatus.findFirst({
+    // A new task is always born in the single `not_started` status. Fall back to the
+    // is_default flag, then the first active status, for older/partial orgs.
+    const notStarted = await this.prisma.taskStatus.findFirst({
+      where: { organization_id: orgId, type: 'not_started', is_active: true },
+      orderBy: { order_index: 'asc' },
+    });
+    if (notStarted) return notStarted.id;
+    const flagged = await this.prisma.taskStatus.findFirst({
       where: { organization_id: orgId, is_default: true, is_active: true },
       orderBy: { order_index: 'asc' },
     });
-    if (status) return status.id;
+    if (flagged) return flagged.id;
     const fallback = await this.prisma.taskStatus.findFirst({
       where: { organization_id: orgId, is_active: true },
       orderBy: { order_index: 'asc' },
@@ -1031,11 +1039,14 @@ export class TasksService {
       },
     });
 
-    const completedStatuses = await this.prisma.taskStatus.findMany({
-      where: { organization_id: orgId, type: 'completed' },
-      select: { id: true },
+    // "completed" = successful (drives completion counts); "terminal" = closed
+    // (completed OR incomplete) — a closed task is never counted as overdue.
+    const closingStatuses = await this.prisma.taskStatus.findMany({
+      where: { organization_id: orgId, type: { in: TERMINAL_TYPES } },
+      select: { id: true, type: true },
     });
-    const completedIds = new Set(completedStatuses.map((s) => s.id));
+    const completedIds = new Set(closingStatuses.filter((s) => isSuccessful(s.type)).map((s) => s.id));
+    const terminalIds = new Set(closingStatuses.map((s) => s.id));
     const now = new Date();
 
     const userMap = new Map<string, { user_id: string; total: number; completed: number; overdue: number }>();
@@ -1047,7 +1058,7 @@ export class TasksService {
 
     for (const task of tasks) {
       const isCompleted = completedIds.has(task.status_id);
-      const isOverdue = !!task.deadline && task.deadline < now && !isCompleted;
+      const isOverdue = !!task.deadline && task.deadline < now && !terminalIds.has(task.status_id);
 
       if (task.priority_id && task.priority) {
         if (!priorityMap.has(task.priority_id)) {
@@ -1159,7 +1170,7 @@ export class TasksService {
             organization_id: orgId,
             is_cc: false,
             user_id: { in: eligibleUserIdArray },
-            task: { is_deleted: false, status: { type: { not: 'completed' } } },
+            task: { is_deleted: false, status: { type: { notIn: TERMINAL_TYPES } } },
           },
           select: { user_id: true },
         })
@@ -1254,7 +1265,7 @@ export class TasksService {
             organization_id: orgId,
             is_cc: false,
             user_id: { in: ids },
-            task: { is_deleted: false, status: { type: { not: 'completed' } } },
+            task: { is_deleted: false, status: { type: { notIn: TERMINAL_TYPES } } },
           },
           select: { user_id: true },
         })

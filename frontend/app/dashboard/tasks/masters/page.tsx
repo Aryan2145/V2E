@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
@@ -27,6 +27,7 @@ import type {
 import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown } from 'lucide-react'
 import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
 import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
+import Modal from '@/components/ui/Modal'
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -37,6 +38,13 @@ function FormField({ label, children }: { label: string; children: React.ReactNo
       {children}
     </div>
   )
+}
+
+// NestJS validation errors arrive as a string or string[] under response.data.message.
+function apiError(e: unknown): string | null {
+  const msg = (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message
+  if (Array.isArray(msg)) return msg[0] ?? null
+  return msg ?? null
 }
 
 const inputCls = 'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white'
@@ -348,80 +356,164 @@ function PrioritiesTab({ orgId }: { orgId: string }) {
   )
 }
 
+// Statuses are shown as one top-to-bottom flow: Not Started → In Progress stages (ordered)
+// → Completed → Incomplete. The three singletons are plain one-line rows; only In Progress
+// is a section you can add to and reorder.
+
 function StatusesTab({ orgId }: { orgId: string }) {
   const [items, setItems] = useState<TaskStatus[]>([])
   const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({ label: '', type: 'in_progress', color: '#0891B2', order_index: 0, is_default: false })
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState({ label: '', color: '#2563EB' })
+  const [adding, setAdding] = useState(false)
+  const [addForm, setAddForm] = useState({ label: '', color: '#0891B2' })
   const [submitting, setSubmitting] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     setLoading(true)
     tasksApi.getStatuses(orgId).then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
   }, [orgId])
+  useEffect(() => { load() }, [load])
 
-  async function handleCreate() {
-    if (!form.label.trim()) return
-    setSubmitting(true)
+  const single = (type: string) => items.find((s) => s.type === type) ?? null
+  const inProgress = items.filter((s) => s.type === 'in_progress').sort((a, b) => a.order_index - b.order_index)
+
+  function startEdit(item: TaskStatus) {
+    setEditingId(item.id); setEditForm({ label: item.label, color: item.color }); setError(null)
+  }
+
+  async function handleAdd() {
+    if (!addForm.label.trim()) return
+    setSubmitting(true); setError(null)
     try {
-      const item = await tasksApi.createStatus(orgId, { label: form.label.trim(), type: form.type, color: form.color, order_index: form.order_index, is_default: form.is_default, is_active: true })
-      setItems((prev) => [...prev, item].sort((a, b) => a.order_index - b.order_index))
-      setForm({ label: '', type: 'in_progress', color: '#0891B2', order_index: 0, is_default: false })
-      setCreating(false)
-    } catch { /* ignore */ } finally { setSubmitting(false) }
+      const maxOrder = items.reduce((m, s) => Math.max(m, s.order_index), 0)
+      const item = await tasksApi.createStatus(orgId, { label: addForm.label.trim(), type: 'in_progress', color: addForm.color, order_index: maxOrder + 1, is_active: true } as Omit<TaskStatus, 'id' | 'organization_id'>)
+      setItems((prev) => [...prev, item])
+      setAddForm({ label: '', color: '#0891B2' }); setAdding(false)
+    } catch (e) { setError(apiError(e) ?? 'Could not add stage.') } finally { setSubmitting(false) }
+  }
+
+  async function handleSaveEdit(id: string) {
+    if (!editForm.label.trim()) return
+    setSubmitting(true); setError(null)
+    try {
+      const updated = await tasksApi.updateStatus(orgId, id, { label: editForm.label.trim(), color: editForm.color })
+      setItems((prev) => prev.map((s) => (s.id === id ? updated : s)))
+      setEditingId(null)
+    } catch (e) { setError(apiError(e) ?? 'Could not save changes.') } finally { setSubmitting(false) }
+  }
+
+  async function handleDelete(id: string) {
+    if (!confirm('Remove this In Progress stage?')) return
+    setError(null)
+    try {
+      await tasksApi.deleteStatus(orgId, id)
+      setItems((prev) => prev.filter((s) => s.id !== id))
+    } catch (e) { setError(apiError(e) ?? 'Could not remove stage.') }
+  }
+
+  // Reorder among In Progress, then renumber every status into canonical phase order
+  // (not_started → in_progress… → completed → incomplete) so order_index never collides.
+  async function applyOrder(newInProgress: TaskStatus[]) {
+    const ordered = [single('not_started'), ...newInProgress, single('completed'), single('incomplete')].filter(Boolean) as TaskStatus[]
+    const updates = ordered.map((s, i) => ({ id: s.id, order_index: i }))
+    setSavingOrder(true)
+    setItems((prev) => prev.map((s) => { const u = updates.find((x) => x.id === s.id); return u ? { ...s, order_index: u.order_index } : s }))
+    try { await tasksApi.reorderStatuses(orgId, updates) } catch { load() } finally { setSavingOrder(false) }
+  }
+  function move(idx: number, dir: -1 | 1) {
+    const target = idx + dir
+    if (target < 0 || target >= inProgress.length) return
+    const arr = [...inProgress]
+    const [moved] = arr.splice(idx, 1)
+    arr.splice(target, 0, moved)
+    applyOrder(arr)
+  }
+
+  function ColorPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+    return (
+      <div className="flex gap-2 items-center">
+        <input type="color" value={value} onChange={(e) => onChange(e.target.value)} className="w-10 h-[38px] rounded-[6px] border border-[#CBD5E1] cursor-pointer" />
+        <input type="text" value={value} onChange={(e) => onChange(e.target.value)} className={inputCls} />
+      </div>
+    )
+  }
+
+  function EditRow({ id }: { id: string }) {
+    return (
+      <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-4 space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <FormField label="Label"><input type="text" autoFocus value={editForm.label} onChange={(e) => setEditForm({ ...editForm, label: e.target.value })} className={inputCls} /></FormField>
+          <FormField label="Color"><ColorPicker value={editForm.color} onChange={(c) => setEditForm({ ...editForm, color: c })} /></FormField>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={() => handleSaveEdit(id)} disabled={submitting} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors"><Save size={14} /> {submitting ? 'Saving...' : 'Save'}</button>
+          <button onClick={() => setEditingId(null)} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
+        </div>
+      </div>
+    )
   }
 
   if (loading) return <Spinner />
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-[#475569]">{items.length} status{items.length !== 1 ? 'es' : ''}</p>
-        <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Status</button>
+  const notStarted = single('not_started')
+  const completed = single('completed')
+  const incomplete = single('incomplete')
+
+  // One flow row. `role` is the fixed phase shown muted on the left; In Progress stages show
+  // a step number + reorder/delete instead, since their order is the workflow order.
+  const lineFor = (item: TaskStatus, role: string, stage: boolean, idx: number) => {
+    if (editingId === item.id) return <EditRow key={item.id} id={item.id} />
+    return (
+      <div key={item.id} className="flex items-center gap-2.5 bg-white border border-[#E2E8F0] rounded-[8px] pl-3 pr-2 py-2">
+        <span className="w-[78px] shrink-0 flex items-center">
+          {stage
+            ? <span className="w-5 h-5 flex items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] text-[11px] font-bold">{idx + 1}</span>
+            : <span className="text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">{role}</span>}
+        </span>
+        <span className="w-3.5 h-3.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+        <span className="flex-1 min-w-0 truncate text-sm font-semibold text-[#0F172A]">{item.label}</span>
+        {stage && (
+          <div className="flex items-center shrink-0">
+            <button type="button" disabled={idx === 0 || savingOrder} onClick={() => move(idx, -1)} aria-label="Move up" className="w-6 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors"><ChevronUp size={15} /></button>
+            <button type="button" disabled={idx === inProgress.length - 1 || savingOrder} onClick={() => move(idx, 1)} aria-label="Move down" className="w-6 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors"><ChevronDown size={15} /></button>
+          </div>
+        )}
+        <button type="button" onClick={() => startEdit(item)} aria-label="Rename" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"><Pencil size={13} /></button>
+        {stage && (
+          <button type="button" onClick={() => handleDelete(item.id)} disabled={inProgress.length <= 1} aria-label="Remove stage" title={inProgress.length <= 1 ? 'At least one In Progress stage is required' : 'Remove stage'} className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors shrink-0"><Trash2 size={13} /></button>
+        )}
       </div>
-      {creating && (
-        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Label"><input type="text" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. In Review" className={inputCls} /></FormField>
-            <FormField label="Type">
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className={selectCls}>
-                <option value="todo">Todo</option>
-                <option value="in_progress">In Progress</option>
-                <option value="in_review">In Review</option>
-                <option value="completed">Completed</option>
-                <option value="blocked">Blocked</option>
-              </select>
-            </FormField>
-            <FormField label="Color">
-              <div className="flex gap-2 items-center">
-                <input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-10 h-[38px] rounded-[6px] border border-[#CBD5E1] cursor-pointer" />
-                <input type="text" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className={inputCls} />
-              </div>
-            </FormField>
-            <FormField label="Order"><input type="number" value={form.order_index} onChange={(e) => setForm({ ...form, order_index: parseInt(e.target.value) || 0 })} className={inputCls} /></FormField>
-          </div>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input type="checkbox" checked={form.is_default} onChange={(e) => setForm({ ...form, is_default: e.target.checked })} className="accent-[#2563EB] w-4 h-4" />
-            <span className="text-sm text-[#1E293B]">Set as default status</span>
-          </label>
-          <div className="flex gap-2">
-            <button onClick={handleCreate} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">{submitting ? 'Creating...' : 'Create'}</button>
-            <button onClick={() => setCreating(false)} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
-          </div>
+    )
+  }
+
+  return (
+    <div className="space-y-1.5 max-w-2xl">
+      {error && <div className="text-sm text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-3 py-2 mb-1">{error}</div>}
+
+      {notStarted && lineFor(notStarted, 'Start', false, -1)}
+
+      {inProgress.map((s, i) => lineFor(s, 'In progress', true, i))}
+
+      {adding ? (
+        <div className="flex items-center gap-2.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] pl-3 pr-2 py-2">
+          <span className="w-[78px] shrink-0" />
+          <input type="color" value={addForm.color} onChange={(e) => setAddForm({ ...addForm, color: e.target.value })} className="w-7 h-7 shrink-0 rounded-[6px] border border-[#CBD5E1] cursor-pointer p-0" />
+          <input type="text" autoFocus value={addForm.label} onChange={(e) => setAddForm({ ...addForm, label: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') handleAdd(); if (e.key === 'Escape') { setAdding(false); setAddForm({ label: '', color: '#0891B2' }) } }} placeholder="New stage name (e.g. In Review)" className="flex-1 min-w-0 border border-[#CBD5E1] rounded-[6px] px-2.5 py-1.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white" />
+          <button onClick={handleAdd} disabled={submitting || !addForm.label.trim()} className="px-3 py-1.5 text-sm font-semibold text-white bg-[#2563EB] rounded-[6px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors shrink-0">{submitting ? 'Adding…' : 'Add'}</button>
+          <button onClick={() => { setAdding(false); setAddForm({ label: '', color: '#0891B2' }) }} aria-label="Cancel" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"><X size={15} /></button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2.5">
+          <span className="w-[78px] shrink-0" />
+          <button onClick={() => { setAdding(true); setError(null) }} className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] py-1 transition-colors"><Plus size={14} /> Add In Progress stage</button>
         </div>
       )}
-      {items.length === 0 && !creating && <div className="text-center py-12 text-[#475569] text-sm">No statuses yet.</div>}
-      <div className="space-y-2">
-        {items.map((item) => (
-          <div key={item.id} className="bg-white border border-[#E2E8F0] rounded-[8px] px-4 py-3 flex items-center gap-3">
-            <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
-            <span className="flex-1 text-sm font-semibold text-[#0F172A]">{item.label}</span>
-            <span className="text-xs text-[#475569] capitalize">{item.type.replace('_', ' ')}</span>
-            {item.is_default && <span className="text-[11px] font-medium rounded-[999px] px-2 py-0.5 bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">Default</span>}
-            <span className={`text-[11px] font-medium rounded-[999px] px-2 py-0.5 ${item.is_active ? 'bg-[#DCFCE7] text-[#16A34A]' : 'bg-[#FEE2E2] text-[#DC2626]'}`}>{item.is_active ? 'Active' : 'Inactive'}</span>
-          </div>
-        ))}
-      </div>
+
+      {completed && lineFor(completed, 'Completed', false, -1)}
+      {incomplete && lineFor(incomplete, 'Incomplete', false, -1)}
     </div>
   )
 }
@@ -433,22 +525,89 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
   const [templateName, setTemplateName] = useState('')
   const [templateItems, setTemplateItems] = useState<string[]>([''])
   const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const itemRefs = useRef<(HTMLInputElement | null)[]>([])
+  const undoStack = useRef<string[][]>([])
+  const itemsRef = useRef(templateItems)
+  const editingLine = useRef<number | null>(null)
+  useEffect(() => { itemsRef.current = templateItems }, [templateItems])
+
+  // Snapshot the list before a structural change so Ctrl+Z can restore it.
+  function pushHistory() {
+    undoStack.current.push(itemsRef.current)
+    editingLine.current = null
+  }
+
+  function restoreLastSnapshot() {
+    const snapshot = undoStack.current.pop()
+    if (snapshot) { setTemplateItems(snapshot); editingLine.current = null }
+  }
+
+  function handleItemChange(idx: number, value: string) {
+    // Coalesce consecutive edits of the same line into one undo step, capturing
+    // the state (with its text) from before editing started.
+    if (editingLine.current !== idx) {
+      undoStack.current.push(itemsRef.current)
+      editingLine.current = idx
+    }
+    setTemplateItems((prev) => prev.map((p, i) => i === idx ? value : p))
+    if (error) setError(null)
+  }
+
+  function handleItemKeyDown(e: React.KeyboardEvent<HTMLInputElement>, idx: number) {
+    // Undo line removals / edits (falls through to native text undo when empty)
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z') && undoStack.current.length > 0) {
+      e.preventDefault()
+      restoreLastSnapshot()
+      return
+    }
+    if (e.key !== 'Enter') return
+    e.preventDefault()
+    // Empty line: don't open a new entry
+    if (!templateItems[idx].trim()) return
+    editingLine.current = null
+    if (idx === templateItems.length - 1) {
+      // Last line: append a fresh line and focus it
+      setTemplateItems((prev) => [...prev, ''])
+      requestAnimationFrame(() => itemRefs.current[idx + 1]?.focus())
+    } else {
+      // Move to the next existing line
+      itemRefs.current[idx + 1]?.focus()
+    }
+  }
+
+  function handleItemBlur(idx: number) {
+    // An emptied line collapses when you leave it. The pre-edit snapshot (taken
+    // in handleItemChange) already holds the text, so Ctrl+Z restores line + text.
+    editingLine.current = null
+    setTemplateItems((prev) => {
+      if (prev.length <= 1 || prev[idx].trim()) return prev
+      return prev.filter((_, i) => i !== idx)
+    })
+  }
 
   useEffect(() => {
     setLoading(true)
     tasksApi.getChecklistTemplates(orgId).then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
   }, [orgId])
 
+  function resetForm() {
+    setTemplateName(''); setTemplateItems(['']); setError(null); undoStack.current = []; editingLine.current = null
+  }
+
   async function handleCreate() {
-    if (!templateName.trim()) return
+    const name = templateName.trim()
     const cleanItems = templateItems.filter((t) => t.trim())
-    if (cleanItems.length === 0) return
+    if (!name && cleanItems.length === 0) { setError('Add a template name and at least one item.'); return }
+    if (!name) { setError('Template name is required.'); return }
+    if (cleanItems.length === 0) { setError('Add at least one checklist item.'); return }
+    setError(null)
     setSubmitting(true)
     try {
-      const item = await tasksApi.createChecklistTemplate(orgId, { name: templateName.trim(), items: cleanItems.map((t, i) => ({ title: t.trim(), order_index: i })) })
+      const item = await tasksApi.createChecklistTemplate(orgId, { name, items: cleanItems.map((t, i) => ({ title: t.trim(), order_index: i })) })
       setItems((prev) => [...prev, item])
-      setTemplateName(''); setTemplateItems(['']); setCreating(false)
-    } catch { /* ignore */ } finally { setSubmitting(false) }
+      resetForm(); setCreating(false)
+    } catch { setError('Could not create the template. Please try again.') } finally { setSubmitting(false) }
   }
 
   if (loading) return <Spinner />
@@ -459,41 +618,57 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
         <p className="text-sm text-[#475569]">{items.length} template{items.length !== 1 ? 's' : ''}</p>
         <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Template</button>
       </div>
-      {creating && (
-        <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-4 space-y-3">
-          <FormField label="Template Name"><input type="text" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="e.g. Onboarding Checklist" className={inputCls} /></FormField>
-          <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">Items</label>
+      <Modal isOpen={creating} onClose={() => { setCreating(false); resetForm() }} title="New Checklist Template" size="lg" closeOnEscape={false} bodyScroll={false}>
+        <div className="flex-1 min-h-0 flex flex-col">
+          {/* Fixed: name + items heading */}
+          <div className="shrink-0 space-y-4">
+            <FormField label="Template Name"><input type="text" autoFocus value={templateName} onChange={(e) => { setTemplateName(e.target.value); if (error) setError(null) }} placeholder="e.g. Onboarding Checklist" className={inputCls} /></FormField>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Items</label>
+              <p className="text-xs text-[#64748B]">Press Enter to add the next item. Ctrl+Z undoes a removal.</p>
+            </div>
+          </div>
+          {/* Scrollable: only the item lines */}
+          <div className="flex-1 min-h-0 overflow-y-auto -mr-1 pr-1 mt-2">
             {templateItems.map((item, idx) => (
               <div key={idx} className="flex gap-2 mb-2">
-                <input type="text" value={item} onChange={(e) => setTemplateItems((prev) => prev.map((v, i) => i === idx ? e.target.value : v))} placeholder={`Item ${idx + 1}`} className={inputCls} />
-                <button onClick={() => setTemplateItems((prev) => prev.filter((_, i) => i !== idx))} className="w-8 h-[38px] flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors"><X size={14} /></button>
+                <input ref={(el) => { itemRefs.current[idx] = el }} type="text" value={item} onChange={(e) => handleItemChange(idx, e.target.value)} onKeyDown={(e) => handleItemKeyDown(e, idx)} onBlur={() => handleItemBlur(idx)} placeholder={`Item ${idx + 1}`} className={inputCls} />
+                <button onMouseDown={(e) => e.preventDefault()} onClick={() => { pushHistory(); setTemplateItems((prev) => prev.length <= 1 ? [''] : prev.filter((_, i) => i !== idx)) }} className="w-8 h-[38px] flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"><X size={14} /></button>
               </div>
             ))}
-            <button onClick={() => setTemplateItems((prev) => [...prev, ''])} className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors mt-1"><Plus size={13} /> Add item</button>
           </div>
-          <div className="flex gap-2">
-            <button onClick={handleCreate} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">{submitting ? 'Creating...' : 'Create'}</button>
-            <button onClick={() => setCreating(false)} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
+          {/* Fixed: add item + error + actions */}
+          <div className="shrink-0">
+            <button onClick={() => { pushHistory(); setTemplateItems((prev) => [...prev, '']) }} className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors mt-2"><Plus size={13} /> Add item</button>
+            {error && <p className="text-sm font-medium text-[#DC2626] mt-3">{error}</p>}
+            <div className="flex gap-2 mt-4 pt-3 border-t border-[#F1F5F9]">
+              <button onClick={handleCreate} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">{submitting ? 'Creating...' : 'Create Template'}</button>
+              <button onClick={() => { setCreating(false); resetForm() }} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
+            </div>
           </div>
         </div>
-      )}
-      {items.length === 0 && !creating && <div className="text-center py-12 text-[#475569] text-sm">No checklist templates yet.</div>}
-      <div className="space-y-3">
-        {items.map((t) => (
-          <div key={t.id} className="bg-white border border-[#E2E8F0] rounded-[8px] p-4">
-            <p className="text-sm font-semibold text-[#0F172A] mb-2">{t.name}</p>
-            <div className="space-y-1">
-              {(t.items ?? []).map((item, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded border border-[#CBD5E1] shrink-0" />
-                  <span className="text-xs text-[#475569]">{item.title}</span>
-                </div>
-              ))}
+      </Modal>
+      {items.length === 0 && <div className="text-center py-12 text-[#475569] text-sm">No checklist templates yet.</div>}
+      <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 items-start">
+        {items.map((t) => {
+          const count = (t.items ?? []).length
+          return (
+            <div key={t.id} className="bg-white border border-[#E2E8F0] rounded-[10px] p-4 hover:border-[#CBD5E1] hover:shadow-[0_1px_3px_rgba(0,0,0,0.08)] transition-all">
+              <div className="flex items-start justify-between gap-2 mb-3">
+                <p className="text-sm font-semibold text-[#0F172A] leading-snug">{t.name}</p>
+                <span className="shrink-0 text-[11px] font-medium rounded-[999px] px-2 py-0.5 bg-[#EFF6FF] text-[#2563EB]">{count} item{count !== 1 ? 's' : ''}</span>
+              </div>
+              <div className="space-y-1.5">
+                {(t.items ?? []).map((item, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <div className="w-3.5 h-3.5 rounded-[4px] border border-[#CBD5E1] shrink-0 mt-0.5" />
+                    <span className="text-xs text-[#475569] leading-snug">{item.title}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <p className="text-xs text-[#94A3B8] mt-2">{(t.items ?? []).length} item{(t.items ?? []).length !== 1 ? 's' : ''}</p>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -1304,14 +1479,14 @@ export default function MastersPage() {
   const activeTabs = effectiveSection === 'tasks' ? visibleTaskTabs : effectiveSection === 'tickets' ? ticketTabs : notifTabs
 
   return (
-    <div className="space-y-6">
-      <div>
+    <div className="h-full min-h-0 flex flex-col gap-5">
+      <div className="flex-none">
         <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Masters</h1>
         <p className="mt-1 text-[15px] text-[#475569]">Configure system settings for tasks and tickets.</p>
       </div>
 
       {/* Top-level switcher */}
-      <div className="flex gap-2 p-1 bg-[#F1F5F9] rounded-[10px] w-fit">
+      <div className="flex-none flex gap-2 p-1 bg-[#F1F5F9] rounded-[10px] w-fit">
         {availableSections.map(([key, label]) => (
           <button
             key={key}
@@ -1330,9 +1505,9 @@ export default function MastersPage() {
         ))}
       </div>
 
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex-1 min-h-0 flex flex-col bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
         {/* Tab bar */}
-        <div className="flex border-b border-[#E2E8F0] overflow-x-auto">
+        <div className="flex-none flex border-b border-[#E2E8F0] overflow-x-auto">
           {activeTabs.map((t) => (
             <button
               key={t.key}
@@ -1358,8 +1533,8 @@ export default function MastersPage() {
           ))}
         </div>
 
-        {/* Content */}
-        <div className="p-6">
+        {/* Content (scrolls internally; header + tabs stay fixed) */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-6">
           {effectiveSection === 'tasks' && (
             <>
               {effectiveTaskTab === 'config' && <ConfigTab orgId={orgId} />}

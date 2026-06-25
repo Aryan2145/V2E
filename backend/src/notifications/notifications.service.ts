@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { PushService } from './push.service';
 import { NotifModule } from './notification-events';
+import { TERMINAL_TYPES } from '../tasks/status-phase';
 
 export interface EmitParams {
   orgId: string;
@@ -237,7 +238,7 @@ export class NotificationsService {
         organization_id: orgId,
         is_deleted: false,
         deadline: { lt: now },
-        status: { type: { not: 'completed' } },
+        status: { type: { notIn: TERMINAL_TYPES } },
       },
       select: {
         id: true,

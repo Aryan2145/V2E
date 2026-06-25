@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
 import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
+import { TERMINAL_TYPES } from '../tasks/status-phase';
 
 const ENTRY_INCLUDE = { orderBy: { order_index: 'asc' as const } };
 
@@ -226,8 +227,9 @@ export class RecurringTasksService {
     }
 
     if (mode === 'delete-future') {
-      const completedStatuses = await this.prisma.taskStatus.findMany({
-        where: { organization_id: orgId, type: 'completed' },
+      // Skip already-closed instances (completed OR incomplete) — only drop still-open future ones.
+      const terminalStatuses = await this.prisma.taskStatus.findMany({
+        where: { organization_id: orgId, type: { in: TERMINAL_TYPES } },
         select: { id: true },
       });
       await this.prisma.task.updateMany({
@@ -235,7 +237,7 @@ export class RecurringTasksService {
           organization_id: orgId,
           recurring_template_id: templateId,
           is_deleted: false,
-          status_id: { notIn: completedStatuses.map((s) => s.id) },
+          status_id: { notIn: terminalStatuses.map((s) => s.id) },
         },
         data: { is_deleted: true, deleted_at: new Date(), deletion_reason: 'Recurring template stopped' },
       });

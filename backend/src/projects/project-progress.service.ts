@@ -12,14 +12,20 @@ export class ProjectProgressService {
   ) {}
 
   async recalculateProjectProgress(projectId: string): Promise<void> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { organization_id: true },
+    });
+
     const projectTasks = await this.prisma.projectTask.findMany({
       where: { project_id: projectId },
     });
 
     const taskIds = projectTasks.filter((pt) => pt.task_id).map((pt) => pt.task_id as string);
 
+    // Only successful completion counts toward progress; scope to this project's org.
     const completedStatuses = await this.prisma.taskStatus.findMany({
-      where: { type: 'completed' },
+      where: { type: 'completed', ...(project ? { organization_id: project.organization_id } : {}) },
       select: { id: true },
     });
     const completedStatusIds = new Set(completedStatuses.map((s) => s.id));
