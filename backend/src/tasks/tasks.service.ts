@@ -19,6 +19,7 @@ import { ClockService } from '../clock/clock.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
 import { Principal } from '../access-rights/permissions.service';
+import { ChecklistAccessService } from '../task-masters/checklist-access.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -48,6 +49,7 @@ export class TasksService {
     private readonly scope: ScopeService,
     private readonly leave: LeaveService,
     private readonly clock: ClockService,
+    private readonly checklistAccess: ChecklistAccessService,
   ) {
     this.scope.registerWiredList(TasksService.TASK_LEAF);
   }
@@ -157,6 +159,15 @@ export class TasksService {
     // Subject eligibility (fail loud, before any writes): every assignee must be
     // eligible to be assigned a task — even if they have no Tasks actor access.
     await this.subjects.assertAllEligible(orgId, TasksService.TASK_SUBJECT, dto.assignee_user_ids ?? []);
+
+    // Checklist template access: the creator may only apply a template they're
+    // allowed to use (by department / role / explicit grant).
+    if (dto.checklist_template_id) {
+      const allowed = await this.checklistAccess.isAccessible(orgId, userId, dto.checklist_template_id);
+      if (!allowed) {
+        throw new ForbiddenException('You are not allowed to use this checklist template.');
+      }
+    }
 
     // Resolve status
     let statusId = dto.status_id;

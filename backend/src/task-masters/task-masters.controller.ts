@@ -17,6 +17,7 @@ import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { TaskMastersService } from './task-masters.service';
+import { ChecklistAccessService } from './checklist-access.service';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreatePriorityDto } from './dto/create-priority.dto';
@@ -28,7 +29,10 @@ import { CreateChecklistTemplateDto } from './dto/create-checklist-template.dto'
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/tasks/masters')
 export class TaskMastersController {
-  constructor(private readonly service: TaskMastersService) {}
+  constructor(
+    private readonly service: TaskMastersService,
+    private readonly checklistAccess: ChecklistAccessService,
+  ) {}
 
   // ─── Config ─────────────────────────────────────────────────────────────────
 
@@ -187,6 +191,12 @@ export class TaskMastersController {
   @ApiOperation({ summary: 'List checklist templates' })
   listTemplates(@Param('orgId') orgId: string) {
     return this.service.listChecklistTemplates(orgId);
+  }
+
+  @Get('checklist-templates/accessible')
+  @ApiOperation({ summary: 'List checklist templates the current user may use when creating a task' })
+  listAccessibleTemplates(@Param('orgId') orgId: string, @Request() req: any) {
+    return this.checklistAccess.listAccessibleTemplates(orgId, req.user.id);
   }
 
   @Post('checklist-templates')

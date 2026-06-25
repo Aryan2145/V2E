@@ -91,7 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Config',
     items: [
-      { label: 'Masters', href: '/dashboard/tasks/masters', Icon: Settings2, taskConfigGated: true },
+      { label: 'Work Settings', href: '/dashboard/tasks/masters', Icon: Settings2, taskConfigGated: true },
     ],
   },
 ]

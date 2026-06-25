@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { ChevronDown, Search, X, Check, Building2 } from 'lucide-react'
+import { ChevronDown, Search, X, Check, Building2, Lock } from 'lucide-react'
 import { flattenTree, ancestorsOf } from '@/lib/dept-tree'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { useAnchoredPanel } from '@/lib/hooks/useAnchoredPanel'
@@ -22,6 +22,12 @@ interface Props {
    * panel must escape the modal's clipping. See memory: no-overflow-parent.
    */
   inline?: boolean
+  /**
+   * Return a reason string to render a department as LOCKED (visible but not
+   * selectable) — e.g. "Already added" or "Covered by Sales". Return null/undefined
+   * to leave it selectable. The current `value` is never locked.
+   */
+  lockedReason?: (deptId: string) => string | null | undefined
 }
 
 export default function DepartmentSelect({
@@ -31,6 +37,7 @@ export default function DepartmentSelect({
   placeholder = 'Select department',
   allLabel,
   inline = false,
+  lockedReason,
 }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -86,6 +93,28 @@ export default function DepartmentSelect({
   const triggerCls =
     'w-full flex items-center gap-2.5 border border-[#CBD5E1] rounded-[8px] px-3 py-2.5 text-[15px] text-left bg-[#F8FAFC] hover:bg-white hover:border-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors'
 
+  const lockOf = (id: string) => (id === value ? null : lockedReason?.(id) ?? null)
+  const allLocked =
+    !!lockedReason && !allLabel && departments.length > 0 && departments.every((d) => lockOf(d.id))
+
+  // A department shown but not selectable, with the reason why (and an optional path).
+  const lockedRow = (dept: Department, paddingLeft: number, reason: string, sub?: string) => (
+    <div
+      key={dept.id}
+      title={reason}
+      aria-disabled="true"
+      style={{ paddingLeft }}
+      className="w-full flex items-center gap-2.5 pr-3 py-2 cursor-not-allowed select-none"
+    >
+      <span className="w-2.5 h-2.5 rounded-full shrink-0 opacity-40" style={{ backgroundColor: colorFor(dept.id) }} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-medium text-[#94A3B8] truncate">{dept.name}</span>
+        <span className="block text-[11px] text-[#94A3B8] truncate">{sub ? `${reason} · ${sub}` : reason}</span>
+      </span>
+      <Lock size={13} className="text-[#CBD5E1] shrink-0" />
+    </div>
+  )
+
   // Shared panel content (search header + department list) — identical in both
   // portal and inline render paths.
   const panelBody = (
@@ -112,6 +141,9 @@ export default function DepartmentSelect({
       </div>
 
       <div className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+        {allLocked && !q && (
+          <p className="px-3 pt-2 pb-1 text-[11px] text-[#94A3B8]">Every department is already covered by another rule.</p>
+        )}
         {allLabel && !q && (
           <button
             type="button"
@@ -147,6 +179,8 @@ export default function DepartmentSelect({
                 .map((a) => a.name)
                 .join(' › ')
               const isSel = d.id === value
+              const lock = lockOf(d.id)
+              if (lock) return lockedRow(d, 12, lock, path)
               return (
                 <button
                   key={d.id}
@@ -176,6 +210,8 @@ export default function DepartmentSelect({
         ) : (
           flat.map(({ dept, depth }) => {
             const isSel = dept.id === value
+            const lock = lockOf(dept.id)
+            if (lock) return lockedRow(dept, 12 + depth * 16, lock)
             return (
               <button
                 key={dept.id}

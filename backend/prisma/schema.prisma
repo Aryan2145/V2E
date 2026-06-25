@@ -1013,15 +1013,48 @@ model TaskChecklist {
 }
 
 model TaskChecklistTemplate {
-  id                 String   @id @default(uuid())
+  id                 String              @id @default(uuid())
   organization_id    String
   name               String
   created_by_user_id String
-  items              Json     @default("[]")
-  created_at         DateTime @default(now())
-  updated_at         DateTime @updatedAt
+  items              Json                @default("[]")
+  access_mode        ChecklistAccessMode @default(everyone)
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+
+  access_rules ChecklistTemplateAccessRule[]
 
   @@map("task_checklist_templates")
+}
+
+enum ChecklistAccessMode {
+  everyone
+  restricted
+}
+
+enum ChecklistAccessKind {
+  department
+  role
+  user
+  exclude_user // a person revoked from the dynamic department/role grants
+  exclude_role // a whole role revoked from the dynamic department grants
+}
+
+model ChecklistTemplateAccessRule {
+  id                      String              @id @default(uuid())
+  organization_id         String
+  template_id             String
+  kind                    ChecklistAccessKind
+  department_id           String? // when kind = department
+  include_sub_departments Boolean             @default(true) // cascade opt-out
+  role_id                 String? // when kind = role (dept-scoped Role.id)
+  user_id                 String? // when kind = user
+  created_at              DateTime            @default(now())
+
+  template TaskChecklistTemplate @relation(fields: [template_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, template_id])
+  @@map("checklist_template_access_rules")
 }
 
 model TaskReminder {

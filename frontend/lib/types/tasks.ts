@@ -193,12 +193,41 @@ export interface TaskArchiveItem {
   deleted_at: string
 }
 
+export type ChecklistAccessMode = 'everyone' | 'restricted'
+export type ChecklistAccessKind = 'department' | 'role' | 'user' | 'exclude_user' | 'exclude_role'
+
+export interface ChecklistAccessRule {
+  id: string
+  kind: ChecklistAccessKind
+  department_id: string | null
+  include_sub_departments: boolean
+  role_id: string | null
+  user_id: string | null
+}
+
 export interface ChecklistTemplate {
   id: string
   organization_id: string
   name: string
   items: { title: string; order_index: number }[]
+  access_mode: ChecklistAccessMode
+  access_rules: ChecklistAccessRule[]
   created_at: string
+}
+
+export interface ChecklistAccessRuleInput {
+  kind: ChecklistAccessKind
+  department_id?: string
+  include_sub_departments?: boolean
+  role_id?: string
+  user_id?: string
+}
+
+export interface ChecklistTemplateInput {
+  name: string
+  items: { title: string; order_index: number }[]
+  access_mode?: ChecklistAccessMode
+  access_rules?: ChecklistAccessRuleInput[]
 }
 
 // ─── Reports ──────────────────────────────────────────────────────────────────

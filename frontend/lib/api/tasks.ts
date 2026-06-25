@@ -12,6 +12,7 @@ import type {
   RecurringScheduleEntry,
   TaskArchiveItem,
   ChecklistTemplate,
+  ChecklistTemplateInput,
   TaskReportData,
   CollectiveOrgTasks,
 } from '@/lib/types/tasks'
@@ -112,9 +113,24 @@ export const tasksApi = {
     return unwrap<ChecklistTemplate[]>(res)
   },
 
-  createChecklistTemplate: async (orgId: string, dto: Omit<ChecklistTemplate, 'id' | 'organization_id' | 'created_at'>): Promise<ChecklistTemplate> => {
+  // Templates the current user is allowed to apply when creating a task.
+  getAccessibleChecklistTemplates: async (orgId: string): Promise<ChecklistTemplate[]> => {
+    const res = await apiClient.get(`${base(orgId)}/masters/checklist-templates/accessible`)
+    return unwrap<ChecklistTemplate[]>(res)
+  },
+
+  createChecklistTemplate: async (orgId: string, dto: ChecklistTemplateInput): Promise<ChecklistTemplate> => {
     const res = await apiClient.post(`${base(orgId)}/masters/checklist-templates`, dto)
     return unwrap<ChecklistTemplate>(res)
+  },
+
+  updateChecklistTemplate: async (orgId: string, id: string, dto: Partial<ChecklistTemplateInput>): Promise<ChecklistTemplate> => {
+    const res = await apiClient.patch(`${base(orgId)}/masters/checklist-templates/${id}`, dto)
+    return unwrap<ChecklistTemplate>(res)
+  },
+
+  deleteChecklistTemplate: async (orgId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/masters/checklist-templates/${id}`)
   },
 
   // ── Tasks ────────────────────────────────────────────────────────────────────
@@ -158,6 +174,7 @@ export const tasksApi = {
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
     checklist_items?: { title: string; order_index: number }[]
+    checklist_template_id?: string
     goal_id?: string
   }): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}`, dto)

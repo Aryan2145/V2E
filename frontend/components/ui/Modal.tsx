@@ -14,6 +14,13 @@ interface ModalProps {
   size?: ModalSize
   /** Close when Escape is pressed. Disable for data-entry modals to avoid losing input. */
   closeOnEscape?: boolean
+  /**
+   * When true (default) the whole body scrolls once content exceeds the panel.
+   * Set false to make the body a flex column instead — the modal grows only to
+   * its max height, and any inner region you mark `flex-1 min-h-0 overflow-y-auto`
+   * becomes the sole scroll area, keeping headers/footers pinned.
+   */
+  bodyScroll?: boolean
 }
 
 const sizeClasses: Record<ModalSize, string> = {
@@ -29,6 +36,7 @@ export default function Modal({
   children,
   size = 'md',
   closeOnEscape = true,
+  bodyScroll = true,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
   const [mounted, setMounted] = useState(false)
@@ -98,7 +106,7 @@ export default function Modal({
         </div>
 
         {/* Body */}
-        <div className="px-6 py-5 overflow-y-auto">{children}</div>
+        <div className={['px-6 py-5', bodyScroll ? 'overflow-y-auto' : 'flex-1 min-h-0 flex flex-col'].join(' ')}>{children}</div>
       </div>
     </div>,
     document.body,

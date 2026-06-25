@@ -349,8 +349,8 @@ export class TaskMastersService {
     return (dto.access_rules ?? [])
       .filter((r) =>
         (r.kind === 'department' && r.department_id) ||
-        (r.kind === 'role' && r.role_id) ||
-        (r.kind === 'user' && r.user_id),
+        ((r.kind === 'role' || r.kind === 'exclude_role') && r.role_id) ||
+        ((r.kind === 'user' || r.kind === 'exclude_user') && r.user_id),
       )
       .map((r) => ({
         organization_id: orgId,
@@ -358,8 +358,8 @@ export class TaskMastersService {
         kind: r.kind,
         department_id: r.kind === 'department' ? r.department_id ?? null : null,
         include_sub_departments: r.kind === 'department' ? r.include_sub_departments ?? true : true,
-        role_id: r.kind === 'role' ? r.role_id ?? null : null,
-        user_id: r.kind === 'user' ? r.user_id ?? null : null,
+        role_id: r.kind === 'role' || r.kind === 'exclude_role' ? r.role_id ?? null : null,
+        user_id: r.kind === 'user' || r.kind === 'exclude_user' ? r.user_id ?? null : null,
       }));
   }
 

@@ -79,6 +79,11 @@ export class CreateTaskDto {
   @Type(() => ChecklistItemDto)
   checklist_items?: ChecklistItemDto[];
 
+  // When the checklist was applied from a template, its id — re-validated for access.
+  @IsOptional()
+  @IsString()
+  checklist_template_id?: string;
+
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

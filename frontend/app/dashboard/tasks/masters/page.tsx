@@ -12,7 +12,13 @@ import type {
   TaskPriority,
   TaskStatus,
   ChecklistTemplate,
+  ChecklistAccessMode,
 } from '@/lib/types/tasks'
+import type { Department, Role, EmployeeProfile } from '@/lib/types'
+import { getDepartments } from '@/lib/api/departments'
+import { getRoles } from '@/lib/api/roles'
+import { getEmployees } from '@/lib/api/employees'
+import ChecklistAccessEditor, { type LocalRule, newRuleKey } from '@/components/tasks/ChecklistAccessEditor'
 import type {
   TicketMasterConfig,
   TicketType,
@@ -24,10 +30,9 @@ import type {
   TicketStatusType,
   TicketTemplateType,
 } from '@/lib/types/tickets'
-import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown, ArrowLeft } from 'lucide-react'
 import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
 import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
-import Modal from '@/components/ui/Modal'
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -521,11 +526,18 @@ function StatusesTab({ orgId }: { orgId: string }) {
 function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
   const [items, setItems] = useState<ChecklistTemplate[]>([])
   const [loading, setLoading] = useState(true)
-  const [creating, setCreating] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [templateName, setTemplateName] = useState('')
   const [templateItems, setTemplateItems] = useState<string[]>([''])
+  const [accessMode, setAccessMode] = useState<ChecklistAccessMode>('everyone')
+  const [accessRules, setAccessRules] = useState<LocalRule[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Access-rule data sources (loaded once).
+  const [departments, setDepartments] = useState<Department[]>([])
+  const [roles, setRoles] = useState<Role[]>([])
+  const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const itemRefs = useRef<(HTMLInputElement | null)[]>([])
   const undoStack = useRef<string[][]>([])
   const itemsRef = useRef(templateItems)
@@ -589,74 +601,188 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
   useEffect(() => {
     setLoading(true)
     tasksApi.getChecklistTemplates(orgId).then(setItems).catch(() => setItems([])).finally(() => setLoading(false))
+    getDepartments(orgId).then(setDepartments).catch(() => setDepartments([]))
+    getRoles(orgId).then(setRoles).catch(() => setRoles([]))
+    getEmployees(orgId).then(setEmployees).catch(() => setEmployees([]))
   }, [orgId])
 
   function resetForm() {
-    setTemplateName(''); setTemplateItems(['']); setError(null); undoStack.current = []; editingLine.current = null
+    setTemplateName(''); setTemplateItems(['']); setAccessMode('everyone'); setAccessRules([])
+    setError(null); undoStack.current = []; editingLine.current = null
   }
 
-  async function handleCreate() {
+  function openCreate() {
+    resetForm(); setEditingId(null); setFormOpen(true)
+  }
+
+  function openEdit(t: ChecklistTemplate) {
+    resetForm()
+    setEditingId(t.id)
+    setTemplateName(t.name)
+    const titles = (t.items ?? []).map((i) => i.title)
+    setTemplateItems(titles.length > 0 ? titles : [''])
+    setAccessMode(t.access_mode ?? 'everyone')
+    setAccessRules(
+      (t.access_rules ?? []).map((r) => ({
+        _key: newRuleKey(),
+        kind: r.kind,
+        department_id: r.department_id ?? undefined,
+        include_sub_departments: r.include_sub_departments,
+        role_id: r.role_id ?? undefined,
+        user_id: r.user_id ?? undefined,
+      })),
+    )
+    setFormOpen(true)
+  }
+
+  function closeForm() {
+    setFormOpen(false); setEditingId(null); resetForm()
+  }
+
+  async function handleSubmit() {
     const name = templateName.trim()
     const cleanItems = templateItems.filter((t) => t.trim())
     if (!name && cleanItems.length === 0) { setError('Add a template name and at least one item.'); return }
     if (!name) { setError('Template name is required.'); return }
     if (cleanItems.length === 0) { setError('Add at least one checklist item.'); return }
+
+    // Validate access rules when restricted: each grant must name a target.
+    // exclude_user rows (removed-people exceptions) ride along but aren't grants.
+    let rulesPayload: { kind: 'department' | 'role' | 'user' | 'exclude_user' | 'exclude_role'; department_id?: string; include_sub_departments?: boolean; role_id?: string; user_id?: string }[] = []
+    if (accessMode === 'restricted') {
+      rulesPayload = accessRules
+        .filter((r) =>
+          (r.kind === 'department' && r.department_id) ||
+          ((r.kind === 'role' || r.kind === 'exclude_role') && r.role_id) ||
+          ((r.kind === 'user' || r.kind === 'exclude_user') && r.user_id),
+        )
+        .map((r) => ({
+          kind: r.kind,
+          department_id: r.kind === 'department' ? r.department_id : undefined,
+          include_sub_departments: r.kind === 'department' ? (r.include_sub_departments ?? true) : undefined,
+          role_id: r.kind === 'role' || r.kind === 'exclude_role' ? r.role_id : undefined,
+          user_id: r.kind === 'user' || r.kind === 'exclude_user' ? r.user_id : undefined,
+        }))
+      if (!rulesPayload.some((r) => r.kind === 'department' || r.kind === 'role' || r.kind === 'user')) {
+        setError('Restricted access needs at least one department, role, or person — or switch to Everyone.')
+        return
+      }
+    }
+
     setError(null)
     setSubmitting(true)
+    const payload = {
+      name,
+      items: cleanItems.map((t, i) => ({ title: t.trim(), order_index: i })),
+      access_mode: accessMode,
+      access_rules: rulesPayload,
+    }
     try {
-      const item = await tasksApi.createChecklistTemplate(orgId, { name, items: cleanItems.map((t, i) => ({ title: t.trim(), order_index: i })) })
-      setItems((prev) => [...prev, item])
-      resetForm(); setCreating(false)
-    } catch { setError('Could not create the template. Please try again.') } finally { setSubmitting(false) }
+      if (editingId) {
+        const updated = await tasksApi.updateChecklistTemplate(orgId, editingId, payload)
+        setItems((prev) => prev.map((t) => (t.id === editingId ? updated : t)))
+      } else {
+        const created = await tasksApi.createChecklistTemplate(orgId, payload)
+        setItems((prev) => [...prev, created])
+      }
+      closeForm()
+    } catch (e) { setError(apiError(e) ?? 'Could not save the template. Please try again.') } finally { setSubmitting(false) }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await tasksApi.deleteChecklistTemplate(orgId, id)
+      setItems((prev) => prev.filter((t) => t.id !== id))
+    } catch { /* ignore */ }
   }
 
   if (loading) return <Spinner />
+
+  const accessSummary = (t: ChecklistTemplate): string => {
+    if ((t.access_mode ?? 'everyone') === 'everyone') return 'Everyone'
+    const rules = t.access_rules ?? []
+    const d = rules.filter((r) => r.kind === 'department').length
+    const r = rules.filter((x) => x.kind === 'role').length
+    const u = rules.filter((x) => x.kind === 'user').length
+    const parts: string[] = []
+    if (d) parts.push(`${d} dept${d !== 1 ? 's' : ''}`)
+    if (r) parts.push(`${r} role${r !== 1 ? 's' : ''}`)
+    if (u) parts.push(`${u} ${u !== 1 ? 'people' : 'person'}`)
+    return parts.length ? `Restricted · ${parts.join(', ')}` : 'Restricted'
+  }
+
+  if (formOpen) {
+    return (
+      <div className="space-y-5 max-w-5xl">
+        <div className="flex items-center gap-3">
+          <button onClick={closeForm} aria-label="Back to templates" className="w-9 h-9 flex items-center justify-center rounded-[8px] border border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9] transition-colors shrink-0"><ArrowLeft size={18} /></button>
+          <div>
+            <h2 className="text-[22px] font-semibold text-[#0F172A] leading-tight">{editingId ? 'Edit Checklist Template' : 'New Checklist Template'}</h2>
+            <p className="text-sm text-[#475569]">{editingId ? 'Update the name, items, and who can use this template.' : 'Name the template, add its items, and choose who can use it.'}</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
+          {/* Left: name + items */}
+          <div className="space-y-5">
+            <FormField label="Template Name"><input type="text" autoFocus value={templateName} onChange={(e) => { setTemplateName(e.target.value); if (error) setError(null) }} placeholder="e.g. Onboarding Checklist" className={inputCls} /></FormField>
+
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1">Items</label>
+              <p className="text-xs text-[#64748B] mb-2">Press Enter to add the next item. Ctrl+Z undoes a removal.</p>
+              {templateItems.map((item, idx) => (
+                <div key={idx} className="relative mb-2">
+                  <input ref={(el) => { itemRefs.current[idx] = el }} type="text" value={item} onChange={(e) => handleItemChange(idx, e.target.value)} onKeyDown={(e) => handleItemKeyDown(e, idx)} onBlur={() => handleItemBlur(idx)} placeholder={`Item ${idx + 1}`} className={`${inputCls} pr-9`} />
+                  <button onMouseDown={(e) => e.preventDefault()} onClick={() => { pushHistory(); setTemplateItems((prev) => prev.length <= 1 ? [''] : prev.filter((_, i) => i !== idx)) }} className="absolute top-0 right-0 h-[38px] w-9 flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors" aria-label="Remove item"><X size={14} /></button>
+                </div>
+              ))}
+              <button onClick={() => { pushHistory(); setTemplateItems((prev) => [...prev, '']) }} className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors mt-1"><Plus size={13} /> Add item</button>
+            </div>
+          </div>
+
+          {/* Right: access rules card */}
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
+            <ChecklistAccessEditor
+              mode={accessMode}
+              rules={accessRules}
+              onModeChange={setAccessMode}
+              onRulesChange={setAccessRules}
+              departments={departments}
+              roles={roles}
+              employees={employees}
+            />
+          </div>
+        </div>
+
+        {error && <p className="text-sm font-medium text-[#DC2626]">{error}</p>}
+
+        <div className="flex gap-2 pt-2">
+          <button onClick={handleSubmit} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">{submitting ? 'Saving...' : editingId ? 'Save Changes' : 'Create Template'}</button>
+          <button onClick={closeForm} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-[#475569]">{items.length} template{items.length !== 1 ? 's' : ''}</p>
-        <button onClick={() => setCreating(true)} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Template</button>
+        <button onClick={openCreate} className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"><Plus size={14} /> Add Template</button>
       </div>
-      <Modal isOpen={creating} onClose={() => { setCreating(false); resetForm() }} title="New Checklist Template" size="lg" closeOnEscape={false} bodyScroll={false}>
-        <div className="flex-1 min-h-0 flex flex-col">
-          {/* Fixed: name + items heading */}
-          <div className="shrink-0 space-y-4">
-            <FormField label="Template Name"><input type="text" autoFocus value={templateName} onChange={(e) => { setTemplateName(e.target.value); if (error) setError(null) }} placeholder="e.g. Onboarding Checklist" className={inputCls} /></FormField>
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1">Items</label>
-              <p className="text-xs text-[#64748B]">Press Enter to add the next item. Ctrl+Z undoes a removal.</p>
-            </div>
-          </div>
-          {/* Scrollable: only the item lines */}
-          <div className="flex-1 min-h-0 overflow-y-auto -mr-1 pr-1 mt-2">
-            {templateItems.map((item, idx) => (
-              <div key={idx} className="flex gap-2 mb-2">
-                <input ref={(el) => { itemRefs.current[idx] = el }} type="text" value={item} onChange={(e) => handleItemChange(idx, e.target.value)} onKeyDown={(e) => handleItemKeyDown(e, idx)} onBlur={() => handleItemBlur(idx)} placeholder={`Item ${idx + 1}`} className={inputCls} />
-                <button onMouseDown={(e) => e.preventDefault()} onClick={() => { pushHistory(); setTemplateItems((prev) => prev.length <= 1 ? [''] : prev.filter((_, i) => i !== idx)) }} className="w-8 h-[38px] flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"><X size={14} /></button>
-              </div>
-            ))}
-          </div>
-          {/* Fixed: add item + error + actions */}
-          <div className="shrink-0">
-            <button onClick={() => { pushHistory(); setTemplateItems((prev) => [...prev, '']) }} className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors mt-2"><Plus size={13} /> Add item</button>
-            {error && <p className="text-sm font-medium text-[#DC2626] mt-3">{error}</p>}
-            <div className="flex gap-2 mt-4 pt-3 border-t border-[#F1F5F9]">
-              <button onClick={handleCreate} disabled={submitting} className="px-4 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">{submitting ? 'Creating...' : 'Create Template'}</button>
-              <button onClick={() => { setCreating(false); resetForm() }} className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors">Cancel</button>
-            </div>
-          </div>
-        </div>
-      </Modal>
       {items.length === 0 && <div className="text-center py-12 text-[#475569] text-sm">No checklist templates yet.</div>}
       <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-4 items-start">
         {items.map((t) => {
           const count = (t.items ?? []).length
+          const restricted = (t.access_mode ?? 'everyone') === 'restricted'
           return (
             <div key={t.id} className="bg-white border border-[#E2E8F0] rounded-[10px] p-4 hover:border-[#CBD5E1] hover:shadow-[0_1px_3px_rgba(0,0,0,0.08)] transition-all">
               <div className="flex items-start justify-between gap-2 mb-3">
                 <p className="text-sm font-semibold text-[#0F172A] leading-snug">{t.name}</p>
-                <span className="shrink-0 text-[11px] font-medium rounded-[999px] px-2 py-0.5 bg-[#EFF6FF] text-[#2563EB]">{count} item{count !== 1 ? 's' : ''}</span>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button onClick={() => openEdit(t)} aria-label="Edit" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"><Pencil size={13} /></button>
+                  <button onClick={() => handleDelete(t.id)} aria-label="Delete" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"><Trash2 size={13} /></button>
+                </div>
               </div>
               <div className="space-y-1.5">
                 {(t.items ?? []).map((item, idx) => (
@@ -665,6 +791,10 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
                     <span className="text-xs text-[#475569] leading-snug">{item.title}</span>
                   </div>
                 ))}
+              </div>
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[#F1F5F9]">
+                <span className="text-[11px] font-medium rounded-[999px] px-2 py-0.5 bg-[#EFF6FF] text-[#2563EB]">{count} item{count !== 1 ? 's' : ''}</span>
+                <span className={['text-[11px] font-medium rounded-[999px] px-2 py-0.5', restricted ? 'bg-[#FEF3C7] text-[#B45309]' : 'bg-[#F1F5F9] text-[#475569]'].join(' ')}>{accessSummary(t)}</span>
               </div>
             </div>
           )
@@ -1255,16 +1385,18 @@ function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={on}
       onClick={onChange}
       className={[
-        'relative w-9 h-5 rounded-full transition-colors shrink-0',
+        'inline-flex items-center w-9 h-5 rounded-full px-0.5 transition-colors shrink-0',
         on ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
       ].join(' ')}
     >
       <span
         className={[
-          'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform',
-          on ? 'translate-x-[18px]' : 'translate-x-0.5',
+          'block w-4 h-4 rounded-full bg-white shadow transition-transform',
+          on ? 'translate-x-4' : 'translate-x-0',
         ].join(' ')}
       />
     </button>
@@ -1359,11 +1491,11 @@ function NotificationsMasterTab({ orgId }: { orgId: string }) {
 
 const taskTabs: { key: TaskMasterTab; label: string; icon: React.ReactNode }[] = [
   { key: 'assignee_visibility', label: 'Assignee Visibility', icon: <Users size={15} /> },
-  { key: 'config', label: 'Config', icon: <Settings2 size={15} /> },
+  { key: 'checklists', label: 'Checklist Templates', icon: <List size={15} /> },
   { key: 'categories', label: 'Categories', icon: <Tag size={15} /> },
   { key: 'priorities', label: 'Priorities', icon: <BarChart size={15} /> },
   { key: 'statuses', label: 'Statuses', icon: <Activity size={15} /> },
-  { key: 'checklists', label: 'Checklist Templates', icon: <List size={15} /> },
+  { key: 'config', label: 'Config', icon: <Settings2 size={15} /> },
 ]
 
 // Each Task Masters tab is gated by the matching access-rights leaf. A user sees a
@@ -1479,14 +1611,14 @@ export default function MastersPage() {
   const activeTabs = effectiveSection === 'tasks' ? visibleTaskTabs : effectiveSection === 'tickets' ? ticketTabs : notifTabs
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-5">
-      <div className="flex-none">
-        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Masters</h1>
+    <div className="flex flex-col gap-5">
+      <div>
+        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Work Settings</h1>
         <p className="mt-1 text-[15px] text-[#475569]">Configure system settings for tasks and tickets.</p>
       </div>
 
       {/* Top-level switcher */}
-      <div className="flex-none flex gap-2 p-1 bg-[#F1F5F9] rounded-[10px] w-fit">
+      <div className="flex gap-2 p-1 bg-[#F1F5F9] rounded-[10px] w-fit">
         {availableSections.map(([key, label]) => (
           <button
             key={key}
@@ -1505,7 +1637,7 @@ export default function MastersPage() {
         ))}
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
+      <div className="flex flex-col min-h-[calc(100vh-17rem)] bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
         {/* Tab bar */}
         <div className="flex-none flex border-b border-[#E2E8F0] overflow-x-auto">
           {activeTabs.map((t) => (
@@ -1533,8 +1665,8 @@ export default function MastersPage() {
           ))}
         </div>
 
-        {/* Content (scrolls internally; header + tabs stay fixed) */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-6">
+        {/* Content — card grows with content; the page scrolls when it overflows */}
+        <div className="flex-1 p-6">
           {effectiveSection === 'tasks' && (
             <>
               {effectiveTaskTab === 'config' && <ConfigTab orgId={orgId} />}

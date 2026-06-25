@@ -8,7 +8,7 @@ import TimeField from '@/components/ui/TimeField'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
+import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
 // import QuadrantBadge from './QuadrantBadge'
@@ -77,6 +77,8 @@ export default function CreateTaskModal({
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
   const [checklist, setChecklist] = useState<ChecklistEntry[]>([])
   const [newChecklistItem, setNewChecklistItem] = useState('')
+  const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
@@ -85,6 +87,22 @@ export default function CreateTaskModal({
   // Portal target only exists on the client — guard against SSR mismatch.
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
+
+  // Load the checklist templates this user is allowed to apply, when the modal opens.
+  useEffect(() => {
+    if (!isOpen || !orgId) return
+    tasksApi.getAccessibleChecklistTemplates(orgId).then(setChecklistTemplates).catch(() => setChecklistTemplates([]))
+  }, [isOpen, orgId])
+
+  // Apply a template: replace the checklist with its items (still editable).
+  function applyTemplate(templateId: string) {
+    setSelectedTemplateId(templateId)
+    if (!templateId) return
+    const tpl = checklistTemplates.find((t) => t.id === templateId)
+    if (!tpl) return
+    const sorted = [...(tpl.items ?? [])].sort((a, b) => a.order_index - b.order_index)
+    setChecklist(sorted.map((i) => ({ title: i.title })))
+  }
 
   const primaryAssignees = assignees.filter((a) => !a.is_cc)
   const primaryAssigneeCount = primaryAssignees.length
@@ -166,6 +184,7 @@ export default function CreateTaskModal({
     setAssignees([])
     setChecklist([])
     setNewChecklistItem('')
+    setSelectedTemplateId('')
     setError(null)
     setHolidayCheck(null)
   }, [statuses])
@@ -221,6 +240,7 @@ export default function CreateTaskModal({
         checklist_items: checklist.length > 0
           ? checklist.map((item, idx) => ({ title: item.title, order_index: idx }))
           : undefined,
+        checklist_template_id: selectedTemplateId || undefined,
       })
       reset()
       onTaskCreated?.(newTask)
@@ -466,6 +486,21 @@ export default function CreateTaskModal({
           {/* Checklist */}
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Checklist</label>
+            {checklistTemplates.length > 0 && (
+              <div className="mb-3">
+                <select
+                  value={selectedTemplateId}
+                  onChange={(e) => applyTemplate(e.target.value)}
+                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
+                >
+                  <option value="">Apply a checklist template…</option>
+                  {checklistTemplates.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-[#64748B]">Pre-fills the checklist below; you can still edit the items.</p>
+              </div>
+            )}
             {checklist.map((item, idx) => (
               <div key={idx} className="flex items-center gap-2 mb-1.5">
                 <div className="w-4 h-4 rounded border border-[#CBD5E1] shrink-0" />

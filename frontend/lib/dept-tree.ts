@@ -57,6 +57,24 @@ export function flattenTree(departments: Department[]): FlatDept[] {
   return out
 }
 
+/**
+ * Descendants of a department in pre-order, each with its depth RELATIVE to the
+ * given department (direct children = 0). Self is excluded. Used to show, and to
+ * cascade over, the sub-departments a department sweeps in.
+ */
+export function descendantsOf(departments: Department[], deptId: string): FlatDept[] {
+  const { childrenOf } = buildDeptForest(departments)
+  const out: FlatDept[] = []
+  const walk = (id: string, depth: number) => {
+    for (const child of childrenOf.get(id) ?? []) {
+      out.push({ dept: child, depth })
+      walk(child.id, depth + 1)
+    }
+  }
+  walk(deptId, 0)
+  return out
+}
+
 /** Root → … → self chain for a department, for the breadcrumb. */
 export function ancestorsOf(departments: Department[], deptId: string): Department[] {
   const byId = new Map(departments.map((d) => [d.id, d]))
