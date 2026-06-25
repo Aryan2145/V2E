@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback } from 'react'
+import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
 import { tasksApi } from '@/lib/api/tasks'
@@ -1113,12 +1114,12 @@ function NotificationsMasterTab({ orgId }: { orgId: string }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const taskTabs: { key: TaskMasterTab; label: string; icon: React.ReactNode }[] = [
+  { key: 'assignee_visibility', label: 'Assignee Visibility', icon: <Users size={15} /> },
   { key: 'config', label: 'Config', icon: <Settings2 size={15} /> },
   { key: 'categories', label: 'Categories', icon: <Tag size={15} /> },
   { key: 'priorities', label: 'Priorities', icon: <BarChart size={15} /> },
   { key: 'statuses', label: 'Statuses', icon: <Activity size={15} /> },
   { key: 'checklists', label: 'Checklist Templates', icon: <List size={15} /> },
-  { key: 'assignee_visibility', label: 'Assignee Visibility', icon: <Users size={15} /> },
 ]
 
 // Each Task Masters tab is gated by the matching access-rights leaf. A user sees a
@@ -1142,13 +1143,41 @@ const ticketTabs: { key: TicketMasterTab; label: string; icon: React.ReactNode }
   { key: 'templates', label: 'Templates', icon: <CheckSquare size={15} /> },
 ]
 
+const TASK_TAB_KEYS: TaskMasterTab[] = ['config', 'categories', 'priorities', 'statuses', 'checklists', 'assignee_visibility']
+const TICKET_TAB_KEYS: TicketMasterTab[] = ['config', 'types', 'categories', 'priorities', 'statuses', 'templates']
+
+function readParam(name: string): string | null {
+  if (typeof window === 'undefined') return null
+  return new URLSearchParams(window.location.search).get(name)
+}
+
 export default function MastersPage() {
   const { user } = useAuth()
   const { can, isAdmin, loading: permsLoading } = usePermissions()
+  const router = useRouter()
+  const pathname = usePathname()
   const orgId = user?.organizationId ?? ''
-  const [masterSection, setMasterSection] = useState<'tasks' | 'tickets' | 'notifications'>('tasks')
-  const [taskTab, setTaskTab] = useState<TaskMasterTab>('config')
-  const [ticketTab, setTicketTab] = useState<TicketMasterTab>('config')
+  const [masterSection, setMasterSection] = useState<'tasks' | 'tickets' | 'notifications'>(() => {
+    const s = readParam('section')
+    return s === 'tickets' || s === 'notifications' ? s : 'tasks'
+  })
+  const [taskTab, setTaskTab] = useState<TaskMasterTab>(() => {
+    const t = readParam('tab') as TaskMasterTab | null
+    return t && TASK_TAB_KEYS.includes(t) ? t : 'assignee_visibility'
+  })
+  const [ticketTab, setTicketTab] = useState<TicketMasterTab>(() => {
+    const t = readParam('tab') as TicketMasterTab | null
+    return t && TICKET_TAB_KEYS.includes(t) ? t : 'config'
+  })
+
+  // Reflect the active section + tab in the URL so a reload (or a shared link)
+  // lands on the same place. Uses replace so it doesn't pollute browser history.
+  const syncUrl = useCallback((section: string, tab: string) => {
+    const params = new URLSearchParams()
+    params.set('section', section)
+    params.set('tab', tab)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [router, pathname])
 
   if (!orgId) {
     return (
@@ -1217,7 +1246,11 @@ export default function MastersPage() {
         {availableSections.map(([key, label]) => (
           <button
             key={key}
-            onClick={() => setMasterSection(key)}
+            onClick={() => {
+              setMasterSection(key)
+              const tab = key === 'tasks' ? taskTab : key === 'tickets' ? ticketTab : 'config'
+              syncUrl(key, tab)
+            }}
             className={[
               'px-4 py-2 rounded-[8px] text-sm font-semibold transition-colors',
               effectiveSection === key ? 'bg-white text-[#0F172A] shadow-[0_1px_3px_rgba(0,0,0,0.1)]' : 'text-[#475569] hover:text-[#0F172A]',
@@ -1235,8 +1268,13 @@ export default function MastersPage() {
             <button
               key={t.key}
               onClick={() => {
-                if (effectiveSection === 'tasks') setTaskTab(t.key as TaskMasterTab)
-                else if (effectiveSection === 'tickets') setTicketTab(t.key as TicketMasterTab)
+                if (effectiveSection === 'tasks') {
+                  setTaskTab(t.key as TaskMasterTab)
+                  syncUrl('tasks', t.key)
+                } else if (effectiveSection === 'tickets') {
+                  setTicketTab(t.key as TicketMasterTab)
+                  syncUrl('tickets', t.key)
+                }
               }}
               className={[
                 'flex items-center gap-2 px-5 py-3.5 text-sm font-medium transition-colors whitespace-nowrap border-b-2',
