@@ -20,9 +20,25 @@ import type {
   ChecklistUndoImportResult,
   TaskReportData,
   CollectiveOrgTasks,
+  TaskDashboard,
+  PagedTasks,
+  WorkQuery,
+  PeopleTree,
+  EmployeeReport,
+  BulkAction,
 } from '@/lib/types/tasks'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/tasks`
+
+/** Serialise a WorkQuery to a query string, dropping empty/undefined values. */
+function workQs(query: WorkQuery): string {
+  const params = new URLSearchParams()
+  for (const [k, v] of Object.entries(query as Record<string, unknown>)) {
+    if (v !== undefined && v !== null && v !== '') params.set(k, String(v))
+  }
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
+}
 
 // ─── Response unwrapper ───────────────────────────────────────────────────────
 
@@ -166,6 +182,38 @@ export const tasksApi = {
     const params = filters ? new URLSearchParams(filters).toString() : ''
     const res = await apiClient.get(`${base(orgId)}${params ? `?${params}` : ''}`)
     return unwrap<Task[]>(res)
+  },
+
+  // ── Work dashboard (scope-aware canvas) ───────────────────────────────────────
+
+  getDashboard: async (orgId: string, query: WorkQuery = {}): Promise<TaskDashboard> => {
+    const res = await apiClient.get(`${base(orgId)}/dashboard${workQs(query)}`)
+    return unwrap<TaskDashboard>(res)
+  },
+
+  listTasksPaged: async (orgId: string, query: WorkQuery = {}): Promise<PagedTasks> => {
+    const res = await apiClient.get(`${base(orgId)}/paged${workQs(query)}`)
+    return unwrap<PagedTasks>(res)
+  },
+
+  getPeopleTree: async (orgId: string, query: WorkQuery = {}): Promise<PeopleTree> => {
+    const res = await apiClient.get(`${base(orgId)}/people-tree${workQs(query)}`)
+    return unwrap<PeopleTree>(res)
+  },
+
+  getEmployeeReport: async (orgId: string, userId: string, query: WorkQuery = {}): Promise<EmployeeReport> => {
+    const res = await apiClient.get(`${base(orgId)}/people/${userId}/report${workQs(query)}`)
+    return unwrap<EmployeeReport>(res)
+  },
+
+  exportWork: async (orgId: string, query: WorkQuery = {}): Promise<{ csv: string; count: number }> => {
+    const res = await apiClient.get(`${base(orgId)}/export${workQs(query)}`)
+    return unwrap<{ csv: string; count: number }>(res)
+  },
+
+  bulkUpdate: async (orgId: string, taskIds: string[], action: BulkAction, payload: { status_id?: string; deadline?: string | null } = {}): Promise<{ updated: number }> => {
+    const res = await apiClient.post(`${base(orgId)}/bulk`, { task_ids: taskIds, action, ...payload })
+    return unwrap<{ updated: number }>(res)
   },
 
   getMyTasks: async (orgId: string): Promise<Task[]> => {

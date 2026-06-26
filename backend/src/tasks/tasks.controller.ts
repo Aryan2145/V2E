@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { DataScope } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
@@ -21,6 +22,12 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
+
+/** Map a raw `?scope=` query value to a DataScope, ignoring anything invalid. */
+function toDataScope(raw?: string): DataScope | undefined {
+  if (raw && (Object.values(DataScope) as string[]).includes(raw)) return raw as DataScope;
+  return undefined;
+}
 
 @ApiTags('tasks')
 @ApiBearerAuth()
@@ -125,6 +132,135 @@ export class TasksController {
     @Query('to_date') to_date?: string,
   ) {
     return this.service.getReports(orgId, from_date, to_date);
+  }
+
+  @Get('dashboard')
+  @ApiOperation({ summary: 'Scope-aware Work dashboard: KPI counts + dimension breakdowns' })
+  getDashboard(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: string,
+    @Query('status_id') status_id?: string,
+    @Query('priority_id') priority_id?: string,
+    @Query('category_id') category_id?: string,
+    @Query('department_id') department_id?: string,
+    @Query('created_by_user_id') created_by_user_id?: string,
+    @Query('assignee_user_id') assignee_user_id?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.getDashboard(orgId, principalFromUser(req.user), {
+      scope: toDataScope(scope),
+      status_id, priority_id, category_id, department_id, created_by_user_id,
+      assignee_user_id, type, search, from_date, to_date,
+    });
+  }
+
+  @Get('paged')
+  @ApiOperation({ summary: 'Paginated, scope-aware task list for the dashboard result surface' })
+  listPaged(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: string,
+    @Query('page') page?: string,
+    @Query('page_size') page_size?: string,
+    @Query('sort') sort?: string,
+    @Query('bucket') bucket?: string,
+    @Query('status_id') status_id?: string,
+    @Query('priority_id') priority_id?: string,
+    @Query('category_id') category_id?: string,
+    @Query('department_id') department_id?: string,
+    @Query('created_by_user_id') created_by_user_id?: string,
+    @Query('assignee_user_id') assignee_user_id?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.listTasksPaged(
+      orgId,
+      principalFromUser(req.user),
+      { status_id, priority_id, category_id, department_id, created_by_user_id, assignee_user_id, type, search, from_date, to_date },
+      toDataScope(scope),
+      page ? parseInt(page, 10) : 1,
+      page_size ? parseInt(page_size, 10) : 25,
+      sort ?? 'created_desc',
+      bucket,
+    );
+  }
+
+  @Get('people-tree')
+  @ApiOperation({ summary: 'Reporting tree of visible people with per-node workload stats' })
+  getPeopleTree(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: string,
+    @Query('status_id') status_id?: string,
+    @Query('priority_id') priority_id?: string,
+    @Query('category_id') category_id?: string,
+    @Query('department_id') department_id?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.getPeopleTree(orgId, principalFromUser(req.user), toDataScope(scope), {
+      status_id, priority_id, category_id, department_id, type, search, from_date, to_date,
+    });
+  }
+
+  @Get('people/:userId/report')
+  @ApiOperation({ summary: "An employee's work report (scope-gated): their work + what they delegated" })
+  getEmployeeReport(
+    @Param('orgId') orgId: string,
+    @Param('userId') userId: string,
+    @Request() req: any,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.getEmployeeReport(orgId, principalFromUser(req.user), userId, { from_date, to_date });
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'Export the current scope/filtered task view as CSV' })
+  exportCsv(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: string,
+    @Query('bucket') bucket?: string,
+    @Query('status_id') status_id?: string,
+    @Query('priority_id') priority_id?: string,
+    @Query('category_id') category_id?: string,
+    @Query('department_id') department_id?: string,
+    @Query('created_by_user_id') created_by_user_id?: string,
+    @Query('assignee_user_id') assignee_user_id?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.exportCsv(
+      orgId,
+      principalFromUser(req.user),
+      { status_id, priority_id, category_id, department_id, created_by_user_id, assignee_user_id, type, search, from_date, to_date },
+      toDataScope(scope),
+      bucket,
+    );
+  }
+
+  @Post('bulk')
+  @ApiOperation({ summary: 'Bulk status / deadline / complete on a set of tasks (scope-gated)' })
+  bulkUpdate(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Body() body: { task_ids: string[]; action: 'status' | 'deadline' | 'complete'; status_id?: string; deadline?: string | null },
+  ) {
+    return this.service.bulkUpdate(orgId, principalFromUser(req.user), body.task_ids ?? [], body.action, {
+      status_id: body.status_id,
+      deadline: body.deadline,
+    });
   }
 
   // ─── /:id routes ─────────────────────────────────────────────────────────────

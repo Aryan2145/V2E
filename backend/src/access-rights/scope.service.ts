@@ -99,6 +99,58 @@ export class ScopeService implements OnApplicationBootstrap {
     return policy.whereForUsers(visible);
   }
 
+  /** Narrow-to-broad ordering of data scopes, used to clamp a requested scope. */
+  private static readonly SCOPE_RANK: Record<DataScope, number> = {
+    [DataScope.own]: 0,
+    [DataScope.team]: 1,
+    [DataScope.department]: 2,
+    [DataScope.org]: 3,
+  };
+
+  /** Clamp a requested scope so it can never exceed the actor's entitled `max`. */
+  clampScope(requested: DataScope, max: DataScope): DataScope {
+    return ScopeService.SCOPE_RANK[requested] <= ScopeService.SCOPE_RANK[max] ? requested : max;
+  }
+
+  /**
+   * Resolve the scope to actually apply for a list query. `max` is the actor's entitled
+   * read scope for the leaf; `effective` is `requested` clamped to `max` (or `max` when no
+   * narrower scope is requested). Both `null` when the actor may not read the leaf.
+   *
+   * This powers the Mine / My Team / Organization switcher: the client may ask to NARROW
+   * the view, never to widen it past entitlement.
+   */
+  async resolveListScope(
+    orgId: string,
+    principal: Principal,
+    leafKey: string,
+    requested?: DataScope | null,
+  ): Promise<{ max: DataScope | null; effective: DataScope | null }> {
+    const max = await this.permissions.scopeFor(orgId, principal, leafKey, PermissionAction.read);
+    if (max === null) return { max: null, effective: null };
+    const effective = requested ? this.clampScope(requested, max) : max;
+    return { max, effective };
+  }
+
+  /**
+   * Prisma `where` fragment for an already-resolved `effective` scope (see resolveListScope).
+   * `{}` = no restriction (org scope); DENY = no content.
+   */
+  async whereForScope(
+    orgId: string,
+    actorId: string,
+    leafKey: string,
+    effective: DataScope | null,
+  ): Promise<Record<string, unknown>> {
+    if (effective === null) return DENY_WHERE;
+    if (effective === DataScope.org) return {};
+    const visible = await this.visibleUserIds(orgId, actorId, effective);
+    if (visible === 'ALL') return {};
+    const policy = scopePolicyOf(leafKey);
+    if (!policy?.whereForUsers) return DENY_WHERE;
+    return policy.whereForUsers(visible);
+  }
+
   /**
    * Gate a mutation: throws unless the record (identified by its CORE participant user
    * ids) is within the actor's effective scope for `action`. Fail-loud.

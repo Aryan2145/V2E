@@ -1,0 +1,103 @@
+'use client'
+
+import React from 'react'
+import type { TaskDashboard, DashboardBreakdownItem } from '@/lib/types/tasks'
+
+export type BreakdownDim = 'status' | 'priority' | 'category' | 'department' | 'type' | 'assignee' | 'assigner'
+
+export interface BreakdownSelection {
+  status_id?: string
+  priority_id?: string
+  category_id?: string
+  department_id?: string
+  type?: string
+  assignee_user_id?: string
+  created_by_user_id?: string
+}
+
+const DIM_KEY: Record<BreakdownDim, keyof BreakdownSelection> = {
+  status: 'status_id',
+  priority: 'priority_id',
+  category: 'category_id',
+  department: 'department_id',
+  type: 'type',
+  assignee: 'assignee_user_id',
+  assigner: 'created_by_user_id',
+}
+
+function BreakdownCard({
+  title,
+  items,
+  activeId,
+  defaultColor,
+  onToggle,
+}: {
+  title: string
+  items: DashboardBreakdownItem[]
+  activeId?: string
+  defaultColor: string
+  onToggle: (id: string | null) => void
+}) {
+  if (!items.length) return null
+  const max = Math.max(...items.map((i) => i.total), 1)
+  const top = items.slice(0, 7)
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-4">
+      <p className="text-[13px] font-semibold text-[#0F172A] mb-3">{title}</p>
+      <div className="space-y-2">
+        {top.map((it) => {
+          const id = it.id ?? '__none__'
+          const isActive = activeId != null && activeId === it.id
+          const color = it.color || defaultColor
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => onToggle(isActive ? null : (it.id ?? null))}
+              className={`w-full text-left group rounded-[8px] px-2 py-1.5 transition-colors ${isActive ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className={`text-[13px] truncate ${isActive ? 'font-semibold text-[#2563EB]' : 'text-[#334155] group-hover:text-[#0F172A]'}`}>
+                  {it.label}
+                </span>
+                <span className="text-[12px] font-semibold tabular-nums text-[#475569] shrink-0">{it.total}</span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-[#F1F5F9] overflow-hidden">
+                <div className="h-full rounded-full transition-all" style={{ width: `${(it.total / max) * 100}%`, backgroundColor: color }} />
+              </div>
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Power-BI-style slicer panel. Each dimension is a clickable bar list; clicking a bar
+ * sets that dimension's filter (and re-slices the whole board). The clicked dimension's
+ * own bars stay visible so the selection reads clearly.
+ */
+export default function BreakdownPanel({
+  data,
+  selection,
+  onChange,
+}: {
+  data: TaskDashboard
+  selection: BreakdownSelection
+  onChange: (key: keyof BreakdownSelection, value: string | null) => void
+}) {
+  const set = (dim: BreakdownDim) => (id: string | null) => onChange(DIM_KEY[dim], id)
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+      <BreakdownCard title="By Status" items={data.by_status} activeId={selection.status_id} defaultColor="#2563EB" onToggle={set('status')} />
+      <BreakdownCard title="By Priority" items={data.by_priority} activeId={selection.priority_id} defaultColor="#D97706" onToggle={set('priority')} />
+      <BreakdownCard title="By Category" items={data.by_category} activeId={selection.category_id} defaultColor="#7C3AED" onToggle={set('category')} />
+      <BreakdownCard title="By Department" items={data.by_department} activeId={selection.department_id} defaultColor="#0891B2" onToggle={set('department')} />
+      <BreakdownCard title="Assigned to (workload)" items={data.by_assignee} activeId={selection.assignee_user_id} defaultColor="#2563EB" onToggle={set('assignee')} />
+      <BreakdownCard title="Assigned by (delegation)" items={data.by_assigner} activeId={selection.created_by_user_id} defaultColor="#059669" onToggle={set('assigner')} />
+    </div>
+  )
+}

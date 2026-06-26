@@ -1,0 +1,70 @@
+'use client'
+
+import React from 'react'
+import {
+  AlertTriangle, Calendar, CalendarDays, Activity, CheckCircle2, Repeat, LayoutGrid,
+} from 'lucide-react'
+import type { DashboardKpis, WorkBucket } from '@/lib/types/tasks'
+
+type TileDef = {
+  bucket: WorkBucket | null
+  label: string
+  color: string
+  icon: React.ReactNode
+  key: keyof DashboardKpis | 'total'
+}
+
+const TILES: TileDef[] = [
+  { bucket: 'overdue', label: 'Overdue', color: '#DC2626', icon: <AlertTriangle size={18} />, key: 'overdue' },
+  { bucket: 'due_today', label: 'Due Today', color: '#D97706', icon: <Calendar size={18} />, key: 'due_today' },
+  { bucket: 'due_week', label: 'Due This Week', color: '#2563EB', icon: <CalendarDays size={18} />, key: 'due_week' },
+  { bucket: 'ongoing', label: 'Ongoing', color: '#0891B2', icon: <Activity size={18} />, key: 'ongoing' },
+  { bucket: 'completed', label: 'Completed', color: '#16A34A', icon: <CheckCircle2 size={18} />, key: 'completed' },
+  { bucket: 'recurring', label: 'Recurring', color: '#7C3AED', icon: <Repeat size={18} />, key: 'recurring' },
+  { bucket: null, label: 'All Tasks', color: '#475569', icon: <LayoutGrid size={18} />, key: 'total' },
+]
+
+/**
+ * Server-counted KPI tiles. Each tile is a slicer: click to filter the result surface
+ * to that bucket (counts and rows share one backend definition, so they always match).
+ */
+export default function KpiTiles({
+  kpis,
+  active,
+  onSelect,
+}: {
+  kpis: DashboardKpis
+  active: WorkBucket | null
+  onSelect: (bucket: WorkBucket | null) => void
+}) {
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
+      {TILES.map((t) => {
+        const value = t.key === 'total' ? kpis.total : kpis[t.key]
+        const isActive = active === t.bucket
+        return (
+          <button
+            key={t.label}
+            type="button"
+            onClick={() => onSelect(isActive ? null : t.bucket)}
+            className="bg-white border rounded-[12px] p-3.5 flex flex-col gap-2 text-left transition-all duration-150 border-[#E2E8F0] shadow-[0_1px_3px_rgba(0,0,0,0.06)] hover:border-[#CBD5E1] hover:shadow-[0_2px_8px_rgba(0,0,0,0.10)]"
+            style={isActive ? { borderColor: t.color, boxShadow: `0 0 0 2px ${t.color}30, 0 2px 8px rgba(0,0,0,0.08)` } : undefined}
+          >
+            <div className="flex items-center justify-between">
+              <span
+                className="w-8 h-8 rounded-[8px] flex items-center justify-center"
+                style={{ backgroundColor: t.color + '18', color: t.color }}
+              >
+                {t.icon}
+              </span>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-[#0F172A] leading-tight tabular-nums">{value}</p>
+              <p className="text-[13px] mt-0.5" style={{ color: isActive ? t.color : '#475569' }}>{t.label}</p>
+            </div>
+          </button>
+        )
+      })}
+    </div>
+  )
+}

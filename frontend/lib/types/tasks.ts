@@ -101,6 +101,7 @@ export interface Task {
     show_on_card: boolean
   }
   reopen_expires_at?: string
+  is_overdue?: boolean
   created_at: string
   updated_at: string
   category?: TaskCategory
@@ -108,6 +109,8 @@ export interface Task {
   status?: TaskStatus
   assignees?: TaskAssigneeUser[]
   checklist?: TaskChecklistItem[]
+  /** The user who created/assigned the task (resolved server-side). */
+  created_by?: { id: string; name: string; email?: string } | null
   _count?: { assignees: number; checklist: number; comments: number }
 }
 
@@ -353,6 +356,110 @@ export interface TaskReportData {
     one_time: { total: number; completed: number }
   }
 }
+
+// ─── Work Dashboard (scope-aware canvas) ────────────────────────────────────────
+
+export type WorkScope = 'own' | 'team' | 'department' | 'org'
+
+export interface DashboardKpis {
+  total: number
+  not_started: number
+  ongoing: number
+  completed: number
+  overdue: number
+  due_today: number
+  due_week: number
+  recurring: number
+}
+
+export interface DashboardBreakdownItem {
+  id: string | null
+  label: string
+  color?: string
+  type?: string | null
+  order_index?: number
+  total: number
+}
+
+export interface TrendPoint {
+  week: string
+  created: number
+  completed: number
+}
+
+export interface TaskDashboard {
+  applied_scope: WorkScope | null
+  max_scope: WorkScope | null
+  kpis: DashboardKpis
+  by_status: DashboardBreakdownItem[]
+  by_priority: DashboardBreakdownItem[]
+  by_category: DashboardBreakdownItem[]
+  by_department: DashboardBreakdownItem[]
+  by_type: DashboardBreakdownItem[]
+  by_assignee: DashboardBreakdownItem[]
+  by_assigner: DashboardBreakdownItem[]
+  trend: TrendPoint[]
+}
+
+export interface PersonNode {
+  user_id: string
+  name: string
+  role_title: string | null
+  department_name: string | null
+  reporting_to_user_id: string | null
+  assignee: { total: number; overdue: number; completed: number }
+  assigned_count: number
+}
+
+export interface PeopleTree {
+  nodes: PersonNode[]
+  root_user_id: string
+}
+
+export interface EmployeeReport {
+  employee: { id: string; name: string; email: string; role_title: string | null; department_name: string | null }
+  as_assignee: DashboardKpis
+  as_assigner: DashboardKpis
+  assignee_breakdowns: {
+    by_status: DashboardBreakdownItem[]
+    by_priority: DashboardBreakdownItem[]
+    by_category: DashboardBreakdownItem[]
+    by_department: DashboardBreakdownItem[]
+    by_type: DashboardBreakdownItem[]
+  }
+}
+
+export type BulkAction = 'status' | 'deadline' | 'complete'
+
+export interface PagedTasks {
+  items: Task[]
+  total: number
+  page: number
+  page_size: number
+  has_more: boolean
+}
+
+/** Query params shared by the dashboard + paged list endpoints. */
+export interface WorkQuery {
+  scope?: WorkScope
+  status_id?: string
+  priority_id?: string
+  category_id?: string
+  department_id?: string
+  created_by_user_id?: string
+  assignee_user_id?: string
+  type?: string
+  search?: string
+  from_date?: string
+  to_date?: string
+  bucket?: string
+  page?: number
+  page_size?: number
+  sort?: string
+}
+
+export type WorkBucket =
+  | 'overdue' | 'due_today' | 'due_week' | 'completed' | 'ongoing' | 'not_started' | 'recurring'
 
 // ─── Collective ───────────────────────────────────────────────────────────────
 

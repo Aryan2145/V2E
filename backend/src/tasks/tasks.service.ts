@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   CompletionMode,
+  DataScope,
   TaskActionType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -35,6 +36,22 @@ const TASK_INCLUDE = {
   escalations: true,
   reminders: true,
 };
+
+/** Shared filter shape for list / paged / dashboard task queries. */
+export interface TaskListFilters {
+  status_id?: string;
+  priority_id?: string;
+  category_id?: string;
+  department_id?: string;
+  created_by_user_id?: string;
+  quadrant?: string;
+  type?: string;
+  assignee_user_id?: string;
+  goal_id?: string;
+  search?: string;
+  from_date?: string;
+  to_date?: string;
+}
 
 @Injectable()
 export class TasksService {
@@ -354,33 +371,42 @@ export class TasksService {
   async listTasks(
     orgId: string,
     principal: Principal,
-    filters: {
-      status_id?: string;
-      priority_id?: string;
-      category_id?: string;
-      quadrant?: string;
-      type?: string;
-      assignee_user_id?: string;
-      goal_id?: string;
-      search?: string;
-      from_date?: string;
-      to_date?: string;
-    },
+    filters: TaskListFilters,
   ) {
-    const where: any = {
-      organization_id: orgId,
-      is_deleted: false,
-    };
-
-    // Row-level data scope (own/team/department/org) — AND'd so it never clobbers
-    // the search OR or assignee filter below.
+    // Row-level data scope (own/team/department/org) at the actor's full entitlement.
     const scopeWhere = await this.scope.listWhere(orgId, principal, TasksService.TASK_LEAF);
-    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere];
+    const where = this.buildTaskWhere(orgId, scopeWhere, filters, 'deadline');
+
+    const tasks = await this.prisma.task.findMany({
+      where,
+      include: TASK_INCLUDE,
+      orderBy: { created_at: 'desc' },
+    });
+
+    return this.enrichTaskList(tasks);
+  }
+
+  /**
+   * Shared task `where` builder for list / paged / dashboard queries. `scopeWhere` is the
+   * already-resolved row-scope fragment (AND'd so it never clobbers the search OR).
+   * `dateField` chooses whether the from/to range filters by deadline (legacy list) or
+   * created_at (dashboard "period" semantics).
+   */
+  private buildTaskWhere(
+    orgId: string,
+    scopeWhere: Record<string, unknown>,
+    filters: TaskListFilters,
+    dateField: 'deadline' | 'created_at' = 'created_at',
+  ): any {
+    const where: any = { organization_id: orgId, is_deleted: false };
+    if (scopeWhere && Object.keys(scopeWhere).length) where.AND = [scopeWhere];
 
     if (filters.goal_id) where.goal_id = filters.goal_id;
     if (filters.status_id) where.status_id = filters.status_id;
     if (filters.priority_id) where.priority_id = filters.priority_id;
     if (filters.category_id) where.category_id = filters.category_id;
+    if (filters.department_id) where.department_id = filters.department_id;
+    if (filters.created_by_user_id) where.created_by_user_id = filters.created_by_user_id;
     if (filters.quadrant) where.quadrant = filters.quadrant as any;
     if (filters.type) where.type = filters.type as any;
     if (filters.search) {
@@ -390,21 +416,413 @@ export class TasksService {
       ];
     }
     if (filters.from_date || filters.to_date) {
-      where.deadline = {};
-      if (filters.from_date) where.deadline.gte = new Date(filters.from_date);
-      if (filters.to_date) where.deadline.lte = new Date(filters.to_date);
+      const range: any = {};
+      if (filters.from_date) range.gte = new Date(filters.from_date);
+      if (filters.to_date) range.lte = new Date(filters.to_date);
+      where[dateField] = range;
     }
     if (filters.assignee_user_id) {
       where.assignees = { some: { user_id: filters.assignee_user_id, is_cc: false } };
     }
 
-    const tasks = await this.prisma.task.findMany({
-      where,
-      include: TASK_INCLUDE,
-      orderBy: { created_at: 'desc' },
-    });
+    return where;
+  }
 
-    return this.enrichTaskList(tasks);
+  /**
+   * Extra `where` fragment for a KPI "bucket" (overdue / due today / etc). Shared by the
+   * dashboard counts and the paged list so a tile's number always matches the rows it opens.
+   */
+  private bucketWhere(bucket: string | undefined, now: Date): any {
+    if (!bucket) return {};
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayEnd = new Date(todayStart); todayEnd.setDate(todayEnd.getDate() + 1);
+    const weekEnd = new Date(todayStart); weekEnd.setDate(weekEnd.getDate() - todayStart.getDay() + 7);
+    const open = { status: { type: { notIn: TERMINAL_TYPES } } };
+    switch (bucket) {
+      case 'overdue': return { deadline: { lt: now }, ...open };
+      case 'due_today': return { deadline: { gte: todayStart, lt: todayEnd }, ...open };
+      case 'due_week': return { deadline: { gte: todayStart, lt: weekEnd }, ...open };
+      case 'completed': return { status: { type: 'completed' } };
+      case 'ongoing': return { status: { type: 'in_progress' } };
+      case 'not_started': return { status: { type: 'not_started' } };
+      case 'recurring': return { type: 'recurring' as any };
+      default: return {};
+    }
+  }
+
+  private taskOrderBy(sort?: string): any {
+    switch (sort) {
+      case 'deadline_asc': return [{ deadline: { sort: 'asc', nulls: 'last' } }];
+      case 'deadline_desc': return [{ deadline: { sort: 'desc', nulls: 'last' } }];
+      case 'created_asc': return { created_at: 'asc' };
+      case 'updated_desc': return { updated_at: 'desc' };
+      case 'created_desc':
+      default: return { created_at: 'desc' };
+    }
+  }
+
+  /**
+   * Paginated task list for the Work dashboard's result surface. Scope is clamped to the
+   * actor's entitlement (own/team/org switcher) and never widened past it. Returns a count
+   * envelope so the client never loads the whole table — critical at org scale.
+   */
+  async listTasksPaged(
+    orgId: string,
+    principal: Principal,
+    filters: TaskListFilters,
+    requestedScope?: DataScope | null,
+    page = 1,
+    pageSize = 25,
+    sort = 'created_desc',
+    bucket?: string,
+  ) {
+    const { effective } = await this.scope.resolveListScope(orgId, principal, TasksService.TASK_LEAF, requestedScope);
+    const scopeWhere = await this.scope.whereForScope(orgId, principal.userId, TasksService.TASK_LEAF, effective);
+    const now = await this.clock.now(orgId);
+    const where = { ...this.buildTaskWhere(orgId, scopeWhere, filters, 'created_at'), ...this.bucketWhere(bucket, now) };
+
+    const take = Math.min(Math.max(pageSize, 1), 100);
+    const skip = (Math.max(page, 1) - 1) * take;
+
+    const [items, total] = await Promise.all([
+      this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: this.taskOrderBy(sort), skip, take }),
+      this.prisma.task.count({ where }),
+    ]);
+
+    return {
+      items: await this.enrichTaskList(items),
+      total,
+      page: Math.max(page, 1),
+      page_size: take,
+      has_more: skip + items.length < total,
+    };
+  }
+
+  /**
+   * Scope-aware dashboard aggregation for the Work canvas. Computes KPI counts and
+   * dimension breakdowns with count()/groupBy() (never a full-table load), sim-clock aware.
+   * `applied_scope` / `max_scope` let the client render the Mine/My Team/Organization switcher.
+   */
+  async getDashboard(
+    orgId: string,
+    principal: Principal,
+    filters: TaskListFilters & { scope?: DataScope | null },
+  ) {
+    const { max, effective } = await this.scope.resolveListScope(orgId, principal, TasksService.TASK_LEAF, filters.scope);
+    const scopeWhere = await this.scope.whereForScope(orgId, principal.userId, TasksService.TASK_LEAF, effective);
+    const where = this.buildTaskWhere(orgId, scopeWhere, filters, 'created_at');
+
+    // Empty / denied scope → zeroed dashboard (never leak counts).
+    if (effective === null) {
+      return {
+        applied_scope: null,
+        max_scope: max,
+        kpis: { total: 0, not_started: 0, ongoing: 0, completed: 0, overdue: 0, due_today: 0, due_week: 0, recurring: 0 },
+        by_status: [], by_priority: [], by_category: [], by_department: [], by_type: [],
+        by_assignee: [], by_assigner: [], trend: [],
+      };
+    }
+
+    const now = await this.clock.now(orgId);
+
+    const [kpis, dims, by_assignee, by_assigner, trend] = await Promise.all([
+      this.kpiFor(where, now),
+      this.dimensionBreakdowns(orgId, where),
+      this.assigneeBreakdown(where),
+      this.assignerBreakdown(where),
+      this.trendSeries(where, now),
+    ]);
+
+    return { applied_scope: effective, max_scope: max, kpis, ...dims, by_assignee, by_assigner, trend };
+  }
+
+  // ─── Dashboard helpers (shared by dashboard + employee report) ─────────────────
+
+  /** The eight headline KPI counts for a task `where`, sim-clock aware. */
+  private async kpiFor(where: any, now: Date) {
+    const c = (bucket?: string) => this.prisma.task.count({ where: { ...where, ...this.bucketWhere(bucket, now) } });
+    const [total, not_started, ongoing, completed, overdue, due_today, due_week, recurring] = await Promise.all([
+      c(), c('not_started'), c('ongoing'), c('completed'), c('overdue'), c('due_today'), c('due_week'), c('recurring'),
+    ]);
+    return { total, not_started, ongoing, completed, overdue, due_today, due_week, recurring };
+  }
+
+  /** Status / priority / category / department / type breakdowns for a task `where`. */
+  private async dimensionBreakdowns(orgId: string, where: any) {
+    const [statusGroups, priorityGroups, categoryGroups, deptGroups, typeGroups] = await Promise.all([
+      this.prisma.task.groupBy({ by: ['status_id'], where, _count: { _all: true } }),
+      this.prisma.task.groupBy({ by: ['priority_id'], where, _count: { _all: true } }),
+      this.prisma.task.groupBy({ by: ['category_id'], where, _count: { _all: true } }),
+      this.prisma.task.groupBy({ by: ['department_id'], where, _count: { _all: true } }),
+      this.prisma.task.groupBy({ by: ['type'], where, _count: { _all: true } }),
+    ]);
+    const [statuses, priorities, categories, depts] = await Promise.all([
+      this.prisma.taskStatus.findMany({ where: { organization_id: orgId }, select: { id: true, label: true, color: true, type: true, order_index: true } }),
+      this.prisma.taskPriority.findMany({ where: { organization_id: orgId }, select: { id: true, label: true, color: true, order_index: true } }),
+      this.prisma.taskCategory.findMany({ where: { organization_id: orgId }, select: { id: true, name: true, color: true } }),
+      this.prisma.department.findMany({
+        where: { id: { in: deptGroups.map((g) => g.department_id).filter((x): x is string => !!x) } },
+        select: { id: true, name: true, color: true },
+      }),
+    ]);
+    const statusMap = new Map(statuses.map((s) => [s.id, s]));
+    const priorityMap = new Map(priorities.map((p) => [p.id, p]));
+    const categoryMap = new Map(categories.map((c2) => [c2.id, c2]));
+    const deptMap = new Map(depts.map((d) => [d.id, d]));
+    return {
+      by_status: statusGroups
+        .map((g) => {
+          const s = statusMap.get(g.status_id);
+          return { id: g.status_id, label: s?.label ?? 'Unknown', color: s?.color ?? '#94A3B8', type: s?.type ?? null, order_index: s?.order_index ?? 0, total: g._count._all };
+        })
+        .sort((a, b) => a.order_index - b.order_index),
+      by_priority: priorityGroups
+        .filter((g) => g.priority_id)
+        .map((g) => {
+          const p = priorityMap.get(g.priority_id!);
+          return { id: g.priority_id, label: p?.label ?? 'Unknown', color: p?.color ?? '#94A3B8', order_index: p?.order_index ?? 0, total: g._count._all };
+        })
+        .sort((a, b) => a.order_index - b.order_index),
+      by_category: categoryGroups
+        .filter((g) => g.category_id)
+        .map((g) => {
+          const cat = categoryMap.get(g.category_id!);
+          return { id: g.category_id, label: cat?.name ?? 'Uncategorized', color: cat?.color ?? '#94A3B8', total: g._count._all };
+        }),
+      by_department: deptGroups
+        .filter((g) => g.department_id)
+        .map((g) => {
+          const d = deptMap.get(g.department_id!);
+          return { id: g.department_id, label: d?.name ?? 'Unassigned', color: d?.color ?? '#94A3B8', total: g._count._all };
+        }),
+      by_type: typeGroups.map((g) => ({ id: g.type, label: g.type, total: g._count._all })),
+    };
+  }
+
+  private async enrichUserNames(ids: (string | null | undefined)[]) {
+    const uniq = [...new Set(ids.filter((x): x is string => !!x))];
+    if (!uniq.length) return new Map<string, { id: string; name: string; email: string }>();
+    const users = await this.prisma.user.findMany({ where: { id: { in: uniq } }, select: { id: true, name: true, email: true } });
+    return new Map(users.map((u) => [u.id, u]));
+  }
+
+  /** Top assignees (people receiving work) for a task `where`. */
+  private async assigneeBreakdown(where: any, limit = 12) {
+    const groups = await this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, task: where }, _count: { _all: true } });
+    const names = await this.enrichUserNames(groups.map((g) => g.user_id));
+    return groups
+      .map((g) => ({ id: g.user_id, label: names.get(g.user_id)?.name ?? 'Unknown', total: g._count._all }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, limit);
+  }
+
+  /** Top assigners (people giving work) for a task `where`. */
+  private async assignerBreakdown(where: any, limit = 12) {
+    const groups = await this.prisma.task.groupBy({ by: ['created_by_user_id'], where, _count: { _all: true } });
+    const names = await this.enrichUserNames(groups.map((g) => g.created_by_user_id));
+    return groups
+      .map((g) => ({ id: g.created_by_user_id, label: names.get(g.created_by_user_id)?.name ?? 'Unknown', total: g._count._all }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, limit);
+  }
+
+  /** Weekly created-vs-completed series for the last `weeks` weeks (Sunday-start). */
+  private async trendSeries(where: any, now: Date, weeks = 8) {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    start.setDate(start.getDate() - start.getDay());
+    const baseWhere = { ...where };
+    delete baseWhere.created_at; // the trend defines its own window
+    const buckets = Array.from({ length: weeks }, (_, i) => {
+      const from = new Date(start); from.setDate(from.getDate() - (weeks - 1 - i) * 7);
+      const to = new Date(from); to.setDate(to.getDate() + 7);
+      return { from, to };
+    });
+    return Promise.all(
+      buckets.map(async ({ from, to }) => {
+        const [created, completed] = await Promise.all([
+          this.prisma.task.count({ where: { ...baseWhere, created_at: { gte: from, lt: to } } }),
+          this.prisma.task.count({ where: { ...baseWhere, status: { type: 'completed' }, updated_at: { gte: from, lt: to } } }),
+        ]);
+        return { week: from.toISOString().slice(0, 10), created, completed };
+      }),
+    );
+  }
+
+  // ─── People tree (org-chart drill) ─────────────────────────────────────────────
+
+  /**
+   * Reporting tree of the people visible at `requestedScope`, each annotated with their
+   * workload (as assignee: total/overdue/completed) and delegation count (as assigner),
+   * computed over the tasks the VIEWER can see. The client assembles the tree from
+   * `reporting_to_user_id` (a node whose parent isn't in the set is a root).
+   */
+  async getPeopleTree(
+    orgId: string,
+    principal: Principal,
+    requestedScope: DataScope | null | undefined,
+    filters: TaskListFilters,
+  ) {
+    const { effective } = await this.scope.resolveListScope(orgId, principal, TasksService.TASK_LEAF, requestedScope);
+    if (effective === null) return { nodes: [], root_user_id: principal.userId };
+
+    const visible = await this.scope.visibleUserIds(orgId, principal.userId, effective);
+    const profiles = await this.prisma.employeeProfile.findMany({
+      where: { organization_id: orgId, ...(visible === 'ALL' ? {} : { user_id: { in: visible } }) },
+      select: {
+        user_id: true,
+        reporting_to_user_id: true,
+        department: { select: { id: true, name: true } },
+        role: { select: { title: true } },
+      },
+    });
+    const userIds = profiles.map((p) => p.user_id);
+    if (!userIds.length) return { nodes: [], root_user_id: principal.userId };
+
+    const scopeWhere = await this.scope.whereForScope(orgId, principal.userId, TasksService.TASK_LEAF, effective);
+    const base = this.buildTaskWhere(orgId, scopeWhere, filters, 'created_at');
+    const now = await this.clock.now(orgId);
+    const openTask = { status: { type: { notIn: TERMINAL_TYPES } } };
+
+    const [names, aTotal, aOverdue, aDone, asg] = await Promise.all([
+      this.enrichUserNames(userIds),
+      this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: base }, _count: { _all: true } }),
+      this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: { ...base, deadline: { lt: now }, ...openTask } }, _count: { _all: true } }),
+      this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: { ...base, status: { type: 'completed' } } }, _count: { _all: true } }),
+      this.prisma.task.groupBy({ by: ['created_by_user_id'], where: { ...base, created_by_user_id: { in: userIds } }, _count: { _all: true } }),
+    ]);
+    const cnt = (arr: any[], key: string) => new Map(arr.map((g) => [g[key], g._count._all]));
+    const totM = cnt(aTotal, 'user_id'), ovM = cnt(aOverdue, 'user_id'), dnM = cnt(aDone, 'user_id'), asgM = cnt(asg, 'created_by_user_id');
+
+    const nodes = profiles.map((p) => ({
+      user_id: p.user_id,
+      name: names.get(p.user_id)?.name ?? 'Unknown',
+      role_title: p.role?.title ?? null,
+      department_name: p.department?.name ?? null,
+      reporting_to_user_id: p.reporting_to_user_id,
+      assignee: { total: totM.get(p.user_id) ?? 0, overdue: ovM.get(p.user_id) ?? 0, completed: dnM.get(p.user_id) ?? 0 },
+      assigned_count: asgM.get(p.user_id) ?? 0,
+    }));
+    return { nodes, root_user_id: principal.userId };
+  }
+
+  // ─── Employee work report (drill target) ───────────────────────────────────────
+
+  /**
+   * Per-employee work report, gated by the viewer's scope (403 if the target is outside
+   * the viewer's visible set). Returns the employee's KPIs both as assignee ("their work")
+   * and as assigner ("what they delegated"), over tasks the viewer can see.
+   */
+  async getEmployeeReport(orgId: string, principal: Principal, targetUserId: string, filters: TaskListFilters) {
+    const { effective } = await this.scope.resolveListScope(orgId, principal, TasksService.TASK_LEAF, undefined);
+    if (effective === null) throw new ForbiddenException('You do not have access to task data');
+    const visible = await this.scope.visibleUserIds(orgId, principal.userId, effective);
+    if (visible !== 'ALL' && !visible.includes(targetUserId)) {
+      throw new ForbiddenException('This employee is outside your visibility scope');
+    }
+
+    const [user, profile] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: targetUserId }, select: { id: true, name: true, email: true } }),
+      this.prisma.employeeProfile.findFirst({
+        where: { organization_id: orgId, user_id: targetUserId },
+        select: { department: { select: { name: true } }, role: { select: { title: true } } },
+      }),
+    ]);
+    if (!user) throw new NotFoundException('Employee not found');
+
+    const scopeWhere = await this.scope.whereForScope(orgId, principal.userId, TasksService.TASK_LEAF, effective);
+    const base = this.buildTaskWhere(orgId, scopeWhere, filters, 'created_at');
+    const now = await this.clock.now(orgId);
+    const asAssignee = { ...base, assignees: { some: { user_id: targetUserId, is_cc: false } } };
+    const asAssigner = { ...base, created_by_user_id: targetUserId };
+
+    const [assigneeKpis, assignerKpis, assigneeDims] = await Promise.all([
+      this.kpiFor(asAssignee, now),
+      this.kpiFor(asAssigner, now),
+      this.dimensionBreakdowns(orgId, asAssignee),
+    ]);
+
+    return {
+      employee: { id: user.id, name: user.name, email: user.email, role_title: profile?.role?.title ?? null, department_name: profile?.department?.name ?? null },
+      as_assignee: assigneeKpis,
+      as_assigner: assignerKpis,
+      assignee_breakdowns: assigneeDims,
+    };
+  }
+
+  // ─── Bulk actions ──────────────────────────────────────────────────────────────
+
+  /** Bulk status / deadline / complete over the subset of `taskIds` within the actor's scope. */
+  async bulkUpdate(
+    orgId: string,
+    principal: Principal,
+    taskIds: string[],
+    action: 'status' | 'deadline' | 'complete',
+    payload: { status_id?: string; deadline?: string | null },
+  ) {
+    if (!taskIds?.length) return { updated: 0 };
+    const scopeWhere = await this.scope.listWhere(orgId, principal, TasksService.TASK_LEAF);
+    const allowed = await this.prisma.task.findMany({
+      where: { organization_id: orgId, is_deleted: false, id: { in: taskIds }, ...(Object.keys(scopeWhere).length ? { AND: [scopeWhere] } : {}) },
+      select: { id: true },
+    });
+    const ids = allowed.map((t) => t.id);
+    if (!ids.length) return { updated: 0 };
+
+    let activity: TaskActionType = 'edited';
+    if (action === 'status' && payload.status_id) {
+      const st = await this.prisma.taskStatus.findFirst({ where: { id: payload.status_id, organization_id: orgId } });
+      if (!st) throw new BadRequestException('Status not found');
+      await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { status_id: payload.status_id } });
+      activity = 'status_changed';
+    } else if (action === 'deadline') {
+      await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { deadline: payload.deadline ? new Date(payload.deadline) : null } });
+    } else if (action === 'complete') {
+      const completed = await this.prisma.taskStatus.findFirst({ where: { organization_id: orgId, type: 'completed', is_active: true }, orderBy: { order_index: 'asc' } });
+      if (completed) await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { status_id: completed.id } });
+      await this.prisma.taskAssignee.updateMany({ where: { task_id: { in: ids }, is_cc: false }, data: { is_completed: true, completed_at: new Date() } });
+      activity = 'completed';
+    } else {
+      throw new BadRequestException('Unknown bulk action');
+    }
+
+    await Promise.all(ids.map((id) => this.logActivity(orgId, id, principal.userId, activity, { bulk: true }).catch(() => null)));
+    return { updated: ids.length };
+  }
+
+  // ─── CSV export ────────────────────────────────────────────────────────────────
+
+  /** Scope + filter aware CSV of the current view (capped). Returned as a JSON string field. */
+  async exportCsv(
+    orgId: string,
+    principal: Principal,
+    filters: TaskListFilters,
+    requestedScope?: DataScope | null,
+    bucket?: string,
+  ) {
+    const { effective } = await this.scope.resolveListScope(orgId, principal, TasksService.TASK_LEAF, requestedScope);
+    const scopeWhere = await this.scope.whereForScope(orgId, principal.userId, TasksService.TASK_LEAF, effective);
+    const now = await this.clock.now(orgId);
+    const where = { ...this.buildTaskWhere(orgId, scopeWhere, filters, 'created_at'), ...this.bucketWhere(bucket, now) };
+    const tasks = await this.prisma.task.findMany({ where, include: TASK_INCLUDE, orderBy: this.taskOrderBy('created_desc'), take: 5000 });
+    const enriched = await this.enrichTaskList(tasks);
+
+    const headers = ['Title', 'Status', 'Priority', 'Category', 'Type', 'Assigned By', 'Assignees', 'Deadline', 'Created'];
+    const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = [headers.join(',')];
+    for (const t of enriched as any[]) {
+      lines.push([
+        t.title,
+        t.status?.label ?? '',
+        t.priority?.label ?? '',
+        t.category?.name ?? '',
+        t.type,
+        t.created_by?.name ?? '',
+        (t.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user?.name).filter(Boolean).join('; '),
+        t.deadline ? new Date(t.deadline).toISOString() : '',
+        new Date(t.created_at).toISOString(),
+      ].map(esc).join(','));
+    }
+    return { csv: lines.join('\n'), count: enriched.length };
   }
 
   async getMyTasks(orgId: string, userId: string) {
