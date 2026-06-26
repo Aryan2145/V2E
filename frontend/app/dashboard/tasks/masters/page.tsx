@@ -1615,8 +1615,8 @@ export default function MastersPage() {
 
   const availableSections = (
     [
-      canViewTaskMasters ? (['tasks', 'Task Masters'] as const) : null,
-      isAdmin ? (['tickets', 'Ticket Masters'] as const) : null,
+      canViewTaskMasters ? (['tasks', 'Task'] as const) : null,
+      isAdmin ? (['tickets', 'Ticket'] as const) : null,
       isAdmin ? (['notifications', 'Notifications'] as const) : null,
     ].filter(Boolean) as ReadonlyArray<readonly ['tasks' | 'tickets' | 'notifications', string]>
   )
