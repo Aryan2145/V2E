@@ -35,6 +35,17 @@ const pill = (active: boolean) =>
       : 'bg-white text-[#475569] border-[#E2E8F0] hover:bg-[#F1F5F9]',
   ].join(' ')
 
+/** Line-item count shown beside a section heading: solid blue pill, white text.
+ *  Render nothing when the count is zero. */
+function CountBadge({ n }: { n: number }) {
+  if (!n) return null
+  return (
+    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold leading-none">
+      {n}
+    </span>
+  )
+}
+
 /** Small searchable dropdown used to add a role or a person. */
 function AddPicker({
   label,
@@ -78,18 +89,21 @@ function AddPicker({
   }, [options, query])
 
   return (
-    <div ref={wrapRef}>
+    <div ref={wrapRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+        aria-label={label}
+        title={label}
+        className="w-7 h-7 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white flex items-center justify-center transition-colors shrink-0"
       >
-        <Plus size={13} /> {label}
+        <Plus size={16} />
       </button>
       {open && (
-        // In-flow (not absolute): a bordered panel below the button, so it never
-        // clips against the modal's scroll container. See memory: no-overflow-parent.
-        <div className="mt-1.5 w-full max-w-sm bg-white border border-[#E2E8F0] rounded-[8px] shadow-[0_2px_8px_rgba(0,0,0,0.08)] overflow-hidden">
+        // Absolute panel anchored under the top-right trigger; right-aligned so it
+        // stays within the card and overlays the body (card isn't overflow-hidden,
+        // so it isn't clipped). See memory: no-overflow-parent.
+        <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-64 bg-white border border-[#E2E8F0] rounded-[8px] shadow-[0_8px_28px_rgba(0,0,0,0.14)] overflow-hidden">
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[#F1F5F9]">
             <Search size={14} className="text-[#94A3B8] shrink-0" />
             <input
@@ -315,13 +329,29 @@ export default function ChecklistAccessEditor({
             department, role, or being named directly.
           </p>
 
-          {/* Three cards in a row — Departments · Roles · People. Departments gets
-              extra width (longest content); each list scrolls on its own. */}
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-4 items-start">
-          {/* Departments — no overflow clip here so the picker dropdown can escape the card */}
-          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col">
-            <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Departments</span>
-            <div className="mt-2 space-y-2">
+          {/* Three cards in a row — equal width, equal height. Departments has no
+              internal scroll so its inline picker dropdown escapes the card unclipped;
+              Roles and People scroll inside their fixed height. */}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 items-start">
+          {/* Departments — no overflow clip so the inline picker dropdown isn't cut off */}
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col min-h-[360px]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Departments</span>
+                <CountBadge n={deptRules.length} />
+              </div>
+              <button
+                type="button"
+                disabled={hasEmptyDept}
+                onClick={() => add({ kind: 'department', department_id: '', include_sub_departments: true })}
+                title={hasEmptyDept ? 'Select a department in the blank row first' : 'Add department'}
+                aria-label="Add department"
+                className="w-7 h-7 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white flex items-center justify-center transition-colors shrink-0 disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
+              >
+                <Plus size={16} />
+              </button>
+            </div>
+            <div className="mt-2 space-y-2 flex-1">
             {deptRules.length === 0 && <p className="text-xs text-[#94A3B8]">No departments added.</p>}
             {deptRules.map((r) => {
               const cascade = r.include_sub_departments ?? true
@@ -387,23 +417,20 @@ export default function ChecklistAccessEditor({
               )
             })}
             </div>
-            <button
-              type="button"
-              disabled={hasEmptyDept}
-              onClick={() => add({ kind: 'department', department_id: '', include_sub_departments: true })}
-              title={hasEmptyDept ? 'Select a department in the blank row first' : undefined}
-              className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] disabled:text-[#94A3B8] disabled:cursor-not-allowed disabled:hover:text-[#94A3B8] transition-colors mt-2.5"
-            >
-              <Plus size={13} /> Add department
-            </button>
           </div>
 
           {/* Roles — auto-filled from the selected departments, plus any added directly */}
-          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col">
-            <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Roles</span>
-            <div className="mt-2 space-y-2 max-h-[340px] overflow-y-auto -mr-1 pr-1">
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col h-[360px]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Roles</span>
+                <CountBadge n={inScopeRoles.length} />
+              </div>
+              <AddPicker label="Add role" options={roleOptions} onPick={addRole} />
+            </div>
+            <div className="mt-2 space-y-2 flex-1 overflow-y-auto min-h-0 -mr-1 pr-1">
             <div className="flex flex-wrap gap-1.5">
-              {inScopeRoles.length === 0 && <p className="text-xs text-[#94A3B8]">Pick a department to fill in its roles, or add one below.</p>}
+              {inScopeRoles.length === 0 && <p className="text-xs text-[#94A3B8]">Pick a department to fill in its roles, or add one.</p>}
               {inScopeRoles.map(({ role, via }) => (
                 <span
                   key={role.id}
@@ -434,18 +461,18 @@ export default function ChecklistAccessEditor({
               </div>
             )}
             </div>
-            <div className="mt-2.5">
-              <AddPicker label="Add role" options={roleOptions} onPick={addRole} />
-            </div>
           </div>
 
           {/* People — resolved live from the departments/roles above, plus manual adds */}
-          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">People with access</span>
-              <span className="text-[11px] text-[#94A3B8]">{effectivePeople.length}</span>
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col h-[360px]">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">People with access</span>
+                <CountBadge n={effectivePeople.length} />
+              </div>
+              <AddPicker label="Add person" options={personOptions} onPick={addPerson} />
             </div>
-            <div className="mt-2 max-h-[340px] overflow-y-auto -mr-1 pr-1">
+            <div className="mt-2 flex-1 overflow-y-auto min-h-0 -mr-1 pr-1">
             {effectivePeople.length === 0 ? (
               <p className="text-xs text-[#94A3B8]">No one yet — add a department, role, or person.</p>
             ) : (
@@ -463,9 +490,6 @@ export default function ChecklistAccessEditor({
                 ))}
               </div>
             )}
-            </div>
-            <div className="mt-2.5">
-              <AddPicker label="Add person" options={personOptions} onPick={addPerson} />
             </div>
           </div>
           </div>{/* /three-card grid */}
