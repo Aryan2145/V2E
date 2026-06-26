@@ -309,62 +309,64 @@ export default function ChecklistAccessEditor({
       {mode === 'everyone' ? (
         <p className="text-xs text-[#64748B] mt-1.5">Anyone creating a task can apply this checklist.</p>
       ) : (
-        <div className="mt-3 space-y-4 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC] p-3.5">
-          <p className="text-xs text-[#64748B] -mt-0.5">
+        <div className="mt-3">
+          <p className="text-xs text-[#64748B]">
             A person can use this checklist if they match <span className="font-semibold">any</span> rule below — by
             department, role, or being named directly.
           </p>
 
-          {/* Departments */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Departments</span>
-            </div>
+          {/* Three cards in a row — Departments · Roles · People. Departments gets
+              extra width (longest content); each list scrolls on its own. */}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-4 items-start">
+          {/* Departments — no overflow clip here so the picker dropdown can escape the card */}
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col">
+            <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Departments</span>
+            <div className="mt-2 space-y-2">
             {deptRules.length === 0 && <p className="text-xs text-[#94A3B8]">No departments added.</p>}
             {deptRules.map((r) => {
               const cascade = r.include_sub_departments ?? true
               const subs = r.department_id ? descendantsOf(departments, r.department_id) : []
               return (
-                <div key={r._key} className="bg-white border border-[#E2E8F0] rounded-[8px] p-2.5 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 min-w-0">
-                      <DepartmentSelect
-                        value={r.department_id ?? ''}
-                        onChange={(id) => update(r._key, { department_id: id })}
-                        departments={departments}
-                        placeholder="Select department…"
-                        inline
-                        lockedReason={(id) => lockReasonFor(r._key, id)}
-                      />
-                    </div>
+                <div key={r._key} className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-2.5 space-y-2">
+                  <DepartmentSelect
+                    value={r.department_id ?? ''}
+                    onChange={(id) => update(r._key, { department_id: id })}
+                    departments={departments}
+                    placeholder="Select department…"
+                    inline
+                    lockedReason={(id) => lockReasonFor(r._key, id)}
+                  />
+                  {/* Toggle on the left, compact remove on the right — no wasted column beside the select */}
+                  <div className="flex items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() => update(r._key, { include_sub_departments: !cascade })}
+                      className="flex items-center gap-2 text-xs text-[#475569]"
+                    >
+                      <span
+                        className={[
+                          'relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0',
+                          cascade ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
+                        ].join(' ')}
+                      >
+                        <span
+                          className={[
+                            'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200',
+                            cascade ? 'translate-x-4' : 'translate-x-0',
+                          ].join(' ')}
+                        />
+                      </span>
+                      Include sub-departments
+                    </button>
                     <button
                       type="button"
                       onClick={() => removeDept(r)}
-                      className="w-8 h-[38px] flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"
+                      aria-label="Remove department"
+                      className="p-1 -mr-0.5 text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"
                     >
                       <X size={14} />
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => update(r._key, { include_sub_departments: !cascade })}
-                    className="flex items-center gap-2 text-xs text-[#475569]"
-                  >
-                    <span
-                      className={[
-                        'relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0',
-                        cascade ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
-                      ].join(' ')}
-                    >
-                      <span
-                        className={[
-                          'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200',
-                          cascade ? 'translate-x-4' : 'translate-x-0',
-                        ].join(' ')}
-                      />
-                    </span>
-                    Include sub-departments
-                  </button>
                   {/* When cascading, spell out exactly which sub-departments are swept in. */}
                   {r.department_id && cascade && (
                     subs.length === 0 ? (
@@ -384,20 +386,22 @@ export default function ChecklistAccessEditor({
                 </div>
               )
             })}
+            </div>
             <button
               type="button"
               disabled={hasEmptyDept}
               onClick={() => add({ kind: 'department', department_id: '', include_sub_departments: true })}
               title={hasEmptyDept ? 'Select a department in the blank row first' : undefined}
-              className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] disabled:text-[#94A3B8] disabled:cursor-not-allowed disabled:hover:text-[#94A3B8] transition-colors"
+              className="flex items-center gap-1.5 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8] disabled:text-[#94A3B8] disabled:cursor-not-allowed disabled:hover:text-[#94A3B8] transition-colors mt-2.5"
             >
               <Plus size={13} /> Add department
             </button>
           </div>
 
           {/* Roles — auto-filled from the selected departments, plus any added directly */}
-          <div className="space-y-2">
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col">
             <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Roles</span>
+            <div className="mt-2 space-y-2 max-h-[340px] overflow-y-auto -mr-1 pr-1">
             <div className="flex flex-wrap gap-1.5">
               {inScopeRoles.length === 0 && <p className="text-xs text-[#94A3B8]">Pick a department to fill in its roles, or add one below.</p>}
               {inScopeRoles.map(({ role, via }) => (
@@ -429,21 +433,25 @@ export default function ChecklistAccessEditor({
                 ))}
               </div>
             )}
-            <AddPicker label="Add role" options={roleOptions} onPick={addRole} />
+            </div>
+            <div className="mt-2.5">
+              <AddPicker label="Add role" options={roleOptions} onPick={addRole} />
+            </div>
           </div>
 
           {/* People — resolved live from the departments/roles above, plus manual adds */}
-          <div className="space-y-2">
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-3.5 flex flex-col">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">People with access</span>
               <span className="text-[11px] text-[#94A3B8]">{effectivePeople.length}</span>
             </div>
+            <div className="mt-2 max-h-[340px] overflow-y-auto -mr-1 pr-1">
             {effectivePeople.length === 0 ? (
               <p className="text-xs text-[#94A3B8]">No one yet — add a department, role, or person.</p>
             ) : (
-              <div className="space-y-1 max-h-[260px] overflow-y-auto -mr-1 pr-1">
+              <div className="space-y-1">
                 {effectivePeople.map((p) => (
-                  <div key={p.uid} className="flex items-center gap-2 bg-white border border-[#E2E8F0] rounded-[8px] px-2.5 py-1.5">
+                  <div key={p.uid} className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] px-2.5 py-1.5">
                     <div className="flex-1 min-w-0">
                       <p className="text-sm text-[#0F172A] truncate">{p.name}</p>
                       {p.sources.length > 0 && <p className="text-[11px] text-[#94A3B8] truncate">via {p.sources.join(', ')}</p>}
@@ -455,12 +463,17 @@ export default function ChecklistAccessEditor({
                 ))}
               </div>
             )}
-            <AddPicker label="Add person" options={personOptions} onPick={addPerson} />
+            </div>
+            <div className="mt-2.5">
+              <AddPicker label="Add person" options={personOptions} onPick={addPerson} />
+            </div>
           </div>
+          </div>{/* /three-card grid */}
 
-          {/* Removed (exceptions) — durable, findable log of who was taken out */}
+          {/* Removed (exceptions) — durable, findable log of who was taken out.
+              Full-width strip below the columns so restores are easy to find. */}
           {removedPeople.length > 0 && (
-            <div className="space-y-2 rounded-[8px] border border-[#FDE68A] bg-[#FFFBEB] p-3">
+            <div className="mt-5 space-y-2 rounded-[8px] border border-[#FDE68A] bg-[#FFFBEB] p-3">
               <div className="flex items-center gap-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#B45309]">Removed</span>
                 <span className="text-[11px] text-[#B45309]">{removedPeople.length}</span>

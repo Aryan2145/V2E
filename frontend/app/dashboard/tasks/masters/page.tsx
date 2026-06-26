@@ -728,7 +728,7 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
 
   if (formOpen) {
     return (
-      <div className="space-y-5 max-w-5xl">
+      <div className="space-y-5 max-w-6xl">
         <div className="flex items-center gap-3">
           <button onClick={closeForm} aria-label="Back to templates" className="w-9 h-9 flex items-center justify-center rounded-[8px] border border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9] transition-colors shrink-0"><ArrowLeft size={18} /></button>
           <div>
@@ -737,16 +737,17 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
-          {/* Left: name + items */}
-          <div className="space-y-5">
-            <FormField label="Template Name"><input type="text" autoFocus value={templateName} onChange={(e) => { setTemplateName(e.target.value); if (error) setError(null) }} placeholder="e.g. Onboarding Checklist" className={inputCls} /></FormField>
+        {/* Single column: name + items card on top, access card full-width below. */}
+        <div className="space-y-6">
+          {/* Name + items */}
+          <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 space-y-5">
+            <FormField label="Template Name"><input type="text" autoFocus value={templateName} onChange={(e) => { setTemplateName(e.target.value); if (error) setError(null) }} placeholder="e.g. Onboarding Checklist" className={`${inputCls} max-w-xl`} /></FormField>
 
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1">Items</label>
               <p className="text-xs text-[#64748B] mb-2">Press Enter to add the next item. Ctrl+Z undoes a removal.</p>
               {templateItems.map((item, idx) => (
-                <div key={idx} className="relative mb-2">
+                <div key={idx} className="relative mb-2 max-w-xl">
                   <input ref={(el) => { itemRefs.current[idx] = el }} type="text" value={item} onChange={(e) => handleItemChange(idx, e.target.value)} onKeyDown={(e) => handleItemKeyDown(e, idx)} onBlur={() => handleItemBlur(idx)} placeholder={`Item ${idx + 1}`} className={`${inputCls} pr-9`} />
                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => { pushHistory(); setTemplateItems((prev) => prev.length <= 1 ? [''] : prev.filter((_, i) => i !== idx)) }} className="absolute top-0 right-0 h-[38px] w-9 flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors" aria-label="Remove item"><X size={14} /></button>
                 </div>
@@ -755,7 +756,7 @@ function ChecklistTemplatesTab({ orgId }: { orgId: string }) {
             </div>
           </div>
 
-          {/* Right: access rules card */}
+          {/* Access rules card — full width below items */}
           <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
             <ChecklistAccessEditor
               mode={accessMode}
