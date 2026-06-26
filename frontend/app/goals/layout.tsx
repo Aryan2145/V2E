@@ -9,6 +9,7 @@ const TABS = [
   { label: 'Goals', href: '/goals/annual' },
   { label: 'Sub-goals', href: '/goals/quarterly' },
   { label: 'Balanced Scorecard', href: '/goals/scorecard' },
+  { label: 'Strategic Map', href: '/goals/strategic-map' },
 ]
 
 export default function GoalsLayout({ children }: { children: React.ReactNode }) {
