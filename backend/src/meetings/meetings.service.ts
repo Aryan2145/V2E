@@ -13,6 +13,7 @@ import { TasksService } from '../tasks/tasks.service';
 import { PermissionsService, principalFromUser } from '../access-rights/permissions.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
+import { AccessVisibilityService } from '../access-rights/access-visibility.service';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 import {
   UpdateMeetingDto,
@@ -62,8 +63,18 @@ export class MeetingsService {
     private readonly permissions: PermissionsService,
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
+    private readonly visibility: AccessVisibilityService,
   ) {
     this.scope.registerWiredList(MEETING);
+    this.visibility.registerCounter(MEETING, (orgId, userId) =>
+      this.prisma.meeting.count({
+        where: {
+          organization_id: orgId,
+          is_deleted: false,
+          ...(this.visibility.whereForUser(MEETING, userId) ?? {}),
+        },
+      }),
+    );
   }
 
   // ─── Create ─────────────────────────────────────────────────────────────────

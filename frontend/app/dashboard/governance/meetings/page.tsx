@@ -17,6 +17,7 @@ import MeetingCalendarView from '@/components/meetings/MeetingCalendarView'
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal'
 import type { PersonOption } from '@/components/meetings/MeetingAttendeeSelector'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
 
 const selectClass =
   'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
@@ -65,7 +66,7 @@ export default function MeetingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const orgId = user?.organizationId ?? ''
-  const { perms } = useMeetingPermissions(orgId)
+  const { perms, loading: permsLoading } = useMeetingPermissions(orgId)
 
   const [meetings, setMeetings] = useState<Meeting[]>([])
   const [people, setPeople] = useState<PersonOption[]>([])
@@ -170,7 +171,9 @@ export default function MeetingsPage() {
         </div>
       </div>
 
-      {view === 'calendar' ? (
+      {!permsLoading && !perms.read ? (
+        <AccessHiddenState orgId={orgId} leaf="meetings" moduleLabel="Meetings" />
+      ) : view === 'calendar' ? (
         loading ? (
           <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
         ) : (

@@ -20,12 +20,14 @@ import {
   EmptyState,
   GoalStatusBadge,
   PerspectiveBadge,
+  ConfidenceBadge,
   ProgressBar,
   formatDate,
   useGoalPermissions,
 } from './shared'
 import CreateGoalModal from './CreateGoalModal'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
 
 const PERSPECTIVES: GoalPerspective[] = ['financial', 'customer', 'internal_process', 'learning_growth']
 const STATUSES: GoalStatus[] = ['not_started', 'on_track', 'at_risk', 'achieved', 'archived']
@@ -40,14 +42,16 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
   const orgId = user?.organizationId ?? ''
   const meta = LEVEL_META[level]
   const showPerspective = level !== 'objective'
-  const { perms } = useGoalPermissions(orgId)
+  const { perms, loading: permsLoading } = useGoalPermissions(orgId)
 
   // The parent level a new goal at this level rolls up to: annual → objective, quarterly → annual.
   const parentLevel: GoalLevel | null = level === 'annual' ? 'objective' : level === 'quarterly' ? 'annual' : null
 
   const [goals, setGoals] = useState<Goal[]>([])
   const [parentOptions, setParentOptions] = useState<Goal[]>([])
-  const [employees, setEmployees] = useState<{ user_id: string; name: string }[]>([])
+  const [employees, setEmployees] = useState<
+    { user_id: string; name: string; role_title?: string | null; department_name?: string | null }[]
+  >([])
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
@@ -74,7 +78,12 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
       .then(([g, emps, depts, parents]: any[]) => {
         setGoals(g)
         setEmployees(
-          (emps as any[]).map((e) => ({ user_id: e.user_id, name: e.user?.name ?? e.name ?? e.email ?? 'Unknown' })),
+          (emps as any[]).map((e) => ({
+            user_id: e.user_id,
+            name: e.user?.name ?? e.name ?? e.email ?? 'Unknown',
+            role_title: e.role?.title ?? e.role?.name ?? null,
+            department_name: e.department?.name ?? null,
+          })),
         )
         setDepartments((depts as any[]).map((d) => ({ id: d.id, name: d.name })))
         setParentOptions(parents as Goal[])
@@ -142,6 +151,23 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
         render: (g) => <GoalStatusBadge status={g.status} />,
       },
       {
+        key: 'review',
+        header: 'Review',
+        desktopHiddenBelow: 'lg',
+        render: (g) => {
+          const overdue = g.next_review_date && new Date(g.next_review_date) < new Date()
+          if (overdue) {
+            return (
+              <span className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap bg-[#FEE2E2] text-[#DC2626] border-[#FECACA]">
+                Review due
+              </span>
+            )
+          }
+          if (g.last_confidence) return <ConfidenceBadge confidence={g.last_confidence} />
+          return <span className="text-xs text-[#94A3B8]">No check-in</span>
+        },
+      },
+      {
         key: 'progress',
         header: 'Progress',
         desktopHiddenBelow: 'md',
@@ -182,6 +208,10 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
         )}
       </div>
 
+      {!permsLoading && !perms.read ? (
+        <AccessHiddenState orgId={orgId} leaf="goals" moduleLabel={meta.plural} />
+      ) : (
+       <>
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="relative flex-1 min-w-[200px]">
@@ -256,6 +286,8 @@ export default function GoalListView({ level }: { level: GoalLevel }) {
           </div>
         }
       />
+       </>
+      )}
 
       <CreateGoalModal
         isOpen={createOpen}

@@ -4,6 +4,7 @@ import { ProjectProgressService } from './project-progress.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
+import { AccessVisibilityService } from '../access-rights/access-visibility.service';
 import { Principal } from '../access-rights/permissions.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -35,8 +36,18 @@ export class ProjectsService {
     private readonly notifications: NotificationsService,
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
+    private readonly visibility: AccessVisibilityService,
   ) {
     this.scope.registerWiredList(ProjectsService.PROJECTS_LEAF);
+    this.visibility.registerCounter(ProjectsService.PROJECTS_LEAF, (orgId, userId) =>
+      this.prisma.project.count({
+        where: {
+          organization_id: orgId,
+          is_deleted: false,
+          ...(this.visibility.whereForUser(ProjectsService.PROJECTS_LEAF, userId) ?? {}),
+        },
+      }),
+    );
   }
 
   // ─── Master ──────────────────────────────────────────────────────────────────

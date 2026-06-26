@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service'
 import { AuditWriterService } from '../audit/audit-writer.service'
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service'
 import { ScopeService } from '../access-rights/scope.service'
+import { AccessVisibilityService } from '../access-rights/access-visibility.service'
 import { Principal } from '../access-rights/permissions.service'
 import type { RaiseTicketDto } from './dto/raise-ticket.dto'
 import type { UpdateTicketDto } from './dto/update-ticket.dto'
@@ -50,8 +51,18 @@ export class TicketsService {
     private readonly scope: ScopeService,
     private readonly auditWriter: AuditWriterService,
     private readonly templateAccess: TicketTemplateAccessService,
+    private readonly visibility: AccessVisibilityService,
   ) {
     this.scope.registerWiredList(TicketsService.TICKETS_LEAF)
+    this.visibility.registerCounter(TicketsService.TICKETS_LEAF, (orgId, userId) =>
+      this.prisma.ticket.count({
+        where: {
+          organization_id: orgId,
+          is_deleted: false,
+          ...(this.visibility.whereForUser(TicketsService.TICKETS_LEAF, userId) ?? {}),
+        },
+      }),
+    )
   }
 
   // ─── Defaults ──────────────────────────────────────────────────────────────

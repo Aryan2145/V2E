@@ -1,12 +1,14 @@
 import apiClient from './client'
 import type {
   Goal,
+  GoalCheckIn,
   GoalLevel,
   GoalNextDefault,
   GoalPerspective,
   ScorecardQuadrant,
   CreateGoalInput,
   UpdateGoalInput,
+  CreateCheckInInput,
 } from '@/lib/types/goals'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/goals`
@@ -65,5 +67,15 @@ export const goalsApi = {
 
   remove: async (orgId: string, id: string, reason?: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/${id}`, { data: { reason } })
+  },
+
+  listCheckIns: async (orgId: string, goalId: string): Promise<GoalCheckIn[]> => {
+    const res = await apiClient.get(`${base(orgId)}/${goalId}/check-ins`)
+    return unwrap<GoalCheckIn[]>(res)
+  },
+
+  createCheckIn: async (orgId: string, goalId: string, dto: CreateCheckInInput): Promise<GoalCheckIn> => {
+    const res = await apiClient.post(`${base(orgId)}/${goalId}/check-ins`, dto)
+    return unwrap<GoalCheckIn>(res)
   },
 }

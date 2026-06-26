@@ -217,6 +217,7 @@ model User {
   conversation_memberships ConversationMember[]
   sent_messages            Message[]          @relation("SentMessages")
   owned_goals              Goal[]             @relation("GoalOwner")
+  goal_check_ins           GoalCheckIn[]      @relation("GoalCheckInAuthor")
   audit_logs               AuditLog[]
   organized_meetings       Meeting[]          @relation("MeetingOrganizer")
   meeting_attendances      MeetingAttendee[]  @relation("MeetingAttendeeUser")
@@ -2739,6 +2740,23 @@ enum GoalStatus {
   archived
 }
 
+// Owner's RAG judgement call, recorded at each check-in (independent of the
+// raw measure math — confidence is the human read on whether the goal lands).
+enum GoalConfidence {
+  on_track // green
+  at_risk // amber
+  off_track // red
+}
+
+// How often the owner is expected to check in. `none` = ad-hoc, no cadence.
+enum GoalCadence {
+  none
+  weekly
+  biweekly
+  monthly
+  quarterly
+}
+
 model Goal {
   id                 String           @id @default(uuid())
   organization_id    String
@@ -2752,7 +2770,11 @@ model Goal {
   start_date         DateTime?
   due_date           DateTime // REQUIRED on every level
   status             GoalStatus       @default(not_started)
-  progress_percent   Float            @default(0) // displayed only; owned by Performance module
+  progress_percent   Float            @default(0) // computed from measures / rolled up from children at each check-in
+  review_cadence     GoalCadence      @default(none) // expected check-in rhythm
+  next_review_date   DateTime? // when the next check-in is due (driven by cadence)
+  last_check_in_at   DateTime? // timestamp of the most recent check-in
+  last_confidence    GoalConfidence? // owner's most recent RAG call
   is_deleted         Boolean          @default(false)
   deleted_at         DateTime?
   deleted_by_user_id String?
@@ -2767,9 +2789,11 @@ model Goal {
   children   Goal[]        @relation("GoalHierarchy")
   measures   GoalMeasure[]
   tasks      Task[]
+  check_ins  GoalCheckIn[]
 
   @@index([organization_id, level])
   @@index([parent_goal_id])
+  @@index([organization_id, next_review_date])
   @@map("goals")
 }
 
@@ -2784,10 +2808,52 @@ model GoalMeasure {
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  goal Goal @relation(fields: [goal_id], references: [id], onDelete: Cascade)
+  goal       Goal             @relation(fields: [goal_id], references: [id], onDelete: Cascade)
+  check_ins  MeasureCheckIn[]
 
   @@index([goal_id])
   @@map("goal_measures")
+}
+
+// ─── Goal check-ins (the execution heartbeat) ──────────────────────────────────
+// One row per review event on a goal: the owner records the period's actuals
+// (MeasureCheckIn rows), a confidence (RAG) call, and a short narrative. The
+// computed progress at that moment is snapshotted so history is replayable.
+model GoalCheckIn {
+  id                 String         @id @default(uuid())
+  organization_id    String
+  goal_id            String
+  check_in_date      DateTime // the date the check-in is "for"
+  confidence         GoalConfidence
+  progress_percent   Float // snapshot of computed progress at this check-in
+  status_note        String?        @db.Text // owner's narrative: what's happening & why
+  created_by_user_id String
+  created_at         DateTime       @default(now())
+
+  goal           Goal             @relation(fields: [goal_id], references: [id], onDelete: Cascade)
+  created_by     User             @relation("GoalCheckInAuthor", fields: [created_by_user_id], references: [id])
+  measure_values MeasureCheckIn[]
+
+  @@index([goal_id, check_in_date])
+  @@map("goal_check_ins")
+}
+
+// The actual value recorded for a single measure at a single check-in — the
+// time-series that powers each measure's trajectory chart.
+model MeasureCheckIn {
+  id               String   @id @default(uuid())
+  organization_id  String
+  goal_check_in_id String
+  goal_measure_id  String
+  value            String // recorded actual at this check-in (string keeps units flexible)
+  created_at       DateTime @default(now())
+
+  check_in GoalCheckIn @relation(fields: [goal_check_in_id], references: [id], onDelete: Cascade)
+  measure  GoalMeasure @relation(fields: [goal_measure_id], references: [id], onDelete: Cascade)
+
+  @@index([goal_measure_id, created_at])
+  @@index([goal_check_in_id])
+  @@map("measure_check_ins")
 }
 
 // ─── Governance: Meetings ──────────────────────────────────────────────────────

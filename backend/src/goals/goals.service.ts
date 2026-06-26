@@ -4,14 +4,24 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { GoalLevel, GoalPerspective, Prisma } from '@prisma/client';
+import {
+  DataScope,
+  GoalCadence,
+  GoalConfidence,
+  GoalLevel,
+  GoalPerspective,
+  GoalStatus,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
+import { AccessVisibilityService } from '../access-rights/access-visibility.service';
 import { Principal } from '../access-rights/permissions.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
+import { CreateGoalCheckInDto } from './dto/create-check-in.dto';
 
 const PERSPECTIVES: GoalPerspective[] = [
   'financial',
@@ -40,8 +50,18 @@ export class GoalsService {
     private readonly audit: AuditService,
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
+    private readonly visibility: AccessVisibilityService,
   ) {
     this.scope.registerWiredList(GoalsService.GOALS_LEAF);
+    this.visibility.registerCounter(GoalsService.GOALS_LEAF, (orgId, userId) =>
+      this.prisma.goal.count({
+        where: {
+          organization_id: orgId,
+          is_deleted: false,
+          ...(this.visibility.whereForUser(GoalsService.GOALS_LEAF, userId) ?? {}),
+        },
+      }),
+    );
   }
 
   // ─── Create ───────────────────────────────────────────────────────────────
@@ -103,6 +123,11 @@ export class GoalsService {
         start_date: startDate,
         due_date: dueDate,
         status: dto.status ?? 'not_started',
+        review_cadence: dto.review_cadence ?? 'none',
+        next_review_date:
+          dto.review_cadence && dto.review_cadence !== 'none'
+            ? this.nextReviewDate(new Date(), dto.review_cadence)
+            : null,
         created_by_user_id: userId,
         measures: dto.measures?.length
           ? {
@@ -135,8 +160,8 @@ export class GoalsService {
   // ─── List ─────────────────────────────────────────────────────────────────
   async list(orgId: string, principal: Principal, filters: GoalListFilters = {}) {
     const where: Prisma.GoalWhereInput = { organization_id: orgId, is_deleted: false };
-    const scopeWhere = await this.scope.listWhere(orgId, principal, GoalsService.GOALS_LEAF);
-    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere as Prisma.GoalWhereInput];
+    const scopeWhere = await this.goalsLineOfSightWhere(orgId, principal);
+    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere];
     if (filters.level) where.level = filters.level;
     if (filters.perspective) where.perspective = filters.perspective;
     if (filters.owner_user_id) where.owner_user_id = filters.owner_user_id;
@@ -169,7 +194,18 @@ export class GoalsService {
       include: {
         owner: { select: { id: true, name: true, email: true } },
         department: { select: { id: true, name: true } },
-        measures: { orderBy: { created_at: 'asc' } },
+        measures: {
+          orderBy: { created_at: 'asc' },
+          include: { check_ins: { orderBy: { created_at: 'asc' } } },
+        },
+        check_ins: {
+          take: 12,
+          orderBy: { check_in_date: 'desc' },
+          include: {
+            created_by: { select: { id: true, name: true } },
+            measure_values: true,
+          },
+        },
         parent: {
           include: { owner: { select: { id: true, name: true } } },
         },
@@ -274,6 +310,109 @@ export class GoalsService {
     });
   }
 
+  // ─── Check-in (record actuals + confidence at a review event) ──────────────
+  async createCheckIn(orgId: string, userId: string, goalId: string, dto: CreateGoalCheckInDto) {
+    const goal = await this.prisma.goal.findFirst({
+      where: { id: goalId, organization_id: orgId, is_deleted: false },
+      include: { measures: true },
+    });
+    if (!goal) throw new NotFoundException('Goal not found');
+
+    const checkInDate = this.parseDate(dto.check_in_date, 'check_in_date');
+
+    // Only accept values that map to a measure actually on this goal.
+    const measureIds = new Set(goal.measures.map((m) => m.id));
+    const values = (dto.values ?? []).filter(
+      (v) => measureIds.has(v.goal_measure_id) && v.value?.trim() !== '',
+    );
+
+    // Compute progress against the post-check-in measure snapshot.
+    const merged = goal.measures.map((m) => {
+      const v = values.find((x) => x.goal_measure_id === m.id);
+      return { target_value: m.target_value, current_value: v ? v.value : m.current_value };
+    });
+    const computed = this.computeProgress(merged);
+    const progress = computed ?? goal.progress_percent;
+
+    const checkIn = await this.prisma.$transaction(async (tx) => {
+      const ci = await tx.goalCheckIn.create({
+        data: {
+          organization_id: orgId,
+          goal_id: goalId,
+          check_in_date: checkInDate,
+          confidence: dto.confidence,
+          progress_percent: progress,
+          status_note: dto.status_note?.trim() || null,
+          created_by_user_id: userId,
+          measure_values: values.length
+            ? {
+                create: values.map((v) => ({
+                  organization_id: orgId,
+                  goal_measure_id: v.goal_measure_id,
+                  value: v.value.trim(),
+                })),
+              }
+            : undefined,
+        },
+        include: {
+          created_by: { select: { id: true, name: true } },
+          measure_values: true,
+        },
+      });
+
+      // Denormalise the latest actual onto each measure for at-a-glance reads.
+      for (const v of values) {
+        await tx.goalMeasure.update({
+          where: { id: v.goal_measure_id },
+          data: { current_value: v.value.trim() },
+        });
+      }
+
+      await tx.goal.update({
+        where: { id: goalId },
+        data: {
+          progress_percent: progress,
+          last_check_in_at: new Date(),
+          last_confidence: dto.confidence,
+          status: this.statusFromConfidence(dto.confidence, goal.status),
+          next_review_date: this.nextReviewDate(checkInDate, goal.review_cadence),
+        },
+      });
+
+      return ci;
+    });
+
+    // Roll the new progress up the line of sight (parents with no own measures).
+    await this.rollupAncestors(orgId, goal.parent_goal_id);
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'create',
+      resource: 'goal_check_in',
+      entityId: checkIn.id,
+      entityLabel: goal.title,
+      changes: {
+        confidence: { before: null, after: dto.confidence },
+        progress_percent: { before: goal.progress_percent, after: progress },
+      },
+    });
+
+    return checkIn;
+  }
+
+  async listCheckIns(orgId: string, goalId: string) {
+    await this.findActiveOrFail(orgId, goalId);
+    return this.prisma.goalCheckIn.findMany({
+      where: { goal_id: goalId, organization_id: orgId },
+      orderBy: { check_in_date: 'desc' },
+      include: {
+        created_by: { select: { id: true, name: true } },
+        measure_values: true,
+      },
+    });
+  }
+
   // ─── Update ────────────────────────────────────────────────────────────────
   async update(orgId: string, userId: string, id: string, dto: UpdateGoalDto) {
     const existing = await this.findActiveOrFail(orgId, id);
@@ -293,6 +432,13 @@ export class GoalsService {
         : { disconnect: true };
     }
     if (dto.status !== undefined) data.status = dto.status;
+    if (dto.review_cadence !== undefined) {
+      data.review_cadence = dto.review_cadence;
+      // Re-anchor the next review off the last check-in (or now) under the new cadence.
+      const base = existing.last_check_in_at ?? new Date();
+      data.next_review_date =
+        dto.review_cadence === 'none' ? null : this.nextReviewDate(base, dto.review_cadence);
+    }
     if (dto.start_date !== undefined) {
       data.start_date = dto.start_date ? this.parseDate(dto.start_date, 'start_date') : null;
     }
@@ -311,19 +457,44 @@ export class GoalsService {
     const updated = await this.prisma.goal.update({ where: { id }, data });
 
     if (dto.measures !== undefined) {
-      await this.prisma.goalMeasure.deleteMany({ where: { goal_id: id } });
-      if (dto.measures.length) {
-        await this.prisma.goalMeasure.createMany({
-          data: dto.measures.map((m) => ({
-            organization_id: orgId,
-            goal_id: id,
-            name: m.name.trim(),
-            target_value: m.target_value,
-            current_value: m.current_value ?? null,
-            unit: m.unit ?? null,
-          })),
-        });
+      // Upsert by id so a measure keeps its identity — and its check-in history —
+      // across edits. (A blanket delete/recreate would cascade-delete every
+      // MeasureCheckIn tied to it.) current_value is owned by check-ins, so it is
+      // never touched here; only measures the user actually removed are deleted.
+      const existingMeasures = await this.prisma.goalMeasure.findMany({
+        where: { goal_id: id },
+        select: { id: true },
+      });
+      const existingIds = new Set(existingMeasures.map((m) => m.id));
+      const keptIds = new Set(dto.measures.filter((m) => m.id).map((m) => m.id as string));
+
+      const toDelete = [...existingIds].filter((eid) => !keptIds.has(eid));
+      if (toDelete.length) {
+        await this.prisma.goalMeasure.deleteMany({ where: { id: { in: toDelete } } });
       }
+
+      for (const m of dto.measures) {
+        if (m.id && existingIds.has(m.id)) {
+          await this.prisma.goalMeasure.update({
+            where: { id: m.id },
+            data: { name: m.name.trim(), target_value: m.target_value, unit: m.unit ?? null },
+          });
+        } else {
+          await this.prisma.goalMeasure.create({
+            data: {
+              organization_id: orgId,
+              goal_id: id,
+              name: m.name.trim(),
+              target_value: m.target_value,
+              current_value: m.current_value ?? null,
+              unit: m.unit ?? null,
+            },
+          });
+        }
+      }
+
+      // A measure set change can shift computed progress — recompute from measures.
+      await this.recomputeProgressFromMeasures(orgId, id);
     }
 
     const changes = this.audit.diff(
@@ -390,6 +561,176 @@ export class GoalsService {
     });
 
     return { success: true };
+  }
+
+  // ─── Line-of-sight visibility ──────────────────────────────────────────────
+
+  /**
+   * Goal visibility follows the cascade, not just row ownership. A user sees goals
+   * they participate in (own/created, within their data scope) PLUS the entire
+   * sub-tree beneath them AND the parent chain above them — so owning an objective
+   * reveals the goals cascading under it, and owning a sub-goal reveals the objective
+   * it rolls up to. Returns the Prisma `where` to AND into the list query
+   * (`{}` = org-wide, `{ id: { in: [] } }` = nothing).
+   */
+  private async goalsLineOfSightWhere(
+    orgId: string,
+    principal: Principal,
+  ): Promise<Prisma.GoalWhereInput> {
+    const { effective } = await this.scope.resolveListScope(
+      orgId,
+      principal,
+      GoalsService.GOALS_LEAF,
+    );
+    if (effective === null) return { id: { in: [] } }; // denied — fail closed
+    if (effective === DataScope.org) return {}; // no row restriction
+
+    const visible = await this.scope.visibleUserIds(orgId, principal.userId, effective);
+    if (visible === 'ALL') return {};
+
+    // Seeds: goals anyone in the user's scope participates in (owns / created).
+    const seeds = await this.prisma.goal.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        OR: [{ owner_user_id: { in: visible } }, { created_by_user_id: { in: visible } }],
+      },
+      select: { id: true, parent_goal_id: true },
+    });
+
+    const visibleIds = new Set<string>(seeds.map((s) => s.id));
+
+    // Walk UP — the parent chain of every seed (line of sight to the top).
+    let parentIds = seeds.map((s) => s.parent_goal_id).filter((p): p is string => !!p);
+    while (parentIds.length) {
+      const parents = await this.prisma.goal.findMany({
+        where: { id: { in: parentIds }, organization_id: orgId, is_deleted: false },
+        select: { id: true, parent_goal_id: true },
+      });
+      parentIds = [];
+      for (const p of parents) {
+        if (!visibleIds.has(p.id)) {
+          visibleIds.add(p.id);
+          if (p.parent_goal_id) parentIds.push(p.parent_goal_id);
+        }
+      }
+    }
+
+    // Walk DOWN — the whole sub-tree beneath every seed.
+    let frontier = seeds.map((s) => s.id);
+    while (frontier.length) {
+      const children = await this.prisma.goal.findMany({
+        where: { parent_goal_id: { in: frontier }, organization_id: orgId, is_deleted: false },
+        select: { id: true },
+      });
+      frontier = [];
+      for (const c of children) {
+        if (!visibleIds.has(c.id)) {
+          visibleIds.add(c.id);
+          frontier.push(c.id);
+        }
+      }
+    }
+
+    return { id: { in: [...visibleIds] } };
+  }
+
+  // ─── Progress / rollup ─────────────────────────────────────────────────────
+
+  /** Average of each numeric measure's clamped (current ÷ target) %. Null when
+   *  no measure is numerically computable (leave progress to roll up / manual). */
+  private computeProgress(
+    measures: { target_value: string; current_value: string | null }[],
+  ): number | null {
+    const pcts: number[] = [];
+    for (const m of measures) {
+      const target = this.toNum(m.target_value);
+      const current = this.toNum(m.current_value);
+      if (target === null || current === null || target === 0) continue;
+      pcts.push(Math.max(0, Math.min(100, (current / target) * 100)));
+    }
+    if (!pcts.length) return null;
+    return Math.round(pcts.reduce((s, x) => s + x, 0) / pcts.length);
+  }
+
+  private toNum(v: string | null | undefined): number | null {
+    if (v === null || v === undefined) return null;
+    const n = parseFloat(String(v).replace(/[, ]/g, ''));
+    return isNaN(n) ? null : n;
+  }
+
+  /** Recompute a goal's progress from its current measures, then roll up. */
+  private async recomputeProgressFromMeasures(orgId: string, goalId: string) {
+    const measures = await this.prisma.goalMeasure.findMany({
+      where: { goal_id: goalId },
+      select: { target_value: true, current_value: true },
+    });
+    const computed = this.computeProgress(measures);
+    if (computed !== null) {
+      await this.prisma.goal.update({
+        where: { id: goalId },
+        data: { progress_percent: computed },
+      });
+    }
+    const goal = await this.prisma.goal.findUnique({
+      where: { id: goalId },
+      select: { parent_goal_id: true },
+    });
+    await this.rollupAncestors(orgId, goal?.parent_goal_id ?? null);
+  }
+
+  /** Walk up the line of sight: a parent with no measures of its own takes the
+   *  average progress of its children. A parent that has its own measures owns
+   *  its progress via its own check-ins, so propagation stops there. */
+  private async rollupAncestors(orgId: string, parentId: string | null) {
+    let current = parentId;
+    const guard = new Set<string>();
+    while (current && !guard.has(current)) {
+      guard.add(current);
+      const parent = await this.prisma.goal.findFirst({
+        where: { id: current, organization_id: orgId, is_deleted: false },
+        include: { _count: { select: { measures: true } } },
+      });
+      if (!parent) break;
+      if (parent._count.measures > 0) break;
+
+      const children = await this.prisma.goal.findMany({
+        where: { parent_goal_id: current, is_deleted: false },
+        select: { progress_percent: true },
+      });
+      const avg = children.length
+        ? Math.round(children.reduce((s, c) => s + c.progress_percent, 0) / children.length)
+        : 0;
+      await this.prisma.goal.update({ where: { id: current }, data: { progress_percent: avg } });
+      current = parent.parent_goal_id;
+    }
+  }
+
+  private nextReviewDate(from: Date, cadence: GoalCadence): Date | null {
+    const d = new Date(from);
+    switch (cadence) {
+      case 'weekly':
+        d.setDate(d.getDate() + 7);
+        return d;
+      case 'biweekly':
+        d.setDate(d.getDate() + 14);
+        return d;
+      case 'monthly':
+        d.setMonth(d.getMonth() + 1);
+        return d;
+      case 'quarterly':
+        d.setMonth(d.getMonth() + 3);
+        return d;
+      default:
+        return null;
+    }
+  }
+
+  /** Map the owner's RAG confidence onto the goal's status, without clobbering a
+   *  goal that's already been closed out (achieved/archived). */
+  private statusFromConfidence(c: GoalConfidence, currentStatus: GoalStatus): GoalStatus {
+    if (currentStatus === 'achieved' || currentStatus === 'archived') return currentStatus;
+    return c === 'on_track' ? 'on_track' : 'at_risk';
   }
 
   // ─── Helpers ───────────────────────────────────────────────────────────────

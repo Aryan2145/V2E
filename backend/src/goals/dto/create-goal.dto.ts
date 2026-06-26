@@ -9,9 +9,15 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { GoalLevel, GoalPerspective, GoalStatus } from '@prisma/client';
+import { GoalCadence, GoalLevel, GoalPerspective, GoalStatus } from '@prisma/client';
 
 export class GoalMeasureDto {
+  // Present when editing an existing measure — lets the service preserve its
+  // identity (and check-in history) instead of wiping and recreating.
+  @IsOptional()
+  @IsUUID()
+  id?: string;
+
   @IsString()
   @MaxLength(200)
   name!: string;
@@ -68,6 +74,10 @@ export class CreateGoalDto {
   @IsOptional()
   @IsEnum(GoalStatus)
   status?: GoalStatus;
+
+  @IsOptional()
+  @IsEnum(GoalCadence)
+  review_cadence?: GoalCadence;
 
   @IsOptional()
   @IsArray()

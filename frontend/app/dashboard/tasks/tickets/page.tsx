@@ -7,11 +7,14 @@ import { useAuth } from '@/lib/auth/context'
 import { ticketsApi } from '@/lib/api/tickets'
 import type { Ticket, TicketType, TicketCategory, TicketPriority, TicketStatus, TicketStats } from '@/lib/types/tickets'
 import TicketCard from '@/components/tickets/TicketCard'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
+import { usePermissions } from '@/lib/auth/use-permissions'
 
 export default function TicketsPage() {
   const { user } = useAuth()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
+  const { can, loading: permsLoading } = usePermissions()
 
   const [tickets, setTickets] = useState<Ticket[]>([])
   const [stats, setStats] = useState<TicketStats | null>(null)
@@ -69,6 +72,15 @@ export default function TicketsPage() {
   )
 
   const hasFilters = filterType || filterCategory || filterPriority || filterStatus || filterSla
+
+  if (!permsLoading && !can('tickets.ticket.manage', 'read')) {
+    return (
+      <div className="flex flex-col gap-6">
+        <h1 className="text-[22px] font-bold text-[#0F172A]">Tickets</h1>
+        <AccessHiddenState orgId={orgId} leaf="tickets.ticket.manage" moduleLabel="Tickets" />
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-6">

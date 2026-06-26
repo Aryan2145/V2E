@@ -5,9 +5,18 @@ import { Plus, Trash2 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
+import EmployeePicker from '@/components/ui/EmployeePicker'
 import { useToast } from '@/components/ui/Toast'
 import { goalsApi } from '@/lib/api/goals'
-import { STATUS_META, type Goal, type GoalStatus, type UpdateGoalInput } from '@/lib/types/goals'
+import {
+  CADENCE_META,
+  CADENCE_OPTIONS,
+  STATUS_META,
+  type Goal,
+  type GoalCadence,
+  type GoalStatus,
+  type UpdateGoalInput,
+} from '@/lib/types/goals'
 import { toDateInput } from './shared'
 
 const inputClass =
@@ -17,6 +26,7 @@ const STATUSES: GoalStatus[] = ['not_started', 'on_track', 'at_risk', 'achieved'
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
 interface MeasureRow {
+  id?: string
   name: string
   target_value: string
   unit: string
@@ -27,7 +37,7 @@ interface Props {
   onClose: () => void
   orgId: string
   goal: Goal
-  employees: { user_id: string; name: string }[]
+  employees: { user_id: string; name: string; role_title?: string | null; department_name?: string | null }[]
   departments: { id: string; name: string }[]
   onSaved: (goal: Goal) => void
 }
@@ -41,6 +51,7 @@ export default function EditGoalModal({ isOpen, onClose, orgId, goal, employees,
   const [startDate, setStartDate] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [status, setStatus] = useState<GoalStatus>('not_started')
+  const [cadence, setCadence] = useState<GoalCadence>('none')
   const [measures, setMeasures] = useState<MeasureRow[]>([])
   const [saving, setSaving] = useState(false)
 
@@ -55,7 +66,15 @@ export default function EditGoalModal({ isOpen, onClose, orgId, goal, employees,
     setStartDate(toDateInput(goal.start_date))
     setDueDate(toDateInput(goal.due_date))
     setStatus(goal.status)
-    setMeasures((goal.measures ?? []).map((m) => ({ name: m.name, target_value: m.target_value, unit: m.unit ?? '' })))
+    setCadence(goal.review_cadence ?? 'none')
+    setMeasures(
+      (goal.measures ?? []).map((m) => ({
+        id: m.id,
+        name: m.name,
+        target_value: m.target_value,
+        unit: m.unit ?? '',
+      })),
+    )
   }, [isOpen, goal])
 
   function updateMeasure(i: number, patch: Partial<MeasureRow>) {
@@ -75,9 +94,15 @@ export default function EditGoalModal({ isOpen, onClose, orgId, goal, employees,
       start_date: startDate ? new Date(startDate).toISOString() : undefined,
       due_date: new Date(dueDate).toISOString(),
       status,
+      review_cadence: cadence,
       measures: measures
         .filter((m) => m.name.trim() && m.target_value.trim())
-        .map((m) => ({ name: m.name.trim(), target_value: m.target_value.trim(), unit: m.unit.trim() || undefined })),
+        .map((m) => ({
+          id: m.id,
+          name: m.name.trim(),
+          target_value: m.target_value.trim(),
+          unit: m.unit.trim() || undefined,
+        })),
     }
 
     setSaving(true)
@@ -107,13 +132,13 @@ export default function EditGoalModal({ isOpen, onClose, orgId, goal, employees,
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelClass}>Owner *</label>
-            <select className={inputClass} value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
-              {employees.map((e) => (
-                <option key={e.user_id} value={e.user_id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
+            <EmployeePicker
+              value={ownerId}
+              onChange={setOwnerId}
+              employees={employees}
+              title="Select Owner"
+              placeholder="Select owner…"
+            />
           </div>
           <div>
             <label className={labelClass}>Department</label>
@@ -146,6 +171,17 @@ export default function EditGoalModal({ isOpen, onClose, orgId, goal, employees,
               ))}
             </select>
           </div>
+        </div>
+        <div>
+          <label className={labelClass}>Review cadence</label>
+          <select className={inputClass} value={cadence} onChange={(e) => setCadence(e.target.value as GoalCadence)}>
+            {CADENCE_OPTIONS.map((c) => (
+              <option key={c} value={c}>
+                {CADENCE_META[c].label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-[#64748B] mt-1">How often the owner is expected to check in — sets the next review date.</p>
         </div>
         <div>
           <div className="flex items-center justify-between mb-1">

@@ -18,6 +18,8 @@ import PeopleTree from '@/components/tasks/overview/PeopleTree'
 import BulkActionBar from '@/components/tasks/overview/BulkActionBar'
 import SelectField from '@/components/ui/SelectField'
 import DateRangePicker from '@/components/ui/DateRangePicker'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
+import { usePermissions } from '@/lib/auth/use-permissions'
 import {
   Plus, Search, CheckSquare, SlidersHorizontal, X, BarChart3, Download, ListChecks,
 } from 'lucide-react'
@@ -34,6 +36,7 @@ const SCOPE_BLURB: Record<WorkScope, string> = {
 export default function TasksOverviewPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
+  const { can, loading: permsLoading } = usePermissions()
 
   // Masters
   const [categories, setCategories] = useState<TaskCategory[]>([])
@@ -220,6 +223,15 @@ export default function TasksOverviewPage() {
       <div className="flex flex-col items-center justify-center h-64 text-center">
         <p className="font-semibold text-[#0F172A]">No organization found</p>
         <p className="text-sm text-[#475569] mt-1">You are not a member of any organization.</p>
+      </div>
+    )
+  }
+
+  if (!permsLoading && !can('tasks.task.manage', 'read')) {
+    return (
+      <div className="space-y-5">
+        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Work Overview</h1>
+        <AccessHiddenState orgId={orgId} leaf="tasks.task.manage" moduleLabel="Tasks" />
       </div>
     )
   }

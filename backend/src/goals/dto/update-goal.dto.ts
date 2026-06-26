@@ -9,7 +9,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { GoalStatus } from '@prisma/client';
+import { GoalCadence, GoalStatus } from '@prisma/client';
 import { GoalMeasureDto } from './create-goal.dto';
 
 /**
@@ -45,6 +45,10 @@ export class UpdateGoalDto {
   @IsOptional()
   @IsEnum(GoalStatus)
   status?: GoalStatus;
+
+  @IsOptional()
+  @IsEnum(GoalCadence)
+  review_cadence?: GoalCadence;
 
   @IsOptional()
   @IsArray()

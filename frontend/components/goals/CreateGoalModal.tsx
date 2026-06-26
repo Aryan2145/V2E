@@ -5,12 +5,16 @@ import { Plus, Trash2, Loader2 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
+import EmployeePicker from '@/components/ui/EmployeePicker'
 import { useToast } from '@/components/ui/Toast'
 import { goalsApi } from '@/lib/api/goals'
 import {
+  CADENCE_META,
+  CADENCE_OPTIONS,
   LEVEL_META,
   PERSPECTIVE_META,
   type Goal,
+  type GoalCadence,
   type GoalLevel,
   type GoalPerspective,
   type CreateGoalInput,
@@ -25,6 +29,8 @@ const PERSPECTIVES: GoalPerspective[] = ['financial', 'customer', 'internal_proc
 interface EmployeeOption {
   user_id: string
   name: string
+  role_title?: string | null
+  department_name?: string | null
 }
 interface DeptOption {
   id: string
@@ -85,6 +91,7 @@ export default function CreateGoalModal({
   const [startDate, setStartDate] = useState('')
   const [dueDate, setDueDate] = useState('')
   const [perspective, setPerspective] = useState<GoalPerspective | ''>('')
+  const [cadence, setCadence] = useState<GoalCadence>('none')
   const [measures, setMeasures] = useState<MeasureRow[]>([])
   const [minDate, setMinDate] = useState(todayStr())
   const [maxDate, setMaxDate] = useState('')
@@ -101,6 +108,7 @@ export default function CreateGoalModal({
     setStartDate('')
     setMeasures([])
     setPerspective('')
+    setCadence('none')
     setParentId(parent?.id ?? '')
   }, [isOpen, parent])
 
@@ -162,6 +170,7 @@ export default function CreateGoalModal({
     if (startDate) dto.start_date = new Date(startDate).toISOString()
     if (effectiveParent) dto.parent_goal_id = effectiveParent.id
     if (level !== 'objective' && perspective) dto.perspective = perspective as GoalPerspective
+    if (cadence !== 'none') dto.review_cadence = cadence
     const cleanMeasures = measures
       .filter((m) => m.name.trim() && m.target_value.trim())
       .map((m) => ({ name: m.name.trim(), target_value: m.target_value.trim(), unit: m.unit.trim() || undefined }))
@@ -269,14 +278,13 @@ export default function CreateGoalModal({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={labelClass}>Owner *</label>
-            <select className={inputClass} value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
-              <option value="">Select owner…</option>
-              {ownerOptions.map((e) => (
-                <option key={e.user_id} value={e.user_id}>
-                  {e.name}
-                </option>
-              ))}
-            </select>
+            <EmployeePicker
+              value={ownerId}
+              onChange={setOwnerId}
+              employees={ownerOptions}
+              title="Select Owner"
+              placeholder="Select owner…"
+            />
           </div>
           <div>
             <label className={labelClass}>Department</label>
@@ -323,6 +331,21 @@ export default function CreateGoalModal({
               </p>
             )}
           </div>
+        </div>
+
+        {/* Review cadence */}
+        <div>
+          <label className={labelClass}>Review cadence</label>
+          <select className={inputClass} value={cadence} onChange={(e) => setCadence(e.target.value as GoalCadence)}>
+            {CADENCE_OPTIONS.map((c) => (
+              <option key={c} value={c}>
+                {CADENCE_META[c].label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-[#64748B] mt-1">
+            How often the owner checks in. Sets the next review date and keeps the goal honest.
+          </p>
         </div>
 
         {/* Measures */}

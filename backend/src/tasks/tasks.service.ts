@@ -19,6 +19,7 @@ import { LeaveService } from '../leave/leave.service';
 import { ClockService } from '../clock/clock.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
+import { AccessVisibilityService } from '../access-rights/access-visibility.service';
 import { Principal } from '../access-rights/permissions.service';
 import { ChecklistAccessService } from '../task-masters/checklist-access.service';
 import { CreateTaskDto } from './dto/create-task.dto';
@@ -67,8 +68,18 @@ export class TasksService {
     private readonly leave: LeaveService,
     private readonly clock: ClockService,
     private readonly checklistAccess: ChecklistAccessService,
+    private readonly visibility: AccessVisibilityService,
   ) {
     this.scope.registerWiredList(TasksService.TASK_LEAF);
+    this.visibility.registerCounter(TasksService.TASK_LEAF, (orgId, userId) =>
+      this.prisma.task.count({
+        where: {
+          organization_id: orgId,
+          is_deleted: false,
+          ...(this.visibility.whereForUser(TasksService.TASK_LEAF, userId) ?? {}),
+        },
+      }),
+    );
   }
 
   /** The subject leaf governing "can be assigned a task". */

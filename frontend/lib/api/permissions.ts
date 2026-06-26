@@ -218,3 +218,29 @@ export async function getMyPermissions(orgId: string): Promise<MyPermissions> {
   const { data } = await apiClient.get<ApiResponse<MyPermissions>>(`${base(orgId)}/my-permissions`)
   return data.data
 }
+
+// ─── Access visibility ("is this empty, or am I just not allowed to see it?") ───
+
+export type VisibilityReason = 'ok' | 'no_system_role' | 'role_lacks_permission'
+
+export interface AccessVisibility {
+  leaf: string
+  module_label: string
+  can_read: boolean
+  scope: DataScope | null
+  /** Rows assigned to me, ignoring scope. null = module has no counter. */
+  assigned_count: number | null
+  has_system_role: boolean
+  reason: VisibilityReason
+}
+
+/**
+ * Ask why a module looks empty. Callable even when the caller is denied read on the
+ * module (gated by auth + org only), so a hidden user can be shown an honest message.
+ */
+export async function getAccessVisibility(orgId: string, leaf: string): Promise<AccessVisibility> {
+  const { data } = await apiClient.get<ApiResponse<AccessVisibility>>(
+    `${base(orgId)}/access/visibility/${leaf}`,
+  )
+  return data.data
+}

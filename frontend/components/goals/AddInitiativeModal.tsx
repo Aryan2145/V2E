@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
+import EmployeePicker from '@/components/ui/EmployeePicker'
 import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
 
@@ -16,7 +17,7 @@ interface Props {
   onClose: () => void
   orgId: string
   goalId: string
-  employees: { user_id: string; name: string }[]
+  employees: { user_id: string; name: string; role_title?: string | null; department_name?: string | null }[]
   onCreated: () => void
 }
 
@@ -75,14 +76,13 @@ export default function AddInitiativeModal({ isOpen, onClose, orgId, goalId, emp
         </div>
         <div>
           <label className={labelClass}>Executor (assignee) *</label>
-          <select className={inputClass} value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-            <option value="">Select executor…</option>
-            {employees.map((e) => (
-              <option key={e.user_id} value={e.user_id}>
-                {e.name}
-              </option>
-            ))}
-          </select>
+          <EmployeePicker
+            value={assignee}
+            onChange={setAssignee}
+            employees={employees}
+            title="Select Executor"
+            placeholder="Select executor…"
+          />
         </div>
         <div>
           <label className={labelClass}>Deadline</label>

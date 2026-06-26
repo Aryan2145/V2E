@@ -3,6 +3,16 @@
 export type GoalLevel = 'objective' | 'annual' | 'quarterly'
 export type GoalPerspective = 'financial' | 'customer' | 'internal_process' | 'learning_growth'
 export type GoalStatus = 'not_started' | 'on_track' | 'at_risk' | 'achieved' | 'archived'
+export type GoalConfidence = 'on_track' | 'at_risk' | 'off_track'
+export type GoalCadence = 'none' | 'weekly' | 'biweekly' | 'monthly' | 'quarterly'
+
+export interface MeasureCheckIn {
+  id: string
+  goal_check_in_id: string
+  goal_measure_id: string
+  value: string
+  created_at: string
+}
 
 export interface GoalMeasure {
   id: string
@@ -11,6 +21,21 @@ export interface GoalMeasure {
   target_value: string
   current_value?: string | null
   unit?: string | null
+  /** Time-series of recorded actuals (present on the detail endpoint). */
+  check_ins?: MeasureCheckIn[]
+}
+
+export interface GoalCheckIn {
+  id: string
+  goal_id: string
+  check_in_date: string
+  confidence: GoalConfidence
+  progress_percent: number
+  status_note?: string | null
+  created_by_user_id: string
+  created_at: string
+  created_by?: { id: string; name: string }
+  measure_values?: MeasureCheckIn[]
 }
 
 export interface GoalOwnerLite {
@@ -33,11 +58,16 @@ export interface Goal {
   due_date: string
   status: GoalStatus
   progress_percent: number
+  review_cadence: GoalCadence
+  next_review_date: string | null
+  last_check_in_at: string | null
+  last_confidence: GoalConfidence | null
   created_at: string
   updated_at: string
   owner?: GoalOwnerLite
   department?: { id: string; name: string } | null
   measures?: GoalMeasure[]
+  check_ins?: GoalCheckIn[]
   parent?: Goal | null
   children?: Goal[]
   tasks?: any[]
@@ -61,6 +91,14 @@ export interface ScorecardQuadrant {
   average_progress: number
 }
 
+export interface GoalMeasureInput {
+  id?: string
+  name: string
+  target_value: string
+  current_value?: string
+  unit?: string
+}
+
 export interface CreateGoalInput {
   level: GoalLevel
   parent_goal_id?: string
@@ -72,10 +110,18 @@ export interface CreateGoalInput {
   start_date?: string
   due_date: string
   status?: GoalStatus
-  measures?: Array<{ name: string; target_value: string; current_value?: string; unit?: string }>
+  review_cadence?: GoalCadence
+  measures?: GoalMeasureInput[]
 }
 
 export type UpdateGoalInput = Partial<Omit<CreateGoalInput, 'level' | 'parent_goal_id' | 'perspective'>>
+
+export interface CreateCheckInInput {
+  check_in_date: string
+  confidence: GoalConfidence
+  status_note?: string
+  values?: Array<{ goal_measure_id: string; value: string }>
+}
 
 // ─── Labels & palette (driven by DESIGN_RULES status/badge colors) ─────────────
 
@@ -102,6 +148,26 @@ export const LEVEL_META: Record<GoalLevel, { label: string; plural: string; chil
   annual: { label: 'Goal', plural: 'Goals', child: 'quarterly' },
   quarterly: { label: 'Sub-goal', plural: 'Sub-goals', child: null },
 }
+
+// Owner's RAG confidence call — the human read recorded at each check-in.
+export const CONFIDENCE_META: Record<
+  GoalConfidence,
+  { label: string; bg: string; text: string; border: string; dot: string }
+> = {
+  on_track: { label: 'On track', bg: '#DCFCE7', text: '#16A34A', border: '#BBF7D0', dot: '#16A34A' },
+  at_risk: { label: 'At risk', bg: '#FEF9C3', text: '#CA8A04', border: '#FDE68A', dot: '#D97706' },
+  off_track: { label: 'Off track', bg: '#FEE2E2', text: '#DC2626', border: '#FECACA', dot: '#DC2626' },
+}
+
+export const CADENCE_META: Record<GoalCadence, { label: string; short: string }> = {
+  none: { label: 'No set cadence', short: 'Ad-hoc' },
+  weekly: { label: 'Weekly', short: 'Weekly' },
+  biweekly: { label: 'Every 2 weeks', short: 'Biweekly' },
+  monthly: { label: 'Monthly', short: 'Monthly' },
+  quarterly: { label: 'Quarterly', short: 'Quarterly' },
+}
+
+export const CADENCE_OPTIONS: GoalCadence[] = ['none', 'weekly', 'biweekly', 'monthly', 'quarterly']
 
 // ─── Access Rights & Audit ─────────────────────────────────────────────────────
 

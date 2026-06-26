@@ -356,6 +356,12 @@ export const isValidLeaf = (key: string): boolean => LEAF_INDEX.has(key);
 
 export const moduleOf = (key: string): string | undefined => LEAF_INDEX.get(key)?.moduleKey;
 
+/** Human module label for a leaf, e.g. "goals" → "Goals", "tasks.task.manage" → "Tasks". */
+export const moduleLabelOf = (key: string): string | undefined => {
+  const moduleKey = LEAF_INDEX.get(key)?.moduleKey;
+  return moduleKey ? PERMISSION_REGISTRY.find((m) => m.key === moduleKey)?.label : undefined;
+};
+
 export const isEntitlementControlled = (key: string): boolean =>
   LEAF_INDEX.get(key)?.entitlementControlled ?? false;
 

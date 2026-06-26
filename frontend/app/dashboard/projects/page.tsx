@@ -7,6 +7,8 @@ import { projectsApi } from '@/lib/api/projects'
 import type { Project, ProjectStatus } from '@/lib/types/projects'
 import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectStatCard from '@/components/projects/ProjectStatCard'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
+import { usePermissions } from '@/lib/auth/use-permissions'
 import { Plus, Briefcase, Search } from 'lucide-react'
 
 const STATUS_OPTS: { value: 'all' | ProjectStatus; label: string }[] = [
@@ -20,6 +22,7 @@ const STATUS_OPTS: { value: 'all' | ProjectStatus; label: string }[] = [
 export default function ProjectsPage() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
+  const { can, loading: permsLoading } = usePermissions()
 
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
@@ -51,6 +54,15 @@ export default function ProjectsPage() {
     return (
       <div className="flex flex-col items-center justify-center h-64">
         <p className="font-semibold text-[#0F172A]">No organization found</p>
+      </div>
+    )
+  }
+
+  if (!permsLoading && !can('projects.project.manage', 'read')) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Projects</h1>
+        <AccessHiddenState orgId={orgId} leaf="projects.project.manage" moduleLabel="Projects" />
       </div>
     )
   }

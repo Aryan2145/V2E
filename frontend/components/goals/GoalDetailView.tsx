@@ -15,6 +15,10 @@ import {
   Building2,
   CornerLeftUp,
   ListChecks,
+  Activity,
+  CircleCheckBig,
+  CalendarClock,
+  History,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { goalsApi } from '@/lib/api/goals'
@@ -23,10 +27,11 @@ import { getDepartments } from '@/lib/api/departments'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
-import { LEVEL_META, type Goal } from '@/lib/types/goals'
+import { CADENCE_META, LEVEL_META, type Goal } from '@/lib/types/goals'
 import {
   GoalStatusBadge,
   PerspectiveBadge,
+  ConfidenceBadge,
   ProgressBar,
   EmptyState,
   formatDate,
@@ -35,20 +40,27 @@ import {
 import CreateGoalModal from './CreateGoalModal'
 import EditGoalModal from './EditGoalModal'
 import AddInitiativeModal from './AddInitiativeModal'
+import CheckInModal from './CheckInModal'
+import MeasureTrajectory from './MeasureTrajectory'
+import GoalCascade from './GoalCascade'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
 
 export default function GoalDetailView({ goalId }: { goalId: string }) {
   const { user } = useAuth()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
-  const { perms } = useGoalPermissions(orgId)
+  const { perms, loading: permsLoading } = useGoalPermissions(orgId)
 
   const [goal, setGoal] = useState<Goal | null>(null)
-  const [employees, setEmployees] = useState<{ user_id: string; name: string }[]>([])
+  const [employees, setEmployees] = useState<
+    { user_id: string; name: string; role_title?: string | null; department_name?: string | null }[]
+  >([])
   const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
   const [editOpen, setEditOpen] = useState(false)
+  const [checkInOpen, setCheckInOpen] = useState(false)
   const [addChildOpen, setAddChildOpen] = useState(false)
   const [addTaskOpen, setAddTaskOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -72,7 +84,14 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
           return
         }
         setGoal(g)
-        setEmployees((emps as any[]).map((e) => ({ user_id: e.user_id, name: e.user?.name ?? e.name ?? e.email ?? 'Unknown' })))
+        setEmployees(
+          (emps as any[]).map((e) => ({
+            user_id: e.user_id,
+            name: e.user?.name ?? e.name ?? e.email ?? 'Unknown',
+            role_title: e.role?.title ?? null,
+            department_name: e.department?.name ?? null,
+          })),
+        )
         setDepartments((depts as any[]).map((d) => ({ id: d.id, name: d.name })))
       })
       .finally(() => setLoading(false))
@@ -97,7 +116,9 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
     }
   }
 
-  if (loading) return <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
+  if (loading || permsLoading) return <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
+  // Denied read (the API 403s before the goal loads) → explain access, don't cry "not found".
+  if (!perms.read) return <AccessHiddenState orgId={orgId} leaf="goals" moduleLabel="Goals" />
   if (notFound || !goal)
     return (
       <EmptyState
@@ -118,10 +139,19 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Breadcrumb */}
-      <Link href={backHref} className="inline-flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] w-fit">
-        <ArrowLeft size={15} /> {meta.plural}
-      </Link>
+      {/* Breadcrumb — back mirrors the forward navigation: return to wherever the
+          user came from (parent objective, list, etc.). Fall back to the level
+          list on a fresh load / refresh with no in-app history to step back to. */}
+      <button
+        type="button"
+        onClick={() => {
+          if (typeof window !== 'undefined' && window.history.length > 1) router.back()
+          else router.push(backHref)
+        }}
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] w-fit"
+      >
+        <ArrowLeft size={15} /> Back
+      </button>
 
       {/* Header card */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6">
@@ -131,11 +161,20 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
               <span className="text-xs font-semibold text-[#64748B] uppercase tracking-wider">{meta.label}</span>
               <PerspectiveBadge perspective={goal.perspective} />
               <GoalStatusBadge status={goal.status} />
+              <ConfidenceBadge confidence={goal.last_confidence} />
             </div>
             <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">{goal.title}</h1>
             {goal.description && <p className="text-[15px] text-[#1E293B] mt-2 leading-relaxed">{goal.description}</p>}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {perms.edit && (
+              <button
+                onClick={() => setCheckInOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8]"
+              >
+                <Activity size={15} /> Check in
+              </button>
+            )}
             {perms.edit && (
               <button
                 onClick={() => setEditOpen(true)}
@@ -165,26 +204,105 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
             <ProgressBar value={goal.progress_percent} />
           </div>
         </div>
+
+        {/* Review rhythm strip — the cadence that makes ownership real */}
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-4 pt-4 border-t border-[#E2E8F0]">
+          <ReviewStat
+            icon={<CircleCheckBig size={14} />}
+            label="Last check-in"
+            value={goal.last_check_in_at ? formatDate(goal.last_check_in_at) : 'Never'}
+            tone={goal.last_check_in_at ? 'normal' : 'muted'}
+          />
+          <ReviewStat
+            icon={<CalendarClock size={14} />}
+            label="Cadence"
+            value={CADENCE_META[goal.review_cadence].label}
+            tone={goal.review_cadence === 'none' ? 'muted' : 'normal'}
+          />
+          <ReviewStat
+            icon={<CalendarDays size={14} />}
+            label="Next review"
+            value={goal.next_review_date ? formatDate(goal.next_review_date) : '—'}
+            tone={
+              goal.next_review_date && new Date(goal.next_review_date) < new Date() ? 'overdue' : 'normal'
+            }
+          />
+        </div>
       </div>
 
-      {/* Measures */}
-      <Section title="Measures & targets" icon={<Target size={16} />}>
+      {/* Measures & trajectory */}
+      <Section
+        title="Measures & trajectory"
+        icon={<Target size={16} />}
+        action={
+          perms.edit && goal.measures && goal.measures.length > 0 ? (
+            <button
+              onClick={() => setCheckInOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"
+            >
+              <Activity size={15} /> Check in
+            </button>
+          ) : undefined
+        }
+      >
         {goal.measures && goal.measures.length > 0 ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {goal.measures.map((m) => (
-              <div key={m.id} className="border border-[#E2E8F0] rounded-[10px] p-4">
-                <p className="text-sm font-medium text-[#0F172A]">{m.name}</p>
-                <p className="text-[22px] font-bold text-[#0F172A] mt-1">
-                  {m.current_value ? `${m.current_value} / ` : ''}
-                  {m.target_value}
-                  {m.unit ? <span className="text-sm font-medium text-[#64748B] ml-1">{m.unit}</span> : null}
-                </p>
-                <p className="text-xs text-[#64748B] mt-0.5">Target</p>
-              </div>
+              <MeasureTrajectory key={m.id} measure={m} />
             ))}
           </div>
         ) : (
-          <p className="text-sm text-[#94A3B8]">No measures defined.</p>
+          <p className="text-sm text-[#94A3B8]">
+            No measures defined. Add measures (in Edit) so each check-in can track actuals against a target.
+          </p>
+        )}
+      </Section>
+
+      {/* Check-in history — the heartbeat */}
+      <Section title="Check-in history" icon={<History size={16} />}>
+        {goal.check_ins && goal.check_ins.length > 0 ? (
+          <div className="flex flex-col gap-3 max-h-[460px] overflow-y-auto pr-1">
+            {goal.check_ins.map((ci) => {
+              const measureById = new Map((goal.measures ?? []).map((m) => [m.id, m]))
+              return (
+                <div key={ci.id} className="border border-[#E2E8F0] rounded-[10px] p-4">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-sm font-semibold text-[#0F172A]">{formatDate(ci.check_in_date)}</span>
+                      <ConfidenceBadge confidence={ci.confidence} />
+                      <span className="text-xs font-medium text-[#475569]">{ci.progress_percent}% progress</span>
+                    </div>
+                    {ci.created_by?.name && (
+                      <span className="text-xs text-[#94A3B8]">by {ci.created_by.name}</span>
+                    )}
+                  </div>
+                  {ci.status_note && <p className="text-sm text-[#1E293B] mt-2 leading-relaxed">{ci.status_note}</p>}
+                  {ci.measure_values && ci.measure_values.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2.5">
+                      {ci.measure_values.map((mv) => {
+                        const m = measureById.get(mv.goal_measure_id)
+                        return (
+                          <span
+                            key={mv.id}
+                            className="inline-flex items-center gap-1 text-xs rounded-full bg-[#F1F5F9] px-2.5 py-1 text-[#475569]"
+                          >
+                            <span className="font-medium text-[#0F172A]">{m?.name ?? 'Measure'}:</span>
+                            {mv.value}
+                            {m?.unit ? ` ${m.unit}` : ''}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-[#94A3B8]">
+            No check-ins yet. Use <span className="font-medium text-[#475569]">Check in</span> to record the first
+            actuals and a confidence call.
+          </p>
         )}
       </Section>
 
@@ -218,26 +336,13 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
           }
         >
           {goal.children && goal.children.length > 0 ? (
-            <div className="flex flex-col gap-2">
-              {goal.children.map((c) => (
-                <RowLink key={c.id} onClick={() => router.push(`/goals/${c.id}`)}>
-                  <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[15px] font-medium text-[#0F172A] truncate">{c.title}</p>
-                      <p className="text-xs text-[#64748B] mt-0.5">
-                        {c.owner?.name ?? '—'} · due {formatDate(c.due_date)}
-                      </p>
-                    </div>
-                    <PerspectiveBadge perspective={c.perspective} />
-                    <GoalStatusBadge status={c.status} />
-                    <div className="w-28 hidden sm:block">
-                      <ProgressBar value={c.progress_percent} />
-                    </div>
-                  </div>
-                  <ChevronRight size={16} className="text-[#CBD5E1] shrink-0" />
-                </RowLink>
-              ))}
-            </div>
+            <>
+              <p className="text-xs text-[#94A3B8] mb-3 -mt-1">
+                Expand a row to drill into its {LEVEL_META[childLevel].plural.toLowerCase()}
+                {LEVEL_META[childLevel].child ? ` and ${LEVEL_META[LEVEL_META[childLevel].child].plural.toLowerCase()}` : ' and tasks'} — all in place.
+              </p>
+              <GoalCascade orgId={orgId} goals={goal.children} />
+            </>
           ) : (
             <p className="text-sm text-[#94A3B8]">
               No {LEVEL_META[childLevel].plural.toLowerCase()} yet.
@@ -298,6 +403,13 @@ export default function GoalDetailView({ goalId }: { goalId: string }) {
         departments={departments}
         onSaved={() => load()}
       />
+      <CheckInModal
+        isOpen={checkInOpen}
+        onClose={() => setCheckInOpen(false)}
+        orgId={orgId}
+        goal={goal}
+        onSaved={() => load()}
+      />
       {childLevel && (
         <CreateGoalModal
           isOpen={addChildOpen}
@@ -345,6 +457,29 @@ function Meta({ icon, label, value }: { icon: React.ReactNode; label: string; va
         <span className="text-[#94A3B8]">{icon}</span>
         {value}
       </p>
+    </div>
+  )
+}
+
+function ReviewStat({
+  icon,
+  label,
+  value,
+  tone = 'normal',
+}: {
+  icon: React.ReactNode
+  label: string
+  value: string
+  tone?: 'normal' | 'muted' | 'overdue'
+}) {
+  const color = tone === 'overdue' ? '#DC2626' : tone === 'muted' ? '#94A3B8' : '#0F172A'
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-[#94A3B8]">{icon}</span>
+      <span className="text-xs font-semibold text-[#64748B] uppercase tracking-wider">{label}</span>
+      <span className="text-sm font-medium" style={{ color }}>
+        {value}
+      </span>
     </div>
   )
 }

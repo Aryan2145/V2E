@@ -3,8 +3,10 @@
 import { useEffect, useState } from 'react'
 import { getMyPermissions } from '@/lib/api/permissions'
 import {
+  CONFIDENCE_META,
   PERSPECTIVE_META,
   STATUS_META,
+  type GoalConfidence,
   type GoalPerspective,
   type GoalStatus,
 } from '@/lib/types/goals'
@@ -47,6 +49,26 @@ export function GoalStatusBadge({ status }: { status: GoalStatus }) {
       className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap"
       style={{ backgroundColor: m.bg, color: m.text, borderColor: m.border }}
     >
+      {m.label}
+    </span>
+  )
+}
+
+export function ConfidenceBadge({
+  confidence,
+  withDot = true,
+}: {
+  confidence: GoalConfidence | null | undefined
+  withDot?: boolean
+}) {
+  if (!confidence) return null
+  const m = CONFIDENCE_META[confidence]
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap"
+      style={{ backgroundColor: m.bg, color: m.text, borderColor: m.border }}
+    >
+      {withDot && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: m.dot }} />}
       {m.label}
     </span>
   )

@@ -20,6 +20,7 @@ import { GoalsService } from './goals.service';
 import { principalFromUser } from '../access-rights/permissions.service';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto, DeleteGoalDto } from './dto/update-goal.dto';
+import { CreateGoalCheckInDto } from './dto/create-check-in.dto';
 
 const GOALS = 'goals';
 
@@ -76,6 +77,25 @@ export class GoalsController {
   @ApiOperation({ summary: 'Goal detail (parent, children, measures, linked tasks)' })
   getOne(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.getOne(orgId, id);
+  }
+
+  @Get(':id/check-ins')
+  @RequirePermission(GOALS, PermissionAction.read)
+  @ApiOperation({ summary: 'Full check-in history for a goal' })
+  listCheckIns(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.service.listCheckIns(orgId, id);
+  }
+
+  @Post(':id/check-ins')
+  @RequirePermission(GOALS, PermissionAction.edit)
+  @ApiOperation({ summary: 'Record a check-in (actuals + confidence) on a goal' })
+  createCheckIn(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Request() req: any,
+    @Body() dto: CreateGoalCheckInDto,
+  ) {
+    return this.service.createCheckIn(orgId, req.user.id, id, dto);
   }
 
   @Post()
