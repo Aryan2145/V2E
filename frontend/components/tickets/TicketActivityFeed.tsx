@@ -25,6 +25,13 @@ const ACTION_CONFIG: Record<TicketActivityAction, { label: string; color: string
   sla_breached:           { label: 'SLA breached',                 color: '#DC2626', bg: '#FEE2E2' },
   confirmation_requested: { label: 'Confirmation requested',       color: '#2563EB', bg: '#EFF6FF' },
   raiser_confirmed:       { label: 'Raiser confirmed resolution',  color: '#16A34A', bg: '#DCFCE7' },
+  rejected:               { label: 'Ticket rejected to triage',    color: '#DC2626', bg: '#FEE2E2' },
+  transferred:            { label: 'Ticket transferred',           color: '#7C3AED', bg: '#EDE9FE' },
+  put_on_hold:            { label: 'Put on hold',                  color: '#6B7280', bg: '#F1F5F9' },
+  resumed:                { label: 'Resumed from hold',            color: '#0891B2', bg: '#E0F2FE' },
+  first_responded:        { label: 'First response',               color: '#16A34A', bg: '#DCFCE7' },
+  response_breached:      { label: 'Response SLA breached',        color: '#DC2626', bg: '#FEE2E2' },
+  claimed:                { label: 'Ticket claimed',               color: '#2563EB', bg: '#EFF6FF' },
 }
 
 function formatTime(d: string) {

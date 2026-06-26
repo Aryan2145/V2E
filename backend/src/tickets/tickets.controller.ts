@@ -13,6 +13,10 @@ import { CloseTicketDto } from './dto/close-ticket.dto'
 import { RateTicketDto } from './dto/rate-ticket.dto'
 import { AddTicketCommentDto } from './dto/add-comment.dto'
 import { DeleteTicketDto } from './dto/delete-ticket.dto'
+import { HoldTicketDto } from './dto/hold-ticket.dto'
+import { RejectTicketDto } from './dto/reject-ticket.dto'
+import { TransferTicketDto } from './dto/transfer-ticket.dto'
+import { ReopenTicketDto } from './dto/reopen-ticket.dto'
 
 interface AuthUser {
   id: string
@@ -92,6 +96,23 @@ export class TicketsController {
     return this.ticketsService.markNotificationRead(orgId, user.id, nid)
   }
 
+  // Templates the current user may pick when raising (access-filtered).
+  @Get('templates/accessible')
+  accessibleTemplates(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser) {
+    return this.ticketsService.listAccessibleTemplates(orgId, user.id)
+  }
+
+  // Resolvers who may be assigned a ticket of the given type/category/template.
+  @Get('assignable')
+  assignable(
+    @Param('orgId') orgId: string,
+    @Query('typeId') typeId?: string,
+    @Query('categoryId') categoryId?: string,
+    @Query('templateId') templateId?: string,
+  ) {
+    return this.ticketsService.listAssignableUsers(orgId, { typeId, categoryId, templateId })
+  }
+
   @Get(':id')
   getOne(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.ticketsService.getTicket(orgId, id)
@@ -130,6 +151,31 @@ export class TicketsController {
   @Post(':id/confirm')
   confirm(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.ticketsService.confirmResolution(orgId, user.id, id)
+  }
+
+  @Post(':id/hold')
+  hold(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: HoldTicketDto) {
+    return this.ticketsService.holdTicket(orgId, user.id, !!user.is_admin, id, dto)
+  }
+
+  @Post(':id/resume')
+  resume(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketsService.resumeTicket(orgId, user.id, !!user.is_admin, id)
+  }
+
+  @Post(':id/reject')
+  reject(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: RejectTicketDto) {
+    return this.ticketsService.rejectTicket(orgId, user.id, !!user.is_admin, id, dto)
+  }
+
+  @Post(':id/transfer')
+  transfer(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: TransferTicketDto) {
+    return this.ticketsService.transferTicket(orgId, user.id, !!user.is_admin, id, dto)
+  }
+
+  @Post(':id/reopen')
+  reopen(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ReopenTicketDto) {
+    return this.ticketsService.reopenTicket(orgId, user.id, !!user.is_admin, id, dto)
   }
 
   @Post(':id/rate')

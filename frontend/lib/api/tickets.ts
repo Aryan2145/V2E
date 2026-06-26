@@ -17,6 +17,12 @@ import type {
   TicketReportBreakdown,
   TicketReportSlaBreaches,
   TicketReportRatings,
+  TicketReportFirstResponse,
+  TicketReportBacklogAging,
+  TicketReportAgentLoad,
+  TicketReportReopenRate,
+  TicketResolverGroup,
+  TicketAssignableUsers,
 } from '@/lib/types/tickets'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/tickets`
@@ -147,6 +153,35 @@ export const ticketsApi = {
     const res = await apiClient.get(`${base(orgId)}/archive`)
     return unwrap<TicketArchiveEntry[]>(res)
   },
+  // ── Resolver Groups ──────────────────────────────────────────────────────────
+
+  listResolverGroups: async (orgId: string): Promise<TicketResolverGroup[]> => {
+    const res = await apiClient.get(`${masters(orgId)}/resolver-groups`)
+    return unwrap<TicketResolverGroup[]>(res)
+  },
+  createResolverGroup: async (orgId: string, dto: Record<string, unknown>): Promise<TicketResolverGroup> => {
+    const res = await apiClient.post(`${masters(orgId)}/resolver-groups`, dto)
+    return unwrap<TicketResolverGroup>(res)
+  },
+  updateResolverGroup: async (orgId: string, id: string, dto: Record<string, unknown>): Promise<TicketResolverGroup> => {
+    const res = await apiClient.patch(`${masters(orgId)}/resolver-groups/${id}`, dto)
+    return unwrap<TicketResolverGroup>(res)
+  },
+  deleteResolverGroup: async (orgId: string, id: string): Promise<void> => {
+    await apiClient.delete(`${masters(orgId)}/resolver-groups/${id}`)
+  },
+
+  // Templates the current user may pick when raising (access-filtered).
+  listAccessibleTemplates: async (orgId: string): Promise<TicketTemplate[]> => {
+    const res = await apiClient.get(`${base(orgId)}/templates/accessible`)
+    return unwrap<TicketTemplate[]>(res)
+  },
+  // Resolvers eligible to be assigned a ticket of the given type/category/template.
+  listAssignable: async (orgId: string, params: { typeId?: string; categoryId?: string; templateId?: string }): Promise<TicketAssignableUsers> => {
+    const res = await apiClient.get(`${base(orgId)}/assignable`, { params })
+    return unwrap<TicketAssignableUsers>(res)
+  },
+
   getNotifications: async (orgId: string): Promise<TicketNotification[]> => {
     const res = await apiClient.get(`${base(orgId)}/notifications`)
     return unwrap<TicketNotification[]>(res)
@@ -193,6 +228,26 @@ export const ticketsApi = {
   },
   submitProof: async (orgId: string, id: string, proof_url: string): Promise<Ticket> => {
     const res = await apiClient.post(`${base(orgId)}/${id}/proof`, { proof_url })
+    return unwrap<Ticket>(res)
+  },
+  hold: async (orgId: string, id: string, reason?: string): Promise<Ticket> => {
+    const res = await apiClient.post(`${base(orgId)}/${id}/hold`, { reason })
+    return unwrap<Ticket>(res)
+  },
+  resume: async (orgId: string, id: string): Promise<Ticket> => {
+    const res = await apiClient.post(`${base(orgId)}/${id}/resume`)
+    return unwrap<Ticket>(res)
+  },
+  reject: async (orgId: string, id: string, reason: string): Promise<Ticket> => {
+    const res = await apiClient.post(`${base(orgId)}/${id}/reject`, { reason })
+    return unwrap<Ticket>(res)
+  },
+  transfer: async (orgId: string, id: string, dto: { resolver_group_id?: string; department_id?: string; reason?: string }): Promise<Ticket> => {
+    const res = await apiClient.post(`${base(orgId)}/${id}/transfer`, dto)
+    return unwrap<Ticket>(res)
+  },
+  reopen: async (orgId: string, id: string, reason?: string): Promise<Ticket> => {
+    const res = await apiClient.post(`${base(orgId)}/${id}/reopen`, { reason })
     return unwrap<Ticket>(res)
   },
 
@@ -245,5 +300,21 @@ export const ticketsApi = {
   getRatings: async (orgId: string, from?: string, to?: string): Promise<TicketReportRatings> => {
     const res = await apiClient.get(`${reports(orgId)}/ratings`, { params: { from, to } })
     return unwrap<TicketReportRatings>(res)
+  },
+  getFirstResponse: async (orgId: string, from?: string, to?: string): Promise<TicketReportFirstResponse[]> => {
+    const res = await apiClient.get(`${reports(orgId)}/first-response`, { params: { from, to } })
+    return unwrap<TicketReportFirstResponse[]>(res)
+  },
+  getBacklogAging: async (orgId: string): Promise<TicketReportBacklogAging> => {
+    const res = await apiClient.get(`${reports(orgId)}/backlog-aging`)
+    return unwrap<TicketReportBacklogAging>(res)
+  },
+  getAgentLoad: async (orgId: string): Promise<TicketReportAgentLoad[]> => {
+    const res = await apiClient.get(`${reports(orgId)}/agent-load`)
+    return unwrap<TicketReportAgentLoad[]>(res)
+  },
+  getReopenRate: async (orgId: string, from?: string, to?: string): Promise<TicketReportReopenRate> => {
+    const res = await apiClient.get(`${reports(orgId)}/reopen-rate`, { params: { from, to } })
+    return unwrap<TicketReportReopenRate>(res)
   },
 }

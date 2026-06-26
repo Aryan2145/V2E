@@ -10,6 +10,7 @@ import { CreateTicketCategoryDto, UpdateTicketCategoryDto } from './dto/create-t
 import { CreateTicketPriorityDto, UpdateTicketPriorityDto } from './dto/create-ticket-priority.dto'
 import { CreateTicketStatusDto, UpdateTicketStatusDto, ReorderTicketStatusesDto } from './dto/create-ticket-status.dto'
 import { CreateTicketTemplateDto, UpdateTicketTemplateDto } from './dto/create-ticket-template.dto'
+import { CreateResolverGroupDto, UpdateResolverGroupDto } from './dto/resolver-group.dto'
 
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
 @Controller('api/v1/org/:orgId/tickets/masters')
@@ -124,5 +125,25 @@ export class TicketsMastersController {
   @Delete('templates/:id')
   archiveTemplate(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.ticketsService.archiveTemplate(orgId, id)
+  }
+
+  @Get('resolver-groups')
+  listResolverGroups(@Param('orgId') orgId: string) {
+    return this.ticketsService.listResolverGroups(orgId)
+  }
+
+  @Post('resolver-groups')
+  createResolverGroup(@Param('orgId') orgId: string, @Body() dto: CreateResolverGroupDto) {
+    return this.ticketsService.createResolverGroup(orgId, dto)
+  }
+
+  @Patch('resolver-groups/:id')
+  updateResolverGroup(@Param('orgId') orgId: string, @Param('id') id: string, @Body() dto: UpdateResolverGroupDto) {
+    return this.ticketsService.updateResolverGroup(orgId, id, dto)
+  }
+
+  @Delete('resolver-groups/:id')
+  deleteResolverGroup(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.ticketsService.deleteResolverGroup(orgId, id)
   }
 }

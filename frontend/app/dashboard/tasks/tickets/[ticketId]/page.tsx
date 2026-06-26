@@ -2,10 +2,10 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, RefreshCw, Ticket as TicketIcon, Link2, CheckSquare, Clock, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Ticket as TicketIcon, Link2, CheckSquare, Clock, AlertTriangle, PauseCircle, PlayCircle, XCircle, ArrowRightLeft, RotateCcw } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { ticketsApi } from '@/lib/api/tickets'
-import type { Ticket, TicketComment, TicketActivityLog, TicketMasterConfig } from '@/lib/types/tickets'
+import type { Ticket, TicketComment, TicketActivityLog, TicketMasterConfig, TicketResolverGroup } from '@/lib/types/tickets'
 import TicketStatusBadge from '@/components/tickets/TicketStatusBadge'
 import TicketTypeBadge from '@/components/tickets/TicketTypeBadge'
 import SLAIndicator from '@/components/tickets/SLAIndicator'
@@ -50,6 +50,28 @@ export default function TicketDetailPage() {
   const [showResolveForm, setShowResolveForm] = useState(false)
   const [showDeleteForm, setShowDeleteForm] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
+
+  // Lifecycle action panels (only one open at a time)
+  const [actionPanel, setActionPanel] = useState<'hold' | 'reject' | 'transfer' | 'reopen' | null>(null)
+  const [reason, setReason] = useState('')
+  const [transferGroupId, setTransferGroupId] = useState('')
+  const [resolverGroups, setResolverGroups] = useState<TicketResolverGroup[]>([])
+
+  function openPanel(panel: 'hold' | 'reject' | 'transfer' | 'reopen') {
+    setReason('')
+    setTransferGroupId('')
+    setActionPanel(panel)
+    if (panel === 'transfer' && orgId) {
+      ticketsApi.listResolverGroups(orgId)
+        .then((g) => setResolverGroups(g.filter((x) => x.is_active)))
+        .catch(() => setResolverGroups([]))
+    }
+  }
+  function closePanel() {
+    setActionPanel(null)
+    setReason('')
+    setTransferGroupId('')
+  }
 
   const load = useCallback(async () => {
     if (!orgId) return
@@ -107,6 +129,14 @@ export default function TicketDetailPage() {
   const isAssignee = ticket.assigned_to_user_id === userId
   const isAdminOrHR = !!user?.is_admin
   const isClosed = ticket.status?.type === 'closed_resolved' || ticket.status?.type === 'closed_unresolved'
+  const isResolved = ticket.status?.type === 'resolved'
+  const canManage = isAssignee || isAdminOrHR
+
+  const canHold = canManage && !ticket.on_hold && (ticket.status?.type === 'assigned' || ticket.status?.type === 'in_progress')
+  const canResume = canManage && ticket.on_hold
+  const canReject = canManage && !isClosed && !isResolved
+  const canTransfer = canManage && !isClosed
+  const canReopen = (isRaiser || isAssignee || isAdminOrHR) && (isResolved || isClosed)
 
   const showConfirmBanner =
     ticket.status?.type === 'resolved' &&
@@ -136,6 +166,16 @@ export default function TicketDetailPage() {
             <span className="font-mono text-sm text-[#94A3B8]">{ticket.ticket_number}</span>
             <h1 className="text-[20px] font-bold text-[#0F172A] truncate">{ticket.title}</h1>
             {ticket.status && <TicketStatusBadge status={ticket.status} />}
+            {ticket.on_hold && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-[#FEF9C3] text-[#CA8A04] border border-[#FDE68A]">
+                <PauseCircle size={11} /> On hold
+              </span>
+            )}
+            {ticket.reopen_count > 0 && (
+              <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium bg-[#E0F2FE] text-[#0369A1] border border-[#BAE6FD]">
+                <RotateCcw size={11} /> Reopened ×{ticket.reopen_count}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap mt-1">
             {ticket.ticket_type && <TicketTypeBadge type={ticket.ticket_type} />}
@@ -152,6 +192,19 @@ export default function TicketDetailPage() {
               </span>
             )}
             <SLAIndicator sla_due_at={ticket.sla_due_at} sla_breached={ticket.sla_breached} status_type={ticket.status?.type} created_at={ticket.created_at} />
+            {ticket.response_breached ? (
+              <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA]">
+                Response breached
+              </span>
+            ) : ticket.responded_at ? (
+              <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]">
+                Responded {formatDate(ticket.responded_at)}
+              </span>
+            ) : ticket.response_due_at ? (
+              <span className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A]">
+                Response due {formatDate(ticket.response_due_at)}
+              </span>
+            ) : null}
           </div>
           <p className="text-xs text-[#94A3B8] mt-1">Raised {formatDateTime(ticket.created_at)}</p>
         </div>
@@ -416,6 +469,119 @@ export default function TicketDetailPage() {
                   Close — Unresolved
                 </button>
               </>
+            )}
+
+            {/* Put on hold */}
+            {canHold && (
+              actionPanel === 'hold' ? (
+                <div className="flex flex-col gap-2 p-3 bg-[#FEFCE8] border border-[#FDE68A] rounded-[10px]">
+                  <p className="text-xs font-semibold text-[#0F172A]">Put ticket on hold</p>
+                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Reason (optional)..." className="w-full px-2 py-1.5 border border-[#FDE68A] rounded-[6px] text-sm resize-none focus:border-[#CA8A04] focus:outline-none bg-white" />
+                  <div className="flex gap-2">
+                    <button type="button" disabled={actionLoading}
+                      onClick={() => action(() => ticketsApi.hold(orgId, ticketId, reason.trim() || undefined).then(() => closePanel()))}
+                      className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-white bg-[#CA8A04] hover:bg-[#A16207] disabled:opacity-60">
+                      Put on hold
+                    </button>
+                    <button type="button" onClick={closePanel} className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9]">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" disabled={actionLoading} onClick={() => openPanel('hold')}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-sm font-semibold text-[#CA8A04] border border-[#FDE68A] hover:bg-[#FEFCE8] disabled:opacity-60 transition-colors">
+                  <PauseCircle size={15} /> Put on Hold
+                </button>
+              )
+            )}
+
+            {/* Resume */}
+            {canResume && (
+              <button type="button" disabled={actionLoading} onClick={() => action(() => ticketsApi.resume(orgId, ticketId).then(() => {}))}
+                className="w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">
+                <PlayCircle size={15} /> Resume
+              </button>
+            )}
+
+            {/* Transfer */}
+            {canTransfer && (
+              actionPanel === 'transfer' ? (
+                <div className="flex flex-col gap-2 p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px]">
+                  <p className="text-xs font-semibold text-[#0F172A]">Transfer to resolver group</p>
+                  <select value={transferGroupId} onChange={(e) => setTransferGroupId(e.target.value)}
+                    className="w-full px-2 py-1.5 border border-[#CBD5E1] rounded-[6px] text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white">
+                    <option value="">Select a resolver group...</option>
+                    {resolverGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Reason (optional)..." className="w-full px-2 py-1.5 border border-[#CBD5E1] rounded-[6px] text-sm resize-none focus:border-[#2563EB] focus:outline-none bg-white" />
+                  <div className="flex gap-2">
+                    <button type="button" disabled={!transferGroupId || actionLoading}
+                      onClick={() => action(() => ticketsApi.transfer(orgId, ticketId, { resolver_group_id: transferGroupId, reason: reason.trim() || undefined }).then(() => closePanel()))}
+                      className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]">
+                      Transfer
+                    </button>
+                    <button type="button" onClick={closePanel} className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9]">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" disabled={actionLoading} onClick={() => openPanel('transfer')}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-60 transition-colors">
+                  <ArrowRightLeft size={15} /> Transfer
+                </button>
+              )
+            )}
+
+            {/* Reject */}
+            {canReject && (
+              actionPanel === 'reject' ? (
+                <div className="flex flex-col gap-2 p-3 bg-[#FEF2F2] border border-[#FECACA] rounded-[10px]">
+                  <p className="text-xs font-semibold text-[#0F172A]">Reject ticket</p>
+                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Reason for rejection (required)..." className="w-full px-2 py-1.5 border border-[#FECACA] rounded-[6px] text-sm resize-none focus:border-[#DC2626] focus:outline-none bg-white" />
+                  <div className="flex gap-2">
+                    <button type="button" disabled={!reason.trim() || actionLoading}
+                      onClick={() => action(() => ticketsApi.reject(orgId, ticketId, reason.trim()).then(() => closePanel()))}
+                      className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]">
+                      Reject
+                    </button>
+                    <button type="button" onClick={closePanel} className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9]">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" disabled={actionLoading} onClick={() => openPanel('reject')}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-sm font-semibold text-[#DC2626] border border-[#FECACA] hover:bg-[#FEE2E2] disabled:opacity-60 transition-colors">
+                  <XCircle size={15} /> Reject
+                </button>
+              )
+            )}
+
+            {/* Reopen */}
+            {canReopen && (
+              actionPanel === 'reopen' ? (
+                <div className="flex flex-col gap-2 p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px]">
+                  <p className="text-xs font-semibold text-[#0F172A]">Reopen ticket</p>
+                  <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Reason (optional)..." className="w-full px-2 py-1.5 border border-[#CBD5E1] rounded-[6px] text-sm resize-none focus:border-[#2563EB] focus:outline-none bg-white" />
+                  <div className="flex gap-2">
+                    <button type="button" disabled={actionLoading}
+                      onClick={() => action(() => ticketsApi.reopen(orgId, ticketId, reason.trim() || undefined).then(() => closePanel()))}
+                      className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60">
+                      Reopen
+                    </button>
+                    <button type="button" onClick={closePanel} className="flex-1 py-1.5 rounded-[6px] text-xs font-semibold text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9]">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" disabled={actionLoading} onClick={() => openPanel('reopen')}
+                  className="w-full flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-60 transition-colors">
+                  <RotateCcw size={15} /> Reopen
+                </button>
+              )
             )}
 
             {isAdminOrHR && !isClosed && (

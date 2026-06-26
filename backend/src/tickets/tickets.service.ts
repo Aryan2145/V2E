@@ -18,8 +18,14 @@ import type { CreateTicketTypeDto, UpdateTicketTypeDto } from './dto/create-tick
 import type { CreateTicketCategoryDto, UpdateTicketCategoryDto } from './dto/create-ticket-category.dto'
 import type { CreateTicketPriorityDto, UpdateTicketPriorityDto } from './dto/create-ticket-priority.dto'
 import type { CreateTicketStatusDto, UpdateTicketStatusDto, ReorderTicketStatusesDto } from './dto/create-ticket-status.dto'
-import type { CreateTicketTemplateDto, UpdateTicketTemplateDto } from './dto/create-ticket-template.dto'
+import type { CreateTicketTemplateDto, UpdateTicketTemplateDto, TicketTemplateAccessRuleDto } from './dto/create-ticket-template.dto'
 import type { UpdateTicketMasterDto } from './dto/update-ticket-master.dto'
+import type { HoldTicketDto } from './dto/hold-ticket.dto'
+import type { RejectTicketDto } from './dto/reject-ticket.dto'
+import type { TransferTicketDto } from './dto/transfer-ticket.dto'
+import type { ReopenTicketDto } from './dto/reopen-ticket.dto'
+import type { CreateResolverGroupDto, UpdateResolverGroupDto } from './dto/resolver-group.dto'
+import { TicketTemplateAccessService } from './ticket-template-access.service'
 
 const TICKET_INCLUDE = {
   ticket_type: true,
@@ -43,6 +49,7 @@ export class TicketsService {
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
     private readonly auditWriter: AuditWriterService,
+    private readonly templateAccess: TicketTemplateAccessService,
   ) {
     this.scope.registerWiredList(TicketsService.TICKETS_LEAF)
   }
@@ -79,9 +86,10 @@ export class TicketsService {
       { label: 'Open', type: 'open' as const, color: '#2563EB', order_index: 0, is_default: true },
       { label: 'Assigned', type: 'assigned' as const, color: '#0891B2', order_index: 1 },
       { label: 'Accepted & In Progress', type: 'in_progress' as const, color: '#D97706', order_index: 2 },
-      { label: 'Resolved', type: 'resolved' as const, color: '#16A34A', order_index: 3 },
-      { label: 'Closed — Resolved', type: 'closed_resolved' as const, color: '#15803D', order_index: 4 },
-      { label: 'Closed — Unresolved', type: 'closed_unresolved' as const, color: '#DC2626', order_index: 5 },
+      { label: 'On Hold', type: 'on_hold' as const, color: '#6B7280', order_index: 3 },
+      { label: 'Resolved', type: 'resolved' as const, color: '#16A34A', order_index: 4 },
+      { label: 'Closed — Resolved', type: 'closed_resolved' as const, color: '#15803D', order_index: 5 },
+      { label: 'Closed — Unresolved', type: 'closed_unresolved' as const, color: '#DC2626', order_index: 6 },
     ]
     for (const s of defaultStatuses) {
       await this.prisma.ticketStatus.create({ data: { organization_id: orgId, ...s } })
@@ -145,6 +153,20 @@ export class TicketsService {
     const status = await this.prisma.ticketStatus.findFirst({ where: { organization_id: orgId, type: type as never } })
     if (!status) throw new BadRequestException(`Status type "${type}" not found. Run GET /tickets/masters/config first.`)
     return status
+  }
+
+  // Finds a status of the given type, creating a sensible default if missing.
+  // Used for the `on_hold` status, added after some orgs were already seeded.
+  private async ensureStatusByType(
+    orgId: string,
+    type: string,
+    fallback: { label: string; color: string; order_index: number },
+  ) {
+    const existing = await this.prisma.ticketStatus.findFirst({ where: { organization_id: orgId, type: type as never } })
+    if (existing) return existing
+    return this.prisma.ticketStatus.create({
+      data: { organization_id: orgId, type: type as never, ...fallback },
+    })
   }
 
   private async generateTicketNumber(orgId: string): Promise<string> {
@@ -243,6 +265,100 @@ export class TicketsService {
     return members.map((m) => m.user_id)
   }
 
+  // Resolves the resolver group that owns a ticket, template → category → type.
+  private async resolveResolverGroup(orgId: string, typeId?: string, categoryId?: string, templateId?: string) {
+    const groupIds: (string | null | undefined)[] = []
+    if (templateId) {
+      const t = await this.prisma.ticketTemplate.findUnique({ where: { id: templateId }, select: { resolver_group_id: true } })
+      groupIds.push(t?.resolver_group_id)
+    }
+    if (categoryId) {
+      const c = await this.prisma.ticketCategory.findUnique({ where: { id: categoryId }, select: { resolver_group_id: true } })
+      groupIds.push(c?.resolver_group_id)
+    }
+    if (typeId) {
+      const ty = await this.prisma.ticketType.findUnique({ where: { id: typeId }, select: { resolver_group_id: true } })
+      groupIds.push(ty?.resolver_group_id)
+    }
+    const groupId = groupIds.find((g) => !!g)
+    if (!groupId) return null
+    return this.prisma.ticketResolverGroup.findFirst({
+      where: { id: groupId, organization_id: orgId, is_active: true },
+      include: { members: true },
+    })
+  }
+
+  // Decides the initial assignee + resolver group for a new ticket. Resolver
+  // groups take precedence; their strategy decides whether one member is
+  // force-assigned (round_robin) or the ticket waits in the pool (claim/manual).
+  private async resolveAssignment(
+    orgId: string,
+    typeId: string,
+    categoryId?: string,
+    templateId?: string,
+  ): Promise<{ assigneeId: string | null; resolverGroupId: string | null }> {
+    const group = await this.resolveResolverGroup(orgId, typeId, categoryId, templateId)
+    if (group && group.members.length) {
+      if (group.assignment_strategy === 'round_robin') {
+        const memberId = await this.resolveGroupRoundRobin(orgId, group.id, group.members.map((m) => m.user_id))
+        return { assigneeId: memberId, resolverGroupId: group.id }
+      }
+      // claim / manual — leave unassigned but remember which pool owns it.
+      return { assigneeId: null, resolverGroupId: group.id }
+    }
+    // Legacy fallback: per-entity auto_assign_user_id / auto_assign_role.
+    const assigneeId = await this.resolveAutoAssignee(orgId, typeId, categoryId, templateId)
+    return { assigneeId, resolverGroupId: group?.id ?? null }
+  }
+
+  private async resolveGroupRoundRobin(orgId: string, groupId: string, userIds: string[]): Promise<string | null> {
+    if (userIds.length === 0) return null
+    const tracker = await this.prisma.ticketRoundRobinTracker.findUnique({
+      where: { scope_type_scope_id_role: { scope_type: 'resolver_group', scope_id: groupId, role: 'members' } },
+    })
+    let nextIdx = 0
+    if (tracker) {
+      const lastIdx = userIds.indexOf(tracker.last_assigned_user_id)
+      nextIdx = (lastIdx + 1) % userIds.length
+    }
+    const assignedUserId = userIds[nextIdx]
+    await this.prisma.ticketRoundRobinTracker.upsert({
+      where: { scope_type_scope_id_role: { scope_type: 'resolver_group', scope_id: groupId, role: 'members' } },
+      update: { last_assigned_user_id: assignedUserId, assignment_count: { increment: 1 } },
+      create: {
+        organization_id: orgId,
+        scope_type: 'resolver_group',
+        scope_id: groupId,
+        role: 'members',
+        last_assigned_user_id: assignedUserId,
+        assignment_count: 1,
+      },
+    })
+    return assignedUserId
+  }
+
+  // First-response SLA (hours): template → category → type → org default. null = no clock.
+  private resolveResponseSla(
+    typeHours?: number | null,
+    categoryHours?: number | null,
+    templateHours?: number | null,
+    orgDefaultHours?: number | null,
+  ): number | null {
+    return templateHours ?? categoryHours ?? typeHours ?? orgDefaultHours ?? null
+  }
+
+  // Sets responded_at the first time the assignee engages (accept or comment).
+  private async markFirstResponse(
+    orgId: string,
+    ticket: { id: string; responded_at: Date | null; assigned_to_user_id: string | null; response_due_at: Date | null },
+    actorUserId: string,
+  ) {
+    if (ticket.responded_at) return
+    if (ticket.assigned_to_user_id !== actorUserId) return
+    await this.prisma.ticket.update({ where: { id: ticket.id }, data: { responded_at: new Date() } })
+    await this.logActivity(orgId, ticket.id, actorUserId, 'first_responded')
+  }
+
   // ─── Masters ───────────────────────────────────────────────────────────────
 
   async getConfig(orgId: string) {
@@ -332,23 +448,141 @@ export class TicketsService {
   async listTemplates(orgId: string) {
     return this.prisma.ticketTemplate.findMany({
       where: { organization_id: orgId, is_active: true },
-      include: { ticket_type: true, category: true, priority: true },
+      include: { ticket_type: true, category: true, priority: true, resolver_group: true, access_rules: true },
       orderBy: { name: 'asc' },
     })
   }
 
+  // Templates the current user may pick when raising a ticket (access-filtered).
+  async listAccessibleTemplates(orgId: string, userId: string) {
+    await this.ensureDefaults(orgId)
+    return this.templateAccess.listAccessibleTemplates(orgId, userId)
+  }
+
+  // Maps incoming access-rule DTOs to DB rows, nulling inapplicable target columns.
+  private buildTemplateAccessRows(orgId: string, rules: TicketTemplateAccessRuleDto[] = []) {
+    return rules
+      .filter((r) => {
+        if (r.kind === 'department') return !!r.department_id
+        if (r.kind === 'role' || r.kind === 'exclude_role') return !!r.role_id
+        if (r.kind === 'user' || r.kind === 'exclude_user') return !!r.user_id
+        return false
+      })
+      .map((r) => ({
+        organization_id: orgId,
+        kind: r.kind,
+        department_id: r.kind === 'department' ? r.department_id ?? null : null,
+        include_sub_departments: r.kind === 'department' ? r.include_sub_departments ?? true : true,
+        role_id: r.kind === 'role' || r.kind === 'exclude_role' ? r.role_id ?? null : null,
+        user_id: r.kind === 'user' || r.kind === 'exclude_user' ? r.user_id ?? null : null,
+      }))
+  }
+
   async createTemplate(orgId: string, userId: string, dto: CreateTicketTemplateDto) {
+    const { access_rules, checklist_items, ...rest } = dto
     return this.prisma.ticketTemplate.create({
-      data: { organization_id: orgId, created_by_user_id: userId, ...dto },
+      data: {
+        organization_id: orgId,
+        created_by_user_id: userId,
+        ...rest,
+        checklist_items: (checklist_items ?? []) as never,
+        access_rules:
+          dto.access_mode === 'restricted' && access_rules?.length
+            ? { create: this.buildTemplateAccessRows(orgId, access_rules) }
+            : undefined,
+      },
+      include: { ticket_type: true, category: true, priority: true, resolver_group: true, access_rules: true },
     })
   }
 
   async updateTemplate(orgId: string, templateId: string, dto: UpdateTicketTemplateDto) {
-    return this.prisma.ticketTemplate.update({ where: { id: templateId }, data: dto })
+    const { access_rules, checklist_items, ...rest } = dto
+    const data: Record<string, unknown> = { ...rest }
+    if (checklist_items !== undefined) data.checklist_items = checklist_items
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ticketTemplate.update({ where: { id: templateId }, data: data as never })
+      // Replace-all the access rules when the access shape is part of this update.
+      if (access_rules !== undefined || dto.access_mode !== undefined) {
+        await tx.ticketTemplateAccessRule.deleteMany({ where: { template_id: templateId } })
+        const mode = dto.access_mode
+        if (mode === 'restricted' && access_rules?.length) {
+          await tx.ticketTemplateAccessRule.createMany({
+            data: this.buildTemplateAccessRows(orgId, access_rules).map((r) => ({ ...r, template_id: templateId })),
+          })
+        }
+      }
+    })
+    return this.prisma.ticketTemplate.findUnique({
+      where: { id: templateId },
+      include: { ticket_type: true, category: true, priority: true, resolver_group: true, access_rules: true },
+    })
   }
 
   async archiveTemplate(orgId: string, templateId: string) {
     return this.prisma.ticketTemplate.update({ where: { id: templateId }, data: { is_active: false } })
+  }
+
+  // ─── Resolver Groups ─────────────────────────────────────────────────────────
+
+  async listResolverGroups(orgId: string) {
+    return this.prisma.ticketResolverGroup.findMany({
+      where: { organization_id: orgId },
+      include: { members: true },
+      orderBy: { name: 'asc' },
+    })
+  }
+
+  async createResolverGroup(orgId: string, dto: CreateResolverGroupDto) {
+    const { member_user_ids, ...rest } = dto
+    return this.prisma.ticketResolverGroup.create({
+      data: {
+        organization_id: orgId,
+        ...rest,
+        members: member_user_ids?.length
+          ? { create: member_user_ids.map((uid) => ({ organization_id: orgId, user_id: uid })) }
+          : undefined,
+      },
+      include: { members: true },
+    })
+  }
+
+  async updateResolverGroup(orgId: string, groupId: string, dto: UpdateResolverGroupDto) {
+    const { member_user_ids, ...rest } = dto
+    await this.prisma.$transaction(async (tx) => {
+      await tx.ticketResolverGroup.update({ where: { id: groupId }, data: rest as never })
+      if (member_user_ids !== undefined) {
+        await tx.ticketResolverGroupMember.deleteMany({ where: { resolver_group_id: groupId } })
+        if (member_user_ids.length) {
+          await tx.ticketResolverGroupMember.createMany({
+            data: member_user_ids.map((uid) => ({ organization_id: orgId, resolver_group_id: groupId, user_id: uid })),
+          })
+        }
+      }
+    })
+    return this.prisma.ticketResolverGroup.findUnique({ where: { id: groupId }, include: { members: true } })
+  }
+
+  async deleteResolverGroup(orgId: string, groupId: string) {
+    return this.prisma.ticketResolverGroup.update({ where: { id: groupId }, data: { is_active: false } })
+  }
+
+  // The people who may resolve a ticket of a given type/category/template — used
+  // to populate the assignee picker so only eligible resolvers surface.
+  async listAssignableUsers(orgId: string, opts: { typeId?: string; categoryId?: string; templateId?: string }) {
+    const group = await this.resolveResolverGroup(orgId, opts.typeId, opts.categoryId, opts.templateId)
+    let candidateIds: string[]
+    if (group && group.members.length) {
+      candidateIds = group.members.map((m) => m.user_id)
+    } else {
+      const members = await this.prisma.organizationMember.findMany({
+        where: { organization_id: orgId, is_active: true },
+        select: { user_id: true },
+      })
+      candidateIds = members.map((m) => m.user_id)
+    }
+    // Gate by subject eligibility (module ceiling + per-user grants/revokes).
+    const { eligible } = await this.subjects.filterEligible(orgId, 'tickets.subject.assignable', candidateIds)
+    return { resolver_group_id: group?.id ?? null, user_ids: eligible }
   }
 
   // ─── Ticket Lifecycle ──────────────────────────────────────────────────────
@@ -357,24 +591,51 @@ export class TicketsService {
     await this.ensureDefaults(orgId)
     const master = await this.prisma.ticketMaster.findUnique({ where: { organization_id: orgId } })!
 
-    const [ticketType, category, priority] = await Promise.all([
+    const [ticketType, category, priority, template] = await Promise.all([
       this.prisma.ticketType.findUnique({ where: { id: dto.ticket_type_id } }),
       dto.category_id ? this.prisma.ticketCategory.findUnique({ where: { id: dto.category_id } }) : null,
       dto.priority_id ? this.prisma.ticketPriority.findUnique({ where: { id: dto.priority_id } }) : null,
+      dto.template_id ? this.prisma.ticketTemplate.findUnique({ where: { id: dto.template_id } }) : null,
     ])
     if (!ticketType) throw new NotFoundException('Ticket type not found')
+
+    // A locked-priority template forces its own priority regardless of the form value.
+    const effectivePriorityId =
+      template?.lock_priority && template.priority_id ? template.priority_id : dto.priority_id
+    const effectivePriority =
+      effectivePriorityId === dto.priority_id
+        ? priority
+        : await this.prisma.ticketPriority.findUnique({ where: { id: effectivePriorityId! } })
 
     const sla_days = this.resolveSlaFromConfigs(
       ticketType.default_sla_days,
       category?.default_sla_days,
-      priority?.sla_days,
+      effectivePriority?.sla_days,
     )
     const now = new Date()
     const rawSlaDate = new Date(now.getTime() + sla_days * 24 * 60 * 60 * 1000)
     // sla_due_at will be adjusted after ticket creation (need ticket.id for audit log)
     const sla_due_at = rawSlaDate
 
-    const assigneeId = dto.assigned_to_user_id ?? await this.resolveAutoAssignee(orgId, dto.ticket_type_id, dto.category_id, dto.template_id)
+    // First-response clock (hours): template → category → type → org default.
+    const responseHours = this.resolveResponseSla(
+      ticketType.default_response_sla_hours,
+      category?.default_response_sla_hours,
+      template?.response_sla_hours,
+      master?.default_response_sla_hours,
+    )
+    const responseDueAt = responseHours != null ? new Date(now.getTime() + responseHours * 60 * 60 * 1000) : null
+
+    // Explicit assignee wins; otherwise route via resolver group / legacy auto-assign.
+    let assigneeId = dto.assigned_to_user_id ?? null
+    let resolverGroupId: string | null = null
+    if (assigneeId) {
+      resolverGroupId = (await this.resolveResolverGroup(orgId, dto.ticket_type_id, dto.category_id, dto.template_id))?.id ?? null
+    } else {
+      const routed = await this.resolveAssignment(orgId, dto.ticket_type_id, dto.category_id, dto.template_id)
+      assigneeId = routed.assigneeId
+      resolverGroupId = routed.resolverGroupId
+    }
     const openStatus = await this.getStatusByType(orgId, assigneeId ? 'assigned' : 'open')
 
     const ticket_number = await this.generateTicketNumber(orgId)
@@ -387,14 +648,17 @@ export class TicketsService {
         description: dto.description,
         ticket_type_id: dto.ticket_type_id,
         category_id: dto.category_id,
-        priority_id: dto.priority_id,
+        priority_id: effectivePriorityId,
         status_id: openStatus.id,
         template_id: dto.template_id,
         raised_by_user_id: userId,
         assigned_to_user_id: assigneeId,
         assigned_at: assigneeId ? now : undefined,
+        resolver_group_id: resolverGroupId,
         sla_days,
         sla_due_at,
+        response_sla_hours: responseHours,
+        response_due_at: responseDueAt,
         requires_raiser_confirmation: master?.require_raiser_confirmation ?? false,
         proof_required: dto.proof_required ?? false,
         checklist: dto.checklist_items?.length
@@ -552,6 +816,7 @@ export class TicketsService {
     const ticket = await this.getTicket(orgId, ticketId)
     if (ticket.assigned_to_user_id !== userId) throw new ForbiddenException('Only the assigned user can accept this ticket')
     if (ticket.status.type !== 'assigned') throw new BadRequestException('Ticket must be in Assigned status to accept')
+    await this.markFirstResponse(orgId, ticket, userId)
     const inProgressStatus = await this.getStatusByType(orgId, 'in_progress')
     const updated = await this.prisma.ticket.update({
       where: { id: ticketId },
@@ -629,6 +894,198 @@ export class TicketsService {
       include: TICKET_INCLUDE,
     })
     await this.logActivity(orgId, ticketId, userId, 'raiser_confirmed')
+    return updated
+  }
+
+  // ─── Hold / Resume (SLA pause) ───────────────────────────────────────────────
+
+  async holdTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: HoldTicketDto) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (!isAdmin && ticket.assigned_to_user_id !== userId) {
+      throw new ForbiddenException('Only the assignee or an admin can put this ticket on hold')
+    }
+    if (ticket.on_hold) throw new BadRequestException('Ticket is already on hold')
+    if (['closed_resolved', 'closed_unresolved'].includes(ticket.status.type)) {
+      throw new BadRequestException('A closed ticket cannot be put on hold')
+    }
+    const holdStatus = await this.ensureStatusByType(orgId, 'on_hold', { label: 'On Hold', color: '#6B7280', order_index: 3 })
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: { on_hold: true, hold_since: new Date(), status_id: holdStatus.id },
+      include: TICKET_INCLUDE,
+    })
+    await this.logActivity(orgId, ticketId, userId, 'put_on_hold', { reason: dto.reason })
+    await this.notifyUser(orgId, ticketId, ticket.raised_by_user_id, 'status_changed',
+      `Your ticket ${ticket.ticket_number} has been put on hold${dto.reason ? `: ${dto.reason}` : ''}`)
+    return updated
+  }
+
+  async resumeTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (!isAdmin && ticket.assigned_to_user_id !== userId) {
+      throw new ForbiddenException('Only the assignee or an admin can resume this ticket')
+    }
+    if (!ticket.on_hold || !ticket.hold_since) throw new BadRequestException('Ticket is not on hold')
+
+    const now = new Date()
+    const pausedMs = now.getTime() - ticket.hold_since.getTime()
+    const pausedSeconds = Math.max(0, Math.round(pausedMs / 1000))
+    // Push both clocks forward by the paused duration so the pause is "free time".
+    const newSlaDue = new Date(ticket.sla_due_at.getTime() + pausedMs)
+    const newResponseDue =
+      ticket.response_due_at && !ticket.responded_at
+        ? new Date(ticket.response_due_at.getTime() + pausedMs)
+        : ticket.response_due_at
+    // Return to in-progress if previously accepted, else assigned, else open.
+    const resumeType = ticket.accepted_at ? 'in_progress' : ticket.assigned_to_user_id ? 'assigned' : 'open'
+    const resumeStatus = await this.getStatusByType(orgId, resumeType)
+
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: {
+        on_hold: false,
+        hold_since: null,
+        total_hold_seconds: { increment: pausedSeconds },
+        sla_due_at: newSlaDue,
+        response_due_at: newResponseDue,
+        status_id: resumeStatus.id,
+      },
+      include: TICKET_INCLUDE,
+    })
+    await this.logActivity(orgId, ticketId, userId, 'resumed', { paused_seconds: pausedSeconds })
+    return updated
+  }
+
+  // ─── Reject (bounce to triage) ───────────────────────────────────────────────
+
+  async rejectTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: RejectTicketDto) {
+    if (!dto.reason?.trim()) throw new BadRequestException('A rejection reason is required')
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (!isAdmin && ticket.assigned_to_user_id !== userId) {
+      throw new ForbiddenException('Only the assignee or an admin can reject this ticket')
+    }
+    if (['closed_resolved', 'closed_unresolved'].includes(ticket.status.type)) {
+      throw new BadRequestException('A closed ticket cannot be rejected')
+    }
+    const openStatus = await this.getStatusByType(orgId, 'open')
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: {
+        assigned_to_user_id: null,
+        assigned_at: null,
+        accepted_at: null,
+        on_hold: false,
+        hold_since: null,
+        status_id: openStatus.id,
+      },
+      include: TICKET_INCLUDE,
+    })
+    await this.logActivity(orgId, ticketId, userId, 'rejected', { reason: dto.reason })
+    const adminIds = await this.getAdminUserIds(orgId)
+    await this.notifyUsers(orgId, ticketId, adminIds, 'unassigned',
+      `Ticket ${ticket.ticket_number} was rejected and returned to triage: ${dto.reason}`)
+    return updated
+  }
+
+  // ─── Transfer (re-route to another resolver group / department) ───────────────
+
+  async transferTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: TransferTicketDto) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (!isAdmin && ticket.assigned_to_user_id !== userId) {
+      throw new ForbiddenException('Only the assignee or an admin can transfer this ticket')
+    }
+    let group = null
+    if (dto.resolver_group_id) {
+      group = await this.prisma.ticketResolverGroup.findFirst({
+        where: { id: dto.resolver_group_id, organization_id: orgId, is_active: true },
+        include: { members: true },
+      })
+    } else if (dto.department_id) {
+      group = await this.prisma.ticketResolverGroup.findFirst({
+        where: { organization_id: orgId, department_id: dto.department_id, is_active: true },
+        include: { members: true },
+        orderBy: { name: 'asc' },
+      })
+    }
+    if (!group) throw new BadRequestException('No active resolver group found for the transfer target')
+
+    let assigneeId: string | null = null
+    if (group.members.length && group.assignment_strategy === 'round_robin') {
+      assigneeId = await this.resolveGroupRoundRobin(orgId, group.id, group.members.map((m) => m.user_id))
+    }
+    const status = await this.getStatusByType(orgId, assigneeId ? 'assigned' : 'open')
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: {
+        resolver_group_id: group.id,
+        assigned_to_user_id: assigneeId,
+        assigned_at: assigneeId ? new Date() : null,
+        accepted_at: null,
+        on_hold: false,
+        hold_since: null,
+        status_id: status.id,
+      },
+      include: TICKET_INCLUDE,
+    })
+    await this.logActivity(orgId, ticketId, userId, 'transferred', { to_group: group.id, reason: dto.reason })
+    if (assigneeId) {
+      await this.notifyUser(orgId, ticketId, assigneeId, 'assigned',
+        `Ticket ${ticket.ticket_number} has been transferred to you: ${ticket.title}`)
+    } else {
+      const adminIds = await this.getAdminUserIds(orgId)
+      await this.notifyUsers(orgId, ticketId, adminIds, 'unassigned',
+        `Ticket ${ticket.ticket_number} was transferred to ${group.name} and needs assignment`)
+    }
+    return updated
+  }
+
+  // ─── Reopen ──────────────────────────────────────────────────────────────────
+
+  async reopenTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: ReopenTicketDto) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    const isClosedOrResolved = ['resolved', 'closed_resolved', 'closed_unresolved'].includes(ticket.status.type)
+    if (!isClosedOrResolved) throw new BadRequestException('Only a resolved or closed ticket can be reopened')
+
+    const master = await this.prisma.ticketMaster.findUnique({ where: { organization_id: orgId } })
+    const isRaiser = ticket.raised_by_user_id === userId
+    const isAssignee = ticket.assigned_to_user_id === userId
+    const raiserAllowed = isRaiser && (master?.allow_requester_reopen ?? true)
+    const assigneeAllowed = isAssignee && (master?.allow_assignee_reopen ?? true)
+    if (!isAdmin && !raiserAllowed && !assigneeAllowed) {
+      throw new ForbiddenException('You are not allowed to reopen this ticket')
+    }
+
+    // Restart the resolution clock from now (rework SLA), holiday-adjusted.
+    const now = new Date()
+    const rawSlaDue = new Date(now.getTime() + ticket.sla_days * 24 * 60 * 60 * 1000)
+    const adjusted = await this.holidaysService.adjustDeadline(
+      rawSlaDue, orgId, undefined, ticket.assigned_to_user_id ?? undefined,
+      'ticket', ticket.id, ticket.title, true,
+    )
+    const reopenType = ticket.assigned_to_user_id ? 'in_progress' : 'open'
+    const reopenStatus = await this.getStatusByType(orgId, reopenType)
+
+    const updated = await this.prisma.ticket.update({
+      where: { id: ticketId },
+      data: {
+        status_id: reopenStatus.id,
+        reopen_count: { increment: 1 },
+        resolved_at: null,
+        closed_at: null,
+        raiser_confirmed_at: null,
+        sla_breached: false,
+        sla_due_at: adjusted ?? rawSlaDue,
+        on_hold: false,
+        hold_since: null,
+      },
+      include: TICKET_INCLUDE,
+    })
+    await this.logActivity(orgId, ticketId, userId, 'reopened', { reason: dto.reason })
+    const notify = [ticket.assigned_to_user_id, ticket.raised_by_user_id].filter(
+      (uid): uid is string => !!uid && uid !== userId,
+    )
+    await this.notifyUsers(orgId, ticketId, notify, 'status_changed',
+      `Ticket ${ticket.ticket_number} has been reopened${dto.reason ? `: ${dto.reason}` : ''}`)
     return updated
   }
 
@@ -718,6 +1175,8 @@ export class TicketsService {
       },
     })
     await this.logActivity(orgId, ticketId, userId, 'comment_added')
+    // A comment by the assignee counts as the first response.
+    await this.markFirstResponse(orgId, ticket, userId)
 
     // Notify the other parties on the ticket (raiser + assignee, minus commenter)
     const snippet = dto.body.length > 80 ? `${dto.body.slice(0, 80)}…` : dto.body
@@ -843,6 +1302,115 @@ export class TicketsService {
     return { total_ratings: total, avg_rating: Math.round(avg * 10) / 10, distribution, tickets }
   }
 
+  // Avg time-to-first-response per assignee + how many breached the response SLA.
+  async getFirstResponseReport(orgId: string, from?: string, to?: string) {
+    const dateFilter = this.buildDateFilter(from, to)
+    const tickets = await this.prisma.ticket.findMany({
+      where: { organization_id: orgId, is_deleted: false, responded_at: { not: null }, ...dateFilter },
+      select: { assigned_to_user_id: true, created_at: true, responded_at: true, response_breached: true },
+    })
+    const byUser: Record<string, { total: number; sum: number; breached: number }> = {}
+    for (const t of tickets) {
+      if (!t.assigned_to_user_id || !t.responded_at) continue
+      const hours = (t.responded_at.getTime() - t.created_at.getTime()) / (1000 * 60 * 60)
+      const u = (byUser[t.assigned_to_user_id] ??= { total: 0, sum: 0, breached: 0 })
+      u.total++
+      u.sum += hours
+      if (t.response_breached) u.breached++
+    }
+    return Object.entries(byUser).map(([userId, { total, sum, breached }]) => ({
+      user_id: userId,
+      responded_count: total,
+      avg_hours: Math.round((sum / total) * 10) / 10,
+      breached_count: breached,
+    }))
+  }
+
+  // Open (non-closed) tickets bucketed by age, to surface a growing backlog tail.
+  async getBacklogAgingReport(orgId: string) {
+    const now = Date.now()
+    const tickets = await this.prisma.ticket.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        status: { type: { notIn: ['closed_resolved', 'closed_unresolved'] } },
+      },
+      include: { ticket_type: true, priority: true, status: true },
+      orderBy: { created_at: 'asc' },
+    })
+    const buckets = [
+      { label: '< 1 day', min: 0, max: 1, count: 0 },
+      { label: '1–3 days', min: 1, max: 3, count: 0 },
+      { label: '3–7 days', min: 3, max: 7, count: 0 },
+      { label: '7–14 days', min: 7, max: 14, count: 0 },
+      { label: '> 14 days', min: 14, max: Infinity, count: 0 },
+    ]
+    for (const t of tickets) {
+      const ageDays = (now - t.created_at.getTime()) / (1000 * 60 * 60 * 24)
+      const b = buckets.find((bk) => ageDays >= bk.min && ageDays < bk.max)
+      if (b) b.count++
+    }
+    return {
+      total_open: tickets.length,
+      buckets: buckets.map(({ label, count }) => ({ label, count })),
+      oldest: tickets.slice(0, 10).map((t) => ({
+        id: t.id,
+        ticket_number: t.ticket_number,
+        title: t.title,
+        age_days: Math.round((now - t.created_at.getTime()) / (1000 * 60 * 60 * 24)),
+        status: t.status.label,
+        assigned_to_user_id: t.assigned_to_user_id,
+        sla_breached: t.sla_breached,
+      })),
+    }
+  }
+
+  // Per-resolver workload: how many tickets they hold and in what state.
+  async getAgentLoadReport(orgId: string) {
+    const tickets = await this.prisma.ticket.findMany({
+      where: { organization_id: orgId, is_deleted: false, assigned_to_user_id: { not: null } },
+      include: { status: true },
+    })
+    const byUser: Record<string, { open: number; in_progress: number; on_hold: number; breached: number; resolved: number; total: number }> = {}
+    for (const t of tickets) {
+      if (!t.assigned_to_user_id) continue
+      const u = (byUser[t.assigned_to_user_id] ??= { open: 0, in_progress: 0, on_hold: 0, breached: 0, resolved: 0, total: 0 })
+      const type = t.status.type
+      const closed = type === 'closed_resolved' || type === 'closed_unresolved'
+      if (!closed) {
+        u.total++
+        if (type === 'open' || type === 'assigned') u.open++
+        else if (type === 'in_progress') u.in_progress++
+        else if (type === 'on_hold') u.on_hold++
+        if (t.sla_breached) u.breached++
+      }
+      if (type === 'resolved' || type === 'closed_resolved') u.resolved++
+    }
+    return Object.entries(byUser).map(([userId, v]) => ({ user_id: userId, ...v }))
+  }
+
+  // How often closed tickets get reopened — a quality / first-time-fix signal.
+  async getReopenRateReport(orgId: string, from?: string, to?: string) {
+    const dateFilter = this.buildDateFilter(from, to)
+    const tickets = await this.prisma.ticket.findMany({
+      where: { organization_id: orgId, is_deleted: false, ...dateFilter },
+      select: { reopen_count: true, closed_at: true, ticket_number: true, title: true, id: true },
+    })
+    const total = tickets.length
+    const everReopened = tickets.filter((t) => t.reopen_count > 0)
+    const totalReopens = tickets.reduce((s, t) => s + t.reopen_count, 0)
+    return {
+      total_tickets: total,
+      reopened_tickets: everReopened.length,
+      reopen_rate: total > 0 ? Math.round((everReopened.length / total) * 100) : 0,
+      total_reopens: totalReopens,
+      most_reopened: everReopened
+        .sort((a, b) => b.reopen_count - a.reopen_count)
+        .slice(0, 10)
+        .map((t) => ({ id: t.id, ticket_number: t.ticket_number, title: t.title, reopen_count: t.reopen_count })),
+    }
+  }
+
   private buildDateFilter(from?: string, to?: string) {
     if (!from && !to) return {}
     return { created_at: { ...(from && { gte: new Date(from) }), ...(to && { lte: new Date(to) }) } }
@@ -866,36 +1434,75 @@ export class TicketsService {
   }
 
   private async processSlaForOrgImpl(orgId: string, now: Date) {
-    const tickets = await this.prisma.ticket.findMany({
+    const master = await this.prisma.ticketMaster.findUnique({ where: { organization_id: orgId } })
+    const intervalHours = master?.escalation_interval_hours ?? 24
+
+    // 1) Newly-breached resolution SLAs. On-hold tickets are skipped (clock paused).
+    const breaching = await this.prisma.ticket.findMany({
       where: {
         organization_id: orgId,
         sla_due_at: { lt: now },
         sla_breached: false,
         is_deleted: false,
+        on_hold: false,
         status: { type: { notIn: ['closed_resolved', 'closed_unresolved'] } },
       },
-      include: { escalations: { orderBy: { level: 'asc' } } },
     })
-
-    for (const ticket of tickets) {
+    for (const ticket of breaching) {
       await this.prisma.ticket.update({ where: { id: ticket.id }, data: { sla_breached: true } })
       await this.logActivity(ticket.organization_id, ticket.id, 'system', 'sla_breached')
-
       if (ticket.assigned_to_user_id) {
         await this.notifyUser(ticket.organization_id, ticket.id, ticket.assigned_to_user_id, 'sla_breached',
           `SLA breached on ticket ${ticket.ticket_number}: ${ticket.title}`)
       }
+    }
 
-      const level1 = ticket.escalations.find((e) => e.level === 1 && e.is_active && !e.escalated_at)
-      if (level1) {
-        await this.prisma.ticketEscalation.update({
-          where: { id: level1.id },
-          data: { escalated_at: now },
-        })
-        await this.notifyUser(ticket.organization_id, ticket.id, level1.escalate_to_user_id, 'escalated',
-          `Ticket ${ticket.ticket_number} SLA has been breached and escalated to you: ${ticket.title}`)
-        await this.logActivity(ticket.organization_id, ticket.id, 'system', 'escalated', { level: 1, user_id: level1.escalate_to_user_id })
-      }
+    // 2) First-response SLA breaches (no response yet, clock elapsed).
+    const responseBreaching = await this.prisma.ticket.findMany({
+      where: {
+        organization_id: orgId,
+        response_due_at: { lt: now },
+        response_breached: false,
+        responded_at: null,
+        is_deleted: false,
+        on_hold: false,
+        status: { type: { notIn: ['closed_resolved', 'closed_unresolved'] } },
+      },
+    })
+    for (const ticket of responseBreaching) {
+      await this.prisma.ticket.update({ where: { id: ticket.id }, data: { response_breached: true } })
+      await this.logActivity(ticket.organization_id, ticket.id, 'system', 'response_breached')
+      const targets = [ticket.assigned_to_user_id, ...(await this.getAdminUserIds(orgId))].filter(
+        (u): u is string => !!u,
+      )
+      await this.notifyUsers(ticket.organization_id, ticket.id, targets, 'sla_breached',
+        `First-response SLA breached on ticket ${ticket.ticket_number}: ${ticket.title}`)
+    }
+
+    // 3) Tiered escalation: fire successive levels over time on breached, still-open
+    //    tickets. Level N is due at sla_due_at + (N-1) * escalation_interval_hours.
+    const escalating = await this.prisma.ticket.findMany({
+      where: {
+        organization_id: orgId,
+        sla_breached: true,
+        is_deleted: false,
+        on_hold: false,
+        status: { type: { notIn: ['closed_resolved', 'closed_unresolved'] } },
+        escalations: { some: { is_active: true, escalated_at: null } },
+      },
+      include: { escalations: { orderBy: { level: 'asc' } } },
+    })
+    for (const ticket of escalating) {
+      // Only fire the next pending level, and only once its time threshold passed.
+      const pending = ticket.escalations.filter((e) => e.is_active && !e.escalated_at).sort((a, b) => a.level - b.level)
+      const next = pending[0]
+      if (!next) continue
+      const dueAt = new Date(ticket.sla_due_at.getTime() + (next.level - 1) * intervalHours * 60 * 60 * 1000)
+      if (dueAt > now) continue
+      await this.prisma.ticketEscalation.update({ where: { id: next.id }, data: { escalated_at: now } })
+      await this.notifyUser(ticket.organization_id, ticket.id, next.escalate_to_user_id, 'escalated',
+        `Ticket ${ticket.ticket_number} escalated to you (level ${next.level}): ${ticket.title}`)
+      await this.logActivity(ticket.organization_id, ticket.id, 'system', 'escalated', { level: next.level, user_id: next.escalate_to_user_id })
     }
   }
 

@@ -40,7 +40,7 @@ export default function NewTicketPage() {
   useEffect(() => {
     if (!orgId) return
     Promise.all([
-      ticketsApi.listTemplates(orgId),
+      ticketsApi.listAccessibleTemplates(orgId),
       ticketsApi.listTypes(orgId),
       ticketsApi.listCategories(orgId),
       ticketsApi.listPriorities(orgId),
@@ -72,10 +72,20 @@ export default function NewTicketPage() {
     setStep('form')
   }
 
+  const priorityLocked = !!selectedTemplate?.lock_priority
   const filteredCategories = categories.filter((c) => !typeId || !c.ticket_type_id || c.ticket_type_id === typeId)
   const filteredTemplates = templates.filter(
     (t) => !templateSearch || t.name.toLowerCase().includes(templateSearch.toLowerCase())
   )
+
+  // Group templates by their group_label (fallback bucket "General"), preserving encounter order.
+  const groupedTemplates = filteredTemplates.reduce<{ label: string; items: TicketTemplate[] }[]>((acc, t) => {
+    const label = t.group_label?.trim() || 'General'
+    let group = acc.find((g) => g.label === label)
+    if (!group) { group = { label, items: [] }; acc.push(group) }
+    group.items.push(t)
+    return acc
+  }, [])
 
   async function handleSubmit() {
     if (!title.trim()) { setError('Title is required'); return }
@@ -149,11 +159,16 @@ export default function NewTicketPage() {
             <p className="text-xs text-[#94A3B8] mt-0.5">Fill in all details manually</p>
           </button>
 
-          {filteredTemplates.length > 0 && (
-            <>
-              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Templates</p>
+          {groupedTemplates.map((group) => (
+            <div key={group.label} className="flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold text-[#475569] uppercase tracking-wider">{group.label}</p>
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                  {group.items.length}
+                </span>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filteredTemplates.map((t) => (
+                {group.items.map((t) => (
                   <TicketTemplateCard
                     key={t.id}
                     template={t}
@@ -162,8 +177,8 @@ export default function NewTicketPage() {
                   />
                 ))}
               </div>
-            </>
-          )}
+            </div>
+          ))}
         </div>
       )}
 
@@ -223,10 +238,18 @@ export default function NewTicketPage() {
           {priorities.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
-              <select value={priorityId} onChange={(e) => setPriorityId(e.target.value)} className={inputCls}>
+              <select
+                value={priorityId}
+                onChange={(e) => setPriorityId(e.target.value)}
+                disabled={priorityLocked}
+                className={`${inputCls} ${priorityLocked ? 'bg-[#F1F5F9] text-[#475569] cursor-not-allowed' : ''}`}
+              >
                 <option value="">Select priority (optional)</option>
                 {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
+              {priorityLocked && (
+                <p className="text-xs text-[#64748B] mt-1">Locked by template</p>
+              )}
             </div>
           )}
 

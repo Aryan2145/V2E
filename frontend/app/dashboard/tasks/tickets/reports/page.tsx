@@ -8,12 +8,16 @@ import type {
   TicketReportBreakdown,
   TicketReportSlaBreaches,
   TicketReportRatings,
+  TicketReportFirstResponse,
+  TicketReportBacklogAging,
+  TicketReportAgentLoad,
+  TicketReportReopenRate,
 } from '@/lib/types/tickets'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from 'recharts'
-import { Download, Clock, Tag, BarChart2, AlertTriangle, Star, Activity } from 'lucide-react'
+import { Download, Clock, Tag, BarChart2, AlertTriangle, Star, Activity, Reply, Layers, Users, RotateCcw } from 'lucide-react'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 
@@ -35,15 +39,21 @@ function exportCsv(filename: string, rows: string[][], headers: string[]) {
 
 const CHART_TOOLTIP_STYLE = { borderRadius: 8, border: '1px solid #E2E8F0', fontSize: 13 }
 
-type ReportTab = 'resolution' | 'by_type' | 'by_category' | 'by_priority' | 'by_status' | 'sla' | 'ratings'
+type ReportTab =
+  | 'resolution' | 'first_response' | 'by_type' | 'by_category' | 'by_priority'
+  | 'by_status' | 'sla' | 'backlog' | 'agent_load' | 'reopen' | 'ratings'
 
 const TABS: { key: ReportTab; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
   { key: 'resolution', label: 'Resolution Time', icon: <Clock size={14} /> },
+  { key: 'first_response', label: 'First Response', icon: <Reply size={14} /> },
   { key: 'by_type', label: 'By Type', icon: <Tag size={14} /> },
   { key: 'by_category', label: 'By Category', icon: <Tag size={14} /> },
   { key: 'by_priority', label: 'By Priority', icon: <BarChart2 size={14} /> },
   { key: 'by_status', label: 'By Status', icon: <Activity size={14} /> },
   { key: 'sla', label: 'SLA Breach', icon: <AlertTriangle size={14} /> },
+  { key: 'backlog', label: 'Backlog Aging', icon: <Layers size={14} /> },
+  { key: 'agent_load', label: 'Agent Load', icon: <Users size={14} /> },
+  { key: 'reopen', label: 'Reopen Rate', icon: <RotateCcw size={14} /> },
   { key: 'ratings', label: 'Ratings', icon: <Star size={14} /> },
 ]
 
@@ -374,6 +384,338 @@ const ratingsColumns: ResponsiveColumn<RatingTicketRow>[] = [
   },
 ]
 
+// ─── First Response ───────────────────────────────────────────────────────────
+
+function FirstResponseTab({ orgId, from, to }: { orgId: string; from: string; to: string }) {
+  const [data, setData] = useState<TicketReportFirstResponse[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getFirstResponse(orgId, from || undefined, to || undefined)
+      .then(setData).catch(() => setData([])).finally(() => setLoading(false))
+  }, [orgId, from, to])
+
+  if (loading) return <Spinner />
+
+  const sorted = [...data].sort((a, b) => a.avg_hours - b.avg_hours)
+  const totalResponded = data.reduce((s, d) => s + d.responded_count, 0)
+  const totalBreached = data.reduce((s, d) => s + d.breached_count, 0)
+  const avgHours = totalResponded > 0
+    ? data.reduce((s, d) => s + d.avg_hours * d.responded_count, 0) / totalResponded
+    : 0
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard label="Resolvers with data" value={data.length} color="#2563EB" />
+        <StatCard label="Responses" value={totalResponded} color="#0891B2" />
+        <StatCard label="Avg first response" value={`${avgHours.toFixed(1)}h`} color="#16A34A" />
+        <StatCard label="Response breaches" value={totalBreached} color="#DC2626" />
+      </div>
+
+      {data.length === 0 ? (
+        <Empty />
+      ) : (
+        <>
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv('first_response.csv',
+              sorted.map((d) => [d.user_id, String(d.responded_count), d.avg_hours.toFixed(2), String(d.breached_count)]),
+              ['User ID', 'Responded', 'Avg Hours', 'Breached'],
+            )} />
+          </div>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={firstResponseColumns}
+            rows={sorted}
+            rowKey={(d) => d.user_id}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+const firstResponseColumns: ResponsiveColumn<TicketReportFirstResponse>[] = [
+  {
+    key: 'user_id',
+    header: 'User ID',
+    primary: true,
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (d) => d.user_id,
+  },
+  {
+    key: 'responded_count',
+    header: 'Responded',
+    cellClassName: 'text-[#0F172A] tabular-nums',
+    render: (d) => d.responded_count,
+  },
+  {
+    key: 'avg_hours',
+    header: 'Avg First Response',
+    cellClassName: 'text-[#0F172A] tabular-nums font-medium',
+    render: (d) => `${d.avg_hours.toFixed(1)} h`,
+  },
+  {
+    key: 'breached_count',
+    header: 'Breached',
+    cellClassName: 'tabular-nums font-medium',
+    render: (d) => (
+      <span className={d.breached_count > 0 ? 'text-[#DC2626] font-semibold' : 'text-[#475569]'}>
+        {d.breached_count}
+      </span>
+    ),
+  },
+]
+
+// ─── Backlog Aging ────────────────────────────────────────────────────────────
+
+const BACKLOG_BUCKET_COLORS = ['#16A34A', '#0891B2', '#2563EB', '#D97706', '#DC2626']
+
+function BacklogAgingTab({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<TicketReportBacklogAging | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getBacklogAging(orgId)
+      .then(setData).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [orgId])
+
+  if (loading) return <Spinner />
+  if (!data) return <Empty />
+
+  const chartData = data.buckets.map((b, i) => ({
+    name: b.label,
+    count: b.count,
+    color: BACKLOG_BUCKET_COLORS[i % BACKLOG_BUCKET_COLORS.length],
+  }))
+
+  return (
+    <div className="space-y-6">
+      <p className="text-xs text-[#475569] -mt-1">Live snapshot of currently open tickets — not affected by the date range.</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard label="Total Open" value={data.total_open} color="#2563EB" />
+        <StatCard label="Oldest (days)" value={data.oldest.length > 0 ? data.oldest[0].age_days : '—'} color="#D97706" />
+      </div>
+
+      {data.total_open === 0 ? (
+        <div className="text-center py-12 text-sm text-[#475569]">No open tickets in the backlog.</div>
+      ) : (
+        <>
+          <div className="h-56">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" />
+                <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#64748B' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748B' }} allowDecimals={false} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: number) => [`${v} tickets`, 'Open']} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {data.oldest.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-[#0F172A] mb-3">Oldest open tickets</h3>
+              <ResponsiveTable
+                className={FLAT_TABLE}
+                columns={backlogColumns}
+                rows={data.oldest}
+                rowKey={(t) => t.id}
+              />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+type BacklogRow = TicketReportBacklogAging['oldest'][number]
+
+const backlogColumns: ResponsiveColumn<BacklogRow>[] = [
+  {
+    key: 'ticket_number',
+    header: 'Ticket #',
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (t) => t.ticket_number,
+  },
+  {
+    key: 'title',
+    header: 'Title',
+    primary: true,
+    cellClassName: 'text-[#0F172A] font-medium',
+    render: (t) => (
+      <span className="flex items-center gap-2">
+        {t.sla_breached && <span className="w-2 h-2 rounded-full bg-[#DC2626] shrink-0" title="SLA breached" />}
+        <span className="truncate">{t.title}</span>
+      </span>
+    ),
+  },
+  {
+    key: 'age_days',
+    header: 'Age',
+    cellClassName: 'text-[#0F172A] tabular-nums font-medium',
+    render: (t) => `${t.age_days}d`,
+  },
+  {
+    key: 'status',
+    header: 'Status',
+    cellClassName: 'text-[#475569]',
+    render: (t) => t.status,
+  },
+]
+
+// ─── Agent Load ───────────────────────────────────────────────────────────────
+
+function AgentLoadTab({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<TicketReportAgentLoad[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getAgentLoad(orgId)
+      .then(setData).catch(() => setData([])).finally(() => setLoading(false))
+  }, [orgId])
+
+  if (loading) return <Spinner />
+
+  const sorted = [...data].sort((a, b) => b.total - a.total)
+  const totalOpen = data.reduce((s, d) => s + d.open + d.in_progress + d.on_hold, 0)
+  const totalBreached = data.reduce((s, d) => s + d.breached, 0)
+
+  return (
+    <div className="space-y-6">
+      <p className="text-xs text-[#475569] -mt-1">Live snapshot of resolver workload — not affected by the date range.</p>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <StatCard label="Resolvers" value={data.length} color="#2563EB" />
+        <StatCard label="Active workload" value={totalOpen} color="#0891B2" />
+        <StatCard label="Breached" value={totalBreached} color="#DC2626" />
+      </div>
+
+      {data.length === 0 ? (
+        <Empty />
+      ) : (
+        <>
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv('agent_load.csv',
+              sorted.map((d) => [d.user_id, String(d.open), String(d.in_progress), String(d.on_hold), String(d.breached), String(d.resolved), String(d.total)]),
+              ['User ID', 'Open', 'In Progress', 'On Hold', 'Breached', 'Resolved', 'Total'],
+            )} />
+          </div>
+          <ResponsiveTable
+            className={FLAT_TABLE}
+            columns={agentLoadColumns}
+            rows={sorted}
+            rowKey={(d) => d.user_id}
+          />
+        </>
+      )}
+    </div>
+  )
+}
+
+const agentLoadColumns: ResponsiveColumn<TicketReportAgentLoad>[] = [
+  {
+    key: 'user_id',
+    header: 'User ID',
+    primary: true,
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (d) => d.user_id,
+  },
+  { key: 'open', header: 'Open', cellClassName: 'text-[#0F172A] tabular-nums', render: (d) => d.open },
+  { key: 'in_progress', header: 'In Progress', cellClassName: 'text-[#0F172A] tabular-nums', render: (d) => d.in_progress },
+  { key: 'on_hold', header: 'On Hold', cellClassName: 'text-[#0F172A] tabular-nums', render: (d) => d.on_hold },
+  {
+    key: 'breached',
+    header: 'Breached',
+    cellClassName: 'tabular-nums font-medium',
+    render: (d) => (
+      <span className={d.breached > 0 ? 'text-[#DC2626] font-semibold' : 'text-[#475569]'}>{d.breached}</span>
+    ),
+  },
+  { key: 'resolved', header: 'Resolved', cellClassName: 'text-[#16A34A] tabular-nums', render: (d) => d.resolved },
+  { key: 'total', header: 'Total', cellClassName: 'text-[#0F172A] tabular-nums font-semibold', render: (d) => d.total },
+]
+
+// ─── Reopen Rate ──────────────────────────────────────────────────────────────
+
+function ReopenRateTab({ orgId, from, to }: { orgId: string; from: string; to: string }) {
+  const [data, setData] = useState<TicketReportReopenRate | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    ticketsApi.getReopenRate(orgId, from || undefined, to || undefined)
+      .then(setData).catch(() => setData(null)).finally(() => setLoading(false))
+  }, [orgId, from, to])
+
+  if (loading) return <Spinner />
+  if (!data) return <Empty />
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard label="Reopen Rate" value={`${data.reopen_rate.toFixed(1)}%`} color="#D97706" />
+        <StatCard label="Reopened Tickets" value={data.reopened_tickets} color="#2563EB" />
+        <StatCard label="Total Tickets" value={data.total_tickets} color="#0891B2" />
+        <StatCard label="Total Reopens" value={data.total_reopens} color="#DC2626" />
+      </div>
+
+      {data.most_reopened.length === 0 ? (
+        <div className="text-center py-12 text-sm text-[#475569]">No reopened tickets in this period.</div>
+      ) : (
+        <>
+          <div className="flex justify-end">
+            <ExportBtn onClick={() => exportCsv('reopen_rate.csv',
+              data.most_reopened.map((t) => [t.ticket_number, t.title, String(t.reopen_count)]),
+              ['Ticket #', 'Title', 'Reopens'],
+            )} />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-[#0F172A] mb-3">Most reopened tickets</h3>
+            <ResponsiveTable
+              className={FLAT_TABLE}
+              columns={reopenColumns}
+              rows={data.most_reopened}
+              rowKey={(t) => t.id}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+type ReopenRow = TicketReportReopenRate['most_reopened'][number]
+
+const reopenColumns: ResponsiveColumn<ReopenRow>[] = [
+  {
+    key: 'ticket_number',
+    header: 'Ticket #',
+    cellClassName: 'font-mono text-xs text-[#475569]',
+    render: (t) => t.ticket_number,
+  },
+  {
+    key: 'title',
+    header: 'Title',
+    primary: true,
+    cellClassName: 'text-[#0F172A] font-medium',
+    render: (t) => t.title,
+  },
+  {
+    key: 'reopen_count',
+    header: 'Reopens',
+    cellClassName: 'text-[#D97706] tabular-nums font-semibold',
+    render: (t) => t.reopen_count,
+  },
+]
+
 // ─── Shared micro-components ──────────────────────────────────────────────────
 
 function Spinner() {
@@ -496,11 +838,15 @@ export default function TicketReportsPage() {
         {/* Content */}
         <div className="flex-1 min-w-0 bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-6">
           {activeTab === 'resolution' && <ResolutionTimeTab orgId={orgId} from={from} to={to} />}
+          {activeTab === 'first_response' && <FirstResponseTab orgId={orgId} from={from} to={to} />}
           {activeTab === 'by_type' && <BreakdownTab label="types" data={typeData} loading={typeLoading} exportFilename="by_type.csv" />}
           {activeTab === 'by_category' && <BreakdownTab label="categories" data={catData} loading={catLoading} exportFilename="by_category.csv" />}
           {activeTab === 'by_priority' && <BreakdownTab label="priorities" data={priData} loading={priLoading} exportFilename="by_priority.csv" />}
           {activeTab === 'by_status' && <BreakdownTab label="statuses" data={stData} loading={stLoading} exportFilename="by_status.csv" />}
           {activeTab === 'sla' && <SlaTab orgId={orgId} from={from} to={to} />}
+          {activeTab === 'backlog' && <BacklogAgingTab orgId={orgId} />}
+          {activeTab === 'agent_load' && <AgentLoadTab orgId={orgId} />}
+          {activeTab === 'reopen' && <ReopenRateTab orgId={orgId} from={from} to={to} />}
           {activeTab === 'ratings' && <RatingsTab orgId={orgId} from={from} to={to} />}
         </div>
       </div>

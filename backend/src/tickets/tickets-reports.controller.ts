@@ -47,4 +47,24 @@ export class TicketsReportsController {
   getRatings(@Param('orgId') orgId: string, @Query('from') from?: string, @Query('to') to?: string) {
     return this.ticketsService.getRatingsReport(orgId, from, to)
   }
+
+  @Get('first-response')
+  getFirstResponse(@Param('orgId') orgId: string, @Query('from') from?: string, @Query('to') to?: string) {
+    return this.ticketsService.getFirstResponseReport(orgId, from, to)
+  }
+
+  @Get('backlog-aging')
+  getBacklogAging(@Param('orgId') orgId: string) {
+    return this.ticketsService.getBacklogAgingReport(orgId)
+  }
+
+  @Get('agent-load')
+  getAgentLoad(@Param('orgId') orgId: string) {
+    return this.ticketsService.getAgentLoadReport(orgId)
+  }
+
+  @Get('reopen-rate')
+  getReopenRate(@Param('orgId') orgId: string, @Query('from') from?: string, @Query('to') to?: string) {
+    return this.ticketsService.getReopenRateReport(orgId, from, to)
+  }
 }

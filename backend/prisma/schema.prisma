@@ -1453,6 +1453,7 @@ enum TicketStatusType {
   open
   assigned
   in_progress
+  on_hold
   resolved
   closed_resolved
   closed_unresolved
@@ -1467,6 +1468,28 @@ enum TicketReassignmentMode {
   assignee_only
   admin_manager_only
   both
+}
+
+// How a resolver group hands a new ticket to one of its members.
+enum TicketAssignmentStrategy {
+  round_robin // force-assign to the next member in rotation
+  claim       // leave unassigned in the pool; any member can claim it
+  manual      // leave unassigned for an admin/manager to assign
+}
+
+// Mirrors ChecklistAccessMode — gates who may pick a template when raising.
+enum TicketTemplateAccessMode {
+  everyone
+  restricted
+}
+
+// Mirrors ChecklistAccessKind.
+enum TicketTemplateAccessKind {
+  department
+  role
+  user
+  exclude_user
+  exclude_role
 }
 
 enum TicketActivityAction {
@@ -1488,6 +1511,13 @@ enum TicketActivityAction {
   sla_breached
   confirmation_requested
   raiser_confirmed
+  rejected
+  transferred
+  put_on_hold
+  resumed
+  first_responded
+  response_breached
+  claimed
 }
 
 model TicketMaster {
@@ -1498,6 +1528,13 @@ model TicketMaster {
   require_raiser_confirmation Boolean                @default(false)
   enable_rating               Boolean                @default(false)
   default_escalation_levels   Int                    @default(2)
+  // Org-wide first-response target (hours). null = no first-response clock by default.
+  default_response_sla_hours  Int?
+  // Gap between successive auto-escalation tiers, measured from resolution-SLA breach.
+  escalation_interval_hours   Int                    @default(24)
+  // Who may reopen a closed ticket.
+  allow_requester_reopen      Boolean                @default(true)
+  allow_assignee_reopen       Boolean                @default(true)
   created_at                  DateTime               @default(now())
   updated_at                  DateTime               @updatedAt
 
@@ -1505,46 +1542,52 @@ model TicketMaster {
 }
 
 model TicketType {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  name                String
-  description         String?  @db.Text
-  color               String
-  icon                String
-  default_sla_days    Int
-  auto_assign_user_id String?
-  auto_assign_role    String?
-  is_active           Boolean  @default(true)
-  order_index         Int      @default(0)
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                         String   @id @default(uuid())
+  organization_id            String
+  name                       String
+  description                String?  @db.Text
+  color                      String
+  icon                       String
+  default_sla_days           Int
+  default_response_sla_hours Int?
+  auto_assign_user_id        String?
+  auto_assign_role           String?
+  resolver_group_id          String?
+  is_active                  Boolean  @default(true)
+  order_index                Int      @default(0)
+  created_at                 DateTime @default(now())
+  updated_at                 DateTime @updatedAt
 
-  categories TicketCategory[]
-  tickets    Ticket[]
-  templates  TicketTemplate[]
+  resolver_group TicketResolverGroup? @relation(fields: [resolver_group_id], references: [id])
+  categories     TicketCategory[]
+  tickets        Ticket[]
+  templates      TicketTemplate[]
 
   @@map("ticket_types")
 }
 
 model TicketCategory {
-  id                     String   @id @default(uuid())
-  organization_id        String
-  name                   String
-  description            String?  @db.Text
-  color                  String
-  ticket_type_id         String?
-  default_sla_days       Int?
-  auto_assign_user_id    String?
-  auto_assign_role       String?
-  visible_to_departments Json     @default("[]")
-  visible_to_roles       Json     @default("[]")
-  is_active              Boolean  @default(true)
-  created_at             DateTime @default(now())
-  updated_at             DateTime @updatedAt
+  id                         String   @id @default(uuid())
+  organization_id            String
+  name                       String
+  description                String?  @db.Text
+  color                      String
+  ticket_type_id             String?
+  default_sla_days           Int?
+  default_response_sla_hours Int?
+  auto_assign_user_id        String?
+  auto_assign_role           String?
+  resolver_group_id          String?
+  visible_to_departments     Json     @default("[]")
+  visible_to_roles           Json     @default("[]")
+  is_active                  Boolean  @default(true)
+  created_at                 DateTime @default(now())
+  updated_at                 DateTime @updatedAt
 
-  ticket_type TicketType? @relation(fields: [ticket_type_id], references: [id])
-  tickets     Ticket[]
-  templates   TicketTemplate[]
+  ticket_type    TicketType?          @relation(fields: [ticket_type_id], references: [id])
+  resolver_group TicketResolverGroup? @relation(fields: [resolver_group_id], references: [id])
+  tickets        Ticket[]
+  templates      TicketTemplate[]
 
   @@map("ticket_categories")
 }
@@ -1567,28 +1610,40 @@ model TicketPriority {
 }
 
 model TicketTemplate {
-  id                   String             @id @default(uuid())
+  id                   String                   @id @default(uuid())
   organization_id      String
   name                 String
-  template_type        TicketTemplateType @default(simple)
+  template_type        TicketTemplateType       @default(simple)
   ticket_type_id       String?
   category_id          String?
   priority_id          String?
+  resolver_group_id    String?
+  // Department this template is grouped under in the raise-ticket catalog.
+  department_id        String?
+  // Optional free-text grouping label (used when no department grouping fits).
+  group_label          String?
   title_template       String
-  description_template String?            @db.Text
+  description_template String?                  @db.Text
   auto_assign_user_id  String?
   auto_assign_role     String?
   sla_days             Int?
-  checklist_items      Json               @default("[]")
-  is_active            Boolean            @default(true)
+  response_sla_hours   Int?
+  // When true the raiser cannot change the pre-filled priority.
+  lock_priority        Boolean                  @default(false)
+  checklist_items      Json                     @default("[]")
+  // Who may pick this template when raising a ticket.
+  access_mode          TicketTemplateAccessMode @default(everyone)
+  is_active            Boolean                  @default(true)
   created_by_user_id   String
-  created_at           DateTime           @default(now())
-  updated_at           DateTime           @updatedAt
+  created_at           DateTime                 @default(now())
+  updated_at           DateTime                 @updatedAt
 
-  ticket_type TicketType?     @relation(fields: [ticket_type_id], references: [id])
-  category    TicketCategory? @relation(fields: [category_id], references: [id])
-  priority    TicketPriority? @relation(fields: [priority_id], references: [id])
-  tickets     Ticket[]
+  ticket_type    TicketType?                  @relation(fields: [ticket_type_id], references: [id])
+  category       TicketCategory?              @relation(fields: [category_id], references: [id])
+  priority       TicketPriority?              @relation(fields: [priority_id], references: [id])
+  resolver_group TicketResolverGroup?         @relation(fields: [resolver_group_id], references: [id])
+  access_rules   TicketTemplateAccessRule[]
+  tickets        Ticket[]
 
   @@map("ticket_templates")
 }
@@ -1624,9 +1679,20 @@ model Ticket {
   raised_by_user_id            String
   assigned_to_user_id          String?
   assigned_at                  DateTime?
+  resolver_group_id            String?
   sla_days                     Int
   sla_due_at                   DateTime
   sla_breached                 Boolean   @default(false)
+  // First-response clock (null hours = no response SLA on this ticket).
+  response_sla_hours           Int?
+  response_due_at              DateTime?
+  responded_at                 DateTime?
+  response_breached            Boolean   @default(false)
+  // On-hold pauses the resolution clock; on resume sla_due_at is pushed forward.
+  on_hold                      Boolean   @default(false)
+  hold_since                   DateTime?
+  total_hold_seconds           Int       @default(0)
+  reopen_count                 Int       @default(0)
   accepted_at                  DateTime?
   resolved_at                  DateTime?
   closed_at                    DateTime?
@@ -1762,6 +1828,60 @@ model TicketNotification {
   created_at      DateTime @default(now())
 
   @@map("ticket_notifications")
+}
+
+// A named pool of people who resolve tickets for a given type/category/template —
+// the "Maintenance team", "IT helpdesk", etc. Members are the only people who
+// surface in the assignee picker for tickets routed here.
+model TicketResolverGroup {
+  id                  String                   @id @default(uuid())
+  organization_id     String
+  name                String
+  description         String?                  @db.Text
+  department_id       String?
+  assignment_strategy TicketAssignmentStrategy @default(round_robin)
+  is_active           Boolean                  @default(true)
+  created_at          DateTime                 @default(now())
+  updated_at          DateTime                 @updatedAt
+
+  members    TicketResolverGroupMember[]
+  types      TicketType[]
+  categories TicketCategory[]
+  templates  TicketTemplate[]
+
+  @@map("ticket_resolver_groups")
+}
+
+model TicketResolverGroupMember {
+  id                String   @id @default(uuid())
+  organization_id   String
+  resolver_group_id String
+  user_id           String
+  created_at        DateTime @default(now())
+
+  resolver_group TicketResolverGroup @relation(fields: [resolver_group_id], references: [id], onDelete: Cascade)
+
+  @@unique([resolver_group_id, user_id])
+  @@map("ticket_resolver_group_members")
+}
+
+// Mirrors ChecklistTemplateAccessRule — gates who may pick a ticket template when
+// raising. Union of department/role/user grants, minus exclusions; departments
+// cascade to sub-departments unless include_sub_departments is toggled off.
+model TicketTemplateAccessRule {
+  id                      String                   @id @default(uuid())
+  organization_id         String
+  template_id             String
+  kind                    TicketTemplateAccessKind
+  department_id           String?
+  include_sub_departments Boolean                  @default(true)
+  role_id                 String?
+  user_id                 String?
+  created_at              DateTime                 @default(now())
+
+  template TicketTemplate @relation(fields: [template_id], references: [id], onDelete: Cascade)
+
+  @@map("ticket_template_access_rules")
 }
 
 // ─── Holiday & Working Days ───────────────────────────────────────────────────
