@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { Plus, X, Search, CornerDownRight } from 'lucide-react'
+import { Plus, X, Search, CornerDownRight, ChevronRight } from 'lucide-react'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
 import { descendantsOf } from '@/lib/dept-tree'
 import type { Department, Role, EmployeeProfile } from '@/lib/types'
@@ -43,6 +43,36 @@ function CountBadge({ n }: { n: number }) {
     <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold leading-none">
       {n}
     </span>
+  )
+}
+
+/** Collapsible list of the sub-departments swept in by a cascading rule.
+ *  Collapsed by default to save space; the count stays visible as a badge. */
+function SubDepartmentList({ subs }: { subs: ReturnType<typeof descendantsOf> }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-[6px] bg-[#F1F5F9] px-2.5 py-2">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-1.5 text-[11px] font-semibold text-[#64748B]"
+      >
+        <ChevronRight size={12} className={`text-[#94A3B8] transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span>Sub-departments</span>
+        <CountBadge n={subs.length} />
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1">
+          {subs.map(({ dept, depth }) => (
+            <div key={dept.id} className="flex items-center gap-1.5 text-xs text-[#475569]" style={{ paddingLeft: depth * 14 }}>
+              <CornerDownRight size={12} className="text-[#CBD5E1] shrink-0" />
+              <span className="truncate">{dept.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -402,15 +432,7 @@ export default function ChecklistAccessEditor({
                     subs.length === 0 ? (
                       <p className="text-[11px] text-[#94A3B8] pl-0.5">No sub-departments — this covers the department only.</p>
                     ) : (
-                      <div className="rounded-[6px] bg-[#F1F5F9] px-2.5 py-2 space-y-1">
-                        <p className="text-[11px] font-semibold text-[#64748B]">Includes {subs.length} sub-department{subs.length !== 1 ? 's' : ''}:</p>
-                        {subs.map(({ dept, depth }) => (
-                          <div key={dept.id} className="flex items-center gap-1.5 text-xs text-[#475569]" style={{ paddingLeft: depth * 14 }}>
-                            <CornerDownRight size={12} className="text-[#CBD5E1] shrink-0" />
-                            <span className="truncate">{dept.name}</span>
-                          </div>
-                        ))}
-                      </div>
+                      <SubDepartmentList subs={subs} />
                     )
                   )}
                 </div>
