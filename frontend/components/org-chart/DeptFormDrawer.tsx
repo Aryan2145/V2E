@@ -7,6 +7,7 @@ import { createDepartment, updateDepartment } from '@/lib/api/departments'
 import { placeUnderParent } from '@/lib/org-chart-layout'
 import { BRANCH_PALETTE } from '@/lib/org-chart-colors'
 import Button from '@/components/ui/Button'
+import EmployeePicker from '@/components/ui/EmployeePicker'
 import type { Department, User } from '@/lib/types'
 
 export type DeptFormTarget =
@@ -174,18 +175,14 @@ export default function DeptFormDrawer({
           </div>
           <div>
             <label className={labelCls}>Department Head</label>
-            <select
+            <EmployeePicker
               value={headUserId}
-              onChange={(e) => setHeadUserId(e.target.value)}
-              className={inputCls}
-            >
-              <option value="">No head assigned</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
+              onChange={setHeadUserId}
+              employees={users.map((u) => ({ user_id: u.id, name: u.name }))}
+              title="Select Department Head"
+              placeholder="No head assigned"
+              allowClear
+            />
           </div>
           <div>
             <label className={labelCls}>Node Color</label>
