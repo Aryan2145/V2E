@@ -388,6 +388,17 @@ export default function ChecklistAccessEditor({
               const subs = r.department_id ? descendantsOf(departments, r.department_id) : []
               return (
                 <div key={r._key} className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-2.5 space-y-2">
+                  {/* Remove sits at the top-right of the row, above the picker */}
+                  <div className="flex justify-end -mt-1 -mb-1">
+                    <button
+                      type="button"
+                      onClick={() => removeDept(r)}
+                      aria-label="Remove department"
+                      className="p-1 -mr-1 text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
                   <DepartmentSelect
                     value={r.department_id ?? ''}
                     onChange={(id) => update(r._key, { department_id: id })}
@@ -396,37 +407,26 @@ export default function ChecklistAccessEditor({
                     inline
                     lockedReason={(id) => lockReasonFor(r._key, id)}
                   />
-                  {/* Toggle on the left, compact remove on the right — no wasted column beside the select */}
-                  <div className="flex items-center justify-between gap-2">
-                    <button
-                      type="button"
-                      onClick={() => update(r._key, { include_sub_departments: !cascade })}
-                      className="flex items-center gap-2 text-xs text-[#475569]"
+                  <button
+                    type="button"
+                    onClick={() => update(r._key, { include_sub_departments: !cascade })}
+                    className="flex items-center gap-2 text-xs text-[#475569]"
+                  >
+                    <span
+                      className={[
+                        'relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0',
+                        cascade ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
+                      ].join(' ')}
                     >
                       <span
                         className={[
-                          'relative w-9 h-5 rounded-full transition-colors duration-200 shrink-0',
-                          cascade ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
+                          'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200',
+                          cascade ? 'translate-x-4' : 'translate-x-0',
                         ].join(' ')}
-                      >
-                        <span
-                          className={[
-                            'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200',
-                            cascade ? 'translate-x-4' : 'translate-x-0',
-                          ].join(' ')}
-                        />
-                      </span>
-                      Include sub-departments
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeDept(r)}
-                      aria-label="Remove department"
-                      className="p-1 -mr-0.5 text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
+                      />
+                    </span>
+                    Include sub-departments
+                  </button>
                   {/* When cascading, spell out exactly which sub-departments are swept in. */}
                   {r.department_id && cascade && (
                     subs.length === 0 ? (
