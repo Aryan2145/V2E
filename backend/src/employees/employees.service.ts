@@ -131,6 +131,8 @@ export class EmployeesService {
       }
     }
 
+    const password_hash = await bcrypt.hash(password, 12);
+
     const { profile, createdUserId } = await this.prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { email } });
 
@@ -144,7 +146,6 @@ export class EmployeesService {
           );
         }
       } else {
-        const password_hash = await bcrypt.hash(password, 12);
         user = await tx.user.create({
           data: { name, email, password_hash, is_active: true },
         });

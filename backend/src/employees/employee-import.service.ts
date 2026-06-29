@@ -122,6 +122,15 @@ export class EmployeeImportService {
     const createdUserByEmail = new Map<string, string>();
     let created = 0;
 
+    // Pre-hash passwords in parallel outside transaction to avoid blocking connection pool
+    const hashedPasswords = await Promise.all(
+      ordered.map(async (p) => {
+        const hash = await bcrypt.hash(p.password, 12);
+        return { email: p.email, hash };
+      }),
+    );
+    const passwordHashMap = new Map(hashedPasswords.map((h) => [h.email, h.hash]));
+
     for (const p of ordered) {
       try {
         // Resolve a manager that pointed at another file row, now that it exists.
@@ -141,7 +150,7 @@ export class EmployeeImportService {
             });
             if (existing) throw new Error('A user with this email already exists in this organization');
           } else {
-            const password_hash = await bcrypt.hash(p.password, 12);
+            const password_hash = passwordHashMap.get(p.email)!;
             user = await tx.user.create({ data: { name: p.name, email: p.email, password_hash, is_active: true } });
           }
           await tx.organizationMember.create({

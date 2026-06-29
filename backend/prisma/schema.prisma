@@ -429,6 +429,7 @@ model LearningPathAssignment {
   path_progress    LearningPathProgress?
 
   @@unique([path_id, employee_profile_id])
+  @@index([employee_profile_id])
   @@map("learning_path_assignments")
 }
 
@@ -446,6 +447,7 @@ model LearningItemProgress {
   item       LearningItem           @relation(fields: [item_id], references: [id], onDelete: Cascade)
 
   @@unique([assignment_id, item_id])
+  @@index([employee_profile_id])
   @@map("learning_item_progress")
 }
 
@@ -992,6 +994,9 @@ model Task {
   comments   TaskComment[]
 
   @@index([goal_id])
+  @@index([organization_id])
+  @@index([created_by_user_id])
+  @@index([department_id])
   @@map("tasks")
 }
 
@@ -1008,6 +1013,8 @@ model TaskAssignee {
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
   @@unique([task_id, user_id])
+  @@index([user_id])
+  @@index([organization_id])
   @@map("task_assignees")
 }
 
@@ -1023,6 +1030,8 @@ model TaskChecklist {
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
+  @@index([task_id])
+  @@index([organization_id])
   @@map("task_checklists")
 }
 
@@ -1108,6 +1117,8 @@ model TaskReminder {
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
+  @@index([task_id])
+  @@index([organization_id])
   @@map("task_reminders")
 }
 
@@ -1125,6 +1136,9 @@ model TaskEscalation {
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
+  @@index([task_id])
+  @@index([organization_id])
+  @@index([escalate_to_user_id])
   @@map("task_escalations")
 }
 
@@ -1139,6 +1153,8 @@ model TaskActivityLog {
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
+  @@index([task_id])
+  @@index([organization_id])
   @@map("task_activity_logs")
 }
 
@@ -1159,6 +1175,8 @@ model TaskComment {
   reply_to_comment TaskComment?  @relation("CommentReplies", fields: [reply_to_comment_id], references: [id])
   replies          TaskComment[] @relation("CommentReplies")
 
+  @@index([task_id])
+  @@index([organization_id])
   @@map("task_comments")
 }
 
