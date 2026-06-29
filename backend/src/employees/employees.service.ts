@@ -57,14 +57,27 @@ export class EmployeesService {
       throw new NotFoundException(`Employee ${id} not found in this organization`);
     }
 
-    // Build reporting chain up to 5 levels
-    const reportingChain: typeof profile.reporting_to[] = [];
-    let currentUserId = profile.reporting_to_user_id;
-    let depth = 0;
+    // Build reporting chain up to 5 levels using a recursive query to avoid N+1 sequential DB calls
+    const chainIds: { user_id: string }[] = await this.prisma.$queryRaw`
+      WITH RECURSIVE reporting_chain AS (
+        SELECT user_id, reporting_to_user_id, 1 as depth
+        FROM employee_profiles
+        WHERE user_id = ${profile.user_id} AND organization_id = ${orgId}
+        UNION ALL
+        SELECT p.user_id, p.reporting_to_user_id, rc.depth + 1
+        FROM employee_profiles p
+        INNER JOIN reporting_chain rc ON p.user_id = rc.reporting_to_user_id
+        WHERE rc.depth < 5 AND p.organization_id = ${orgId}
+      )
+      SELECT user_id FROM reporting_chain WHERE user_id <> ${profile.user_id} ORDER BY depth ASC;
+    `;
 
-    while (currentUserId && depth < 5) {
-      const managerProfile = await this.prisma.employeeProfile.findFirst({
-        where: { user_id: currentUserId, organization_id: orgId },
+    const userIds = chainIds.map((c) => c.user_id);
+    let reportingChain: any[] = [];
+
+    if (userIds.length > 0) {
+      const managers = await this.prisma.employeeProfile.findMany({
+        where: { user_id: { in: userIds }, organization_id: orgId },
         include: {
           user: { select: USER_SELECT },
           role: { select: { id: true, title: true, level: true } },
@@ -72,11 +85,8 @@ export class EmployeesService {
         },
       });
 
-      if (!managerProfile) break;
-
-      reportingChain.push(managerProfile.user as any);
-      currentUserId = managerProfile.reporting_to_user_id ?? null;
-      depth++;
+      const managerMap = new Map(managers.map((m) => [m.user_id, m.user]));
+      reportingChain = userIds.map((uid) => managerMap.get(uid)).filter(Boolean);
     }
 
     return { ...profile, reporting_chain: reportingChain };
@@ -298,15 +308,46 @@ export class EmployeesService {
   }
 
   async getPeopleEvents(orgId: string, windowDays = 30) {
-    const profiles = await this.prisma.employeeProfile.findMany({
-      where: { organization_id: orgId, status: 'active' },
-      include: { user: { select: { id: true, name: true, email: true } } },
-    });
-
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const windowEnd = new Date(today);
     windowEnd.setDate(windowEnd.getDate() + windowDays);
+
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const startMMDD = `${pad(today.getMonth() + 1)}${pad(today.getDate())}`;
+    const endMMDD = `${pad(windowEnd.getMonth() + 1)}${pad(windowEnd.getDate())}`;
+
+    const dateCondition = (col: string) => {
+      if (startMMDD <= endMMDD) {
+        return `${col} IS NOT NULL AND TO_CHAR(${col}, 'MMDD') BETWEEN '${startMMDD}' AND '${endMMDD}'`;
+      } else {
+        return `${col} IS NOT NULL AND (TO_CHAR(${col}, 'MMDD') >= '${startMMDD}' OR TO_CHAR(${col}, 'MMDD') <= '${endMMDD}')`;
+      }
+    };
+
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    // Query database-filtered matches to avoid fetching all employees into JS memory
+    const profiles = await this.prisma.$queryRawUnsafe<any[]>(`
+      SELECT 
+        ep.id,
+        ep.user_id,
+        ep.date_of_birth,
+        ep.marriage_date,
+        ep.date_of_joining,
+        u.name,
+        u.email
+      FROM employee_profiles ep
+      INNER JOIN users u ON ep.user_id = u.id
+      WHERE ep.organization_id = $1 AND ep.status = 'active'
+        AND (
+          (${dateCondition('ep.date_of_birth')})
+          OR (${dateCondition('ep.marriage_date')})
+          OR (${dateCondition('ep.date_of_joining')})
+          OR (ep.date_of_joining IS NOT NULL AND ep.date_of_joining > $2 AND ep.date_of_joining <= $3)
+        );
+    `, orgId, thirtyDaysAgo, today);
 
     // Returns the next calendar occurrence of a month/day on or after today
     function nextOccurrence(month: number, day: number): Date {
@@ -330,20 +371,18 @@ export class EmployeesService {
     const newHirings: any[] = [];
     const workAnniversaries: any[] = [];
 
-    const thirtyDaysAgo = new Date(today);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-
     for (const p of profiles) {
       const base = {
         user_id: p.user_id,
-        name: p.user.name,
+        name: p.name,
         avatar_url: null,
       };
 
       // Birthdays
       if (p.date_of_birth) {
-        const m = p.date_of_birth.getMonth() + 1;
-        const d = p.date_of_birth.getDate();
+        const dob = new Date(p.date_of_birth);
+        const m = dob.getMonth() + 1;
+        const d = dob.getDate();
         const next = nextOccurrence(m, d);
         if (next <= windowEnd) {
           const isToday = next.getTime() === today.getTime();
@@ -357,11 +396,12 @@ export class EmployeesService {
 
       // Marriage anniversaries
       if (p.marriage_date) {
-        const m = p.marriage_date.getMonth() + 1;
-        const d = p.marriage_date.getDate();
+        const mDate = new Date(p.marriage_date);
+        const m = mDate.getMonth() + 1;
+        const d = mDate.getDate();
         const next = nextOccurrence(m, d);
         if (next <= windowEnd) {
-          const years = next.getFullYear() - p.marriage_date.getFullYear();
+          const years = next.getFullYear() - mDate.getFullYear();
           const isToday = next.getTime() === today.getTime();
           anniversaries.push({
             ...base,
@@ -374,22 +414,26 @@ export class EmployeesService {
         }
       }
 
-      // New hirings — joined in the last 30 days (strictly less than 30 days ago)
-      if (p.date_of_joining && p.date_of_joining > thirtyDaysAgo && p.date_of_joining <= today) {
-        const diffDays = Math.floor((today.getTime() - p.date_of_joining.getTime()) / 86400000);
-        newHirings.push({
-          ...base,
-          event_date: p.date_of_joining.toISOString().split('T')[0],
-          label: diffDays === 0 ? 'Joined Today' : `Joined ${diffDays} day${diffDays !== 1 ? 's' : ''} ago`,
-        });
+      // New hirings — joined in the last 30 days
+      if (p.date_of_joining) {
+        const doj = new Date(p.date_of_joining);
+        if (doj > thirtyDaysAgo && doj <= today) {
+          const diffDays = Math.floor((today.getTime() - doj.getTime()) / 86400000);
+          newHirings.push({
+            ...base,
+            event_date: doj.toISOString().split('T')[0],
+            label: diffDays === 0 ? 'Joined Today' : `Joined ${diffDays} day${diffDays !== 1 ? 's' : ''} ago`,
+          });
+        }
       }
 
-      // Work anniversaries — anniversary of joining, at least 1 year
+      // Work anniversaries
       if (p.date_of_joining) {
-        const m = p.date_of_joining.getMonth() + 1;
-        const d = p.date_of_joining.getDate();
+        const doj = new Date(p.date_of_joining);
+        const m = doj.getMonth() + 1;
+        const d = doj.getDate();
         const next = nextOccurrence(m, d);
-        const years = next.getFullYear() - p.date_of_joining.getFullYear();
+        const years = next.getFullYear() - doj.getFullYear();
         if (next <= windowEnd && years >= 1) {
           const isToday = next.getTime() === today.getTime();
           workAnniversaries.push({

@@ -29,6 +29,7 @@ import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
 import { TERMINAL_TYPES, isSuccessful, isTerminal } from './status-phase';
 import { ancestorChain, descendantIds } from '../holidays/dept-tree.util';
+import { TasksAnalyticsService } from './tasks-analytics.service';
 
 const TASK_INCLUDE = {
   status: true,
@@ -78,6 +79,7 @@ export class TasksService {
     private readonly clock: ClockService,
     private readonly checklistAccess: ChecklistAccessService,
     private readonly visibility: AccessVisibilityService,
+    private readonly analytics: TasksAnalyticsService,
   ) {
     this.scope.registerWiredList(TasksService.TASK_LEAF);
     this.visibility.registerCounter(TasksService.TASK_LEAF, (orgId, userId) =>
@@ -439,7 +441,7 @@ export class TasksService {
     }
     if (filters.quadrant) where.quadrant = filters.quadrant as any;
     if (filters.type) where.type = filters.type as any;
-    if (filters.timing) Object.assign(where, this.timingWhere(filters.timing as any));
+    if (filters.timing) Object.assign(where, this.analytics.timingWhere(filters.timing as any));
     if (filters.search) {
       where.OR = [
         { title: { contains: filters.search, mode: 'insensitive' } },
@@ -586,322 +588,28 @@ export class TasksService {
       return {
         applied_scope: null,
         max_scope: max,
-        kpis: this.emptyKpis(),
+        kpis: this.analytics.emptyKpis(),
         by_status: [], by_priority: [], by_category: [], by_department: [], by_type: [],
         by_assignee: [], by_assigner: [], by_role: [],
-        by_timing: this.emptyTiming(), trend: [], trend_monthly: [],
+        by_timing: this.analytics.emptyTiming(), trend: [], trend_monthly: [],
       };
     }
 
     const now = await this.clock.now(orgId);
 
     const [kpis, dims, people, by_timing, trend, trend_monthly] = await Promise.all([
-      this.kpiFor(orgId, where, now),
-      this.dimensionBreakdowns(orgId, where),
-      this.peopleDimensions(orgId, where),
-      this.timingTotals(where),
-      this.trendSeries(where, now),
-      this.trendMonthlySeries(where, now),
+      this.analytics.kpiFor(orgId, where, now),
+      this.analytics.dimensionBreakdowns(orgId, where),
+      this.analytics.peopleDimensions(orgId, where),
+      this.analytics.timingTotals(where),
+      this.analytics.trendSeries(where, now),
+      this.analytics.trendMonthlySeries(where, now),
     ]);
 
     return { applied_scope: effective, max_scope: max, kpis, ...dims, ...people, by_timing, trend, trend_monthly };
   }
 
-  // ─── Dashboard helpers (shared by dashboard + employee report) ─────────────────
 
-  /**
-   * Completion-timing taxonomy. A task falls in exactly one bucket:
-   *  - completed → its persisted `completion_timing` (early | on_time | late)
-   *  - open & past deadline (`is_overdue`) → overdue
-   *  - open & on/before deadline → pending
-   * `completion_timing` is non-null only for completed tasks, so it always wins.
-   */
-  private static readonly TIMINGS = ['early', 'on_time', 'late', 'overdue', 'incomplete', 'pending'] as const;
-
-  private emptyTiming(): Record<(typeof TasksService.TIMINGS)[number], number> {
-    return { early: 0, on_time: 0, late: 0, overdue: 0, incomplete: 0, pending: 0 };
-  }
-
-  /** Prisma `where` fragment isolating one timing bucket (composed onto a task where). */
-  private timingWhere(t: (typeof TasksService.TIMINGS)[number]): any {
-    switch (t) {
-      case 'early': return { completion_timing: 'early' };
-      case 'on_time': return { completion_timing: 'on_time' };
-      case 'late': return { completion_timing: 'late' };
-      case 'incomplete': return { completion_timing: 'incomplete' };
-      case 'overdue': return { completion_timing: null, is_overdue: true };
-      case 'pending': return { completion_timing: null, is_overdue: false };
-    }
-  }
-
-  /** Which timing bucket a (completion_timing, is_overdue) pair belongs to. */
-  private timingOf(ct: string | null, isOverdue: boolean): (typeof TasksService.TIMINGS)[number] {
-    if (ct === 'early' || ct === 'on_time' || ct === 'late' || ct === 'incomplete') return ct;
-    return isOverdue ? 'overdue' : 'pending';
-  }
-
-  private emptyKpis() {
-    return {
-      total: 0, not_started: 0, ongoing: 0, completed: 0, overdue: 0, due_today: 0, due_week: 0, recurring: 0,
-      completed_early: 0, completed_on_time: 0, completed_late: 0, critical_high_open: 0,
-      completion_rate: 0, on_time_rate: 0, recurring_share: 0, delta: null as number | null,
-      overdue_aging: { d0_7: 0, d8_30: 0, d30_plus: 0 },
-    };
-  }
-
-  /** The two highest-severity priority ids (lowest order_index) — our "Critical / High" set. */
-  private async highPriorityIds(orgId: string): Promise<string[]> {
-    const ps = await this.prisma.taskPriority.findMany({
-      where: { organization_id: orgId, is_active: true },
-      orderBy: { order_index: 'asc' }, take: 2, select: { id: true },
-    });
-    return ps.map((p) => p.id);
-  }
-
-  /** Headline KPI counts + rates for a task `where`, sim-clock aware. */
-  private async kpiFor(orgId: string, where: any, now: Date) {
-    const c = (extra: any = {}) => this.prisma.task.count({ where: { ...where, ...extra } });
-    const highIds = await this.highPriorityIds(orgId);
-    const open = { status: { type: { notIn: TERMINAL_TYPES } } };
-    // Overdue-aging windows (open + past deadline, bucketed by how long overdue).
-    const d7 = new Date(now.getTime() - 7 * 86_400_000);
-    const d30 = new Date(now.getTime() - 30 * 86_400_000);
-    const [
-      total, not_started, ongoing, completed, overdue, due_today, due_week, recurring,
-      completed_early, completed_on_time, completed_late, critical_high_open,
-      age0_7, age8_30, age30_plus,
-    ] = await Promise.all([
-      c(), c(this.bucketWhere('not_started', now)), c(this.bucketWhere('ongoing', now)), c(this.bucketWhere('completed', now)),
-      c(this.bucketWhere('overdue', now)), c(this.bucketWhere('due_today', now)), c(this.bucketWhere('due_week', now)), c(this.bucketWhere('recurring', now)),
-      c(this.timingWhere('early')), c(this.timingWhere('on_time')), c(this.timingWhere('late')),
-      highIds.length ? c({ priority_id: { in: highIds }, ...open }) : Promise.resolve(0),
-      c({ deadline: { gte: d7, lt: now }, ...open }),
-      c({ deadline: { gte: d30, lt: d7 }, ...open }),
-      c({ deadline: { lt: d30 }, ...open }),
-    ]);
-    const pct = (n: number, d: number) => (d > 0 ? Math.round((n / d) * 100) : 0);
-    const delta = await this.momCompletionDelta(where, now);
-    return {
-      total, not_started, ongoing, completed, overdue, due_today, due_week, recurring,
-      completed_early, completed_on_time, completed_late, critical_high_open,
-      completion_rate: pct(completed, total),
-      on_time_rate: pct(completed_early + completed_on_time, completed),
-      recurring_share: pct(recurring, total),
-      delta,
-      overdue_aging: { d0_7: age0_7, d8_30: age8_30, d30_plus: age30_plus },
-    };
-  }
-
-  /** Month-over-month change (pts) in completion rate of tasks DUE this vs last month. */
-  private async momCompletionDelta(where: any, now: Date): Promise<number | null> {
-    const monthRate = async (start: Date, end: Date): Promise<number | null> => {
-      const window = { deadline: { gte: start, lt: end } };
-      const [tot, comp] = await Promise.all([
-        this.prisma.task.count({ where: { ...where, ...window } }),
-        this.prisma.task.count({ where: { ...where, ...window, status: { type: 'completed' } } }),
-      ]);
-      return tot ? Math.round((comp / tot) * 100) : null;
-    };
-    const thisStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const nextStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const lastStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const [tR, lR] = await Promise.all([monthRate(thisStart, nextStart), monthRate(lastStart, thisStart)]);
-    return tR != null && lR != null ? tR - lR : null;
-  }
-
-  /** Fold a `[dim, completion_timing, is_overdue]` groupBy into per-key total + timing sub-counts. */
-  private foldTimingGroups<K extends string>(groups: any[], keyField: K) {
-    const map = new Map<string, { total: number; timing: ReturnType<TasksService['emptyTiming']> }>();
-    for (const g of groups) {
-      const key = g[keyField];
-      if (key == null) continue;
-      let e = map.get(key);
-      if (!e) { e = { total: 0, timing: this.emptyTiming() }; map.set(key, e); }
-      const n = g._count._all;
-      e.total += n;
-      e.timing[this.timingOf(g.completion_timing, g.is_overdue)] += n;
-    }
-    return map;
-  }
-
-  /** Overall timing distribution for a task `where`. */
-  private async timingTotals(where: any) {
-    const groups = await this.prisma.task.groupBy({ by: ['completion_timing', 'is_overdue'], where, _count: { _all: true } });
-    const out = this.emptyTiming();
-    for (const g of groups) out[this.timingOf(g.completion_timing, g.is_overdue)] += g._count._all;
-    return out;
-  }
-
-  /** Status / priority / category / department / type / assigner breakdowns, each with timing sub-counts. */
-  private async dimensionBreakdowns(orgId: string, where: any) {
-    const [statusGroups, priorityGroups, categoryGroups, deptGroups, typeGroups, assignerGroups] = await Promise.all([
-      this.prisma.task.groupBy({ by: ['status_id', 'completion_timing', 'is_overdue'], where, _count: { _all: true } }),
-      this.prisma.task.groupBy({ by: ['priority_id', 'completion_timing', 'is_overdue'], where, _count: { _all: true } }),
-      this.prisma.task.groupBy({ by: ['category_id', 'completion_timing', 'is_overdue'], where, _count: { _all: true } }),
-      this.prisma.task.groupBy({ by: ['department_id', 'completion_timing', 'is_overdue'], where, _count: { _all: true } }),
-      this.prisma.task.groupBy({ by: ['type', 'completion_timing', 'is_overdue'], where, _count: { _all: true } }),
-      this.prisma.task.groupBy({ by: ['created_by_user_id', 'completion_timing', 'is_overdue'], where, _count: { _all: true } }),
-    ]);
-    const statusFold = this.foldTimingGroups(statusGroups, 'status_id');
-    const priorityFold = this.foldTimingGroups(priorityGroups, 'priority_id');
-    const categoryFold = this.foldTimingGroups(categoryGroups, 'category_id');
-    const deptFold = this.foldTimingGroups(deptGroups, 'department_id');
-    const typeFold = this.foldTimingGroups(typeGroups, 'type');
-    const assignerFold = this.foldTimingGroups(assignerGroups, 'created_by_user_id');
-
-    const [statuses, priorities, categories, depts, assignerNames] = await Promise.all([
-      this.prisma.taskStatus.findMany({ where: { organization_id: orgId }, select: { id: true, label: true, color: true, type: true, order_index: true } }),
-      this.prisma.taskPriority.findMany({ where: { organization_id: orgId }, select: { id: true, label: true, color: true, order_index: true } }),
-      this.prisma.taskCategory.findMany({ where: { organization_id: orgId }, select: { id: true, name: true, color: true } }),
-      this.prisma.department.findMany({ where: { id: { in: [...deptFold.keys()] } }, select: { id: true, name: true, color: true } }),
-      this.enrichUserNames([...assignerFold.keys()]),
-    ]);
-    const statusMap = new Map(statuses.map((s) => [s.id, s]));
-    const priorityMap = new Map(priorities.map((p) => [p.id, p]));
-    const categoryMap = new Map(categories.map((c2) => [c2.id, c2]));
-    const deptMap = new Map(depts.map((d) => [d.id, d]));
-    const f = (m: Map<string, any>, id: string) => m.get(id) ?? { total: 0, timing: this.emptyTiming() };
-
-    return {
-      by_status: statuses
-        .filter((s) => statusFold.has(s.id))
-        .map((s) => ({ id: s.id, label: s.label, color: s.color, type: s.type, order_index: s.order_index, total: f(statusFold, s.id).total, timing: f(statusFold, s.id).timing }))
-        .sort((a, b) => a.order_index - b.order_index),
-      by_priority: priorities
-        .filter((p) => priorityFold.has(p.id))
-        .map((p) => ({ id: p.id, label: p.label, color: p.color, order_index: p.order_index, total: f(priorityFold, p.id).total, timing: f(priorityFold, p.id).timing }))
-        .sort((a, b) => a.order_index - b.order_index),
-      by_category: [...categoryFold.entries()].map(([id, v]) => {
-        const cat = categoryMap.get(id);
-        return { id, label: cat?.name ?? 'Uncategorized', color: cat?.color ?? '#94A3B8', total: v.total, timing: v.timing };
-      }).sort((a, b) => b.total - a.total),
-      by_department: [...deptFold.entries()].map(([id, v]) => {
-        const d = deptMap.get(id);
-        return { id, label: d?.name ?? 'Unassigned', color: d?.color ?? '#94A3B8', total: v.total, timing: v.timing };
-      }).sort((a, b) => b.total - a.total),
-      by_type: [...typeFold.entries()].map(([id, v]) => ({ id, label: id, total: v.total, timing: v.timing })),
-      by_assigner: [...assignerFold.entries()]
-        .map(([id, v]) => ({ id, label: assignerNames.get(id)?.name ?? 'Unknown', total: v.total, timing: v.timing }))
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 12),
-    };
-  }
-
-  private async enrichUserNames(ids: (string | null | undefined)[]) {
-    const uniq = [...new Set(ids.filter((x): x is string => !!x))];
-    if (!uniq.length) return new Map<string, { id: string; name: string; email: string }>();
-    const users = await this.prisma.user.findMany({ where: { id: { in: uniq } }, select: { id: true, name: true, email: true } });
-    return new Map(users.map((u) => [u.id, u]));
-  }
-
-  /**
-   * Per-user timing sub-counts for the (non-CC) assignees of a task `where`, returned both
-   * keyed by user and rolled up by the assignee's job role. Five small groupBys (one per
-   * timing bucket) since timing lives on the related task, not the assignee row.
-   *
-   * Flag: a multi-assignee task contributes to EACH of its assignees' (and roles') counts —
-   * this is workload distribution, not a unique-task count.
-   */
-  private async peopleDimensions(orgId: string, where: any) {
-    const timingGroups = await Promise.all(
-      TasksService.TIMINGS.map((t) =>
-        this.prisma.taskAssignee.groupBy({
-          by: ['user_id'],
-          where: { is_cc: false, task: { ...where, ...this.timingWhere(t) } },
-          _count: { _all: true },
-        }),
-      ),
-    );
-    // user_id → timing counts
-    const byUser = new Map<string, { total: number; timing: ReturnType<TasksService['emptyTiming']> }>();
-    TasksService.TIMINGS.forEach((t, i) => {
-      for (const g of timingGroups[i]) {
-        let e = byUser.get(g.user_id);
-        if (!e) { e = { total: 0, timing: this.emptyTiming() }; byUser.set(g.user_id, e); }
-        e.total += g._count._all;
-        e.timing[t] += g._count._all;
-      }
-    });
-
-    const [names, profiles] = await Promise.all([
-      this.enrichUserNames([...byUser.keys()]),
-      this.prisma.employeeProfile.findMany({
-        where: { organization_id: orgId, user_id: { in: [...byUser.keys()] } },
-        select: { user_id: true, role: { select: { id: true, title: true } } },
-      }),
-    ]);
-    const roleOf = new Map(profiles.map((p) => [p.user_id, p.role]));
-
-    const by_assignee = [...byUser.entries()]
-      .map(([id, v]) => ({ id, label: names.get(id)?.name ?? 'Unknown', total: v.total, timing: v.timing }))
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 12);
-
-    // Roll users up into their job role.
-    const byRole = new Map<string, { label: string; total: number; timing: ReturnType<TasksService['emptyTiming']> }>();
-    for (const [uid, v] of byUser.entries()) {
-      const role = roleOf.get(uid);
-      const key = role?.id ?? '__none__';
-      let e = byRole.get(key);
-      if (!e) { e = { label: role?.title ?? 'No role', total: 0, timing: this.emptyTiming() }; byRole.set(key, e); }
-      e.total += v.total;
-      (Object.keys(v.timing) as (keyof typeof v.timing)[]).forEach((k) => (e!.timing[k] += v.timing[k]));
-    }
-    const by_role = [...byRole.entries()]
-      .map(([id, v]) => ({ id: id === '__none__' ? null : id, label: v.label, total: v.total, timing: v.timing }))
-      .sort((a, b) => b.total - a.total);
-
-    return { by_assignee, by_role };
-  }
-
-  /** Weekly created/completed/on-time series for the last `weeks` weeks (Sunday-start). */
-  private async trendSeries(where: any, now: Date, weeks = 8) {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    start.setDate(start.getDate() - start.getDay());
-    const baseWhere = { ...where };
-    delete baseWhere.created_at; // the trend defines its own window
-    const buckets = Array.from({ length: weeks }, (_, i) => {
-      const from = new Date(start); from.setDate(from.getDate() - (weeks - 1 - i) * 7);
-      const to = new Date(from); to.setDate(to.getDate() + 7);
-      return { from, to };
-    });
-    return Promise.all(
-      buckets.map(async ({ from, to }) => {
-        const [created, completed, on_time] = await Promise.all([
-          this.prisma.task.count({ where: { ...baseWhere, created_at: { gte: from, lt: to } } }),
-          this.prisma.task.count({ where: { ...baseWhere, status: { type: 'completed' }, updated_at: { gte: from, lt: to } } }),
-          this.prisma.task.count({ where: { ...baseWhere, completion_timing: { in: ['early', 'on_time'] }, updated_at: { gte: from, lt: to } } }),
-        ]);
-        return { week: from.toISOString().slice(0, 10), created, completed, on_time };
-      }),
-    );
-  }
-
-  /**
-   * Monthly due-vs-completed series (last `months`), bucketed by DEADLINE month: how many tasks
-   * were due each month, how many of those completed, and the on-time share of completed.
-   * Drives the composed trend chart's on-time% line.
-   */
-  private async trendMonthlySeries(where: any, now: Date, months = 8) {
-    const baseWhere = { ...where };
-    delete baseWhere.created_at;
-    const buckets = Array.from({ length: months }, (_, i) => {
-      const from = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1);
-      const to = new Date(from.getFullYear(), from.getMonth() + 1, 1);
-      return { from, to };
-    });
-    return Promise.all(
-      buckets.map(async ({ from, to }) => {
-        const window = { deadline: { gte: from, lt: to } };
-        const [due, completed, on_time] = await Promise.all([
-          this.prisma.task.count({ where: { ...baseWhere, ...window } }),
-          this.prisma.task.count({ where: { ...baseWhere, ...window, status: { type: 'completed' } } }),
-          this.prisma.task.count({ where: { ...baseWhere, ...window, completion_timing: { in: ['early', 'on_time'] } } }),
-        ]);
-        return { month: from.toISOString().slice(0, 10), due, completed, on_time, on_time_rate: completed ? Math.round((on_time / completed) * 100) : null };
-      }),
-    );
-  }
 
   // ─── People tree (org-chart drill) ─────────────────────────────────────────────
 
@@ -939,23 +647,23 @@ export class TasksService {
     const openTask = { status: { type: { notIn: TERMINAL_TYPES } } };
 
     const [names, aTotal, aOverdue, aDone, asg, timingGroups] = await Promise.all([
-      this.enrichUserNames(userIds),
+      this.analytics.enrichUserNames(userIds),
       this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: base }, _count: { _all: true } }),
       this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: { ...base, deadline: { lt: now }, ...openTask } }, _count: { _all: true } }),
       this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: { ...base, status: { type: 'completed' } } }, _count: { _all: true } }),
       this.prisma.task.groupBy({ by: ['created_by_user_id'], where: { ...base, created_by_user_id: { in: userIds } }, _count: { _all: true } }),
-      Promise.all(TasksService.TIMINGS.map((t) =>
-        this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: { ...base, ...this.timingWhere(t) } }, _count: { _all: true } }),
+      Promise.all(TasksAnalyticsService.TIMINGS.map((t) =>
+        this.prisma.taskAssignee.groupBy({ by: ['user_id'], where: { is_cc: false, user_id: { in: userIds }, task: { ...base, ...this.analytics.timingWhere(t) } }, _count: { _all: true } }),
       )),
     ]);
     const cnt = (arr: any[], key: string) => new Map(arr.map((g) => [g[key], g._count._all]));
     const totM = cnt(aTotal, 'user_id'), ovM = cnt(aOverdue, 'user_id'), dnM = cnt(aDone, 'user_id'), asgM = cnt(asg, 'created_by_user_id');
     // user_id → assignee timing sub-counts (for the People-lens MiniBars; rolled up client-side).
-    const timingM = new Map<string, ReturnType<TasksService['emptyTiming']>>();
-    TasksService.TIMINGS.forEach((t, i) => {
+    const timingM = new Map<string, ReturnType<TasksAnalyticsService['emptyTiming']>>();
+    TasksAnalyticsService.TIMINGS.forEach((t, i) => {
       for (const g of timingGroups[i]) {
         let e = timingM.get(g.user_id);
-        if (!e) { e = this.emptyTiming(); timingM.set(g.user_id, e); }
+        if (!e) { e = this.analytics.emptyTiming(); timingM.set(g.user_id, e); }
         e[t] += g._count._all;
       }
     });
@@ -967,7 +675,7 @@ export class TasksService {
       department_name: p.department?.name ?? null,
       reporting_to_user_id: p.reporting_to_user_id,
       assignee: { total: totM.get(p.user_id) ?? 0, overdue: ovM.get(p.user_id) ?? 0, completed: dnM.get(p.user_id) ?? 0 },
-      assignee_timing: timingM.get(p.user_id) ?? this.emptyTiming(),
+      assignee_timing: timingM.get(p.user_id) ?? this.analytics.emptyTiming(),
       assigned_count: asgM.get(p.user_id) ?? 0,
     }));
     return { nodes, root_user_id: principal.userId };
@@ -1004,9 +712,9 @@ export class TasksService {
     const asAssigner = { ...base, created_by_user_id: targetUserId };
 
     const [assigneeKpis, assignerKpis, assigneeDims] = await Promise.all([
-      this.kpiFor(orgId, asAssignee, now),
-      this.kpiFor(orgId, asAssigner, now),
-      this.dimensionBreakdowns(orgId, asAssignee),
+      this.analytics.kpiFor(orgId, asAssignee, now),
+      this.analytics.kpiFor(orgId, asAssigner, now),
+      this.analytics.dimensionBreakdowns(orgId, asAssignee),
     ]);
 
     return {
@@ -1020,7 +728,7 @@ export class TasksService {
   // ─── Work flow (assigner → assignee source relationship) ───────────────────────
 
   private emptySourceItem(id: string, label: string) {
-    return { id, label, total: 0, timing: this.emptyTiming() };
+    return { id, label, total: 0, timing: this.analytics.emptyTiming() };
   }
 
   /**
@@ -1042,7 +750,7 @@ export class TasksService {
       applied_scope: null as DataScope | null, max_scope: max,
       by_source: [] as any[], matrix: { depts: [] as any[], rows: [] as any[] },
       incoming_by_source: [] as any[], external_by_dept: [] as any[],
-      outgoing: { by_dept: [] as any[], overdue: 0 }, delegated: { total: 0, open: 0, overdue: 0, timing: this.emptyTiming() },
+      outgoing: { by_dept: [] as any[], overdue: 0 }, delegated: { total: 0, open: 0, overdue: 0, timing: this.analytics.emptyTiming() },
     };
     if (effective === null) return empty;
 
@@ -1095,7 +803,7 @@ export class TasksService {
     const externalByDept = new Map<string, ReturnType<TasksService['emptySourceItem']>>();
     const outgoingByDept = new Map<string, ReturnType<TasksService['emptySourceItem']>>();
     let outgoingOverdue = 0;
-    const delegated = { total: 0, open: 0, overdue: 0, timing: this.emptyTiming() };
+    const delegated = { total: 0, open: 0, overdue: 0, timing: this.analytics.emptyTiming() };
 
     const relOf = (aDept: string | null | undefined, bDept: string | null | undefined): (typeof REL)[number] => {
       if (!aDept || !bDept) return 'external';
@@ -1104,7 +812,7 @@ export class TasksService {
     };
 
     for (const t of tasks) {
-      const timing = this.timingOf(t.completion_timing, t.is_overdue);
+      const timing = this.analytics.timingOf(t.completion_timing, t.is_overdue);
       const assignerDept = userDept.get(t.created_by_user_id);
       const assignerRoot = assignerDept ? rootOf.get(assignerDept) : undefined;
       const assignerInSet = mySet ? mySet.has(t.created_by_user_id) : true;
