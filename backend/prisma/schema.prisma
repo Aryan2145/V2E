@@ -713,6 +713,17 @@ enum CompletionMode {
   any_can_complete
 }
 
+// How a TERMINAL task landed against its deadline. Null while the task is open
+// (open timing is derived live from is_overdue). Set once when the task closes and
+// never recomputed, so it never goes stale. `incomplete` = closed unsuccessfully
+// (a terminal `incomplete` status, e.g. a recurring task that was never done).
+enum CompletionTiming {
+  early
+  on_time
+  late
+  incomplete
+}
+
 enum ReminderType {
   assignee
   assigner
@@ -961,6 +972,8 @@ model Task {
   deadline             DateTime?
   is_overdue           Boolean        @default(false) // persisted by the auto-overdue sweep (mirrors Ticket.sla_breached)
   overdue_at           DateTime?      // business time the task crossed its deadline
+  completed_at         DateTime?      // when the task reached a terminal `completed` status
+  completion_timing    CompletionTiming? // early/on_time/late vs deadline, set once at completion
   recurring_template_id     String?
   workflow_instance_step_id String?
   goal_id              String?        // links a task to a QUARTERLY goal (initiative)

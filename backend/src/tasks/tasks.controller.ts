@@ -144,6 +144,8 @@ export class TasksController {
     @Query('priority_id') priority_id?: string,
     @Query('category_id') category_id?: string,
     @Query('department_id') department_id?: string,
+    @Query('department_ids') department_ids?: string,
+    @Query('role_id') role_id?: string,
     @Query('created_by_user_id') created_by_user_id?: string,
     @Query('assignee_user_id') assignee_user_id?: string,
     @Query('type') type?: string,
@@ -153,8 +155,31 @@ export class TasksController {
   ) {
     return this.service.getDashboard(orgId, principalFromUser(req.user), {
       scope: toDataScope(scope),
-      status_id, priority_id, category_id, department_id, created_by_user_id,
+      status_id, priority_id, category_id, department_id, department_ids, role_id, created_by_user_id,
       assignee_user_id, type, search, from_date, to_date,
+    });
+  }
+
+  @Get('flow')
+  @ApiOperation({ summary: 'Scope-aware work-flow analytics: source relationship, cross-dept matrix, delegation' })
+  getWorkFlow(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: string,
+    @Query('status_id') status_id?: string,
+    @Query('priority_id') priority_id?: string,
+    @Query('category_id') category_id?: string,
+    @Query('department_id') department_id?: string,
+    @Query('department_ids') department_ids?: string,
+    @Query('role_id') role_id?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('from_date') from_date?: string,
+    @Query('to_date') to_date?: string,
+  ) {
+    return this.service.getWorkFlow(orgId, principalFromUser(req.user), {
+      scope: toDataScope(scope),
+      status_id, priority_id, category_id, department_id, department_ids, role_id, type, search, from_date, to_date,
     });
   }
 
@@ -172,6 +197,11 @@ export class TasksController {
     @Query('priority_id') priority_id?: string,
     @Query('category_id') category_id?: string,
     @Query('department_id') department_id?: string,
+    @Query('department_ids') department_ids?: string,
+    @Query('role_id') role_id?: string,
+    @Query('timing') timing?: string,
+    @Query('assigner_person_dept_id') assigner_person_dept_id?: string,
+    @Query('assignee_person_dept_id') assignee_person_dept_id?: string,
     @Query('created_by_user_id') created_by_user_id?: string,
     @Query('assignee_user_id') assignee_user_id?: string,
     @Query('type') type?: string,
@@ -182,7 +212,7 @@ export class TasksController {
     return this.service.listTasksPaged(
       orgId,
       principalFromUser(req.user),
-      { status_id, priority_id, category_id, department_id, created_by_user_id, assignee_user_id, type, search, from_date, to_date },
+      { status_id, priority_id, category_id, department_id, department_ids, role_id, timing, assigner_person_dept_id, assignee_person_dept_id, created_by_user_id, assignee_user_id, type, search, from_date, to_date },
       toDataScope(scope),
       page ? parseInt(page, 10) : 1,
       page_size ? parseInt(page_size, 10) : 25,
@@ -201,13 +231,15 @@ export class TasksController {
     @Query('priority_id') priority_id?: string,
     @Query('category_id') category_id?: string,
     @Query('department_id') department_id?: string,
+    @Query('department_ids') department_ids?: string,
+    @Query('role_id') role_id?: string,
     @Query('type') type?: string,
     @Query('search') search?: string,
     @Query('from_date') from_date?: string,
     @Query('to_date') to_date?: string,
   ) {
     return this.service.getPeopleTree(orgId, principalFromUser(req.user), toDataScope(scope), {
-      status_id, priority_id, category_id, department_id, type, search, from_date, to_date,
+      status_id, priority_id, category_id, department_id, department_ids, role_id, type, search, from_date, to_date,
     });
   }
 
@@ -234,6 +266,11 @@ export class TasksController {
     @Query('priority_id') priority_id?: string,
     @Query('category_id') category_id?: string,
     @Query('department_id') department_id?: string,
+    @Query('department_ids') department_ids?: string,
+    @Query('role_id') role_id?: string,
+    @Query('timing') timing?: string,
+    @Query('assigner_person_dept_id') assigner_person_dept_id?: string,
+    @Query('assignee_person_dept_id') assignee_person_dept_id?: string,
     @Query('created_by_user_id') created_by_user_id?: string,
     @Query('assignee_user_id') assignee_user_id?: string,
     @Query('type') type?: string,
@@ -244,7 +281,7 @@ export class TasksController {
     return this.service.exportCsv(
       orgId,
       principalFromUser(req.user),
-      { status_id, priority_id, category_id, department_id, created_by_user_id, assignee_user_id, type, search, from_date, to_date },
+      { status_id, priority_id, category_id, department_id, department_ids, role_id, timing, assigner_person_dept_id, assignee_person_dept_id, created_by_user_id, assignee_user_id, type, search, from_date, to_date },
       toDataScope(scope),
       bucket,
     );

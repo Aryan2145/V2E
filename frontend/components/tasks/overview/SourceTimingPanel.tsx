@@ -1,0 +1,60 @@
+'use client'
+
+import React from 'react'
+import type { SourceItem } from '@/lib/types/tasks'
+import TimingMiniBar from './TimingMiniBar'
+import TimingLegend from './TimingLegend'
+
+/**
+ * A "where work comes from" panel: each source row (Immediate / Same-dept / External, or a
+ * department) shown as a timing bar + total + overdue%. Click a row to open its task list.
+ * Reused across Own / Team / Org for source, incoming, external-load and outgoing cuts.
+ */
+export default function SourceTimingPanel({
+  title,
+  hint,
+  items,
+  onSelect,
+  emptyText = 'No work in this view.',
+}: {
+  title: string
+  hint?: string
+  items: SourceItem[]
+  onSelect?: (item: SourceItem) => void
+  emptyText?: string
+}) {
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-4 flex flex-col">
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">{title}</h3>
+        {hint && <span className="text-xs text-[#94A3B8]">{hint}</span>}
+      </div>
+      {items.length === 0 ? (
+        <p className="text-sm text-[#475569] py-8 text-center">{emptyText}</p>
+      ) : (
+        <div className="space-y-2.5">
+          {items.map((it) => {
+            const overdueRate = it.total ? Math.round((it.timing.overdue / it.total) * 100) : 0
+            const Row = onSelect ? 'button' : 'div'
+            return (
+              <Row
+                key={it.id}
+                {...(onSelect ? { onClick: () => onSelect(it), type: 'button' as const } : {})}
+                className={`w-full text-left rounded-[10px] border border-[#E2E8F0] px-3.5 py-2.5 transition-colors ${onSelect ? 'hover:border-[#2563EB] hover:bg-[#F8FAFC]' : ''}`}
+              >
+                <div className="flex items-center justify-between gap-3 mb-1.5">
+                  <span className="font-semibold text-sm text-[#0F172A] truncate">{it.label}</span>
+                  <span className="text-xs tabular-nums whitespace-nowrap" style={{ color: overdueRate >= 25 ? '#DC2626' : '#475569' }}>
+                    <span className="font-bold">{overdueRate}%</span> overdue · {it.total}
+                  </span>
+                </div>
+                <TimingMiniBar timing={it.timing} />
+              </Row>
+            )
+          })}
+        </div>
+      )}
+      <div className="pt-3 mt-1"><TimingLegend /></div>
+    </div>
+  )
+}

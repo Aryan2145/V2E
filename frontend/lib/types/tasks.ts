@@ -102,6 +102,8 @@ export interface Task {
   }
   reopen_expires_at?: string
   is_overdue?: boolean
+  completed_at?: string | null
+  completion_timing?: 'early' | 'on_time' | 'late' | 'incomplete' | null
   created_at: string
   updated_at: string
   category?: TaskCategory
@@ -361,6 +363,38 @@ export interface TaskReportData {
 
 export type WorkScope = 'own' | 'team' | 'department' | 'org'
 
+/** Completion-timing taxonomy — the analytical spine of the Work dashboard. */
+export type Timing = 'early' | 'on_time' | 'late' | 'overdue' | 'incomplete' | 'pending'
+
+export const TIMINGS: Timing[] = ['early', 'on_time', 'late', 'overdue', 'incomplete', 'pending']
+
+export type TimingCounts = Record<Timing, number>
+
+/** Brand-system colors + labels for each timing bucket (DESIGN_RULES palette). */
+export const TIMING_META: Record<Timing, { label: string; color: string }> = {
+  early: { label: 'Completed Early', color: '#16A34A' },   // success green
+  on_time: { label: 'Completed On-Time', color: '#2563EB' }, // primary blue
+  late: { label: 'Completed Late', color: '#D97706' },     // warning amber
+  overdue: { label: 'Overdue', color: '#DC2626' },         // danger red
+  incomplete: { label: 'Incomplete', color: '#92400E' },   // dark amber/brown — closed-not-done
+  pending: { label: 'Pending', color: '#94A3B8' },         // muted slate
+}
+
+export const emptyTiming = (): TimingCounts => ({ early: 0, on_time: 0, late: 0, overdue: 0, incomplete: 0, pending: 0 })
+
+/** Sum two timing-count records (used for subtree roll-ups on the client). */
+export function addTiming(a: TimingCounts, b: TimingCounts): TimingCounts {
+  return { early: a.early + b.early, on_time: a.on_time + b.on_time, late: a.late + b.late, overdue: a.overdue + b.overdue, incomplete: a.incomplete + b.incomplete, pending: a.pending + b.pending }
+}
+
+/** Which timing bucket a single task falls in (mirrors the server's classification). */
+export function taskTiming(t: Task): Timing {
+  if (t.completion_timing) return t.completion_timing
+  if (t.status?.type === 'completed') return 'on_time'
+  if (t.status?.type === 'incomplete') return 'incomplete'
+  return t.is_overdue ? 'overdue' : 'pending'
+}
+
 export interface DashboardKpis {
   total: number
   not_started: number
@@ -370,6 +404,16 @@ export interface DashboardKpis {
   due_today: number
   due_week: number
   recurring: number
+  // Timing-derived headline metrics
+  completed_early: number
+  completed_on_time: number
+  completed_late: number
+  critical_high_open: number
+  completion_rate: number
+  on_time_rate: number
+  recurring_share: number
+  delta: number | null // month-over-month completion-rate change (pts)
+  overdue_aging: { d0_7: number; d8_30: number; d30_plus: number }
 }
 
 export interface DashboardBreakdownItem {
@@ -379,12 +423,22 @@ export interface DashboardBreakdownItem {
   type?: string | null
   order_index?: number
   total: number
+  timing: TimingCounts
 }
 
 export interface TrendPoint {
   week: string
   created: number
   completed: number
+  on_time: number
+}
+
+export interface MonthlyTrendPoint {
+  month: string
+  due: number
+  completed: number
+  on_time: number
+  on_time_rate: number | null
 }
 
 export interface TaskDashboard {
@@ -398,7 +452,36 @@ export interface TaskDashboard {
   by_type: DashboardBreakdownItem[]
   by_assignee: DashboardBreakdownItem[]
   by_assigner: DashboardBreakdownItem[]
+  by_role: DashboardBreakdownItem[]
+  by_timing: TimingCounts
   trend: TrendPoint[]
+  trend_monthly: MonthlyTrendPoint[]
+}
+
+/** A source/flow breakdown row (Immediate/Same-dept/External, or a department). */
+export interface SourceItem {
+  id: string
+  label: string
+  total: number
+  timing: TimingCounts
+}
+
+/** Cross-department giving×receiving heatmap (top-level departments). */
+export interface FlowMatrix {
+  depts: { id: string; name: string; color?: string | null }[]
+  rows: { from: string; cells: number[] }[]
+}
+
+/** Scope-aware "where work comes from" analytics (from GET /tasks/flow). */
+export interface WorkFlow {
+  applied_scope: WorkScope | null
+  max_scope: WorkScope | null
+  by_source: SourceItem[]              // Immediate / Same-dept / External (assignee perspective)
+  matrix: FlowMatrix                   // giving root × receiving root (org)
+  incoming_by_source: SourceItem[]     // Within team / Same dept / External (team/dept scope)
+  external_by_dept: SourceItem[]       // which outside department loads us most
+  outgoing: { by_dept: SourceItem[]; overdue: number } // work the set pushed outside
+  delegated: { total: number; open: number; overdue: number; timing: TimingCounts } // work the set handed out
 }
 
 export interface PersonNode {
@@ -408,6 +491,7 @@ export interface PersonNode {
   department_name: string | null
   reporting_to_user_id: string | null
   assignee: { total: number; overdue: number; completed: number }
+  assignee_timing: TimingCounts
   assigned_count: number
 }
 
@@ -426,6 +510,7 @@ export interface EmployeeReport {
     by_category: DashboardBreakdownItem[]
     by_department: DashboardBreakdownItem[]
     by_type: DashboardBreakdownItem[]
+    by_assigner: DashboardBreakdownItem[]
   }
 }
 
@@ -446,6 +531,11 @@ export interface WorkQuery {
   priority_id?: string
   category_id?: string
   department_id?: string
+  department_ids?: string // comma-separated — a department subtree drill
+  role_id?: string // job-role drill (resolved to its assignees server-side)
+  timing?: Timing // a completion-timing slice
+  assigner_person_dept_id?: string // matrix drill: tasks given by a department's people
+  assignee_person_dept_id?: string // matrix drill: tasks received by a department's people
   created_by_user_id?: string
   assignee_user_id?: string
   type?: string

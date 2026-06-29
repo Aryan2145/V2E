@@ -1,0 +1,136 @@
+'use client'
+
+import React, { useMemo } from 'react'
+import { ChevronRight, ExternalLink } from 'lucide-react'
+import { addTiming, emptyTiming, type PersonNode, type TimingCounts } from '@/lib/types/tasks'
+import TimingMiniBar from './TimingMiniBar'
+import TimingLegend from './TimingLegend'
+
+interface PersonStat {
+  user_id: string
+  name: string
+  role_title: string | null
+  isManager: boolean
+  teamSize: number
+  personal: TimingCounts
+  personalTotal: number
+  team: TimingCounts
+  teamTotal: number
+  teamOverdueRate: number
+}
+
+function useForest(nodes: PersonNode[]) {
+  return useMemo(() => {
+    const byId = new Map(nodes.map((n) => [n.user_id, n]))
+    const childrenOf = new Map<string | null, PersonNode[]>()
+    for (const n of nodes) {
+      const parent = n.reporting_to_user_id && byId.has(n.reporting_to_user_id) ? n.reporting_to_user_id : null
+      const key = parent === n.user_id ? null : parent
+      if (!childrenOf.has(key)) childrenOf.set(key, [])
+      childrenOf.get(key)!.push(n)
+    }
+    const subtree = (id: string): PersonNode[] => {
+      const kids = childrenOf.get(id) ?? []
+      return [byId.get(id)!, ...kids.flatMap((k) => subtree(k.user_id))]
+    }
+    const stat = (n: PersonNode): PersonStat => {
+      const team = subtree(n.user_id)
+      const teamTiming = team.reduce((acc, p) => addTiming(acc, p.assignee_timing), emptyTiming())
+      const teamTotal = Object.values(teamTiming).reduce((a, b) => a + b, 0)
+      const personalTotal = Object.values(n.assignee_timing).reduce((a, b) => a + b, 0)
+      return {
+        user_id: n.user_id,
+        name: n.name,
+        role_title: n.role_title,
+        isManager: (childrenOf.get(n.user_id)?.length ?? 0) > 0,
+        teamSize: team.length - 1,
+        personal: n.assignee_timing,
+        personalTotal,
+        team: teamTiming,
+        teamTotal,
+        teamOverdueRate: teamTotal ? Math.round((teamTiming.overdue / teamTotal) * 100) : 0,
+      }
+    }
+    return { byId, childrenOf, stat }
+  }, [nodes])
+}
+
+/**
+ * People lens: for each person, their personal track record vs their whole team's (subtree
+ * roll-up over the reporting tree). Managers drill into their reports; anyone can be opened
+ * as a full employee report. Ranked by team overdue share.
+ */
+export default function PeopleLeaderboard({
+  nodes,
+  drillUserId,
+  onDrill,
+  onOpenReport,
+}: {
+  nodes: PersonNode[]
+  drillUserId: string | null
+  onDrill: (userId: string) => void
+  onOpenReport: (userId: string) => void
+}) {
+  const { childrenOf, stat } = useForest(nodes)
+
+  const rows = useMemo(() => {
+    const list = drillUserId ? childrenOf.get(drillUserId) ?? [] : childrenOf.get(null) ?? []
+    return list.map(stat).sort((a, b) => b.teamOverdueRate - a.teamOverdueRate || b.teamTotal - a.teamTotal)
+  }, [drillUserId, childrenOf, stat])
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] flex flex-col h-[460px]">
+      <div className="flex items-center justify-between px-4 pt-4 pb-3 shrink-0">
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">People · personal vs team</h3>
+        <span className="text-xs text-[#94A3B8]">click a manager to drill in</span>
+      </div>
+      <div className="flex-1 overflow-y-auto px-4 space-y-2">
+        {rows.length === 0 ? (
+          <p className="text-sm text-[#475569] py-10 text-center">No people in this view.</p>
+        ) : (
+          rows.map((s) => (
+            <div key={s.user_id} className="rounded-[10px] border border-[#E2E8F0] px-3.5 py-2.5 hover:border-[#CBD5E1] transition-colors">
+              <div className="flex items-center justify-between gap-3 mb-1.5">
+                <button
+                  onClick={() => (s.isManager ? onDrill(s.user_id) : onOpenReport(s.user_id))}
+                  className="flex items-center gap-2 min-w-0 group text-left"
+                >
+                  <span className="font-semibold text-sm text-[#0F172A] truncate group-hover:text-[#2563EB]">{s.name}</span>
+                  {s.isManager ? (
+                    <span className="text-[11px] font-semibold rounded-full px-2 py-0.5 bg-[#EFF6FF] text-[#2563EB] shrink-0">team of {s.teamSize}</span>
+                  ) : (
+                    <span className="text-[11px] font-medium rounded-full px-2 py-0.5 bg-[#F1F5F9] text-[#475569] shrink-0">individual</span>
+                  )}
+                  {s.isManager && <ChevronRight size={14} className="text-[#94A3B8] group-hover:text-[#2563EB] shrink-0" />}
+                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-xs tabular-nums whitespace-nowrap" style={{ color: s.teamOverdueRate >= 25 ? '#DC2626' : '#475569' }}>
+                    <span className="font-bold">{s.teamOverdueRate}%</span> overdue{s.isManager ? ' (team)' : ''}
+                  </span>
+                  <button onClick={() => onOpenReport(s.user_id)} title="Open report" className="text-[#94A3B8] hover:text-[#2563EB]">
+                    <ExternalLink size={13} />
+                  </button>
+                </div>
+              </div>
+              <div className="grid items-center gap-x-2.5 gap-y-1" style={{ gridTemplateColumns: '58px 1fr auto' }}>
+                <span className="text-xs text-[#94A3B8]">Personal</span>
+                <TimingMiniBar timing={s.personal} />
+                <span className="text-xs tabular-nums text-[#475569]">{s.personalTotal}</span>
+                {s.isManager && (
+                  <>
+                    <span className="text-xs font-medium text-[#2563EB]">Team</span>
+                    <TimingMiniBar timing={s.team} />
+                    <span className="text-xs tabular-nums font-semibold text-[#0F172A]">{s.teamTotal}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="px-4 py-3 border-t border-[#F1F5F9] shrink-0">
+        <TimingLegend />
+      </div>
+    </div>
+  )
+}

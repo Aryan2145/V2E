@@ -21,6 +21,7 @@ import type {
   TaskReportData,
   CollectiveOrgTasks,
   TaskDashboard,
+  WorkFlow,
   PagedTasks,
   WorkQuery,
   PeopleTree,
@@ -189,6 +190,11 @@ export const tasksApi = {
   getDashboard: async (orgId: string, query: WorkQuery = {}): Promise<TaskDashboard> => {
     const res = await apiClient.get(`${base(orgId)}/dashboard${workQs(query)}`)
     return unwrap<TaskDashboard>(res)
+  },
+
+  getWorkFlow: async (orgId: string, query: WorkQuery = {}): Promise<WorkFlow> => {
+    const res = await apiClient.get(`${base(orgId)}/flow${workQs(query)}`)
+    return unwrap<WorkFlow>(res)
   },
 
   listTasksPaged: async (orgId: string, query: WorkQuery = {}): Promise<PagedTasks> => {

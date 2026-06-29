@@ -40,7 +40,7 @@ export default function KpiTiles({
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-3">
       {TILES.map((t) => {
-        const value = t.key === 'total' ? kpis.total : kpis[t.key]
+        const value = (t.key === 'total' ? kpis.total : kpis[t.key]) as number
         const isActive = active === t.bucket
         return (
           <button

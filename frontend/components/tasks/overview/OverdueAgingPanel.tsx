@@ -1,0 +1,52 @@
+'use client'
+
+import React from 'react'
+import { AlertTriangle } from 'lucide-react'
+import type { DashboardKpis } from '@/lib/types/tasks'
+
+export type AgingBand = 'd0_7' | 'd8_30' | 'd30_plus'
+
+/**
+ * Overdue-aging strip: how long the open, past-due work has been slipping. A wall of
+ * 30d+ overdue is a very different signal from a flat overdue count. Each band opens the
+ * matching slice (overdue tasks within that age window).
+ */
+export default function OverdueAgingPanel({
+  aging,
+  onSelect,
+}: {
+  aging: DashboardKpis['overdue_aging']
+  onSelect?: (band: AgingBand) => void
+}) {
+  const bands: { key: AgingBand; label: string; value: number; color: string }[] = [
+    { key: 'd0_7', label: '1–7 days', value: aging.d0_7, color: '#D97706' },
+    { key: 'd8_30', label: '8–30 days', value: aging.d8_30, color: '#DC2626' },
+    { key: 'd30_plus', label: '30+ days', value: aging.d30_plus, color: '#991B1B' },
+  ]
+  const total = bands.reduce((s, b) => s + b.value, 0)
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <span className="w-7 h-7 rounded-[8px] bg-[#FEF2F2] text-[#DC2626] grid place-items-center"><AlertTriangle size={15} /></span>
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">Overdue aging</h3>
+        <span className="text-xs text-[#94A3B8] ml-auto">{total} open & past due</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2.5">
+        {bands.map((b) => {
+          const Tag = onSelect ? 'button' : 'div'
+          return (
+            <Tag
+              key={b.key}
+              {...(onSelect ? { type: 'button' as const, onClick: () => onSelect(b.key) } : {})}
+              className={`text-left rounded-[10px] border border-[#E2E8F0] px-3.5 py-3 transition-colors ${onSelect ? 'hover:border-[#2563EB] hover:bg-[#F8FAFC]' : ''}`}
+            >
+              <div className="text-2xl font-bold tabular-nums leading-none" style={{ color: b.value > 0 ? b.color : '#94A3B8' }}>{b.value}</div>
+              <div className="text-[13px] text-[#475569] mt-1">{b.label}</div>
+            </Tag>
+          )
+        })}
+      </div>
+    </div>
+  )
+}

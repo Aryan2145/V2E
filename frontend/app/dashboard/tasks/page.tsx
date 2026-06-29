@@ -1,28 +1,44 @@
 'use client'
 
-import React, { useEffect, useState, useMemo, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
+import { getDepartments } from '@/lib/api/departments'
+import type { Department } from '@/lib/types'
 import type {
   Task, TaskCategory, TaskPriority, TaskStatus, TaskDashboard, PeopleTree as PeopleTreeData,
-  WorkScope, WorkBucket, WorkQuery,
+  WorkScope, WorkBucket, WorkQuery, Timing, WorkFlow,
 } from '@/lib/types/tasks'
+import { TIMING_META } from '@/lib/types/tasks'
+import { buildDeptForest, subtreeIds, pathTo } from '@/lib/tasks/dept-tree'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
 import ScopeSwitcher from '@/components/tasks/overview/ScopeSwitcher'
-import KpiTiles from '@/components/tasks/overview/KpiTiles'
+import ViewToggle, { type View } from '@/components/tasks/overview/ViewToggle'
+import LensToggle, { type Lens } from '@/components/tasks/overview/LensToggle'
+import TaskTable, { type TableFilterKey } from '@/components/tasks/overview/TaskTable'
+import DrillHero from '@/components/tasks/overview/DrillHero'
+import KpiCards from '@/components/tasks/overview/KpiCards'
+import DeptLeaderboard from '@/components/tasks/overview/DeptLeaderboard'
+import DeptBreakdownChart, { type BreakdownDim } from '@/components/tasks/overview/DeptBreakdownChart'
+import PeopleLeaderboard from '@/components/tasks/overview/PeopleLeaderboard'
+import CrossDeptMatrix from '@/components/tasks/overview/CrossDeptMatrix'
+import OwnView from '@/components/tasks/overview/OwnView'
+import TeamView from '@/components/tasks/overview/TeamView'
+import StatusTimingChart from '@/components/tasks/overview/StatusTimingChart'
+import PrioritySpreadChart from '@/components/tasks/overview/PrioritySpreadChart'
+import CategorySpreadChart from '@/components/tasks/overview/CategorySpreadChart'
+import MonthlyTrendChart from '@/components/tasks/overview/MonthlyTrendChart'
+import KeyInsights from '@/components/tasks/overview/KeyInsights'
+import SegmentDrawer from '@/components/tasks/overview/SegmentDrawer'
 import TaskRow from '@/components/tasks/overview/TaskRow'
 import TaskDrawer from '@/components/tasks/overview/TaskDrawer'
-import BreakdownPanel, { type BreakdownSelection } from '@/components/tasks/overview/BreakdownPanel'
-import TrendChart from '@/components/tasks/overview/TrendChart'
-import PeopleTree from '@/components/tasks/overview/PeopleTree'
 import BulkActionBar from '@/components/tasks/overview/BulkActionBar'
 import SelectField from '@/components/ui/SelectField'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
 import { usePermissions } from '@/lib/auth/use-permissions'
-import {
-  Plus, Search, CheckSquare, SlidersHorizontal, X, BarChart3, Download, ListChecks,
-} from 'lucide-react'
+import { Plus, Search, SlidersHorizontal, X, BarChart3, Download, ListChecks, CheckSquare } from 'lucide-react'
 
 const PAGE_SIZE = 25
 
@@ -33,19 +49,31 @@ const SCOPE_BLURB: Record<WorkScope, string> = {
   org: 'All work across the organization.',
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
 export default function TasksOverviewPage() {
   const { user } = useAuth()
+  const router = useRouter()
   const orgId = user?.organizationId ?? ''
   const { can, loading: permsLoading } = usePermissions()
 
-  // Masters
+  // Masters + departments
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
 
-  // Scope + filters
+  // View (analytics canvas vs data table)
+  const [view, setView] = useState<View>('analytics')
+
+  // Scope / lens / drill
   const [requestedScope, setRequestedScope] = useState<WorkScope | undefined>(undefined)
-  const [bucket, setBucket] = useState<WorkBucket | null>(null)
+  const [lens, setLens] = useState<Lens>('dept')
+  const [deptDrill, setDeptDrill] = useState<string | null>(null)
+  const [personDrill, setPersonDrill] = useState<string | null>(null)
+  const [breakdownDim, setBreakdownDim] = useState<BreakdownDim>('dept')
+
+  // Filters
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [statusId, setStatusId] = useState('')
@@ -53,16 +81,17 @@ export default function TasksOverviewPage() {
   const [categoryId, setCategoryId] = useState('')
   const [departmentId, setDepartmentId] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
-  const [assigneeUserId, setAssigneeUserId] = useState('')
-  const [createdById, setCreatedById] = useState('')
+  const [timingFilter, setTimingFilter] = useState('')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [sort, setSort] = useState('created_desc')
   const [showFilters, setShowFilters] = useState(false)
   const [showInsights, setShowInsights] = useState(true)
+  const [bucket, setBucket] = useState<WorkBucket | null>(null)
 
   // Data
   const [dashboard, setDashboard] = useState<TaskDashboard | null>(null)
+  const [flow, setFlow] = useState<WorkFlow | null>(null)
   const [tree, setTree] = useState<PeopleTreeData | null>(null)
   const [rows, setRows] = useState<Task[]>([])
   const [total, setTotal] = useState(0)
@@ -71,14 +100,13 @@ export default function TasksOverviewPage() {
   const [loadingList, setLoadingList] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
 
-  // Selection / bulk
+  // Selection / drawers
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkBusy, setBulkBusy] = useState(false)
-
-  // UI
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [segment, setSegment] = useState<{ title: string; subtitle: string; query: WorkQuery } | null>(null)
 
   useEffect(() => {
     const t = setTimeout(() => setSearch(searchInput.trim()), 350)
@@ -91,10 +119,28 @@ export default function TasksOverviewPage() {
       tasksApi.getCategories(orgId).catch(() => []),
       tasksApi.getPriorities(orgId).catch(() => []),
       tasksApi.getStatuses(orgId).catch(() => []),
-    ]).then(([c, p, s]) => { setCategories(c); setPriorities(p); setStatuses(s) })
+      getDepartments(orgId).catch(() => [] as Department[]),
+    ]).then(([c, p, s, d]) => { setCategories(c); setPriorities(p); setStatuses(s); setDepartments(d) })
   }, [orgId])
 
-  const filters: WorkQuery = useMemo(() => ({
+  const forest = useMemo(() => buildDeptForest(departments), [departments])
+
+  // ── People forest (reporting structure, from the tree) ────────────────────────
+  const peopleForest = useMemo(() => {
+    const nodes = tree?.nodes ?? []
+    const byId = new Map(nodes.map((n) => [n.user_id, n]))
+    const childrenOf = new Map<string | null, string[]>()
+    for (const n of nodes) {
+      const parent = n.reporting_to_user_id && byId.has(n.reporting_to_user_id) && n.reporting_to_user_id !== n.user_id ? n.reporting_to_user_id : null
+      if (!childrenOf.has(parent)) childrenOf.set(parent, [])
+      childrenOf.get(parent)!.push(n.user_id)
+    }
+    const subtree = (id: string): string[] => [id, ...(childrenOf.get(id) ?? []).flatMap(subtree)]
+    return { byId, subtree }
+  }, [tree])
+
+  // ── Base filters (the filter bar + scope) ─────────────────────────────────────
+  const baseFilters: WorkQuery = useMemo(() => ({
     scope: requestedScope,
     search: search || undefined,
     status_id: statusId || undefined,
@@ -102,40 +148,70 @@ export default function TasksOverviewPage() {
     category_id: categoryId || undefined,
     department_id: departmentId || undefined,
     type: typeFilter || undefined,
-    assignee_user_id: assigneeUserId || undefined,
-    created_by_user_id: createdById || undefined,
+    timing: (timingFilter || undefined) as WorkQuery['timing'],
     from_date: fromDate || undefined,
     to_date: toDate ? `${toDate}T23:59:59` : undefined,
-  }), [requestedScope, search, statusId, priorityId, categoryId, departmentId, typeFilter, assigneeUserId, createdById, fromDate, toDate])
+  }), [requestedScope, search, statusId, priorityId, categoryId, departmentId, typeFilter, timingFilter, fromDate, toDate])
 
-  // Dashboard (no bucket — the tiles show every bucket).
-  const dashKey = JSON.stringify(filters)
+  // The dept subtree currently drilled (Departments lens).
+  const deptNode = deptDrill ? forest.byId.get(deptDrill) ?? null : null
+  const deptSubtree = deptNode ? subtreeIds(deptNode).join(',') : undefined
+  // The person subtree currently drilled (People lens).
+  const personSubtree = personDrill ? peopleForest.subtree(personDrill).join(',') : undefined
+
+  // Board query — drives KPIs, charts, insights, and the result list (drill-scoped).
+  const boardQuery: WorkQuery = useMemo(() => ({
+    ...baseFilters,
+    ...(lens === 'dept' && deptSubtree ? { department_ids: deptSubtree } : {}),
+    ...(lens === 'people' && personSubtree ? { assignee_user_ids: personSubtree } : {}),
+  }), [baseFilters, lens, deptSubtree, personSubtree])
+
+  // ── Dashboard ─────────────────────────────────────────────────────────────────
+  const boardKey = JSON.stringify(boardQuery)
   useEffect(() => {
     if (!orgId) return
     let cancelled = false
-    tasksApi.getDashboard(orgId, JSON.parse(dashKey)).then((d) => { if (!cancelled) setDashboard(d) }).catch(() => { if (!cancelled) setDashboard(null) })
+    tasksApi.getDashboard(orgId, JSON.parse(boardKey)).then((d) => { if (!cancelled) setDashboard(d) }).catch(() => { if (!cancelled) setDashboard(null) })
     return () => { cancelled = true }
-  }, [orgId, dashKey])
+  }, [orgId, boardKey])
 
   const appliedScope = dashboard?.applied_scope ?? requestedScope ?? 'own'
   const maxScope = dashboard?.max_scope ?? null
-  const showTree = showInsights && (appliedScope === 'team' || appliedScope === 'org' || appliedScope === 'department')
+  const peopleAvailable = appliedScope === 'team' || appliedScope === 'org' || appliedScope === 'department'
+  const isTeamScope = appliedScope === 'team' || appliedScope === 'department'
 
-  // People tree (team/org scope only).
+  // ── Work flow (source relationship / matrix / delegation) — analytics only, lazy ──
+  const flowKey = JSON.stringify(baseFilters)
   useEffect(() => {
-    if (!orgId || !showTree) { setTree(null); return }
+    if (!orgId || view !== 'analytics') return
     let cancelled = false
-    tasksApi.getPeopleTree(orgId, JSON.parse(dashKey)).then((t) => { if (!cancelled) setTree(t) }).catch(() => { if (!cancelled) setTree(null) })
+    tasksApi.getWorkFlow(orgId, JSON.parse(flowKey)).then((f) => { if (!cancelled) setFlow(f) }).catch(() => { if (!cancelled) setFlow(null) })
     return () => { cancelled = true }
-  }, [orgId, dashKey, showTree])
+  }, [orgId, flowKey, view])
 
-  // Result list.
-  const listKey = JSON.stringify({ ...filters, bucket, sort })
+  // ── People tree (unscoped by drill so the full forest is drillable). Needed by the
+  //    People lens (Org) and by the Team layout's roster. ─────────────────────────
+  const treeKey = JSON.stringify(baseFilters)
+  const treeNeeded = (lens === 'people' && peopleAvailable) || (view === 'analytics' && isTeamScope)
+  useEffect(() => {
+    if (!orgId || !treeNeeded) { setTree(null); return }
+    let cancelled = false
+    tasksApi.getPeopleTree(orgId, JSON.parse(treeKey)).then((t) => { if (!cancelled) setTree(t) }).catch(() => { if (!cancelled) setTree(null) })
+    return () => { cancelled = true }
+  }, [orgId, treeKey, treeNeeded])
+
+  // ── Result list ───────────────────────────────────────────────────────────────
+  // The Analytics canvas scopes the list to the current drill + KPI bucket; the Table view
+  // is a flat, fully-filterable list (base filters only, no drill/bucket scoping).
+  const listQuery: WorkQuery = view === 'table' ? baseFilters : boardQuery
+  const effectiveBucket = view === 'table' ? null : bucket
+  const listQueryKey = JSON.stringify(listQuery)
+  const listKey = JSON.stringify({ q: listQuery, bucket: effectiveBucket, sort })
   const fetchList = useCallback(async (pageNum: number, replace: boolean) => {
     if (!orgId) return
     replace ? setLoadingList(true) : setLoadingMore(true)
     try {
-      const res = await tasksApi.listTasksPaged(orgId, { ...filters, bucket: bucket ?? undefined, sort, page: pageNum, page_size: PAGE_SIZE })
+      const res = await tasksApi.listTasksPaged(orgId, { ...JSON.parse(listQueryKey), bucket: effectiveBucket ?? undefined, sort, page: pageNum, page_size: PAGE_SIZE })
       setRows((prev) => (replace ? res.items : [...prev, ...res.items]))
       setTotal(res.total); setHasMore(res.has_more); setPage(res.page)
     } finally {
@@ -148,46 +224,106 @@ export default function TasksOverviewPage() {
 
   const refreshAll = useCallback(() => {
     fetchList(1, true)
-    tasksApi.getDashboard(orgId, JSON.parse(dashKey)).then(setDashboard).catch(() => {})
-    if (showTree) tasksApi.getPeopleTree(orgId, JSON.parse(dashKey)).then(setTree).catch(() => {})
-  }, [fetchList, orgId, dashKey, showTree])
+    tasksApi.getDashboard(orgId, JSON.parse(boardKey)).then(setDashboard).catch(() => {})
+    if (lens === 'people' && peopleAvailable) tasksApi.getPeopleTree(orgId, JSON.parse(treeKey)).then(setTree).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fetchList, orgId, boardKey, treeKey, lens, peopleAvailable])
 
-  // ── Breakdown slicer wiring ───────────────────────────────────────────────────
-  const selection: BreakdownSelection = {
-    status_id: statusId || undefined,
-    priority_id: priorityId || undefined,
-    category_id: categoryId || undefined,
-    department_id: departmentId || undefined,
-    type: typeFilter || undefined,
-    assignee_user_id: assigneeUserId || undefined,
-    created_by_user_id: createdById || undefined,
-  }
-  const SETTERS: Record<keyof BreakdownSelection, (v: string) => void> = {
-    status_id: setStatusId, priority_id: setPriorityId, category_id: setCategoryId,
-    department_id: setDepartmentId, type: setTypeFilter, assignee_user_id: setAssigneeUserId, created_by_user_id: setCreatedById,
-  }
-  const onBreakdownChange = (key: keyof BreakdownSelection, value: string | null) => SETTERS[key](value ?? '')
+  // ── Lens / drill transitions ──────────────────────────────────────────────────
+  function switchLens(l: Lens) { setLens(l); setBucket(null) }
+  function drillDept(id: string) { setDeptDrill(id); setBreakdownDim('dept') }
+  function drillPerson(id: string) { setPersonDrill(id) }
 
-  // ── Active filter pills ───────────────────────────────────────────────────────
+  const deptCrumbs = deptNode ? pathTo(forest.byId, deptNode.id).map((n) => ({ id: n.id, name: n.name })) : []
+  const personCrumbs = useMemo(() => {
+    if (!personDrill) return [] as { id: string; name: string }[]
+    const chain: { id: string; name: string }[] = []
+    let cur = peopleForest.byId.get(personDrill)
+    while (cur) {
+      chain.unshift({ id: cur.user_id, name: cur.name })
+      const pid = cur.reporting_to_user_id
+      cur = pid && pid !== cur.user_id ? peopleForest.byId.get(pid) : undefined
+    }
+    return chain
+  }, [personDrill, peopleForest])
+
+  const drilledPersonName = personDrill ? peopleForest.byId.get(personDrill)?.name : undefined
+
+  // ── Segment drawer openers ──────────────────────────────────────────────────--
+  const openSegment = (title: string, subtitle: string, extra: WorkQuery) =>
+    setSegment({ title, subtitle, query: { ...boardQuery, ...extra } })
+
+  const onStatusSegment = (id: string, label: string, timing: Timing) =>
+    openSegment(label, 'Status × timing', { status_id: id, timing })
+  const onPrioritySegment = (id: string, label: string) => openSegment(`${label} priority`, 'Current view', { priority_id: id })
+  const onCategorySegment = (id: string, label: string) => openSegment(label, 'Category', { category_id: id })
+  const onMonthSegment = (month: string, label: string) => {
+    const d = new Date(month)
+    const to = new Date(d.getFullYear(), d.getMonth() + 1, 0)
+    openSegment(`Due in ${MONTHS[d.getMonth()]} ${d.getFullYear()}`, 'Month', {
+      from_date: month, to_date: `${to.toISOString().slice(0, 10)}T23:59:59`,
+    })
+  }
+  const onDeptBreakdownSegment = (kind: BreakdownDim, id: string, label: string) => {
+    if (kind === 'role') openSegment(label, 'Job role', { role_id: id })
+    else if (kind === 'person') openSegment(label, 'Assignee', { assignee_user_id: id })
+    else {
+      const node = forest.byId.get(id)
+      openSegment(label, 'Sub-department', { department_ids: node ? subtreeIds(node).join(',') : id })
+    }
+  }
+  // Cross-dept matrix cell drill: tasks given by `from` dept's people to `to` dept's people.
+  const onMatrixCell = (fromId: string, fromName: string, toId: string, toName: string) =>
+    openSegment(`${fromName} → ${toName}`, 'Cross-department tasks', { assigner_person_dept_id: fromId, assignee_person_dept_id: toId })
+
+  // ── Filters / pills ─────────────────────────────────────────────────────────--
   const pills = useMemo(() => {
     const list: { label: string; clear: () => void }[] = []
     if (search) list.push({ label: `“${search}”`, clear: () => { setSearch(''); setSearchInput('') } })
     if (statusId) list.push({ label: `Status: ${statuses.find((s) => s.id === statusId)?.label ?? '—'}`, clear: () => setStatusId('') })
     if (priorityId) list.push({ label: `Priority: ${priorities.find((p) => p.id === priorityId)?.label ?? '—'}`, clear: () => setPriorityId('') })
     if (categoryId) list.push({ label: `Category: ${categories.find((c) => c.id === categoryId)?.name ?? '—'}`, clear: () => setCategoryId('') })
-    if (departmentId) list.push({ label: `Dept: ${dashboard?.by_department.find((d) => d.id === departmentId)?.label ?? '—'}`, clear: () => setDepartmentId('') })
-    if (typeFilter) list.push({ label: `Type: ${typeFilter}`, clear: () => setTypeFilter('') })
-    if (assigneeUserId) list.push({ label: `Assigned to: ${dashboard?.by_assignee.find((a) => a.id === assigneeUserId)?.label ?? '—'}`, clear: () => setAssigneeUserId('') })
-    if (createdById) list.push({ label: `Assigned by: ${dashboard?.by_assigner.find((a) => a.id === createdById)?.label ?? '—'}`, clear: () => setCreatedById('') })
+    if (departmentId) list.push({ label: `Dept: ${departments.find((d) => d.id === departmentId)?.name ?? '—'}`, clear: () => setDepartmentId('') })
+    if (typeFilter) list.push({ label: `Type: ${typeFilter === 'recurring' ? 'Recurring' : 'One-time'}`, clear: () => setTypeFilter('') })
+    if (timingFilter) list.push({ label: `Timing: ${TIMING_META[timingFilter as Timing].label}`, clear: () => setTimingFilter('') })
     if (fromDate || toDate) list.push({ label: `Date: ${fromDate || '…'} → ${toDate || '…'}`, clear: () => { setFromDate(''); setToDate('') } })
     return list
-  }, [search, statusId, priorityId, categoryId, departmentId, typeFilter, assigneeUserId, createdById, fromDate, toDate, statuses, priorities, categories, dashboard])
+  }, [search, statusId, priorityId, categoryId, departmentId, typeFilter, timingFilter, fromDate, toDate, statuses, priorities, categories, departments])
 
   const filtersActive = pills.length > 0
   function clearFilters() {
     setSearchInput(''); setSearch(''); setStatusId(''); setPriorityId(''); setCategoryId('')
-    setDepartmentId(''); setTypeFilter(''); setAssigneeUserId(''); setCreatedById(''); setFromDate(''); setToDate('')
+    setDepartmentId(''); setTypeFilter(''); setTimingFilter(''); setFromDate(''); setToDate('')
   }
+
+  // Map the table's column-header filter selects onto the page filter state.
+  const tableFilters: Record<TableFilterKey, string> = {
+    type: typeFilter, department_id: departmentId, category_id: categoryId,
+    priority_id: priorityId, status_id: statusId, timing: timingFilter,
+  }
+  const TABLE_SETTERS: Record<TableFilterKey, (v: string) => void> = {
+    type: setTypeFilter, department_id: setDepartmentId, category_id: setCategoryId,
+    priority_id: setPriorityId, status_id: setStatusId, timing: setTimingFilter,
+  }
+  const onTableFilter = (key: TableFilterKey, value: string) => TABLE_SETTERS[key](value)
+  function toggleDeadlineSort() {
+    setSort((s) => (s === 'deadline_asc' ? 'deadline_desc' : 'deadline_asc'))
+  }
+  const deadlineSortDir: 'asc' | 'desc' | null = sort === 'deadline_asc' ? 'asc' : sort === 'deadline_desc' ? 'desc' : null
+
+  // Active-filter chips — multiple filters stack and each is individually removable.
+  const pillsBar = pills.length > 0 ? (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-[12px] text-[#94A3B8] font-medium">Active filters:</span>
+      {pills.map((p, i) => (
+        <span key={i} className="inline-flex items-center gap-1.5 rounded-[999px] bg-[#EFF6FF] border border-[#BFDBFE] text-[#2563EB] text-[12px] font-medium pl-2.5 pr-1.5 py-1">
+          {p.label}
+          <button onClick={p.clear} className="w-4 h-4 rounded-full hover:bg-[#2563EB] hover:text-white flex items-center justify-center transition-colors"><X size={11} /></button>
+        </span>
+      ))}
+      <button onClick={clearFilters} className="text-[12px] text-[#DC2626] font-medium hover:underline">Clear all</button>
+    </div>
+  ) : null
 
   // ── Selection / bulk ──────────────────────────────────────────────────────────
   function toggleSelect(id: string) {
@@ -197,19 +333,15 @@ export default function TasksOverviewPage() {
     const ids = Array.from(selected)
     if (!ids.length) return
     setBulkBusy(true)
-    try {
-      await tasksApi.bulkUpdate(orgId, ids, action, payload)
-      setSelected(new Set())
-      refreshAll()
-    } finally { setBulkBusy(false) }
+    try { await tasksApi.bulkUpdate(orgId, ids, action, payload); setSelected(new Set()); refreshAll() }
+    finally { setBulkBusy(false) }
   }
 
-  // ── Export ────────────────────────────────────────────────────────────────────
   async function exportCsv() {
     if (exporting) return
     setExporting(true)
     try {
-      const { csv } = await tasksApi.exportWork(orgId, { ...filters, bucket: bucket ?? undefined })
+      const { csv } = await tasksApi.exportWork(orgId, { ...boardQuery, bucket: bucket ?? undefined })
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -236,6 +368,8 @@ export default function TasksOverviewPage() {
     )
   }
 
+  const drilled = (lens === 'dept' && deptNode) || (lens === 'people' && personDrill)
+
   return (
     <div className="space-y-5 pb-24">
       {/* Header */}
@@ -252,18 +386,106 @@ export default function TasksOverviewPage() {
         </div>
       </div>
 
-      {/* KPI tiles */}
-      {dashboard && <KpiTiles kpis={dashboard.kpis} active={bucket} onSelect={setBucket} />}
+      {/* View tab: Analytics | Table */}
+      <div className="border-b border-[#E2E8F0] pb-px">
+        <ViewToggle value={view} onChange={setView} />
+      </div>
 
-      {/* Insights (breakdowns + trend + tree) */}
-      {dashboard && showInsights && (
-        <div className="space-y-3">
-          <BreakdownPanel data={dashboard} selection={selection} onChange={onBreakdownChange} />
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 items-start">
-            <TrendChart trend={dashboard.trend} />
-            {showTree && tree && <PeopleTree data={tree} />}
-          </div>
+      {view === 'analytics' ? (
+      <>
+      {/* Lens toggle + Insights toggle (Organization layout only) */}
+      {appliedScope === 'org' && (
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <LensToggle value={lens} onChange={switchLens} />
+          <button onClick={() => setShowInsights((v) => !v)}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-[8px] border text-sm font-medium transition-colors ${showInsights ? 'border-[#2563EB] text-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9]'}`}>
+            <BarChart3 size={15} /> Insights
+          </button>
         </div>
+      )}
+
+      {/* Drill hero (Org dept/people drill) */}
+      {appliedScope === 'org' && lens === 'dept' && deptNode && dashboard && (
+        <DrillHero
+          title={deptNode.name}
+          stats={`${dashboard.kpis.total} tasks · ${dashboard.kpis.completion_rate}% complete · ${dashboard.kpis.overdue} overdue`}
+          crumbs={deptCrumbs}
+          rootLabel="All units"
+          onCrumb={(id) => drillDept(id)}
+          onRoot={() => setDeptDrill(null)}
+          onBack={() => setDeptDrill(deptCrumbs.length >= 2 ? deptCrumbs[deptCrumbs.length - 2].id : null)}
+        />
+      )}
+      {appliedScope === 'org' && lens === 'people' && personDrill && dashboard && (
+        <DrillHero
+          title={drilledPersonName ?? 'Person'}
+          stats={`${dashboard.kpis.total} tasks · ${dashboard.kpis.completion_rate}% complete · ${dashboard.kpis.overdue} overdue`}
+          crumbs={personCrumbs}
+          rootLabel="Everyone"
+          onCrumb={(id) => drillPerson(id)}
+          onRoot={() => setPersonDrill(null)}
+          onBack={() => setPersonDrill(personCrumbs.length >= 2 ? personCrumbs[personCrumbs.length - 2].id : null)}
+        />
+      )}
+
+      {/* ── Scope-tailored analytics ─────────────────────────────────────────── */}
+      {dashboard && appliedScope === 'own' && (
+        <OwnView dashboard={dashboard} flow={flow} userId={user?.id ?? ''} onSelectBucket={setBucket} onOpenSegment={openSegment} />
+      )}
+      {dashboard && isTeamScope && (
+        <TeamView
+          dashboard={dashboard}
+          flow={flow}
+          tree={tree}
+          scopeLabel={appliedScope === 'department' ? 'my department' : 'my team'}
+          onSelectBucket={setBucket}
+          onOpenSegment={openSegment}
+          onOpenReport={(uid) => router.push(`/dashboard/tasks/people/${uid}`)}
+        />
+      )}
+      {dashboard && appliedScope === 'org' && (
+        <>
+          <KpiCards kpis={dashboard.kpis} onSelectBucket={setBucket} />
+          {showInsights && (
+            <div className="space-y-3">
+              {/* Primary panel */}
+              {lens === 'dept' ? (
+                deptNode ? (
+                  <DeptBreakdownChart
+                    node={deptNode}
+                    byDept={dashboard.by_department}
+                    byRole={dashboard.by_role}
+                    byAssignee={dashboard.by_assignee}
+                    dim={breakdownDim}
+                    onDim={setBreakdownDim}
+                    onDrill={drillDept}
+                    onSegment={onDeptBreakdownSegment}
+                  />
+                ) : (
+                  <DeptLeaderboard byDept={dashboard.by_department} forest={forest} onDrill={drillDept} />
+                )
+              ) : tree ? (
+                <PeopleLeaderboard nodes={tree.nodes} drillUserId={personDrill} onDrill={drillPerson} onOpenReport={(uid) => router.push(`/dashboard/tasks/people/${uid}`)} />
+              ) : null}
+
+              {/* Secondary charts */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <StatusTimingChart items={dashboard.by_status} onSegment={onStatusSegment} />
+                <PrioritySpreadChart items={dashboard.by_priority} onSegment={onPrioritySegment} />
+                <CategorySpreadChart items={dashboard.by_category} onSegment={onCategorySegment} />
+              </div>
+
+              {/* Cross-department flow matrix */}
+              {flow && <CrossDeptMatrix matrix={flow.matrix} onCell={onMatrixCell} />}
+
+              {/* Trend + insights */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                <div className="lg:col-span-2"><MonthlyTrendChart trend={dashboard.trend_monthly} onMonth={onMonthSegment} /></div>
+                <KeyInsights dashboard={dashboard} contextLabel={drilled ? (lens === 'dept' ? deptNode?.name : drilledPersonName) : undefined} />
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Toolbar */}
@@ -273,10 +495,6 @@ export default function TasksOverviewPage() {
           <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search tasks…"
             className="w-full rounded-[8px] border border-[#CBD5E1] bg-white pl-9 pr-3 py-2.5 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]" />
         </div>
-        <button onClick={() => setShowInsights((v) => !v)}
-          className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-[8px] border text-sm font-medium transition-colors ${showInsights ? 'border-[#2563EB] text-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9]'}`}>
-          <BarChart3 size={15} /> Insights
-        </button>
         <button onClick={() => setShowFilters((v) => !v)}
           className={`flex items-center gap-1.5 px-3.5 py-2.5 rounded-[8px] border text-sm font-medium transition-colors ${showFilters || filtersActive ? 'border-[#2563EB] text-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] text-[#475569] hover:bg-[#F1F5F9]'}`}>
           <SlidersHorizontal size={15} /> Filters{filtersActive && <span className="ml-0.5 w-1.5 h-1.5 rounded-full bg-[#2563EB]" />}
@@ -309,29 +527,27 @@ export default function TasksOverviewPage() {
             <option value="">All categories</option>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </SelectField>
+          <SelectField value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+            <option value="">All departments</option>
+            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </SelectField>
           <SelectField value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
             <option value="">All types</option>
             <option value="one_time">One-time</option>
             <option value="recurring">Recurring</option>
           </SelectField>
+          <SelectField value={timingFilter} onChange={(e) => setTimingFilter(e.target.value)}>
+            <option value="">All timing</option>
+            {(['early', 'on_time', 'late', 'overdue', 'pending'] as Timing[]).map((t) => <option key={t} value={t}>{TIMING_META[t].label}</option>)}
+          </SelectField>
           <DateRangePicker from={fromDate} to={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} placeholder="Created date range" />
         </div>
       )}
 
-      {/* Active filter pills */}
-      {pills.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap">
-          {pills.map((p, i) => (
-            <span key={i} className="inline-flex items-center gap-1.5 rounded-[999px] bg-[#EFF6FF] border border-[#BFDBFE] text-[#2563EB] text-[12px] font-medium pl-2.5 pr-1.5 py-1">
-              {p.label}
-              <button onClick={p.clear} className="w-4 h-4 rounded-full hover:bg-[#2563EB] hover:text-white flex items-center justify-center transition-colors"><X size={11} /></button>
-            </span>
-          ))}
-          <button onClick={clearFilters} className="text-[12px] text-[#DC2626] font-medium hover:underline">Clear all</button>
-        </div>
-      )}
+      {/* Active pills */}
+      {pillsBar}
 
-      {/* Result count + select-all + bucket */}
+      {/* Result count + bucket */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           {rows.length > 0 && (
@@ -341,7 +557,7 @@ export default function TasksOverviewPage() {
             </button>
           )}
           <p className="text-sm text-[#475569]">
-            {loadingList ? 'Loading…' : <><span className="font-semibold text-[#0F172A] tabular-nums">{total}</span> task{total !== 1 ? 's' : ''}{bucket ? ' in this view' : ''}</>}
+            {loadingList ? 'Loading…' : <><span className="font-semibold text-[#0F172A] tabular-nums">{total}</span> task{total !== 1 ? 's' : ''}{bucket ? ' in this bucket' : ''}</>}
           </p>
         </div>
         {bucket && <button onClick={() => setBucket(null)} className="text-sm text-[#2563EB] hover:underline flex items-center gap-1"><X size={13} /> Clear bucket</button>}
@@ -353,8 +569,8 @@ export default function TasksOverviewPage() {
       ) : rows.length === 0 ? (
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-16">
           <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4"><CheckSquare size={24} className="text-[#94A3B8]" /></div>
-          <p className="font-semibold text-[#0F172A] text-base">{filtersActive || bucket ? 'No tasks match this view' : 'No tasks here yet'}</p>
-          <p className="text-[#475569] text-sm mt-1 text-center max-w-xs">{filtersActive || bucket ? 'Try adjusting your filters or scope.' : 'Create a task to get started.'}</p>
+          <p className="font-semibold text-[#0F172A] text-base">{filtersActive || bucket || drilled ? 'No tasks match this view' : 'No tasks here yet'}</p>
+          <p className="text-[#475569] text-sm mt-1 text-center max-w-xs">{filtersActive || bucket || drilled ? 'Try adjusting your filters or scope.' : 'Create a task to get started.'}</p>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -369,6 +585,43 @@ export default function TasksOverviewPage() {
           )}
         </div>
       )}
+      </>
+      ) : (
+      <>
+      {/* ── Table view ──────────────────────────────────────────────────────── */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[220px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search tasks…"
+            className="w-full rounded-[8px] border border-[#CBD5E1] bg-white pl-9 pr-3 py-2.5 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]" />
+        </div>
+        <button onClick={exportCsv} disabled={exporting}
+          className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-[8px] border border-[#E2E8F0] text-sm font-medium text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-60 transition-colors">
+          <Download size={15} /> {exporting ? 'Exporting…' : 'Export'}
+        </button>
+      </div>
+
+      {pillsBar}
+
+      <TaskTable
+        rows={rows}
+        loading={loadingList}
+        total={total}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={() => fetchList(page + 1, false)}
+        onOpenTask={(id) => setOpenTaskId(id)}
+        departments={departments}
+        categories={categories}
+        priorities={priorities}
+        statuses={statuses}
+        filters={tableFilters}
+        onFilter={onTableFilter}
+        sortDir={deadlineSortDir}
+        onToggleDeadlineSort={toggleDeadlineSort}
+      />
+      </>
+      )}
 
       <BulkActionBar
         count={selected.size}
@@ -379,6 +632,17 @@ export default function TasksOverviewPage() {
         onDeadline={(d) => runBulk('deadline', { deadline: `${d}T23:59:59` })}
         onClear={() => setSelected(new Set())}
       />
+
+      {segment && (
+        <SegmentDrawer
+          orgId={orgId}
+          title={segment.title}
+          subtitle={segment.subtitle}
+          query={segment.query}
+          onClose={() => setSegment(null)}
+          onOpenTask={(id) => { setSegment(null); setOpenTaskId(id) }}
+        />
+      )}
 
       {openTaskId && (
         <TaskDrawer orgId={orgId} taskId={openTaskId} statuses={statuses} onClose={() => setOpenTaskId(null)} onChanged={refreshAll} />
