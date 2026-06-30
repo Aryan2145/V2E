@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bell, BellRing, CheckCheck, Monitor } from 'lucide-react'
+import { Bell, BellRing, CheckCheck, Monitor, CheckCircle2 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useNotifications } from '@/lib/notifications/NotificationsProvider'
+import { useToast } from '@/components/ui/Toast'
 import { enablePush, disablePush, getPushStatus, type PushStatus } from '@/lib/push'
 import type { AppNotification } from '@/lib/api/notifications'
 
@@ -35,6 +36,7 @@ export default function NotificationBell() {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
   const { unreadCount, latest, refresh, markRead, markAllRead } = useNotifications()
+  const { addToast } = useToast()
 
   const [open, setOpen] = useState(false)
   const [pushStatus, setPushStatus] = useState<PushStatus>('unsupported')
@@ -73,10 +75,25 @@ export default function NotificationBell() {
     try {
       if (pushStatus === 'enabled') {
         await disablePush(orgId)
+        setPushStatus(await getPushStatus())
+        addToast('Device notifications turned off for this device', 'info')
       } else {
-        await enablePush(orgId)
+        const ok = await enablePush(orgId)
+        setPushStatus(await getPushStatus())
+        if (ok) {
+          addToast("Device notifications are on — you'll get alerts on this device", 'success')
+        } else {
+          // enablePush returns false on denied permission or unconfigured backend.
+          addToast(
+            Notification.permission === 'denied'
+              ? 'Notifications are blocked in your browser settings. Allow them to continue.'
+              : 'Could not enable device notifications. Please try again.',
+            'error',
+          )
+        }
       }
-      setPushStatus(await getPushStatus())
+    } catch {
+      addToast('Something went wrong updating device notifications.', 'error')
     } finally {
       setPushBusy(false)
     }
@@ -151,22 +168,33 @@ export default function NotificationBell() {
 
           {/* Footer */}
           <div className="border-t border-[#F1F5F9]">
-            {pushStatus !== 'unsupported' && (
+            {pushStatus === 'enabled' ? (
+              // Connected: confirm the state clearly, with Disable as a distinct action.
+              <div className="flex items-center gap-2 px-4 py-2.5 text-xs">
+                <CheckCircle2 size={14} className="shrink-0 text-[#16A34A]" />
+                <span className="flex-1 font-medium text-[#15803D]">Device notifications on</span>
+                <button
+                  onClick={togglePush}
+                  disabled={pushBusy}
+                  className="shrink-0 font-medium text-[#64748B] hover:text-[#DC2626] disabled:opacity-60 transition-colors"
+                >
+                  {pushBusy ? 'Disabling…' : 'Disable'}
+                </button>
+              </div>
+            ) : pushStatus !== 'unsupported' ? (
               <button
                 onClick={togglePush}
                 disabled={pushBusy || pushStatus === 'denied'}
                 className="w-full flex items-center gap-2 px-4 py-2.5 text-xs text-[#64748B] hover:bg-[#F8FAFC] disabled:opacity-60 transition-colors"
               >
                 <Monitor size={13} />
-                {pushStatus === 'enabled'
-                  ? 'Disable device notifications'
-                  : pushStatus === 'denied'
-                    ? 'Notifications blocked in browser settings'
-                    : pushBusy
-                      ? 'Enabling…'
-                      : 'Enable device notifications (desktop & mobile)'}
+                {pushStatus === 'denied'
+                  ? 'Notifications blocked in browser settings'
+                  : pushBusy
+                    ? 'Enabling…'
+                    : 'Enable device notifications (desktop & mobile)'}
               </button>
-            )}
+            ) : null}
             <button
               onClick={() => {
                 setOpen(false)
