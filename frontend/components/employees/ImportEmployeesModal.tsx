@@ -50,6 +50,7 @@ const COLUMNS = [
   'email',
   'password',
   'department',
+  'is_department_head',
   'role',
   'system_role',
   'employment_type',
@@ -69,6 +70,7 @@ const HEADER_LABEL: Record<Column, string> = {
   email: 'email *',
   password: 'password',
   department: 'department *',
+  is_department_head: 'is_department_head',
   role: 'role *',
   system_role: 'system_role *',
   employment_type: 'employment_type',
@@ -86,6 +88,11 @@ const COLUMN_ALIASES: Record<string, Column> = {
   password: 'password',
   department: 'department',
   dept: 'department',
+  is_department_head: 'is_department_head',
+  is_head: 'is_department_head',
+  head_of_department: 'is_department_head',
+  dept_head: 'is_department_head',
+  department_head: 'is_department_head',
   role: 'role',
   job_role: 'role',
   system_role: 'system_role',
@@ -307,8 +314,8 @@ export default function ImportEmployeesModal({
       const mgrValue = mgrRows[0]
         ? `${mgrRows[0].name}${VALUE_SEPARATOR}${mgrRows[0].dept}${VALUE_SEPARATOR}${mgrRows[0].role}`
         : ''
-      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
-      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
+      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, 'yes', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
+      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, 'no', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
 
       // Dropdowns + date constraints for rows 2..LAST.
       const LAST = 500
@@ -317,14 +324,15 @@ export default function ImportEmployeesModal({
         email: 'B',
         password: 'C',
         department: 'D',
-        role: 'E',
-        system_role: 'F',
-        employment_type: 'G',
-        employee_code: 'H',
-        reporting_to: 'I',
-        date_of_joining: 'J',
-        date_of_birth: 'K',
-        marriage_date: 'L',
+        is_department_head: 'E',
+        role: 'F',
+        system_role: 'G',
+        employment_type: 'H',
+        employee_code: 'I',
+        reporting_to: 'J',
+        date_of_joining: 'K',
+        date_of_birth: 'L',
+        marriage_date: 'M',
       }
       const addListDV = (col: Column, formula: string) => {
         for (let r = 2; r <= LAST; r++) {
@@ -355,6 +363,7 @@ export default function ImportEmployeesModal({
         }
       }
       addListDV('department', `'Departments'!$B$2:$B$${deptSorted.length + 1}`)
+      addListDV('is_department_head', '"yes,no"')
       addListDV('role', `'Roles'!$D$2:$D$${roleRows.length + 1}`)
       addListDV('system_role', `'System Roles'!$B$2:$B$${sysSorted.length + 1}`)
       addListDV('reporting_to', `'Reports To'!$E$2:$E$${mgrRows.length + 1}`)
@@ -411,6 +420,7 @@ export default function ImportEmployeesModal({
         email: get('email'),
         password: get('password'),
         department: get('department'),
+        is_department_head: get('is_department_head'),
         role: get('role'),
         system_role: get('system_role'),
         employment_type: get('employment_type'),

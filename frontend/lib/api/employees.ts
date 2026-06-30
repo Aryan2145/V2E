@@ -60,6 +60,7 @@ export interface BulkImportRow {
   email?: string;
   password?: string;
   department?: string;
+  is_department_head?: string;
   role?: string;
   system_role?: string;
   employment_type?: string;

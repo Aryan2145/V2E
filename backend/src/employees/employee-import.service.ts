@@ -33,7 +33,7 @@ interface Prepared {
   name: string;
   email: string;
   password: string;
-  dept?: { id: string; name: string };
+  dept?: { id: string; name: string; head_user_id?: string | null };
   role?: { id: string; title: string };
   systemRole?: { id: string; name: string };
   employmentType: EmploymentType;
@@ -46,10 +46,11 @@ interface Prepared {
   managerLabel?: string;
   issues: ImportRowIssue[];
   isDuplicate: boolean;
+  isDepartmentHead: boolean;
 }
 
 interface ImportContext {
-  deptByName: Map<string, { id: string; name: string }>;
+  deptByName: Map<string, { id: string; name: string; head_user_id?: string | null }>;
   roles: { id: string; title: string; department_id: string }[];
   systemRoleByName: Map<string, { id: string; name: string }>;
   orgUserByEmail: Map<string, { id: string; name: string }>;
@@ -172,6 +173,12 @@ export class EmployeeImportService {
               import_batch_id: batch.id,
             },
           });
+          if (p.isDepartmentHead) {
+            await tx.department.update({
+              where: { id: p.dept!.id },
+              data: { head_user_id: user.id },
+            });
+          }
           // Auto-assign published learning paths (best-effort — never fail the row).
           try {
             await this.learningService.autoAssignForNewEmployee(profile.id, p.role!.id, orgId, user.id);
@@ -359,7 +366,7 @@ export class EmployeeImportService {
 
   private async loadContext(orgId: string): Promise<ImportContext> {
     const [departments, roles, systemRoles, members, profiles] = await Promise.all([
-      this.prisma.department.findMany({ where: { organization_id: orgId }, select: { id: true, name: true } }),
+      this.prisma.department.findMany({ where: { organization_id: orgId }, select: { id: true, name: true, head_user_id: true } }),
       this.prisma.role.findMany({
         where: { organization_id: orgId },
         select: { id: true, title: true, department_id: true },
@@ -413,7 +420,7 @@ export class EmployeeImportService {
 
       // Department.
       const deptName = (row.department ?? '').trim();
-      let dept: { id: string; name: string } | undefined;
+      let dept: { id: string; name: string; head_user_id?: string | null } | undefined;
       if (!deptName) err('Department is required', 'department');
       else {
         dept = ctx.deptByName.get(deptName.toLowerCase());
@@ -496,6 +503,11 @@ export class EmployeeImportService {
       const password = (row.password ?? '').trim() || DEFAULT_IMPORT_PASSWORD;
       if (password.length < 8) err('Password must be at least 8 characters', 'password');
 
+      const isDepartmentHead = (row.is_department_head ?? '').trim().toLowerCase() === 'yes';
+      if (isDepartmentHead && dept && dept.head_user_id) {
+        err(`Department "${dept.name}" already has a Head assigned in the organization`, 'department');
+      }
+
       return {
         index,
         rowNum: index + 2,
@@ -515,6 +527,7 @@ export class EmployeeImportService {
         managerLabel,
         issues,
         isDuplicate,
+        isDepartmentHead,
       };
     });
 
@@ -550,6 +563,24 @@ export class EmployeeImportService {
         if (n > 1) {
           p.issues.push({ message: 'Duplicate employee code — appears earlier in this file', field: 'employee_code', severity: 'error' });
           p.isDuplicate = true;
+        }
+      }
+    }
+
+    // Check for duplicate department heads within the file.
+    const seenDeptHead = new Map<string, number>(); // deptId -> rowNum
+    for (const p of prepared) {
+      if (p.isDepartmentHead && p.dept) {
+        const prevRowNum = seenDeptHead.get(p.dept.id);
+        if (prevRowNum !== undefined) {
+          p.issues.push({
+            message: `Conflict: Row ${prevRowNum} is already designated as the Head for department "${p.dept.name}" in this file`,
+            field: 'department',
+            severity: 'error',
+          });
+          p.isDuplicate = true;
+        } else {
+          seenDeptHead.set(p.dept.id, p.rowNum);
         }
       }
     }

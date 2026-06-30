@@ -36,6 +36,11 @@ export class BulkImportRowDto {
   @IsString()
   department?: string;
 
+  @ApiProperty({ required: false, description: 'Whether this employee is the head of their department (yes/no)' })
+  @IsOptional()
+  @IsString()
+  is_department_head?: string;
+
   @ApiProperty({
     required: false,
     description: 'Job role — accepts "Role · Department" combined value or a plain title',
