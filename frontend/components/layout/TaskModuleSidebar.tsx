@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
+import { useEntitlements } from '@/lib/auth/use-entitlements'
 import {
   LayoutDashboard,
   CheckSquare,
@@ -46,12 +47,14 @@ const TASK_CONFIG_LEAVES = [
 
 interface NavGroup {
   label?: string
+  module: 'tasks' | 'projects' | 'workflows' | 'tickets'
   items: NavItem[]
 }
 
 const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Tasks',
+    module: 'tasks',
     items: [
       { label: 'Overview', href: '/dashboard/tasks', Icon: LayoutDashboard },
       { label: 'My Tasks', href: '/dashboard/tasks/my', Icon: CheckSquare },
@@ -66,6 +69,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Projects',
+    module: 'projects',
     items: [
       { label: 'Projects', href: '/dashboard/projects', Icon: Briefcase },
       { label: 'My Projects', href: '/dashboard/projects/my', Icon: Briefcase },
@@ -73,6 +77,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Workflows',
+    module: 'workflows',
     items: [
       { label: 'Workflows', href: '/dashboard/tasks/workflows', Icon: GitBranch },
       { label: 'My Workflows', href: '/dashboard/tasks/workflows/my', Icon: GitBranch },
@@ -80,6 +85,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Tickets',
+    module: 'tickets',
     items: [
       { label: 'Tickets', href: '/dashboard/tasks/tickets', Icon: Ticket },
       { label: 'My Tickets', href: '/dashboard/tasks/tickets/my', Icon: Ticket },
@@ -90,6 +96,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: 'Config',
+    module: 'tasks',
     items: [
       { label: 'Work Settings', href: '/dashboard/tasks/masters', Icon: Settings2, taskConfigGated: true },
     ],
@@ -107,6 +114,7 @@ export default function TaskModuleSidebar() {
   const pathname = usePathname()
   const { user } = useAuth()
   const { can, isAdmin } = usePermissions()
+  const { entitlements } = useEntitlements()
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'
@@ -171,6 +179,8 @@ export default function TaskModuleSidebar() {
       {/* Nav groups */}
       <nav className="sidebar-scroll flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
         {NAV_GROUPS.map((group, gi) => {
+          const entitlementState = entitlements?.[group.module]
+          if (entitlementState === 'off') return null
           const visibleItems = group.items.filter((item) => {
             if (item.taskConfigGated) return canSeeMasters
             return !(item.adminOnly && !isAdminOrHR)
@@ -190,6 +200,9 @@ export default function TaskModuleSidebar() {
                   ].join(' ')}
                 >
                   {group.label}
+                  {entitlementState === 'preview' && (
+                    <span className="ml-2 normal-case tracking-normal text-[9px] text-[#FBBF24]">Read only</span>
+                  )}
                 </p>
               )}
               {visibleItems.map((item) => {

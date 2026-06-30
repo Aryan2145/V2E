@@ -18,7 +18,7 @@ const NAV_ITEMS: { label: string; href: string; module?: string }[] = [
   { label: 'Goals', href: '/goals', module: 'goals' },
   { label: 'Learning', href: '/learning', module: 'learning' },
   { label: 'Communication', href: '/communication', module: 'communication' },
-  { label: 'Work', href: '/dashboard/tasks', module: 'tasks' },
+  { label: 'Work', href: '/dashboard/tasks', module: 'work' },
   { label: 'ESS', href: '/dashboard/ecs', module: 'ecs' },
   { label: 'Governance', href: '/dashboard/governance', module: 'governance' },
   { label: 'Performance', href: '/dashboard/performance', module: 'performance' },
@@ -74,9 +74,25 @@ export default function TopNav() {
   }, [user?.organizationId])
 
   // Until entitlements load, show everything (avoids a flash of missing tabs).
-  const visibleNav = NAV_ITEMS.filter(
-    (item) => !item.module || !entitlements || entitlements[item.module] !== 'off',
-  )
+  const workModules = ['tasks', 'projects', 'workflows', 'tickets'] as const
+  const firstEnabledWorkModule = workModules.find((module) => entitlements?.[module] !== 'off')
+  const workHref: Record<(typeof workModules)[number], string> = {
+    tasks: '/dashboard/tasks',
+    projects: '/dashboard/projects',
+    workflows: '/dashboard/tasks/workflows',
+    tickets: '/dashboard/tasks/tickets',
+  }
+  const visibleNav = NAV_ITEMS
+    .filter((item) => {
+      if (!item.module || !entitlements) return true
+      if (item.module === 'work') return !!firstEnabledWorkModule
+      return entitlements[item.module] !== 'off'
+    })
+    .map((item) =>
+      item.module === 'work' && firstEnabledWorkModule
+        ? { ...item, href: workHref[firstEnabledWorkModule] }
+        : item,
+    )
   const isPreview = (module?: string) => !!module && entitlements?.[module] === 'preview'
 
   // Close on outside click

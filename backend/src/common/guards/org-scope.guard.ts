@@ -13,6 +13,7 @@ const SEGMENT_TO_MODULE: Record<string, string> = {
   meetings: 'governance',
   'work-logs': 'governance',
   tickets: 'tickets',
+  workflows: 'workflows',
   projects: 'projects',
   learning: 'learning',
   announcements: 'communication',

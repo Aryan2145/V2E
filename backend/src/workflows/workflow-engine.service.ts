@@ -16,6 +16,14 @@ export class WorkflowEngineService {
     private readonly auditWriter: AuditWriterService,
   ) {}
 
+  private async automationEnabled(orgId: string): Promise<boolean> {
+    const entitlement = await this.prisma.orgModuleEntitlement.findUnique({
+      where: { organization_id_module_key: { organization_id: orgId, module_key: 'workflows' } },
+      select: { state: true },
+    })
+    return entitlement?.state === 'full'
+  }
+
   // ── Instance naming ─────────────────────────────────────────────────────────
 
   private formatDate(d: Date): string {
@@ -306,6 +314,9 @@ export class WorkflowEngineService {
       where: { id: workflowTemplateId },
       include: { steps: { orderBy: { order_index: 'asc' } } },
     })
+    if (!(await this.automationEnabled(template.organization_id))) {
+      throw new Error('Workflow execution is disabled for this organization')
+    }
 
     const instanceName = await this.buildInstanceName(
       template.name,
@@ -495,6 +506,7 @@ export class WorkflowEngineService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processOverdueStepsForOrg(orgId: string, now: Date): Promise<void> {
+    if (!(await this.automationEnabled(orgId))) return
     return this.auditWriter.runAsSystem(
       { orgId, triggerSource: 'workflow_overdue', occurredAt: now },
       () => this.processOverdueStepsForOrgImpl(orgId, now),
@@ -591,6 +603,7 @@ export class WorkflowEngineService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processDateTriggersForOrg(orgId: string, now: Date): Promise<void> {
+    if (!(await this.automationEnabled(orgId))) return
     return this.auditWriter.runAsSystem(
       { orgId, triggerSource: 'date_trigger', occurredAt: now },
       () => this.processDateTriggersForOrgImpl(orgId, now),

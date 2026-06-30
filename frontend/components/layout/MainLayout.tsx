@@ -2,13 +2,16 @@
 
 import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { Lock } from 'lucide-react'
+import { Eye, Lock } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useEntitlements } from '@/lib/auth/use-entitlements'
 import TopNav from './TopNav'
 
 // Route prefix → entitlement module (longest match wins). Mirrors the top nav.
 const ROUTE_MODULES: { prefix: string; module: string; label: string }[] = [
+  { prefix: '/dashboard/tasks/tickets', module: 'tickets', label: 'Tickets' },
+  { prefix: '/dashboard/tasks/workflows', module: 'workflows', label: 'Workflows' },
+  { prefix: '/dashboard/projects', module: 'projects', label: 'Projects' },
   { prefix: '/dashboard/tasks', module: 'tasks', label: 'Tasks' },
   { prefix: '/dashboard/ecs', module: 'ecs', label: 'ESS' },
   { prefix: '/dashboard/governance', module: 'governance', label: 'Governance' },
@@ -39,6 +42,15 @@ function ModuleDisabled({ label }: { label: string }) {
   )
 }
 
+function PreviewNotice({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 border-b border-[#FDE68A] bg-[#FFFBEB] px-4 py-2 text-sm text-[#92400E] sm:px-6 lg:px-8">
+      <Eye size={15} className="shrink-0" />
+      <span><strong>{label}</strong> is in preview mode. You can view content, but changes are disabled.</span>
+    </div>
+  )
+}
+
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
   const router = useRouter()
@@ -64,11 +76,21 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
   const current = moduleForPath(pathname)
   // Block a module route only once we know its entitlement is `off`.
   const blocked = current && !entLoading && state(current.module) === 'off'
+  const preview = current && !entLoading && state(current.module) === 'preview'
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <TopNav />
-      <div className="pt-14">{blocked ? <ModuleDisabled label={current!.label} /> : children}</div>
+      <div className="pt-14">
+        {blocked ? (
+          <ModuleDisabled label={current!.label} />
+        ) : (
+          <>
+            {preview && <PreviewNotice label={current!.label} />}
+            {children}
+          </>
+        )}
+      </div>
     </div>
   )
 }

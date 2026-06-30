@@ -181,6 +181,15 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
     ],
   },
   {
+    key: 'workflows',
+    label: 'Workflows',
+    entitlementControlled: true,
+    // Workflow authorization is currently enforced by its own owner/access model.
+    // Keeping this module leafless adds the commercial entitlement ceiling without
+    // exposing permission switches that the workflow service would not enforce.
+    subModules: [],
+  },
+  {
     key: 'projects',
     label: 'Projects',
     entitlementControlled: true,

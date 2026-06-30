@@ -1438,6 +1438,12 @@ export class TicketsService {
 
   // Org-scoped, now-injected — cron passes real now, ReplayService passes sim now.
   async processSlaForOrg(orgId: string, now: Date) {
+    const entitlement = await this.prisma.orgModuleEntitlement.findUnique({
+      where: { organization_id_module_key: { organization_id: orgId, module_key: 'tickets' } },
+      select: { state: true },
+    })
+    if (entitlement?.state !== 'full') return
+
     return this.auditWriter.runAsSystem(
       { orgId, triggerSource: 'sla_breach', occurredAt: now },
       () => this.processSlaForOrgImpl(orgId, now),

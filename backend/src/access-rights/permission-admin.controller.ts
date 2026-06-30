@@ -46,8 +46,8 @@ export class PermissionAdminController {
   @Get('permission-registry')
   @RequireAdmin()
   @ApiOperation({ summary: 'The module → sub-module → feature permission tree' })
-  getRegistry() {
-    return this.service.getRegistry();
+  getRegistry(@Param('orgId') orgId: string) {
+    return this.service.getRegistry(orgId);
   }
 
   @Get('role-permissions')

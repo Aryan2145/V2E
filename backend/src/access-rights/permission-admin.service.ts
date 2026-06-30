@@ -12,6 +12,8 @@ import {
   supportsAction,
   axisOf,
   kindOf,
+  isEntitlementControlled,
+  moduleOf,
 } from './permission-registry';
 import { isContentLeaf, rowScopeOf } from './scope-registry';
 
@@ -43,12 +45,21 @@ export class PermissionAdminService {
   ) {}
 
   /** The permission tree for the UI to render (actor-feature leaves + subject leaves). */
-  getRegistry() {
+  async getRegistry(orgId: string) {
+    const entitlementRows = await this.prisma.orgModuleEntitlement.findMany({
+      where: { organization_id: orgId },
+      select: { module_key: true, state: true },
+    });
+    const entitlementByModule = new Map(entitlementRows.map((row) => [row.module_key, row.state]));
+
     return {
-      modules: PERMISSION_REGISTRY.map((m) => ({
+      modules: PERMISSION_REGISTRY.filter(
+        (m) => !m.entitlementControlled || (entitlementByModule.get(m.key) ?? 'off') !== 'off',
+      ).map((m) => ({
         key: m.key,
         label: m.label,
         entitlementControlled: m.entitlementControlled,
+        entitlementState: m.entitlementControlled ? entitlementByModule.get(m.key) ?? 'off' : 'full',
         subModules: m.subModules.map((s) => ({
           key: s.key,
           label: s.label,
@@ -58,7 +69,10 @@ export class PermissionAdminService {
             description: f.description,
             axis: f.axis,
             kind: f.kind,
-            actions: f.actions,
+            actions:
+              m.entitlementControlled && entitlementByModule.get(m.key) === 'preview'
+                ? f.actions.filter((action) => action === PermissionAction.read)
+                : f.actions,
           })),
         })),
       })),
@@ -354,14 +368,24 @@ export class PermissionAdminService {
   // ─── Subject eligibility org defaults ────────────────────────────────────────
 
   async getSubjectPolicies(orgId: string) {
-    const rows = await this.prisma.subjectEligibilityPolicy.findMany({ where: { organization_id: orgId } });
+    const [rows, entitlementRows] = await Promise.all([
+      this.prisma.subjectEligibilityPolicy.findMany({ where: { organization_id: orgId } }),
+      this.prisma.orgModuleEntitlement.findMany({
+        where: { organization_id: orgId },
+        select: { module_key: true, state: true },
+      }),
+    ]);
     const byKey = new Map(rows.map((r) => [r.subject_key, r.default_eligible]));
+    const entitlementByModule = new Map(entitlementRows.map((row) => [row.module_key, row.state]));
     return {
-      policies: ALL_SUBJECT_LEAVES.map((leaf) => ({
-        subject_key: leaf.key,
-        label: leaf.label,
-        default_eligible: byKey.get(leaf.key) ?? true,
-      })),
+      policies: ALL_SUBJECT_LEAVES.filter((leaf) => {
+        if (!isEntitlementControlled(leaf.key)) return true;
+        return entitlementByModule.get(moduleOf(leaf.key)!) === 'full';
+      }).map((leaf) => ({
+          subject_key: leaf.key,
+          label: leaf.label,
+          default_eligible: byKey.get(leaf.key) ?? true,
+        })),
     };
   }
 

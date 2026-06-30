@@ -52,6 +52,7 @@ export interface RegistryModule {
   key: string
   label: string
   entitlementControlled: boolean
+  entitlementState: 'off' | 'preview' | 'full'
   subModules: RegistrySubModule[]
 }
 

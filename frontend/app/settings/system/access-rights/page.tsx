@@ -716,7 +716,7 @@ export default function AccessControlPage() {
 
                 {locked && (
                   <div className="flex items-center gap-2 bg-[#EFF6FF] border border-[#BAE6FD] rounded-[10px] px-4 py-2.5 text-sm text-[#0369A1]">
-                    <Lock size={15} /> Administrator always has full access. Permissions cannot be restricted.
+                    <Lock size={15} /> Administrator has full access to enabled modules. Permissions cannot be restricted.
                   </div>
                 )}
 
