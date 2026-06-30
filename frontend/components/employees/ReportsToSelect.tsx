@@ -19,10 +19,9 @@ interface Props {
 
 const LEVEL_RANK: Record<RoleLevel, number> = {
   head: 0,
-  lead: 1,
-  senior: 2,
-  mid: 3,
-  junior: 4,
+  senior: 1,
+  mid: 2,
+  junior: 3,
 }
 const rankOf = (lvl?: RoleLevel) => (lvl ? LEVEL_RANK[lvl] : 5)
 

@@ -204,6 +204,7 @@ export default function RolesPage() {
           target={formTarget}
           orgId={orgId}
           departments={departments}
+          roles={roles}
           onClose={() => setFormTarget(null)}
           onSaved={handleSaved}
           onDeleted={handleDeleted}

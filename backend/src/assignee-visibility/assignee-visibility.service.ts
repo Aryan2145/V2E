@@ -16,7 +16,7 @@ import {
 // Member roles that, by default, see everyone (full-visibility list). Distinct from
 // "is an admin" — granting full visibility never confers admin powers elsewhere.
 const DEFAULT_FULL_VISIBILITY_ROLES = ['org_admin', 'hr_manager'];
-const SENIOR_LEVELS = new Set(['senior', 'lead', 'head']);
+const SENIOR_LEVELS = new Set(['senior', 'head']);
 
 const GRAPH_TTL_MS = 60_000; // safety backstop; primary freshness is event invalidation
 const CONFIG_TTL_MS = 5_000;
@@ -40,7 +40,7 @@ interface OrgGraph {
   directManagerOf: Map<string, string | null>;
   childrenOf: Map<string, string[]>;
   deptMembers: Map<string, Set<string>>;
-  deptSeniors: Map<string, Set<string>>; // head_user + senior/lead/head roles
+  deptSeniors: Map<string, Set<string>>; // head_user + senior/head roles
   deptAllowUpward: Map<string, boolean>;
   // dept → every member of its enclosing unified subtree (Feature: treat sub-departments
   // as one pool). Absent when the dept is not inside any unify-flagged subtree.

@@ -53,7 +53,6 @@ const levelConfig: Record<
   junior: { label: 'Junior', bg: 'bg-[#F1F5F9]', text: 'text-[#475569]' },
   mid: { label: 'Mid', bg: 'bg-[#DBEAFE]', text: 'text-[#1D4ED8]' },
   senior: { label: 'Senior', bg: 'bg-[#F3E8FF]', text: 'text-[#7C3AED]' },
-  lead: { label: 'Lead', bg: 'bg-[#FEF3C7]', text: 'text-[#D97706]' },
   head: { label: 'Head', bg: 'bg-[#1E293B]', text: 'text-[#F1F5F9]' },
 }
 

@@ -64,6 +64,39 @@ export class RolesService {
       );
     }
 
+    const titleTrimmed = dto.title.trim();
+    const existingTitle = await this.prisma.role.findFirst({
+      where: {
+        organization_id: orgId,
+        department_id: dto.department_id,
+        title: {
+          equals: titleTrimmed,
+          mode: 'insensitive',
+        },
+      },
+    });
+
+    if (existingTitle) {
+      throw new BadRequestException(
+        `A job role with the title "${dto.title}" already exists in this department (${department.name}).`,
+      );
+    }
+
+    if (dto.level === 'head') {
+      const existingHead = await this.prisma.role.findFirst({
+        where: {
+          organization_id: orgId,
+          department_id: dto.department_id,
+          level: 'head',
+        },
+      });
+      if (existingHead) {
+        throw new BadRequestException(
+          `A role with head level already exists in this department (${department.name}).`,
+        );
+      }
+    }
+
     const created = await this.prisma.role.create({
       data: {
         ...dto,
@@ -82,7 +115,7 @@ export class RolesService {
   }
 
   async update(id: string, orgId: string, dto: UpdateRoleDto) {
-    await this.findOne(id, orgId);
+    const existing = await this.findOne(id, orgId);
 
     if (dto.department_id) {
       const department = await this.prisma.department.findFirst({
@@ -92,6 +125,52 @@ export class RolesService {
       if (!department) {
         throw new NotFoundException(
           `Department ${dto.department_id} not found in this organization`,
+        );
+      }
+    }
+
+    const targetDeptId = dto.department_id ?? existing.department_id;
+    const targetLevel = dto.level ?? existing.level;
+    const targetTitle = dto.title ? dto.title.trim() : existing.title;
+
+    if (dto.title || dto.department_id) {
+      const existingTitle = await this.prisma.role.findFirst({
+        where: {
+          organization_id: orgId,
+          department_id: targetDeptId,
+          title: {
+            equals: targetTitle,
+            mode: 'insensitive',
+          },
+          id: { not: id },
+        },
+      });
+
+      if (existingTitle) {
+        const dept = dto.department_id
+          ? await this.prisma.department.findUnique({ where: { id: dto.department_id } })
+          : existing.department;
+        throw new BadRequestException(
+          `A job role with the title "${targetTitle}" already exists in this department (${dept?.name}).`,
+        );
+      }
+    }
+
+    if (targetLevel === 'head') {
+      const existingHead = await this.prisma.role.findFirst({
+        where: {
+          organization_id: orgId,
+          department_id: targetDeptId,
+          level: 'head',
+          id: { not: id },
+        },
+      });
+      if (existingHead) {
+        const dept = dto.department_id
+          ? await this.prisma.department.findUnique({ where: { id: dto.department_id } })
+          : existing.department;
+        throw new BadRequestException(
+          `A role with head level already exists in this department (${dept?.name}).`,
         );
       }
     }

@@ -250,6 +250,7 @@ export default function DeptRolesPanel({ departments, orgId, canEdit }: DeptRole
         <RoleFormDrawer
           target={drawerTarget}
           orgId={orgId}
+          roles={roles}
           onClose={() => setDrawerTarget(null)}
           onSaved={() => {
             setDrawerTarget(null)

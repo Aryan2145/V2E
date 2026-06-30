@@ -42,7 +42,7 @@ type Column = (typeof COLUMNS)[number]
 const HEADER_LABEL: Record<Column, string> = {
   title: 'title *',
   department: 'department *',
-  level: 'level (junior/mid/senior/lead/head)',
+  level: 'level',
   job_description: 'job_description',
 }
 
@@ -60,7 +60,7 @@ const COLUMN_ALIASES: Record<string, Column> = {
   jd: 'job_description',
 }
 
-const LEVELS: RoleLevel[] = ['junior', 'mid', 'senior', 'lead', 'head']
+const LEVELS: RoleLevel[] = ['head', 'senior', 'mid', 'junior']
 
 function normalizeHeader(h: string): string {
   return h

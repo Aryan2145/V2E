@@ -4,7 +4,7 @@ export type OrgStatus = 'active' | 'inactive' | 'pending_setup';
 
 export type BehaviorType = 'expected_behavior' | 'unacceptable_behavior';
 
-export type RoleLevel = 'junior' | 'mid' | 'senior' | 'lead' | 'head';
+export type RoleLevel = 'junior' | 'mid' | 'senior' | 'head';
 
 export type EmploymentType = 'full_time' | 'part_time' | 'contract';
 

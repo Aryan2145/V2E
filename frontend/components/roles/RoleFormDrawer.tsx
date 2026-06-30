@@ -1,13 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useForm, useFieldArray } from 'react-hook-form'
+import { useForm, useFieldArray, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { X, Plus, Trash2 } from 'lucide-react'
 import { createRole, updateRole, deleteRole } from '@/lib/api/roles'
 import Button from '@/components/ui/Button'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import LevelSelect from './LevelSelect'
 import type { Department, Role, RoleLevel } from '@/lib/types'
 
 export type RoleFormTarget =
@@ -23,6 +25,7 @@ interface RoleFormDrawerProps {
    * Omit it (e.g. the setup wizard) to keep the role scoped to `target.deptId`.
    */
   departments?: Department[]
+  roles?: Role[]
   onClose: () => void
   onSaved: (saved: Role) => void
   onDeleted?: (id: string) => void
@@ -31,9 +34,9 @@ interface RoleFormDrawerProps {
 // ─── Schema (mirrors setup wizard step-4) ───────────────────────────────────────
 
 const roleSchema = z.object({
-  department_id: z.string().optional(),
+  department_id: z.string().min(1, 'Please choose a department for this job role.'),
   title: z.string().min(1, 'Job role title is required'),
-  level: z.enum(['junior', 'mid', 'senior', 'lead', 'head'] as const),
+  level: z.enum(['junior', 'mid', 'senior', 'head'] as const),
   job_description: z.string().optional(),
   kra: z.array(z.object({ title: z.string(), description: z.string() })).default([]),
   kpi: z
@@ -71,6 +74,7 @@ export default function RoleFormDrawer({
   target,
   orgId,
   departments,
+  roles,
   onClose,
   onSaved,
   onDeleted,
@@ -91,6 +95,7 @@ export default function RoleFormDrawer({
     handleSubmit,
     control,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<RoleFormValues>({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -100,6 +105,17 @@ export default function RoleFormDrawer({
 
   const kraArray = useFieldArray({ control, name: 'kra' })
   const kpiArray = useFieldArray({ control, name: 'kpi' })
+
+  const chosenDeptId = watch('department_id') || (target?.mode === 'create' ? target.deptId : target?.role?.department_id) || ''
+  const showHead = useMemo(() => {
+    if (!roles || !chosenDeptId) return true
+    const existingHeadRole = roles.find(
+      (r) => r.department_id === chosenDeptId && r.level === 'head',
+    )
+    if (!existingHeadRole) return true
+    if (isEdit && editing && editing.id === existingHeadRole.id) return true
+    return false
+  }, [roles, chosenDeptId, isEdit, editing])
 
   // Hydrate when the target changes.
   useEffect(() => {
@@ -117,7 +133,7 @@ export default function RoleFormDrawer({
         kpi: r.kpi ?? [],
       })
     } else {
-      reset({ ...EMPTY, department_id: target.deptId ?? departments?.[0]?.id ?? '' })
+      reset({ ...EMPTY, department_id: target.deptId ?? '' })
     }
   }, [target, reset, departments])
 
@@ -215,13 +231,20 @@ export default function RoleFormDrawer({
             {departments && departments.length > 0 && (
               <div>
                 <label className={labelCls}>Department *</label>
-                <select {...register('department_id')} className={inputCls}>
-                  {departments.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
+                <Controller
+                  control={control}
+                  name="department_id"
+                  render={({ field }) => (
+                    <DepartmentSelect
+                      value={field.value ?? ''}
+                      onChange={field.onChange}
+                      departments={departments}
+                    />
+                  )}
+                />
+                {errors.department_id && (
+                  <p className="text-xs text-[#DC2626] mt-1">{errors.department_id.message}</p>
+                )}
               </div>
             )}
 
@@ -241,13 +264,17 @@ export default function RoleFormDrawer({
               </div>
               <div>
                 <label className={labelCls}>Level *</label>
-                <select {...register('level')} className={inputCls}>
-                  <option value="junior">Junior</option>
-                  <option value="mid">Mid</option>
-                  <option value="senior">Senior</option>
-                  <option value="lead">Lead</option>
-                  <option value="head">Head</option>
-                </select>
+                <Controller
+                  control={control}
+                  name="level"
+                  render={({ field }) => (
+                    <LevelSelect
+                      value={field.value}
+                      onChange={field.onChange}
+                      showHead={showHead}
+                    />
+                  )}
+                />
               </div>
             </div>
 

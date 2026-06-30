@@ -157,6 +157,18 @@ export default function AddEmployeeModal({
     [localRoles, form.department_id],
   )
 
+  const selectedRole = useMemo(
+    () => localRoles.find((r) => r.id === form.role_id) ?? null,
+    [localRoles, form.role_id],
+  )
+  const isHeadRoleSelected = selectedRole?.level === 'head'
+
+  const selectedDept = useMemo(
+    () => localDepartments.find((d) => d.id === form.department_id) ?? null,
+    [localDepartments, form.department_id],
+  )
+  const deptHasHead = !!selectedDept?.head_user_id
+
   // Employee codes must be unique within the org — flag a clash as the user types.
   const usedCodes = useMemo(
     () =>
@@ -309,10 +321,13 @@ export default function AddEmployeeModal({
                   value={form.department_id}
                   departments={localDepartments}
                   onChange={(id) => {
-                    set('department_id', id)
-                    set('role_id', '') // reset role when department changes
+                    setForm((f) => ({
+                      ...f,
+                      department_id: id,
+                      role_id: '',
+                      make_dep_head: false,
+                    }))
                     setCreatingRole(false) // roles are dept-scoped
-                    set('make_dep_head', false) // reset checkbox
                   }}
                 />
                 {(() => {
@@ -353,8 +368,21 @@ export default function AddEmployeeModal({
                   roles={deptRoles}
                   disabled={!form.department_id}
                   disabledHint="Pick a department first"
-                  onChange={(id) => set('role_id', id)}
+                  onChange={(id) => {
+                    const role = localRoles.find((r) => r.id === id)
+                    const hasHead = !!localDepartments.find((d) => d.id === form.department_id)?.head_user_id
+                    setForm((f) => ({
+                      ...f,
+                      role_id: id,
+                      make_dep_head: role?.level === 'head' && !hasHead ? true : (role?.level === 'head' ? f.make_dep_head : false),
+                    }))
+                  }}
                 />
+                {isHeadRoleSelected && deptHasHead && (
+                  <p className="mt-1.5 text-xs text-[#CA8A04] bg-[#FEF9C3] border border-[#FDE68A] rounded-[6px] px-2.5 py-1.5 font-medium">
+                    Already there is a head here.
+                  </p>
+                )}
 
                 {/* Inline role creation — opens the full role drawer over this
                     modal, scoped to the chosen department (admin only) */}
@@ -505,6 +533,7 @@ export default function AddEmployeeModal({
               : null
           }
           orgId={orgId}
+          roles={localRoles}
           onClose={() => setCreatingRole(false)}
           onSaved={(saved) => {
             setLocalRoles((rs) => [...rs, saved])
