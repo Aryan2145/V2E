@@ -210,6 +210,12 @@ export interface EmployeeProfile {
   role?: Role;
   department?: Department;
   reporting_to?: User;
+  system_role_id?: string;
+  system_role?: {
+    id: string;
+    name: string;
+    is_admin: boolean;
+  } | null;
 }
 
 export interface PeopleEvent {

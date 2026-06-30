@@ -102,8 +102,6 @@ export default function Step5EmployeesPage() {
   const mode = useSetupMode()
   const isEdit = mode === 'edit'
   const orgId = user?.organizationId ?? ''
-  const hasProfile = employees.some((e) => e.user_id === user?.id)
-
   const [departments, setDepartments] = useState<Department[]>([])
   const [allRoles, setAllRoles] = useState<Role[]>([])
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
@@ -112,6 +110,8 @@ export default function Step5EmployeesPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [serverError, setServerError] = useState<string | null>(null)
+
+  const hasProfile = employees.some((e) => e.user_id === user?.id)
 
   const {
     register,

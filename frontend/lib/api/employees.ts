@@ -46,6 +46,7 @@ export async function createEmployee(
     date_of_birth?: string;
     marriage_date?: string;
     employment_type?: EmploymentType;
+    make_dep_head?: boolean;
   }
 ): Promise<EmployeeProfile> {
   const { data } = await apiClient.post<ApiResponse<EmployeeProfile>>(
