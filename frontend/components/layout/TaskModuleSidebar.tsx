@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import React from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
 import { useEntitlements } from '@/lib/auth/use-entitlements'
+import { getMyOrgs } from '@/lib/api/auth'
 import {
   LayoutDashboard,
   CheckSquare,
@@ -32,6 +33,8 @@ interface NavItem {
   adminOnly?: boolean
   /** Visible to admins OR any role granted a task-configuration permission. */
   taskConfigGated?: boolean
+  /** Only relevant to people who belong to 2+ firms (a group of companies). */
+  multiOrgOnly?: boolean
   disabled?: boolean
 }
 
@@ -62,7 +65,7 @@ const NAV_GROUPS: NavGroup[] = [
       { label: 'Recurring', href: '/dashboard/tasks/recurring', Icon: RotateCcw },
       { label: 'Escalated', href: '/dashboard/tasks/escalated', Icon: AlertTriangle },
       { label: "CC'd Tasks", href: '/dashboard/tasks/cc', Icon: Eye },
-      { label: 'Collective', href: '/dashboard/tasks/collective', Icon: Globe },
+      { label: 'Collective', href: '/dashboard/tasks/collective', Icon: Globe, multiOrgOnly: true },
       { label: 'Archive', href: '/dashboard/tasks/archive', Icon: Archive, adminOnly: true },
       { label: 'Reports', href: '/dashboard/tasks/reports', Icon: BarChart2, adminOnly: true },
     ],
@@ -119,6 +122,20 @@ export default function TaskModuleSidebar() {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'
   })
+
+  // "Collective" (cross-firm) tasks only make sense for a person who belongs to
+  // a group of companies — i.e. has 2+ active org memberships. For a single
+  // firm it just duplicates "My Tasks", so hide it until we confirm multi-org.
+  const [multiOrg, setMultiOrg] = useState(false)
+  useEffect(() => {
+    if (user && !user.isSuperAdmin && user.organizationId) {
+      getMyOrgs()
+        .then((orgs) => setMultiOrg(orgs.length > 1))
+        .catch(() => setMultiOrg(false))
+    } else {
+      setMultiOrg(false)
+    }
+  }, [user?.id, user?.isSuperAdmin, user?.organizationId])
 
   const isAdminOrHR = !!user?.is_admin
   const canSeeMasters =
@@ -183,6 +200,7 @@ export default function TaskModuleSidebar() {
           if (entitlementState === 'off') return null
           const visibleItems = group.items.filter((item) => {
             if (item.taskConfigGated) return canSeeMasters
+            if (item.multiOrgOnly && !multiOrg) return false
             return !(item.adminOnly && !isAdminOrHR)
           })
           if (visibleItems.length === 0) return null
