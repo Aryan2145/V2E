@@ -6,6 +6,7 @@ import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreatePriorityDto } from './dto/create-priority.dto';
 import { CreateStatusDto } from './dto/create-status.dto';
 import { CreateChecklistTemplateDto } from './dto/create-checklist-template.dto';
+import { seedTaskMasters } from './seed-task-masters';
 
 @Injectable()
 export class TaskMastersService {
@@ -14,39 +15,10 @@ export class TaskMastersService {
   // ─── Config ─────────────────────────────────────────────────────────────────
 
   async getOrCreateConfig(orgId: string) {
-    const config = await this.prisma.taskMaster.upsert({
-      where: { organization_id: orgId },
-      create: { organization_id: orgId },
-      update: {},
-    });
-
-    // Seed default priorities if none exist
-    const priorityCount = await this.prisma.taskPriority.count({ where: { organization_id: orgId } });
-    if (priorityCount === 0) {
-      await this.prisma.taskPriority.createMany({
-        data: [
-          { organization_id: orgId, label: 'Critical', color: '#DC2626', order_index: 0 },
-          { organization_id: orgId, label: 'High', color: '#EA580C', order_index: 1 },
-          { organization_id: orgId, label: 'Medium', color: '#D97706', order_index: 2 },
-          { organization_id: orgId, label: 'Low', color: '#2563EB', order_index: 3 },
-        ],
-      });
-    }
-
-    // Seed default statuses if none exist
-    const statusCount = await this.prisma.taskStatus.count({ where: { organization_id: orgId } });
-    if (statusCount === 0) {
-      await this.prisma.taskStatus.createMany({
-        data: [
-          { organization_id: orgId, label: 'Not Started', type: 'not_started', color: '#6B7280', order_index: 0, is_default: true },
-          { organization_id: orgId, label: 'In Progress', type: 'in_progress', color: '#2563EB', order_index: 1 },
-          { organization_id: orgId, label: 'Completed', type: 'completed', color: '#16A34A', order_index: 2 },
-          { organization_id: orgId, label: 'Incomplete', type: 'incomplete', color: '#DC2626', order_index: 3 },
-        ],
-      });
-    }
-
-    return config;
+    // Seeds the TaskMaster config row plus default priorities/statuses if absent.
+    // Shared with org provisioning so brand-new firms get masters up-front.
+    await seedTaskMasters(this.prisma, orgId);
+    return this.prisma.taskMaster.findUniqueOrThrow({ where: { organization_id: orgId } });
   }
 
   async updateConfig(orgId: string, dto: UpdateConfigDto) {
