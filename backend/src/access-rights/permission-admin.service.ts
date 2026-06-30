@@ -229,9 +229,13 @@ export class PermissionAdminService {
 
   /** Lightweight list for pickers (e.g. Add Employee). Any org member may read it. */
   async listSystemRoles(orgId: string) {
+    // Order: non-admin roles by widening data scope (own → team → org), then the
+    // admin role last — i.e. Employee, Manager, Leadership, …, Administrator.
+    // `default_scope` is a DataScope enum declared own/team/department/org, so an
+    // ascending sort yields the scope hierarchy without a hand-maintained list.
     const systemRoles = await this.prisma.systemRole.findMany({
       where: { organization_id: orgId },
-      orderBy: [{ is_system: 'desc' }, { name: 'asc' }],
+      orderBy: [{ is_admin: 'asc' }, { default_scope: 'asc' }, { name: 'asc' }],
       select: { id: true, name: true, is_system: true, is_admin: true },
     });
     return { systemRoles };
