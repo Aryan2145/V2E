@@ -8,7 +8,7 @@ import { getEmployees } from '@/lib/api/employees'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import type { EmployeeProfile, Department, Role, EmployeeStatus } from '@/lib/types'
-import { Search, Users, ChevronRight, UserPlus, Upload } from 'lucide-react'
+import { Search, Users, ChevronRight, UserPlus, Upload, AlertTriangle } from 'lucide-react'
 import AddEmployeeModal from '@/components/employees/AddEmployeeModal'
 import ImportEmployeesModal from '@/components/employees/ImportEmployeesModal'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
@@ -108,6 +108,7 @@ export default function EmployeesPage() {
   const [search, setSearch] = useState('')
   const [deptFilter, setDeptFilter] = useState('all')
   const [showAdd, setShowAdd] = useState(false)
+  const [prefillSelf, setPrefillSelf] = useState(false)
   const [showImport, setShowImport] = useState(false)
   const [view, setView] = useState<EmployeeView>('table')
   const tableScrollRef = useRef<HTMLDivElement>(null)
@@ -329,6 +330,8 @@ export default function EmployeesPage() {
     },
   ]
 
+  const hasProfile = employees.some((e) => e.user_id === user?.id)
+
   return (
     <div className="space-y-6">
       {/* Page header */}
@@ -358,6 +361,31 @@ export default function EmployeesPage() {
           </div>
         )}
       </div>
+
+      {/* Profile setup warning banner */}
+      {user && !user.isSuperAdmin && !hasProfile && !loading && (
+        <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[12px] p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+          <div className="flex items-start gap-3">
+            <AlertTriangle size={20} className="text-[#D97706] shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-[#92400E]">Profile Setup Required</p>
+              <p className="text-xs text-[#B45309] mt-0.5">
+                You do not have an employee profile in the directory yet. Set up your profile to assign yourself to a department, role, and enable full task assignments.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setPrefillSelf(true)
+              setShowAdd(true)
+            }}
+            className="flex items-center justify-center gap-1.5 px-4.5 py-2.5 rounded-[8px] text-sm font-bold text-white bg-[#D97706] hover:bg-[#B45309] transition-colors whitespace-nowrap self-start sm:self-center"
+          >
+            Setup Profile
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-col sm:flex-row gap-3">
@@ -414,9 +442,14 @@ export default function EmployeesPage() {
           departments={departments}
           roles={roles}
           employees={employees}
-          onClose={() => setShowAdd(false)}
+          prefillSelf={prefillSelf}
+          onClose={() => {
+            setShowAdd(false)
+            setPrefillSelf(false)
+          }}
           onCreated={() => {
             setShowAdd(false)
+            setPrefillSelf(false)
             reloadEmployees()
           }}
         />

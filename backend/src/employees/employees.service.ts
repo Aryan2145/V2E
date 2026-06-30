@@ -145,25 +145,31 @@ export class EmployeesService {
 
     const { profile, createdUserId } = await this.prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { email } });
-
+      let isExistingMember = false;
       if (user) {
-        const existing = await tx.organizationMember.findFirst({
+        const existingProfile = await tx.employeeProfile.findFirst({
           where: { user_id: user.id, organization_id: orgId },
         });
-        if (existing) {
+        if (existingProfile) {
           throw new ConflictException(
-            `A user with email '${email}' already exists in this organization`,
+            `A user with email '${email}' already has an employee profile in this organization`,
           );
         }
+        const member = await tx.organizationMember.findFirst({
+          where: { user_id: user.id, organization_id: orgId },
+        });
+        isExistingMember = !!member;
       } else {
         user = await tx.user.create({
           data: { name, email, password_hash, is_active: true },
         });
       }
 
-      await tx.organizationMember.create({
-        data: { organization_id: orgId, user_id: user.id, is_admin: false },
-      });
+      if (!isExistingMember) {
+        await tx.organizationMember.create({
+          data: { organization_id: orgId, user_id: user.id, is_admin: false },
+        });
+      }
 
       const profile = await tx.employeeProfile.create({
         data: {
@@ -264,6 +270,18 @@ export class EmployeesService {
 
     if (!profile) {
       throw new NotFoundException(`Employee ${id} not found in this organization`);
+    }
+
+    if (status === 'inactive') {
+      const primaryAdmin = await this.prisma.organizationMember.findFirst({
+        where: { organization_id: orgId, is_admin: true },
+        orderBy: { joined_at: 'asc' },
+      });
+      if (primaryAdmin && profile.user_id === primaryAdmin.user_id) {
+        throw new BadRequestException(
+          'The primary administrator of this organization cannot be deactivated.',
+        );
+      }
     }
 
     const updated = await this.prisma.employeeProfile.update({

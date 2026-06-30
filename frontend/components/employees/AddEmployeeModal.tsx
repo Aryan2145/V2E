@@ -43,6 +43,7 @@ interface Props {
   departments: Department[]
   roles: Role[]
   employees: EmployeeProfile[]
+  prefillSelf?: boolean
   onClose: () => void
   onCreated: () => void
 }
@@ -62,6 +63,7 @@ export default function AddEmployeeModal({
   departments,
   roles,
   employees,
+  prefillSelf = false,
   onClose,
   onCreated,
 }: Props) {
@@ -96,6 +98,19 @@ export default function AddEmployeeModal({
       .then(({ systemRoles }) => setSystemRoles(systemRoles))
       .catch(() => setSystemRoles([]))
   }, [orgId])
+
+  useEffect(() => {
+    if (prefillSelf && user && systemRoles.length > 0) {
+      const adminRole = systemRoles.find((r) => r.is_admin)
+      setForm((f) => ({
+        ...f,
+        name: user.name,
+        email: user.email,
+        password: '•' + Math.random().toString(36).slice(-8) + 'A1!',
+        system_role_id: adminRole?.id ?? '',
+      }))
+    }
+  }, [prefillSelf, user, systemRoles])
 
   // The dept drawer needs the user list for its "head" picker; load it lazily
   // only when the current user can actually create departments.
@@ -249,6 +264,7 @@ export default function AddEmployeeModal({
                   onChange={(e) => set('name', e.target.value)}
                   placeholder="Jane Doe"
                   className={inputClass}
+                  disabled={prefillSelf}
                 />
               </div>
               <div>
@@ -259,32 +275,35 @@ export default function AddEmployeeModal({
                   onChange={(e) => set('email', e.target.value)}
                   placeholder="jane@company.com"
                   className={inputClass}
+                  disabled={prefillSelf}
                 />
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className={labelClass}>Password *</label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    value={form.password}
-                    onChange={(e) => set('password', e.target.value)}
-                    placeholder="Min. 8 characters"
-                    className={`${inputClass} pr-10`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                  </button>
+              {!prefillSelf && (
+                <div>
+                  <label className={labelClass}>Password *</label>
+                  <div className="relative">
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={form.password}
+                      onChange={(e) => set('password', e.target.value)}
+                      placeholder="Min. 8 characters"
+                      className={`${inputClass} pr-10`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]"
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div>
+              )}
+              <div className={prefillSelf ? 'sm:col-span-2' : ''}>
                 <label className={labelClass}>Department *</label>
                 <DepartmentSelect
                   value={form.department_id}
@@ -367,6 +386,7 @@ export default function AddEmployeeModal({
                 <SelectField
                   value={form.system_role_id}
                   onChange={(e) => set('system_role_id', e.target.value)}
+                  disabled={prefillSelf}
                 >
                   <option value="">— Select —</option>
                   {systemRoles.map((r) => (

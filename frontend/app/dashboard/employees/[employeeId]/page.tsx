@@ -171,6 +171,11 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
     date_of_birth: employee.date_of_birth ? employee.date_of_birth.slice(0, 10) : '',
     marriage_date: employee.marriage_date ? employee.marriage_date.slice(0, 10) : '',
   })
+  const isPrimaryAdmin = employee.system_role?.is_admin && !allEmployees.some(
+    (e) => e.system_role?.is_admin && e.created_at && new Date(e.created_at) < new Date(employee.created_at)
+  )
+  const isSelf = employee.user_id === user?.id
+
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [mounted, setMounted] = useState(false)
@@ -272,10 +277,20 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
             {/* Status */}
             <div>
               <label className={labelClass}>Status</label>
-              <select value={form.status} onChange={(e) => set('status', e.target.value)} className={selectClass}>
+              <select
+                value={form.status}
+                onChange={(e) => set('status', e.target.value)}
+                className={selectClass}
+                disabled={isPrimaryAdmin || isSelf}
+              >
                 <option value="active">Active</option>
                 <option value="inactive">Inactive</option>
               </select>
+              {(isPrimaryAdmin || isSelf) && (
+                <p className="text-[11px] text-[#94A3B8] mt-1">
+                  {isPrimaryAdmin ? 'Primary administrator cannot be deactivated.' : 'You cannot deactivate your own account.'}
+                </p>
+              )}
             </div>
 
             {/* Employee Code */}

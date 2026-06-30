@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Eye, EyeOff, CheckCircle2, Users, ArrowLeft } from 'lucide-react'
+import { Eye, EyeOff, CheckCircle2, Users, ArrowLeft, AlertTriangle } from 'lucide-react'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import { getEmployees, createEmployee } from '@/lib/api/employees'
@@ -102,6 +102,7 @@ export default function Step5EmployeesPage() {
   const mode = useSetupMode()
   const isEdit = mode === 'edit'
   const orgId = user?.organizationId ?? ''
+  const hasProfile = employees.some((e) => e.user_id === user?.id)
 
   const [departments, setDepartments] = useState<Department[]>([])
   const [allRoles, setAllRoles] = useState<Role[]>([])
@@ -201,6 +202,28 @@ export default function Step5EmployeesPage() {
           <h2 className="text-[15px] font-bold text-[#0F172A] border-b border-[#E2E8F0] pb-4">
             Add Employee
           </h2>
+
+          {user && !hasProfile && (
+            <div className="bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-[0_1px_2px_rgba(0,0,0,0.05)]">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} className="text-[#D97706] shrink-0 mt-0.5" />
+                <p className="text-xs text-[#B45309]">
+                  You do not have an employee profile yet. Click below to automatically load your administrator account details so you can select your department and job role.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setValue('name', user.name)
+                  setValue('email', user.email)
+                  setValue('password', '•' + Math.random().toString(36).slice(-8) + 'A1!')
+                }}
+                className="px-3.5 py-2 bg-[#D97706] hover:bg-[#B45309] text-white rounded-[6px] text-xs font-semibold whitespace-nowrap self-start"
+              >
+                Autofill My Details
+              </button>
+            </div>
+          )}
 
           {successMsg && (
             <div className="flex items-center gap-2 bg-[#F0FDF4] border border-[#BBF7D0] rounded-[8px] px-3 py-2.5">

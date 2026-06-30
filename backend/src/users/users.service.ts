@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
@@ -107,6 +108,17 @@ export class UsersService {
       where: { user_id: id, organization_id: orgId },
     });
     if (!member) throw new NotFoundException(`User not found in this organization`);
+
+    // Prevent deactivating the primary administrator of the organization
+    const primaryAdmin = await this.prisma.organizationMember.findFirst({
+      where: { organization_id: orgId, is_admin: true },
+      orderBy: { joined_at: 'asc' },
+    });
+    if (primaryAdmin && id === primaryAdmin.user_id) {
+      throw new BadRequestException(
+        'The primary administrator of this organization cannot be deactivated.',
+      );
+    }
 
     await this.prisma.organizationMember.update({
       where: { id: member.id },
