@@ -11,6 +11,8 @@ import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
 import { PERMISSION_REGISTRY, ENTITLEMENT_MODULE_KEYS } from '../access-rights/permission-registry';
+import { seedDefaultSystemRoles } from '../access-rights/default-system-roles';
+import { seedTaskMasters } from '../task-masters/seed-task-masters';
 
 const ENTITLEMENT_MODULES = PERMISSION_REGISTRY.filter((m) => m.entitlementControlled).map((m) => ({
   key: m.key,
@@ -237,6 +239,15 @@ export class OrganizationsService {
           default_scope: DataScope.org,
         },
       });
+
+      // Seed the editable default roles (Employee / Manager / Leadership),
+      // differentiated by data scope. Idempotent and additive; Administrator
+      // above stays the locked role.
+      await seedDefaultSystemRoles(tx, organization.id);
+
+      // Seed Task Masters (config + default priorities/statuses) so the Create
+      // Task form has a populated Status dropdown from the very first task.
+      await seedTaskMasters(tx, organization.id);
 
       return {
         organization,
