@@ -212,4 +212,131 @@ export class RolesService {
     this.assigneeVisibility.invalidate(orgId);
     return { message: 'Role deleted successfully' };
   }
+
+  async listImportBatches(orgId: string) {
+    const batches = await this.prisma.roleImportBatch.findMany({
+      where: { organization_id: orgId },
+      include: {
+        imported_by: {
+          select: { name: true },
+        },
+        roles: {
+          select: {
+            id: true,
+            _count: {
+              select: {
+                employee_profiles: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    return batches.map((b) => {
+      const hasDependents = b.roles.some((r) => r._count.employee_profiles > 0);
+      return {
+        id: b.id,
+        file_name: b.file_name,
+        status: b.status,
+        total_rows: b.total_rows,
+        created_count: b.created_count,
+        failed_count: b.failed_count,
+        created_at: b.created_at,
+        undone_at: b.undone_at,
+        imported_by: b.imported_by.name,
+        remaining: b.status === 'committed' ? b.roles.length : 0,
+        can_undo: b.status === 'committed' && !hasDependents,
+      };
+    });
+  }
+
+  async createImportBatch(
+    orgId: string,
+    userId: string,
+    dto: { file_name?: string; total_rows: number; created_count: number; failed_count: number; role_ids: string[] },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const batch = await tx.roleImportBatch.create({
+        data: {
+          organization_id: orgId,
+          imported_by_user_id: userId,
+          file_name: dto.file_name ?? null,
+          total_rows: dto.total_rows,
+          created_count: dto.created_count,
+          failed_count: dto.failed_count,
+        },
+      });
+
+      if (dto.role_ids.length > 0) {
+        await tx.role.updateMany({
+          where: { id: { in: dto.role_ids }, organization_id: orgId },
+          data: { import_batch_id: batch.id },
+        });
+      }
+
+      return batch;
+    });
+  }
+
+  async undoImport(orgId: string, batchId: string) {
+    const batch = await this.prisma.roleImportBatch.findFirst({
+      where: { id: batchId, organization_id: orgId },
+      include: {
+        roles: {
+          include: {
+            _count: {
+              select: {
+                employee_profiles: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!batch) {
+      throw new NotFoundException(`Import batch ${batchId} not found`);
+    }
+
+    if (batch.status !== 'committed') {
+      throw new BadRequestException(`Import batch has already been ${batch.status}`);
+    }
+
+    const blocked = batch.roles.filter((r) => r._count.employee_profiles > 0);
+
+    if (blocked.length > 0) {
+      throw new BadRequestException(
+        `Cannot undo. Some job roles created in this batch already have employees assigned to them.`,
+      );
+    }
+
+    const roleIds = batch.roles.map((r) => r.id);
+    let deletedCount = 0;
+    if (roleIds.length > 0) {
+      const { count } = await this.prisma.role.deleteMany({
+        where: { id: { in: roleIds }, organization_id: orgId },
+      });
+      deletedCount = count;
+    }
+
+    await this.prisma.roleImportBatch.update({
+      where: { id: batchId },
+      data: {
+        status: 'undone',
+        undone_at: new Date(),
+        undo_summary: { undone: deletedCount, kept: [] } as any,
+      },
+    });
+
+    this.assigneeVisibility.invalidate(orgId);
+
+    return {
+      batch_id: batchId,
+      undone: deletedCount,
+      kept: 0,
+      status: 'undone',
+    };
+  }
 }

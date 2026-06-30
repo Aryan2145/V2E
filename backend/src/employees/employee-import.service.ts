@@ -503,7 +503,13 @@ export class EmployeeImportService {
       const password = (row.password ?? '').trim() || DEFAULT_IMPORT_PASSWORD;
       if (password.length < 8) err('Password must be at least 8 characters', 'password');
 
-      const isDepartmentHead = (row.is_department_head ?? '').trim().toLowerCase() === 'yes';
+      const rawDeptHead = (row.is_department_head ?? '').trim().toLowerCase();
+      const isDepartmentHead =
+        rawDeptHead === 'yes' ||
+        rawDeptHead === 'true' ||
+        rawDeptHead === '1' ||
+        rawDeptHead.includes('☑') ||
+        rawDeptHead.includes('yes');
       if (isDepartmentHead && dept && dept.head_user_id) {
         err(`Department "${dept.name}" already has a Head assigned in the organization`, 'department');
       }

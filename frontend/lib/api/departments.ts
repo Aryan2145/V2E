@@ -45,3 +45,28 @@ export async function updateDepartmentPosition(
   );
   return data.data;
 }
+
+export async function listImportBatches(orgId: string): Promise<any[]> {
+  const { data } = await apiClient.get<ApiResponse<any[]>>(
+    `/api/v1/org/${orgId}/departments/imports`
+  );
+  return data.data;
+}
+
+export async function createImportBatch(
+  orgId: string,
+  batchData: { file_name?: string; total_rows: number; created_count: number; failed_count: number; department_ids: string[] }
+): Promise<any> {
+  const { data } = await apiClient.post<ApiResponse<any>>(
+    `/api/v1/org/${orgId}/departments/imports`,
+    batchData
+  );
+  return data.data;
+}
+
+export async function undoImport(orgId: string, batchId: string): Promise<any> {
+  const { data } = await apiClient.post<ApiResponse<any>>(
+    `/api/v1/org/${orgId}/departments/imports/${batchId}/undo`
+  );
+  return data.data;
+}

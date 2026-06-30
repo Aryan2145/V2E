@@ -314,8 +314,8 @@ export default function ImportEmployeesModal({
       const mgrValue = mgrRows[0]
         ? `${mgrRows[0].name}${VALUE_SEPARATOR}${mgrRows[0].dept}${VALUE_SEPARATOR}${mgrRows[0].role}`
         : ''
-      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, 'yes', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
-      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, 'no', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
+      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, '☑ Yes', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
+      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, '☐ No', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
 
       // Dropdowns + date constraints for rows 2..LAST.
       const LAST = 500
@@ -363,7 +363,7 @@ export default function ImportEmployeesModal({
         }
       }
       addListDV('department', `'Departments'!$B$2:$B$${deptSorted.length + 1}`)
-      addListDV('is_department_head', '"yes,no"')
+      addListDV('is_department_head', '"☑ Yes,☐ No"')
       addListDV('role', `'Roles'!$D$2:$D$${roleRows.length + 1}`)
       addListDV('system_role', `'System Roles'!$B$2:$B$${sysSorted.length + 1}`)
       addListDV('reporting_to', `'Reports To'!$E$2:$E$${mgrRows.length + 1}`)

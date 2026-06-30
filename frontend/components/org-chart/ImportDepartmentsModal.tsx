@@ -10,8 +10,11 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  History,
+  ArrowLeft,
+  Undo2,
 } from 'lucide-react'
-import { createDepartment } from '@/lib/api/departments'
+import { createDepartment, listImportBatches, createImportBatch, undoImport } from '@/lib/api/departments'
 import { placeUnderParent } from '@/lib/org-chart-layout'
 import { useToast } from '@/components/ui/Toast'
 import type { Department, User } from '@/lib/types'
@@ -142,6 +145,38 @@ export default function ImportDepartmentsModal({
   const [result, setResult] = useState<{ created: number; failed: number; results: RowResult[] } | null>(
     null,
   )
+
+  type Phase = 'upload' | 'history'
+  const [phase, setPhase] = useState<Phase>('upload')
+  const [batches, setBatches] = useState<any[]>([])
+  const [undoResult, setUndoResult] = useState<any | null>(null)
+  const [undoingId, setUndoingId] = useState<string | null>(null)
+
+  async function loadHistory() {
+    try {
+      const data = await listImportBatches(orgId)
+      setBatches(data)
+    } catch {
+      setBatches([])
+    }
+  }
+
+  async function handleUndo(batchId: string) {
+    setUndoingId(batchId)
+    setUndoResult(null)
+    try {
+      const res = await undoImport(orgId, batchId)
+      setUndoResult(res)
+      addToast('Import undone successfully', 'success')
+      onImported()
+      loadHistory()
+    } catch (err: any) {
+      const msg = err?.response?.data?.message ?? 'Could not undo this import'
+      addToast(msg, 'error')
+    } finally {
+      setUndoingId(null)
+    }
+  }
 
   // ─── Template (.xlsx with dropdowns) ──────────────────────────────────────────
   async function downloadTemplate() {
@@ -402,6 +437,26 @@ export default function ImportDepartmentsModal({
     results.sort((a, b) => a.row - b.row)
     const created = results.filter((r) => r.status === 'created').length
     const failed = results.length - created
+    
+    const createdDeptIds = results
+      .filter((r) => r.status === 'created')
+      .map((r) => nameToId.get(norm(r.name)))
+      .filter((id): id is string => !!id)
+
+    if (createdDeptIds.length > 0) {
+      try {
+        await createImportBatch(orgId, {
+          file_name: fileName || undefined,
+          total_rows: rows.length,
+          created_count: created,
+          failed_count: failed,
+          department_ids: createdDeptIds,
+        })
+      } catch (e) {
+        console.error('Failed to create import batch record', e)
+      }
+    }
+
     setResult({ created, failed, results })
     if (created > 0) {
       addToast(
@@ -432,19 +487,50 @@ export default function ImportDepartmentsModal({
       <div className="bg-white w-full sm:max-w-2xl sm:rounded-[12px] rounded-t-[16px] shadow-xl max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
-          <h2 className="text-[18px] font-semibold text-[#0F172A]">Import Departments</h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
-            aria-label="Close"
-          >
-            <X size={18} />
-          </button>
+          <div className="flex items-center gap-3">
+            {phase === 'history' && (
+              <button
+                onClick={() => setPhase('upload')}
+                className="p-1 hover:bg-[#F1F5F9] rounded transition-colors text-[#64748B] hover:text-[#0F172A]"
+                title="Back to upload"
+              >
+                <ArrowLeft size={16} />
+              </button>
+            )}
+            <h2 className="text-[18px] font-semibold text-[#0F172A]">Import Departments</h2>
+          </div>
+          <div className="flex items-center gap-2.5">
+            {phase === 'upload' && !result && (
+              <button
+                onClick={() => {
+                  setPhase('history')
+                  loadHistory()
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[13px] font-semibold text-[#475569] bg-[#F1F5F9] hover:bg-[#E2E8F0] transition-colors"
+              >
+                <History size={14} /> Import History
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
+              aria-label="Close"
+            >
+              <X size={18} />
+            </button>
+          </div>
         </div>
 
         {/* Body */}
         <div className="px-6 py-5 overflow-y-auto space-y-5">
-          {result ? (
+          {phase === 'history' ? (
+            <HistoryView
+              batches={batches}
+              onUndo={handleUndo}
+              undoingId={undoingId}
+              undoResult={undoResult}
+            />
+          ) : result ? (
             <div className="space-y-4">
               <div className="flex items-center gap-4 flex-wrap">
                 <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#DCFCE7] border border-[#BBF7D0]">
@@ -573,7 +659,7 @@ export default function ImportDepartmentsModal({
         </div>
 
         {/* Footer */}
-        {!result && (
+        {!result && phase !== 'history' && (
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
             <button
               type="button"
@@ -596,5 +682,68 @@ export default function ImportDepartmentsModal({
       </div>
     </div>,
     document.body,
+  )
+}
+
+function UndoSummary({ undoResult }: { undoResult: any }) {
+  return (
+    <div className="border border-[#E2E8F0] rounded-[10px] p-4 space-y-2">
+      <p className="text-sm font-semibold text-[#0F172A]">
+        Removed {undoResult.undone} department{undoResult.undone !== 1 ? 's' : ''}.
+      </p>
+    </div>
+  )
+}
+
+function HistoryView({
+  batches,
+  onUndo,
+  undoingId,
+  undoResult,
+}: {
+  batches: any[]
+  onUndo: (batchId: string) => void
+  undoingId: string | null
+  undoResult: any | null
+}) {
+  if (batches.length === 0) {
+    return <p className="text-sm text-[#94A3B8] py-8 text-center">No imports yet.</p>
+  }
+  return (
+    <div className="space-y-3">
+      {undoResult && <UndoSummary undoResult={undoResult} />}
+      <div className="border border-[#E2E8F0] rounded-[10px] divide-y divide-[#F1F5F9]">
+        {batches.map((b) => (
+          <div key={b.id} className="px-4 py-3 flex items-center gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-[#0F172A] truncate">
+                {b.file_name || 'Untitled import'}
+                {b.status !== 'committed' && (
+                  <span className="ml-2 text-[11px] font-semibold text-[#94A3B8] uppercase">{b.status.replace('_', ' ')}</span>
+                )}
+              </p>
+              <p className="text-xs text-[#64748B] mt-0.5">
+                {new Date(b.created_at).toLocaleString()} · by {b.imported_by} · {b.created_count} created
+                {b.failed_count > 0 ? `, ${b.failed_count} failed` : ''} · {b.remaining} still present
+              </p>
+            </div>
+            {b.can_undo ? (
+              <button
+                onClick={() => onUndo(b.id)}
+                disabled={undoingId === b.id}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[13px] font-semibold text-[#B91C1C] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:opacity-60 transition-colors shrink-0"
+              >
+                {undoingId === b.id ? <Loader2 size={13} className="animate-spin" /> : <Undo2 size={13} />}
+                Undo
+              </button>
+            ) : (
+              <span className="text-[11px] text-[#94A3B8] shrink-0">
+                {b.status === 'undone' ? 'Undone' : 'Cannot Undo'}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }

@@ -59,3 +59,28 @@ export async function updateRole(
 export async function deleteRole(orgId: string, id: string): Promise<void> {
   await apiClient.delete(`/api/v1/org/${orgId}/roles/${id}`);
 }
+
+export async function listImportBatches(orgId: string): Promise<any[]> {
+  const { data } = await apiClient.get<ApiResponse<any[]>>(
+    `/api/v1/org/${orgId}/roles/imports`
+  );
+  return data.data;
+}
+
+export async function createImportBatch(
+  orgId: string,
+  batchData: { file_name?: string; total_rows: number; created_count: number; failed_count: number; role_ids: string[] }
+): Promise<any> {
+  const { data } = await apiClient.post<ApiResponse<any>>(
+    `/api/v1/org/${orgId}/roles/imports`,
+    batchData
+  );
+  return data.data;
+}
+
+export async function undoImport(orgId: string, batchId: string): Promise<any> {
+  const { data } = await apiClient.post<ApiResponse<any>>(
+    `/api/v1/org/${orgId}/roles/imports/${batchId}/undo`
+  );
+  return data.data;
+}

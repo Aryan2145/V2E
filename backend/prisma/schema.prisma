@@ -154,6 +154,8 @@ model Organization {
   system_roles       SystemRole[]
   employee_profiles  EmployeeProfile[]
   employee_import_batches EmployeeImportBatch[]
+  department_import_batches DepartmentImportBatch[]
+  role_import_batches      RoleImportBatch[]
   learning_paths     LearningPath[]
   company_policies   CompanyPolicy[]
   announcements      Announcement[]
@@ -202,6 +204,8 @@ model User {
   organization_memberships OrganizationMember[]
   employee_profiles        EmployeeProfile[]
   employee_import_batches  EmployeeImportBatch[] @relation("EmployeeImportedBy")
+  department_import_batches DepartmentImportBatch[] @relation("DepartmentImportedBy")
+  role_import_batches      RoleImportBatch[] @relation("RoleImportedBy")
   headed_departments       Department[]       @relation("DepartmentHead")
   reports_to_employees     EmployeeProfile[]  @relation("ReportingTo")
   announcements            Announcement[]
@@ -283,11 +287,14 @@ model Department {
   head_user           User?           @relation("DepartmentHead", fields: [head_user_id], references: [id])
   roles               Role[]
   employee_profiles   EmployeeProfile[]
+  import_batch_id     String?
+  import_batch        DepartmentImportBatch? @relation("DepartmentImportBatch", fields: [import_batch_id], references: [id], onDelete: SetNull)
   announcements       Announcement[]
   bulletin_boards     BulletinBoard[]
   knowledge_posts     KnowledgePost[]
   goals               Goal[]
 
+  @@index([import_batch_id])
   @@map("departments")
 }
 
@@ -306,7 +313,10 @@ model Role {
   organization      Organization      @relation(fields: [organization_id], references: [id])
   department        Department        @relation(fields: [department_id], references: [id])
   employee_profiles EmployeeProfile[]
+  import_batch_id   String?
+  import_batch      RoleImportBatch? @relation("RoleImportBatch", fields: [import_batch_id], references: [id], onDelete: SetNull)
 
+  @@index([import_batch_id])
   @@map("roles")
 }
 
@@ -370,6 +380,48 @@ model EmployeeImportBatch {
 
   @@index([organization_id])
   @@map("employee_import_batches")
+}
+
+model DepartmentImportBatch {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  imported_by_user_id String
+  file_name           String?
+  total_rows          Int
+  created_count       Int
+  failed_count        Int
+  status              ImportBatchStatus @default(committed)
+  undo_summary        Json?
+  created_at          DateTime          @default(now())
+  undone_at           DateTime?
+
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  imported_by  User         @relation("DepartmentImportedBy", fields: [imported_by_user_id], references: [id])
+  departments  Department[] @relation("DepartmentImportBatch")
+
+  @@index([organization_id])
+  @@map("department_import_batches")
+}
+
+model RoleImportBatch {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  imported_by_user_id String
+  file_name           String?
+  total_rows          Int
+  created_count       Int
+  failed_count        Int
+  status              ImportBatchStatus @default(committed)
+  undo_summary        Json?
+  created_at          DateTime          @default(now())
+  undone_at           DateTime?
+
+  organization Organization @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  imported_by  User         @relation("RoleImportedBy", fields: [imported_by_user_id], references: [id])
+  roles        Role[]       @relation("RoleImportBatch")
+
+  @@index([organization_id])
+  @@map("role_import_batches")
 }
 
 model LearningPath {

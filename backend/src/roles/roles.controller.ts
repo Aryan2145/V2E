@@ -10,13 +10,34 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { IsNumber, IsArray, IsOptional, IsString } from 'class-validator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { RequireAdmin } from '../common/decorators/require-admin.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RolesService } from './roles.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
+
+class CreateImportBatchDto {
+  @IsOptional()
+  @IsString()
+  file_name?: string;
+
+  @IsNumber()
+  total_rows: number;
+
+  @IsNumber()
+  created_count: number;
+
+  @IsNumber()
+  failed_count: number;
+
+  @IsArray()
+  @IsString({ each: true })
+  role_ids: string[];
+}
 
 @ApiTags('roles')
 @ApiBearerAuth()
@@ -64,5 +85,33 @@ export class RolesController {
   @ApiOperation({ summary: 'Delete a role' })
   remove(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.rolesService.remove(id, orgId);
+  }
+
+  @Get('imports')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'List role import batches' })
+  listImports(@Param('orgId') orgId: string) {
+    return this.rolesService.listImportBatches(orgId);
+  }
+
+  @Post('imports')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'Record a role import batch' })
+  createImportBatch(
+    @Param('orgId') orgId: string,
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateImportBatchDto,
+  ) {
+    return this.rolesService.createImportBatch(orgId, userId, dto);
+  }
+
+  @Post('imports/:batchId/undo')
+  @RequireAdmin()
+  @ApiOperation({ summary: 'Undo role import batch' })
+  undoImport(
+    @Param('orgId') orgId: string,
+    @Param('batchId') batchId: string,
+  ) {
+    return this.rolesService.undoImport(orgId, batchId);
   }
 }

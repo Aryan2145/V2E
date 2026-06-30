@@ -149,4 +149,141 @@ export class DepartmentsService {
     this.assigneeVisibility.invalidate(orgId);
     return { message: 'Department deleted successfully' };
   }
+
+  async listImportBatches(orgId: string) {
+    const batches = await this.prisma.departmentImportBatch.findMany({
+      where: { organization_id: orgId },
+      include: {
+        imported_by: {
+          select: { name: true },
+        },
+        departments: {
+          select: {
+            id: true,
+            _count: {
+              select: {
+                child_departments: true,
+                employee_profiles: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    return batches.map((b) => {
+      const hasDependents = b.departments.some(
+        (d) => d._count.child_departments > 0 || d._count.employee_profiles > 0,
+      );
+      return {
+        id: b.id,
+        file_name: b.file_name,
+        status: b.status,
+        total_rows: b.total_rows,
+        created_count: b.created_count,
+        failed_count: b.failed_count,
+        created_at: b.created_at,
+        undone_at: b.undone_at,
+        imported_by: b.imported_by.name,
+        remaining: b.status === 'committed' ? b.departments.length : 0,
+        can_undo: b.status === 'committed' && !hasDependents,
+      };
+    });
+  }
+
+  async createImportBatch(
+    orgId: string,
+    userId: string,
+    dto: { file_name?: string; total_rows: number; created_count: number; failed_count: number; department_ids: string[] },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const batch = await tx.departmentImportBatch.create({
+        data: {
+          organization_id: orgId,
+          imported_by_user_id: userId,
+          file_name: dto.file_name ?? null,
+          total_rows: dto.total_rows,
+          created_count: dto.created_count,
+          failed_count: dto.failed_count,
+        },
+      });
+
+      if (dto.department_ids.length > 0) {
+        await tx.department.updateMany({
+          where: { id: { in: dto.department_ids }, organization_id: orgId },
+          data: { import_batch_id: batch.id },
+        });
+      }
+
+      return batch;
+    });
+  }
+
+  async undoImport(orgId: string, batchId: string) {
+    const batch = await this.prisma.departmentImportBatch.findFirst({
+      where: { id: batchId, organization_id: orgId },
+      include: {
+        departments: {
+          include: {
+            _count: {
+              select: {
+                child_departments: true,
+                employee_profiles: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!batch) {
+      throw new NotFoundException(`Import batch ${batchId} not found`);
+    }
+
+    if (batch.status !== 'committed') {
+      throw new BadRequestException(`Import batch has already been ${batch.status}`);
+    }
+
+    const blocked = batch.departments.filter(
+      (d) => d._count.child_departments > 0 || d._count.employee_profiles > 0,
+    );
+
+    if (blocked.length > 0) {
+      throw new BadRequestException(
+        `Cannot undo. Some departments created in this batch already have child departments or employees assigned.`,
+      );
+    }
+
+    const deptIds = batch.departments.map((d) => d.id);
+    let deletedCount = 0;
+    if (deptIds.length > 0) {
+      await this.prisma.assigneeCrossDeptBridge.deleteMany({
+        where: { organization_id: orgId, OR: [{ from_department_id: { in: deptIds } }, { to_department_id: { in: deptIds } }] },
+      });
+
+      const { count } = await this.prisma.department.deleteMany({
+        where: { id: { in: deptIds }, organization_id: orgId },
+      });
+      deletedCount = count;
+    }
+
+    await this.prisma.departmentImportBatch.update({
+      where: { id: batchId },
+      data: {
+        status: 'undone',
+        undone_at: new Date(),
+        undo_summary: { undone: deletedCount, kept: [] } as any,
+      },
+    });
+
+    this.assigneeVisibility.invalidate(orgId);
+
+    return {
+      batch_id: batchId,
+      undone: deletedCount,
+      kept: 0,
+      status: 'undone',
+    };
+  }
 }
