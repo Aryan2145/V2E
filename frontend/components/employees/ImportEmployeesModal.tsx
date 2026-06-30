@@ -70,7 +70,7 @@ const HEADER_LABEL: Record<Column, string> = {
   email: 'email *',
   password: 'password',
   department: 'department *',
-  is_department_head: 'is_department_head (X = Yes)',
+  is_department_head: 'is_department_head',
   role: 'role *',
   system_role: 'system_role *',
   employment_type: 'employment_type',
@@ -314,8 +314,8 @@ export default function ImportEmployeesModal({
       const mgrValue = mgrRows[0]
         ? `${mgrRows[0].name}${VALUE_SEPARATOR}${mgrRows[0].dept}${VALUE_SEPARATOR}${mgrRows[0].role}`
         : ''
-      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, 'X', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
-      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, '', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
+      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, 'Yes', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
+      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, 'No', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
 
       // Dropdowns + date constraints for rows 2..LAST.
       const LAST = 500
@@ -363,14 +363,9 @@ export default function ImportEmployeesModal({
         }
       }
       addListDV('department', `'Departments'!$B$2:$B$${deptSorted.length + 1}`)
-      // Department Head is a simple checkbox-style column: type "X" to mark a
-      // head, leave blank otherwise. No dropdown — a free cell toggles far more
-      // easily (type X / press Delete) and stays portable across Excel,
-      // LibreOffice and Google Sheets, none of which can share a native
-      // checkbox control written by the library.
-      for (let r = 2; r <= LAST; r++) {
-        ws.getCell(`${colLetter.is_department_head}${r}`).alignment = { horizontal: 'center' }
-      }
+      // Department Head is a Yes/No choice; No is the default (listed first, and
+      // a blank cell is treated as No by the importer).
+      addListDV('is_department_head', '"No,Yes"')
       addListDV('role', `'Roles'!$D$2:$D$${roleRows.length + 1}`)
       addListDV('system_role', `'System Roles'!$B$2:$B$${systemRoles.length + 1}`)
       addListDV('reporting_to', `'Reports To'!$E$2:$E$${mgrRows.length + 1}`)
@@ -791,11 +786,18 @@ export default function ImportEmployeesModal({
                         <th className="px-3 py-2 font-semibold">Issues</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#F1F5F9]">
-                      {visibleRows.map((r) => {
+                    <tbody className="divide-y divide-[#E2E8F0]">
+                      {visibleRows.map((r, i) => {
                         const s = STATUS_STYLES[r.status]
+                        // Zebra striping + a clearly visible divider so two
+                        // adjacent rows never blur together; problem rows keep a
+                        // solid (not faded) red tint, with red preserved on hover.
+                        const rowBg =
+                          r.status !== 'ready'
+                            ? 'bg-[#FEF2F2] hover:bg-[#FEE2E2]'
+                            : `${i % 2 === 1 ? 'bg-[#F8FAFC]' : 'bg-white'} hover:bg-[#EEF2F8]`
                         return (
-                          <tr key={r.row} className={r.status !== 'ready' ? 'bg-[#FEF2F2]/40' : ''}>
+                          <tr key={r.row} className={`${rowBg} transition-colors`}>
                             <td className="px-3 py-2 text-[#94A3B8]">{r.row}</td>
                             <td className="px-3 py-2">
                               <span className={`inline-flex items-center gap-1.5 font-semibold ${s.text}`}>

@@ -380,7 +380,7 @@ export default function EmployeesPage() {
               setPrefillSelf(true)
               setShowAdd(true)
             }}
-            className="flex items-center justify-center gap-1.5 px-4.5 py-2.5 rounded-[8px] text-sm font-bold text-white bg-[#D97706] hover:bg-[#B45309] transition-colors whitespace-nowrap self-start sm:self-center"
+            className="flex items-center justify-center gap-1.5 px-4 py-2 rounded-[8px] text-xs font-bold text-white bg-[#D97706] hover:bg-[#B45309] transition-colors whitespace-nowrap self-start sm:self-center"
           >
             Setup Profile
           </button>
