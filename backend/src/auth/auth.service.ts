@@ -3,6 +3,8 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
+  NotFoundException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -189,10 +191,44 @@ export class AuthService {
   }
 
   async revokeAdmin(targetId: string, requesterId: string) {
-    if (targetId === requesterId) throw new ForbiddenException('You cannot revoke your own super admin access.');
+    if (targetId === requesterId) {
+      throw new ForbiddenException('You cannot revoke your own super admin access.');
+    }
+    const adminCount = await this.prisma.user.count({
+      where: { is_super_admin: true },
+    });
+    if (adminCount <= 1) {
+      throw new ForbiddenException('At least one super administrator account is required at all times.');
+    }
     return this.prisma.user.update({
       where: { id: targetId, is_super_admin: true },
       data: { is_super_admin: false },
+      select: { id: true, name: true, email: true, is_active: true, created_at: true },
+    });
+  }
+
+  async updateAdmin(id: string, dto: { name?: string; email: string; password?: string }) {
+    if (!dto.email?.trim() || !dto.password) {
+      throw new BadRequestException('Email address and password are required to save changes.');
+    }
+
+    const admin = await this.prisma.user.findFirst({ where: { id, is_super_admin: true } });
+    if (!admin) throw new NotFoundException('Admin user not found.');
+
+    if (dto.email.trim() !== admin.email) {
+      const existing = await this.prisma.user.findUnique({ where: { email: dto.email.trim() } });
+      if (existing) throw new ConflictException('This email is already taken.');
+    }
+
+    const password_hash = await bcrypt.hash(dto.password, 12);
+
+    return this.prisma.user.update({
+      where: { id },
+      data: {
+        email: dto.email.trim(),
+        password_hash,
+        ...(dto.name !== undefined && { name: dto.name.trim() }),
+      },
       select: { id: true, name: true, email: true, is_active: true, created_at: true },
     });
   }

@@ -225,7 +225,7 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
   },
   {
     key: 'ecs',
-    label: 'ECS',
+    label: 'ESS',
     entitlementControlled: true,
     subModules: [
       {

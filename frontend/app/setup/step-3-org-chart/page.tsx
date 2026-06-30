@@ -26,6 +26,7 @@ import { getUsers } from '@/lib/api/users'
 import { useAuth } from '@/lib/auth/context'
 import { useSetupMode, SECTION_SETTINGS_ROUTE } from '@/components/setup-wizard/SetupModeContext'
 import Button from '@/components/ui/Button'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
 import type { Department, User } from '@/lib/types'
 
 // ─── Custom dept node ──────────────────────────────────────────────────────────
@@ -158,16 +159,13 @@ function AddDeptPanel({ departments, users, orgId, onClose, onAdded }: AddPanelP
         </div>
         <div>
           <label className={labelCls}>Parent Department</label>
-          <select
+          <DepartmentSelect
             value={parentId}
-            onChange={(e) => setParentId(e.target.value)}
-            className={inputCls}
-          >
-            <option value="">None (top-level)</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
+            onChange={setParentId}
+            departments={departments}
+            placeholder="None (top-level)"
+            allLabel="None (top-level)"
+          />
         </div>
         <div>
           <label className={labelCls}>Department Head</label>

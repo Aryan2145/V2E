@@ -8,6 +8,7 @@ import { placeUnderParent } from '@/lib/org-chart-layout'
 import { BRANCH_PALETTE } from '@/lib/org-chart-colors'
 import Button from '@/components/ui/Button'
 import EmployeePicker from '@/components/ui/EmployeePicker'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
 import type { Department, User } from '@/lib/types'
 
 export type DeptFormTarget =
@@ -164,14 +165,13 @@ export default function DeptFormDrawer({
           </div>
           <div>
             <label className={labelCls}>Parent Department</label>
-            <select value={parentId} onChange={(e) => setParentId(e.target.value)} className={inputCls}>
-              <option value="">None (top-level)</option>
-              {parentOptions.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            <DepartmentSelect
+              value={parentId}
+              onChange={setParentId}
+              departments={parentOptions}
+              placeholder="None (top-level)"
+              allLabel="None (top-level)"
+            />
           </div>
           <div>
             <label className={labelCls}>Department Head</label>

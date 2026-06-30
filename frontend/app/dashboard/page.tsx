@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { getMyOrganization } from '@/lib/api/organizations'
@@ -36,6 +36,43 @@ function calcSetupProgress(
   if (roles.length > 0) score += 25
   if (employees.length > 0) score += 25
   return score
+}
+
+function getDynamicGreeting(name: string): string {
+  const hr = new Date().getHours()
+  const displayName = name ? name.split(' ')[0] : 'there'
+
+  if (hr >= 5 && hr < 12) {
+    const greetings = [
+      `Coffee first, ${displayName}! Let's build something great today.`,
+      `Good morning, ${displayName}. What's our main objective for today?`,
+      `Rise and shine, ${displayName}! Let's align and execute.`,
+      `Start your day focused, ${displayName}. Your team is ready.`,
+    ]
+    return greetings[Math.floor(Math.random() * greetings.length)]
+  } else if (hr >= 12 && hr < 17) {
+    const greetings = [
+      `Good afternoon, ${displayName}. Keeping the momentum going!`,
+      `Hope your day is flowing smoothly, ${displayName}.`,
+      `Tackling the peak of the day, ${displayName}! Let's check in.`,
+    ]
+    return greetings[Math.floor(Math.random() * greetings.length)]
+  } else if (hr >= 17 && hr < 22) {
+    const greetings = [
+      `Good evening, ${displayName}. Time to review today's wins.`,
+      `Winding down the day, ${displayName}? Here is your workspace summary.`,
+      `Good evening, ${displayName}. Wrapping up or planning ahead?`,
+    ]
+    return greetings[Math.floor(Math.random() * greetings.length)]
+  } else {
+    const greetings = [
+      `Hello, night owl! Burning the midnight oil, ${displayName}?`,
+      `Late night focus, ${displayName}? Let's make it count.`,
+      `Quiet hours productivity, ${displayName}. Stay focused!`,
+      `Late night workspace check-in, ${displayName}. Don't forget to rest!`,
+    ]
+    return greetings[Math.floor(Math.random() * greetings.length)]
+  }
 }
 
 // ─── Stat card ─────────────────────────────────────────────────────────────────
@@ -131,6 +168,8 @@ export default function DashboardPage() {
     }).finally(() => setLoading(false))
   }, [orgId])
 
+  const greeting = useMemo(() => getDynamicGreeting(user?.name ?? ''), [user?.name])
+
   const activeEmployees = employees.filter((e) => e.status === 'active').length
   const setupProgress = calcSetupProgress(identity, departments, roles, employees)
 
@@ -147,10 +186,10 @@ export default function DashboardPage() {
       {/* Page header */}
       <div>
         <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">
-          Welcome to {org?.name ?? 'your organization'}
+          {greeting}
         </h1>
         <p className="mt-1 text-[15px] text-[#475569]">
-          Here&apos;s an overview of your organization&apos;s current state.
+          Here&apos;s an overview of what&apos;s happening at {org?.name ?? 'your organization'} today.
         </p>
       </div>
 

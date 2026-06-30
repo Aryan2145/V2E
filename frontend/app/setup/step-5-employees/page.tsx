@@ -23,6 +23,7 @@ const schema = z.object({
   department_id: z.string().min(1, 'Select a department'),
   role_id: z.string().min(1, 'Select a role'),
   reporting_to_user_id: z.string().optional(),
+  make_dep_head: z.boolean().optional(),
 })
 
 type FormValues = z.infer<typeof schema>
@@ -171,9 +172,10 @@ export default function Step5EmployeesPage() {
         department_id: data.department_id,
         employment_type: 'full_time',
         reporting_to_user_id: data.reporting_to_user_id || undefined,
+        make_dep_head: data.make_dep_head || undefined,
       })
       setSuccessMsg(`${data.name} added successfully!`)
-      reset({ department_id: '', role_id: '', reporting_to_user_id: '' })
+      reset({ department_id: '', role_id: '', reporting_to_user_id: '', make_dep_head: false })
       await loadData()
     } catch (err: any) {
       setServerError(err?.response?.data?.message ?? 'Failed to add employee.')
@@ -271,6 +273,23 @@ export default function Step5EmployeesPage() {
               {errors.department_id && (
                 <p className="text-xs text-[#DC2626] mt-1">{errors.department_id.message}</p>
               )}
+              {(() => {
+                const selectedDept = departments.find((d) => d.id === watchedDeptId)
+                const showHeadOption = selectedDept ? !selectedDept.head_user_id : false
+                if (!showHeadOption) return null
+                return (
+                  <label className="flex items-center gap-2 mt-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      {...register('make_dep_head')}
+                      className="w-4.5 h-4.5 rounded border-[#CBD5E1] text-[#2563EB] focus:ring-[#2563EB]"
+                    />
+                    <span className="text-xs font-medium text-[#475569]">
+                      Make this employee the Head of this department
+                    </span>
+                  </label>
+                )
+              })()}
             </div>
 
             {/* Role — filtered by dept */}

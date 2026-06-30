@@ -188,7 +188,7 @@ export default function NewOrganizationPage() {
             <Field label="Organization Name" error={errors.name?.message} required>
               <input
                 {...register('name')}
-                placeholder="Acme Corp"
+                placeholder=""
                 className={inputCls(!!errors.name)}
               />
             </Field>
@@ -297,10 +297,10 @@ export default function NewOrganizationPage() {
             <div className="flex flex-col gap-5">
               <div className="grid grid-cols-2 gap-4">
                 <Field label="Admin Name" error={errors.admin_name?.message} required>
-                  <input {...register('admin_name')} placeholder="Jane Smith" className={inputCls(!!errors.admin_name)} />
+                  <input {...register('admin_name')} placeholder="" className={inputCls(!!errors.admin_name)} />
                 </Field>
                 <Field label="Admin Email" error={errors.admin_email?.message} required>
-                  <input {...register('admin_email')} type="email" placeholder="jane@acme.com" className={inputCls(!!errors.admin_email)} />
+                  <input {...register('admin_email')} type="email" placeholder="" className={inputCls(!!errors.admin_email)} />
                 </Field>
               </div>
               <Field label="Password" error={errors.admin_password?.message} hint="Leave blank if this email already has an account">

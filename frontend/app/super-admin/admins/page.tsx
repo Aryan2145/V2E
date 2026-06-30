@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import apiClient from '@/lib/api/client'
-import { ShieldCheck, Plus, Trash2, PowerOff, Power, X, Eye, EyeOff, Loader2 } from 'lucide-react'
+import { ShieldCheck, Plus, PowerOff, Power, X, Eye, EyeOff, Loader2, Pencil, Trash2 } from 'lucide-react'
 import ResponsiveTable from '@/components/ui/ResponsiveTable'
 
 interface AdminUser {
@@ -32,12 +32,15 @@ const adminApi = {
     const res = await apiClient.patch(`/api/v1/auth/admins/${id}/toggle`, { is_active })
     return unwrap<AdminUser>(res)
   },
+  update: async (id: string, dto: { name?: string; email: string; password?: string }): Promise<AdminUser> => {
+    const res = await apiClient.put(`/api/v1/auth/admins/${id}`, dto)
+    return unwrap<AdminUser>(res)
+  },
   revoke: async (id: string): Promise<AdminUser> => {
     const res = await apiClient.delete(`/api/v1/auth/admins/${id}`)
     return unwrap<AdminUser>(res)
   },
 }
-
 interface AddFormState {
   name: string
   email: string
@@ -56,6 +59,11 @@ export default function AdminsPage() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
   const [actionId, setActionId] = useState<string | null>(null)
+
+  // Edit states
+  const [editingAdmin, setEditingAdmin] = useState<AdminUser | null>(null)
+  const [editForm, setEditForm] = useState<AddFormState>({ name: '', email: '', password: '', showPassword: false })
+  const [editError, setEditError] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -109,6 +117,47 @@ export default function AdminsPage() {
     }
   }
 
+  function openEdit(admin: AdminUser) {
+    setEditingAdmin(admin)
+    setEditForm({ name: admin.name, email: admin.email, password: '', showPassword: false })
+    setEditError('')
+    setShowAdd(false)
+  }
+
+  function resetEditForm() {
+    setEditingAdmin(null)
+    setEditForm({ name: '', email: '', password: '', showPassword: false })
+    setEditError('')
+  }
+
+  async function handleEdit() {
+    if (!editingAdmin) return
+    if (!editForm.email.trim() || !editForm.password) {
+      setEditError('Email address and password are required to save changes.')
+      return
+    }
+    if (editForm.password.length < 8) {
+      setEditError('Password must be at least 8 characters.')
+      return
+    }
+    setSaving(true)
+    setEditError('')
+    try {
+      const updated = await adminApi.update(editingAdmin.id, {
+        name: editForm.name.trim() || undefined,
+        email: editForm.email.trim(),
+        password: editForm.password
+      })
+      setAdmins((prev) => prev.map((a) => a.id === updated.id ? updated : a))
+      resetEditForm()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Failed to save changes.'
+      setEditError(msg)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleRevoke(admin: AdminUser) {
     if (!confirm(`Remove super admin access from ${admin.name}? They will no longer be able to log into the Admin Portal.`)) return
     setActionId(admin.id)
@@ -133,7 +182,7 @@ export default function AdminsPage() {
         </div>
         <button
           type="button"
-          onClick={() => setShowAdd(true)}
+          onClick={() => { setShowAdd(true); setEditingAdmin(null) }}
           className="flex items-center gap-2 h-10 px-4 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
         >
           <Plus size={15} />
@@ -226,6 +275,91 @@ export default function AdminsPage() {
         </div>
       )}
 
+      {/* Edit form */}
+      {editingAdmin && (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 shadow-[0_1px_3px_rgba(0,0,0,0.08)]">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[18px] font-semibold text-[#0F172A]">Edit Super Admin ({editingAdmin.name})</h2>
+            <button
+              type="button"
+              onClick={resetEditForm}
+              className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1.5">Full name</label>
+              <input
+                value={editForm.name}
+                onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="Jane Smith"
+                className="w-full h-10 px-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-[#374151] mb-1.5">Email address (Required)</label>
+              <input
+                type="email"
+                value={editForm.email}
+                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                placeholder="jane@company.com"
+                className="w-full h-10 px-3 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+              />
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-[#374151] mb-1.5">New Password (Required)</label>
+            <div className="relative max-w-sm">
+              <input
+                type={editForm.showPassword ? 'text' : 'password'}
+                value={editForm.password}
+                onChange={(e) => setEditForm((f) => ({ ...f, password: e.target.value }))}
+                placeholder="Min. 8 characters"
+                className="w-full h-10 px-3 pr-10 rounded-[8px] border border-[#CBD5E1] text-sm text-[#0F172A] placeholder:text-[#94A3B8] bg-white focus:border-[#2563EB] focus:outline-none transition-colors"
+              />
+              <button
+                type="button"
+                tabIndex={-1}
+                onClick={() => setEditForm((f) => ({ ...f, showPassword: !f.showPassword }))}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569] transition-colors"
+              >
+                {editForm.showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+            <p className="text-xs text-[#64748B] mt-1">
+              For security, you must specify a new password (min. 8 characters) to save changes.
+            </p>
+          </div>
+
+          {editError && (
+            <p className="text-sm text-[#DC2626] mb-3">{editError}</p>
+          )}
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={resetEditForm}
+              className="h-9 px-4 rounded-[8px] border-2 border-[#2563EB] text-sm font-semibold text-[#2563EB] bg-white hover:bg-[#EFF6FF] transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={handleEdit}
+              className="h-9 px-4 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors flex items-center gap-2"
+            >
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              {saving ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Admin list */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
         {loading ? (
@@ -296,25 +430,40 @@ export default function AdminsPage() {
                 render: (admin) => {
                   const isSelf = admin.id === currentUserId
                   const busy = actionId === admin.id
-                  return isSelf ? (
-                    <span className="text-xs text-[#CBD5E1]">—</span>
-                  ) : (
+                  return (
                     <div className="flex items-center gap-1 md:justify-start justify-end">
+                      {!isSelf && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleToggle(admin)}
+                          title={admin.is_active ? 'Deactivate' : 'Activate'}
+                          className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] disabled:opacity-40 transition-colors"
+                        >
+                          {busy ? <Loader2 size={14} className="animate-spin" /> : admin.is_active ? <PowerOff size={14} /> : <Power size={14} />}
+                        </button>
+                      )}
                       <button
                         type="button"
                         disabled={busy}
-                        onClick={() => handleToggle(admin)}
-                        title={admin.is_active ? 'Deactivate' : 'Activate'}
-                        className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] disabled:opacity-40 transition-colors"
+                        onClick={() => openEdit(admin)}
+                        title="Edit admin"
+                        className="p-1.5 rounded-[6px] hover:bg-[#EFF6FF] text-[#2563EB] disabled:opacity-40 transition-colors"
                       >
-                        {busy ? <Loader2 size={14} className="animate-spin" /> : admin.is_active ? <PowerOff size={14} /> : <Power size={14} />}
+                        <Pencil size={14} />
                       </button>
                       <button
                         type="button"
-                        disabled={busy}
+                        disabled={busy || isSelf || admins.length <= 1}
                         onClick={() => handleRevoke(admin)}
-                        title="Remove admin access"
-                        className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#DC2626] disabled:opacity-40 transition-colors"
+                        title={
+                          isSelf
+                            ? 'You cannot revoke your own super admin access'
+                            : admins.length <= 1
+                              ? 'At least one super administrator account is required'
+                              : 'Remove admin access'
+                        }
+                        className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#DC2626] disabled:opacity-40 disabled:hover:bg-transparent disabled:text-[#CBD5E1] transition-colors"
                       >
                         <Trash2 size={14} />
                       </button>

@@ -285,7 +285,7 @@ export const AUDIT_MODULES: AuditModuleDef[] = [
   },
   {
     key: 'ecs',
-    label: 'ECS',
+    label: 'ESS',
     resources: [{ key: 'company_policy', label: 'Company policies' }],
   },
   {

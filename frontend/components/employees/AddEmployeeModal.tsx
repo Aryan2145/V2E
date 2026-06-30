@@ -130,9 +130,10 @@ export default function AddEmployeeModal({
     date_of_joining: '',
     date_of_birth: '',
     marriage_date: '',
+    make_dep_head: false,
   }))
 
-  const set = (k: keyof typeof form, v: string) =>
+  const set = (k: keyof typeof form, v: any) =>
     setForm((f) => ({ ...f, [k]: v }))
 
   // Roles are scoped to the chosen department.
@@ -201,6 +202,7 @@ export default function AddEmployeeModal({
         date_of_joining: form.date_of_joining || undefined,
         date_of_birth: form.date_of_birth || undefined,
         marriage_date: form.marriage_date || undefined,
+        make_dep_head: form.make_dep_head || undefined,
       })
       addToast(`${form.name.trim()} added`, 'success')
       onCreated()
@@ -291,8 +293,27 @@ export default function AddEmployeeModal({
                     set('department_id', id)
                     set('role_id', '') // reset role when department changes
                     setCreatingRole(false) // roles are dept-scoped
+                    set('make_dep_head', false) // reset checkbox
                   }}
                 />
+                {(() => {
+                  const selectedDept = localDepartments.find((d) => d.id === form.department_id)
+                  const showHeadOption = selectedDept ? !selectedDept.head_user_id : false
+                  if (!showHeadOption) return null
+                  return (
+                    <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={form.make_dep_head}
+                        onChange={(e) => set('make_dep_head', e.target.checked)}
+                        className="w-4 h-4 rounded border-[#CBD5E1] text-[#2563EB] focus:ring-[#2563EB]"
+                      />
+                      <span className="text-xs font-medium text-[#475569]">
+                        Make this employee the Head of this department
+                      </span>
+                    </label>
+                  )
+                })()}
                 {canCreateDept && (
                   <button
                     type="button"

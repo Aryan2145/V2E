@@ -9,6 +9,7 @@ import {
   IsString,
   IsUUID,
   MinLength,
+  IsBoolean,
 } from 'class-validator';
 
 export class CreateEmployeeDto {
@@ -72,4 +73,9 @@ export class CreateEmployeeDto {
   @IsEnum(EmploymentType)
   @IsOptional()
   employment_type?: EmploymentType;
+
+  @ApiPropertyOptional()
+  @IsBoolean()
+  @IsOptional()
+  make_dep_head?: boolean;
 }

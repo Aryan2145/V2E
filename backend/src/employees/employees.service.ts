@@ -93,7 +93,7 @@ export class EmployeesService {
   }
 
   async create(orgId: string, dto: CreateEmployeeDto) {
-    const { name, email, password, ...profileData } = dto;
+    const { name, email, password, make_dep_head, ...profileData } = dto;
 
     const roleExists = await this.prisma.role.findFirst({
       where: { id: profileData.role_id, organization_id: orgId },
@@ -176,6 +176,19 @@ export class EmployeesService {
         },
         include: PROFILE_INCLUDE,
       });
+
+      if (make_dep_head) {
+        const dept = await tx.department.findUnique({
+          where: { id: profileData.department_id },
+          select: { head_user_id: true },
+        });
+        if (dept && !dept.head_user_id) {
+          await tx.department.update({
+            where: { id: profileData.department_id },
+            data: { head_user_id: user.id },
+          });
+        }
+      }
 
       return { profile, createdUserId: user.id };
     });

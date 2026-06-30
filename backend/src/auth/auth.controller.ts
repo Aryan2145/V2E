@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards, Get, Param, Patch, Delete } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Get, Param, Patch, Delete, Put } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
@@ -91,6 +91,17 @@ export class AuthController {
     @Body() dto: { is_active: boolean },
   ) {
     return this.authService.toggleAdmin(id, requesterId, dto.is_active);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @SuperAdmin()
+  @ApiBearerAuth()
+  @Put('admins/:id')
+  updateAdmin(
+    @Param('id') id: string,
+    @Body() dto: { name?: string; email: string; password?: string }
+  ) {
+    return this.authService.updateAdmin(id, dto);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

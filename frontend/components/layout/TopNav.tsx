@@ -9,6 +9,7 @@ import { useEntitlements } from '@/lib/auth/use-entitlements'
 import { getMyOrgs } from '@/lib/api/auth'
 import type { OrgMembership } from '@/lib/types'
 import NotificationBell from './NotificationBell'
+import { useSetupProgress } from '@/lib/hooks/useSetupProgress'
 
 // `module` maps a nav item to its entitlement key. Items with no module are always
 // shown (Dashboard). An `off` module is hidden; `preview` is shown with a badge.
@@ -34,6 +35,31 @@ export default function TopNav() {
   const [switching, setSwitching] = useState<string | null>(null)
   const { entitlements } = useEntitlements()
   const menuRef = useRef<HTMLDivElement>(null)
+  const settingsContainerRef = useRef<HTMLDivElement>(null)
+
+  const { steps, isLoading: progressLoading } = useSetupProgress(user?.organizationId ?? '')
+  const [dismissed, setDismissed] = useState(true)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && user?.id) {
+      const dismissedAtStr = localStorage.getItem(`v2e_setup_dismissed_at_${user.id}`)
+      if (dismissedAtStr) {
+        const dismissedAt = new Date(dismissedAtStr)
+        const oneDayMs = 24 * 60 * 60 * 1000
+        const isExpired = Date.now() - dismissedAt.getTime() > oneDayMs
+        setDismissed(!isExpired)
+      } else {
+        setDismissed(false)
+      }
+    }
+  }, [user?.id])
+
+  const handleDismiss = () => {
+    if (user?.id) {
+      localStorage.setItem(`v2e_setup_dismissed_at_${user.id}`, new Date().toISOString())
+    }
+    setDismissed(true)
+  }
 
   // Close the mobile nav drawer whenever the route changes
   useEffect(() => {
@@ -86,6 +112,11 @@ export default function TopNav() {
   // System Configuration inside it is separately gated server-side + in the Settings sidebar.
   const canAccessSettings =
     !!user && !user.isSuperAdmin && (user.is_admin)
+
+  const employeesStep = steps.find((s) => s.id === 'employees')
+  const employeesCreated = employeesStep ? employeesStep.completed : false
+
+  const showSpotlight = canAccessSettings && !employeesCreated && !progressLoading && !dismissed && pathname === '/dashboard'
 
   async function handleSwitch(orgId: string) {
     setSwitching(orgId)
@@ -152,19 +183,55 @@ export default function TopNav() {
 
       {/* Settings gear — persistent on every page, separate from the top nav */}
       {canAccessSettings && (
-        <Link
-          href="/settings"
-          aria-label="Settings"
-          title="Settings"
-          className={[
-            'shrink-0 w-10 h-10 flex items-center justify-center rounded-[8px] transition-colors',
-            isActive('/settings')
-              ? 'text-[#2563EB] bg-[#EFF6FF]'
-              : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]',
-          ].join(' ')}
-        >
-          <Settings size={19} />
-        </Link>
+        <div className="relative shrink-0" ref={settingsContainerRef}>
+          <Link
+            href="/settings"
+            aria-label="Settings"
+            title="Settings"
+            className={[
+              'w-10 h-10 flex items-center justify-center rounded-[8px] transition-colors relative z-50',
+              isActive('/settings')
+                ? 'text-[#2563EB] bg-[#EFF6FF]'
+                : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]',
+            ].join(' ')}
+          >
+            <Settings size={19} />
+            {showSpotlight && (
+              <span className="absolute inset-0 rounded-[8px] border-2 border-[#2563EB] animate-ping opacity-75 pointer-events-none" />
+            )}
+          </Link>
+
+          {/* Onboarding Spotlight Popover */}
+          {showSpotlight && (
+            <div className="absolute right-0 mt-3 w-80 bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_10px_25px_rgba(0,0,0,0.1)] p-5 z-[9999] animate-in fade-in slide-in-from-top-2 duration-200">
+              {/* Arrow pointer */}
+              <div className="absolute right-3.5 -top-1.5 w-3 h-3 bg-white border-t border-l border-[#E2E8F0] rotate-45" />
+
+              <div className="flex flex-col gap-2">
+                <p className="text-sm font-semibold text-[#0F172A]">Configure Workspace</p>
+                <p className="text-xs text-[#475569] leading-relaxed">
+                  Welcome, <span className="font-medium text-[#0F172A]">{user?.name ? user.name.split(' ')[0] : 'Admin'}</span>! Let&apos;s get your workspace configured. Click the Settings icon to define your vision, departments, and add employees.
+                </p>
+                <div className="flex items-center gap-2 mt-3 justify-end">
+                  <button
+                    type="button"
+                    onClick={handleDismiss}
+                    className="text-xs font-medium text-[#64748B] hover:text-[#0F172A] px-3 py-1.5 rounded-[6px] hover:bg-[#F1F5F9] transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                  <Link
+                    href="/setup/step-1-identity"
+                    onClick={handleDismiss}
+                    className="text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] px-3.5 py-1.5 rounded-[6px] transition-colors"
+                  >
+                    Start Setup
+                  </Link>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* User menu */}
