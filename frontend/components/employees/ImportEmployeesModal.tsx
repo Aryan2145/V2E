@@ -15,6 +15,8 @@ import {
   History,
   Undo2,
   ShieldAlert,
+  Wrench,
+  ChevronRight,
 } from 'lucide-react'
 import {
   validateImport,
@@ -213,6 +215,7 @@ export default function ImportEmployeesModal({
   const [batches, setBatches] = useState<ImportBatchSummary[]>([])
   const [undoResult, setUndoResult] = useState<UndoImportResult | null>(null)
   const [undoingId, setUndoingId] = useState<string | null>(null)
+  const [undoConfirm, setUndoConfirm] = useState<string | null>(null)
 
   const deptNameById = useMemo(
     () => new Map(departments.map((d) => [d.id, d.name])),
@@ -523,10 +526,14 @@ export default function ImportEmployeesModal({
 
   // ─── Failed-rows export ───────────────────────────────────────────────────────
 
-  async function downloadFailures() {
-    if (!validation) return
-    const failedRows = validation.rows.filter((r) => r.status !== 'ready')
-    if (failedRows.length === 0) return
+  /**
+   * Write the original cells for the given rows to an .xlsx, with a trailing
+   * `reason_for_failure` column explaining what happened. That header is not a
+   * known import column, so re-uploading this exact file ignores it — the user
+   * fixes the cells and uploads again without stripping anything.
+   */
+  async function exportRows(entries: { rowNum: number; reason: string }[], filename: string) {
+    if (entries.length === 0) return
     try {
       const mod: any = await import('exceljs')
       const ExcelJS = mod.default ?? mod
@@ -542,13 +549,9 @@ export default function ImportEmployeesModal({
           fgColor: { argb: col === COLUMNS.length + 1 ? 'FFDC2626' : 'FF475569' },
         }
       })
-      for (const vr of failedRows) {
-        const orig = parsedRows[vr.row - 2] ?? {}
-        const reason = vr.issues
-          .filter((i) => i.severity === 'error')
-          .map((i) => i.message)
-          .join('; ')
-        ws.addRow([...COLUMNS.map((c) => (orig as any)[c] ?? ''), reason])
+      for (const e of entries) {
+        const orig = parsedRows[e.rowNum - 2] ?? {}
+        ws.addRow([...COLUMNS.map((c) => (orig as any)[c] ?? ''), e.reason])
       }
       ws.columns.forEach((c: any) => (c.width = 22))
       const buf = await wb.xlsx.writeBuffer()
@@ -558,12 +561,43 @@ export default function ImportEmployeesModal({
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = 'employee-import-failures.xlsx'
+      a.download = filename
       a.click()
       URL.revokeObjectURL(url)
     } catch {
-      addToast('Could not build the failures file.', 'error')
+      addToast('Could not build the file.', 'error')
     }
+  }
+
+  /** Preview step: the rows the validator flagged as not-ready. */
+  function downloadFailures() {
+    if (!validation) return
+    const entries = validation.rows
+      .filter((r) => r.status !== 'ready')
+      .map((vr) => ({
+        rowNum: vr.row,
+        reason: vr.issues.filter((i) => i.severity === 'error').map((i) => i.message).join('; '),
+      }))
+    void exportRows(entries, 'employee-import-failures.xlsx')
+  }
+
+  /**
+   * Result step: rows that failed to import, plus — once an undo has run — the
+   * rows that were removed. The user gets one file with the full correctable
+   * set (failed + removed) so they can fix and re-upload in a single pass.
+   */
+  function downloadResultRows() {
+    if (!commitResult) return
+    const keptEmails = new Set((undoResult?.kept ?? []).map((k) => k.email.toLowerCase()))
+    const entries: { rowNum: number; reason: string }[] = []
+    for (const r of commitResult.results) {
+      if (r.status === 'failed') {
+        entries.push({ rowNum: r.row, reason: r.error || 'Failed to import' })
+      } else if (undoResult && !keptEmails.has(r.email.toLowerCase())) {
+        entries.push({ rowNum: r.row, reason: 'Removed by undo — re-upload this row to re-create the employee' })
+      }
+    }
+    void exportRows(entries, 'employee-import-fixes.xlsx')
   }
 
   // ─── Commit ───────────────────────────────────────────────────────────────────
@@ -752,6 +786,37 @@ export default function ImportEmployeesModal({
                 <span className="ml-auto text-xs text-[#64748B]">from {fileName}</span>
               </div>
 
+              {/* Fix-loop guidance: import the good rows now, then correct only
+                  the failed ones from a pre-filled file and re-upload just that. */}
+              {(() => {
+                const notReady = validation.rows.filter((r) => r.status !== 'ready').length
+                if (notReady === 0) return null
+                const total = validation.rows.length
+                const rowWord = notReady === 1 ? 'row' : 'rows'
+                return (
+                  <div className="flex items-start gap-3 p-3.5 rounded-[10px] bg-[#EFF6FF] border border-[#BFDBFE]">
+                    <Wrench size={18} className="text-[#2563EB] mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] text-[#1E3A8A]">
+                        <strong>{validation.ready} of {total} rows are ready</strong> and will be imported now. The
+                        other <strong>{notReady} {rowWord}</strong> {notReady === 1 ? 'has a problem' : 'have problems'} and
+                        will be skipped — your ready rows aren’t affected.
+                      </p>
+                      <p className="text-[13px] text-[#1E40AF] mt-1">
+                        Download a file with <strong>only those {notReady} {rowWord}</strong> (each tagged with the reason it
+                        failed), fix them there, and re-upload just that file — no need to touch the rows that already passed.
+                      </p>
+                      <button
+                        onClick={downloadFailures}
+                        className="mt-2.5 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[8px] text-[13px] font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
+                      >
+                        <Download size={14} /> Download {notReady} {rowWord} to fix
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
+
               <div className="flex items-center justify-between">
                 <label className="inline-flex items-center gap-2 text-[13px] text-[#475569] cursor-pointer select-none">
                   <input
@@ -762,14 +827,6 @@ export default function ImportEmployeesModal({
                   />
                   Show only rows with problems
                 </label>
-                {validation.rows.some((r) => r.status !== 'ready') && (
-                  <button
-                    onClick={downloadFailures}
-                    className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#2563EB] hover:underline"
-                  >
-                    <Download size={14} /> Download failures to fix
-                  </button>
-                )}
               </div>
 
               <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
@@ -857,9 +914,10 @@ export default function ImportEmployeesModal({
           {phase === 'result' && commitResult && (
             <ResultView
               result={commitResult}
-              onUndo={() => commitResult.batch_id && handleUndo(commitResult.batch_id)}
+              onUndo={() => commitResult.batch_id && setUndoConfirm(commitResult.batch_id)}
               undoing={undoingId === commitResult.batch_id}
               undoResult={undoResult}
+              onDownload={downloadResultRows}
             />
           )}
 
@@ -867,7 +925,13 @@ export default function ImportEmployeesModal({
           {phase === 'history' && (
             <HistoryView
               batches={batches}
-              onUndo={handleUndo}
+              onUndo={(id) => setUndoConfirm(id)}
+              onOpen={(id) =>
+                commitResult?.batch_id === id
+                  ? setPhase('result')
+                  : addToast('The detailed row view is only available right after importing this batch.', 'info')
+              }
+              currentBatchId={commitResult?.batch_id ?? null}
               undoingId={undoingId}
               undoResult={undoResult}
             />
@@ -951,6 +1015,45 @@ export default function ImportEmployeesModal({
           </div>
         </div>
       )}
+
+      {/* Undo confirmation */}
+      {undoConfirm && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-[12px] shadow-xl max-w-md w-full p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-[#FEF2F2] flex items-center justify-center shrink-0">
+                <Undo2 size={20} className="text-[#DC2626]" />
+              </div>
+              <div>
+                <h3 className="text-[16px] font-semibold text-[#0F172A]">Undo this import?</h3>
+                <p className="text-[13px] text-[#475569] mt-1">
+                  This removes the employee accounts created by this import. Anyone who already has activity — heads a
+                  department, owns data, or has people reporting to them — is <strong>kept</strong> and listed afterward.
+                  This can’t be reversed.
+                </p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 mt-5">
+              <button
+                onClick={() => setUndoConfirm(null)}
+                className="px-4 py-2 rounded-[8px] text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors"
+              >
+                Go back
+              </button>
+              <button
+                onClick={() => {
+                  const id = undoConfirm
+                  setUndoConfirm(null)
+                  handleUndo(id)
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C] transition-colors"
+              >
+                <Undo2 size={14} /> Yes, undo import
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>,
     document.body,
   )
@@ -972,39 +1075,102 @@ function ResultView({
   onUndo,
   undoing,
   undoResult,
+  onDownload,
 }: {
   result: BulkImportResult
   onUndo: () => void
   undoing: boolean
   undoResult: UndoImportResult | null
+  onDownload: () => void
 }) {
   const failed = result.results.filter((r) => r.status === 'failed')
+  const keptEmails = new Set((undoResult?.kept ?? []).map((k) => k.email.toLowerCase()))
+  // After undo, the removed people are the ones this import created minus the
+  // ones the undo had to keep — derivable here, no extra round-trip.
+  const removed = undoResult
+    ? result.results.filter((r) => r.status === 'created' && !keptEmails.has(r.email.toLowerCase()))
+    : []
+  const downloadCount = failed.length + removed.length
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#DCFCE7] border border-[#BBF7D0]">
-          <CheckCircle2 size={16} className="text-[#16A34A]" />
-          <span className="text-sm font-semibold text-[#166534]">{result.created} imported</span>
-        </div>
-        {result.failed > 0 && (
-          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#FEE2E2] border border-[#FECACA]">
-            <AlertCircle size={16} className="text-[#DC2626]" />
-            <span className="text-sm font-semibold text-[#991B1B]">{result.failed} failed</span>
-          </div>
-        )}
-        {result.batch_id && result.created > 0 && !undoResult && (
-          <button
-            onClick={onUndo}
-            disabled={undoing}
-            className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-semibold text-[#B91C1C] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:opacity-60 transition-colors"
-          >
-            {undoing ? <Loader2 size={14} className="animate-spin" /> : <Undo2 size={14} />}
-            Undo this import
-          </button>
+        {undoResult ? (
+          // After an undo, the import counts are stale — show what the undo did.
+          <>
+            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#F1F5F9] border border-[#E2E8F0]">
+              <Undo2 size={16} className="text-[#475569]" />
+              <span className="text-sm font-semibold text-[#334155]">{undoResult.undone} removed</span>
+            </div>
+            {undoResult.kept.length > 0 && (
+              <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#FEF3C7] border border-[#FDE68A]">
+                <AlertTriangle size={16} className="text-[#B45309]" />
+                <span className="text-sm font-semibold text-[#92400E]">{undoResult.kept.length} kept</span>
+              </div>
+            )}
+            {failed.length > 0 && (
+              <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#FEE2E2] border border-[#FECACA]">
+                <AlertCircle size={16} className="text-[#DC2626]" />
+                <span className="text-sm font-semibold text-[#991B1B]">{failed.length} failed</span>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#DCFCE7] border border-[#BBF7D0]">
+              <CheckCircle2 size={16} className="text-[#16A34A]" />
+              <span className="text-sm font-semibold text-[#166534]">{result.created} imported</span>
+            </div>
+            {result.failed > 0 && (
+              <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#FEE2E2] border border-[#FECACA]">
+                <AlertCircle size={16} className="text-[#DC2626]" />
+                <span className="text-sm font-semibold text-[#991B1B]">{result.failed} failed</span>
+              </div>
+            )}
+            {result.batch_id && result.created > 0 && (
+              <button
+                onClick={onUndo}
+                disabled={undoing}
+                className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-semibold text-[#B91C1C] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:opacity-60 transition-colors"
+              >
+                {undoing ? <Loader2 size={14} className="animate-spin" /> : <Undo2 size={14} />}
+                Undo this import
+              </button>
+            )}
+          </>
         )}
       </div>
 
-      {undoResult && <UndoSummary undoResult={undoResult} />}
+      {downloadCount > 0 && (
+        <button
+          onClick={onDownload}
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] text-[13px] font-semibold text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] transition-colors"
+        >
+          <Download size={14} />
+          {removed.length > 0
+            ? `Download ${downloadCount} rows to fix & re-upload (${failed.length} failed + ${removed.length} removed)`
+            : `Download ${failed.length} ${failed.length === 1 ? 'row' : 'rows'} to fix & re-upload`}
+        </button>
+      )}
+
+      {undoResult && undoResult.kept.length > 0 && <UndoSummary undoResult={undoResult} compact />}
+
+      {removed.length > 0 && (
+        <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
+          <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+            <p className="text-xs font-semibold text-[#475569] uppercase tracking-wider">Removed ({removed.length})</p>
+          </div>
+          <div className="max-h-52 overflow-y-auto divide-y divide-[#F1F5F9]">
+            {removed.map((r) => (
+              <div key={r.row} className="px-4 py-2">
+                <p className="text-[13px] text-[#0F172A]">
+                  <span className="font-medium">{r.name || `Row ${r.row}`}</span>
+                  {r.email && <span className="text-[#94A3B8]"> · {r.email}</span>}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {failed.length > 0 && (
         <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
@@ -1025,27 +1191,31 @@ function ResultView({
         </div>
       )}
 
-      <p className="text-[13px] text-[#475569]">
-        New accounts use the password from the sheet, or{' '}
-        <span className="font-semibold text-[#0F172A]">Welcome@123</span> when the password column is blank. Ask staff to
-        change it after first sign-in.
-      </p>
+      {!undoResult && (
+        <p className="text-[13px] text-[#475569]">
+          New accounts use the password from the sheet, or{' '}
+          <span className="font-semibold text-[#0F172A]">Welcome@123</span> when the password column is blank. Ask staff to
+          change it after first sign-in.
+        </p>
+      )}
     </div>
   )
 }
 
-function UndoSummary({ undoResult }: { undoResult: UndoImportResult }) {
+function UndoSummary({ undoResult, compact = false }: { undoResult: UndoImportResult; compact?: boolean }) {
   return (
     <div className="border border-[#E2E8F0] rounded-[10px] p-4 space-y-2">
-      <p className="text-sm font-semibold text-[#0F172A]">
-        Removed {undoResult.undone} employee{undoResult.undone !== 1 ? 's' : ''}.
-      </p>
+      {!compact && (
+        <p className="text-sm font-semibold text-[#0F172A]">
+          Removed {undoResult.undone} employee{undoResult.undone !== 1 ? 's' : ''}.
+        </p>
+      )}
       {undoResult.kept.length > 0 && (
         <>
           <p className="text-[13px] text-[#B45309]">
             Kept {undoResult.kept.length} — they already had activity and were left untouched:
           </p>
-          <ul className="space-y-1">
+          <ul className="space-y-1 max-h-52 overflow-y-auto pr-1">
             {undoResult.kept.map((k) => (
               <li key={k.email} className="text-[13px] text-[#475569]">
                 <span className="font-medium text-[#0F172A]">{k.name}</span> — {k.reason}
@@ -1061,11 +1231,15 @@ function UndoSummary({ undoResult }: { undoResult: UndoImportResult }) {
 function HistoryView({
   batches,
   onUndo,
+  onOpen,
+  currentBatchId,
   undoingId,
   undoResult,
 }: {
   batches: ImportBatchSummary[]
   onUndo: (batchId: string) => void
+  onOpen: (batchId: string) => void
+  currentBatchId: string | null
   undoingId: string | null
   undoResult: UndoImportResult | null
 }) {
@@ -1076,36 +1250,50 @@ function HistoryView({
     <div className="space-y-3">
       {undoResult && <UndoSummary undoResult={undoResult} />}
       <div className="border border-[#E2E8F0] rounded-[10px] divide-y divide-[#F1F5F9]">
-        {batches.map((b) => (
-          <div key={b.id} className="px-4 py-3 flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-[#0F172A] truncate">
-                {b.file_name || 'Untitled import'}
-                {b.status !== 'committed' && (
-                  <span className="ml-2 text-[11px] font-semibold text-[#94A3B8] uppercase">{b.status.replace('_', ' ')}</span>
-                )}
-              </p>
-              <p className="text-xs text-[#64748B] mt-0.5">
-                {new Date(b.created_at).toLocaleString()} · by {b.imported_by} · {b.created_count} created
-                {b.failed_count > 0 ? `, ${b.failed_count} failed` : ''} · {b.remaining} still present
-              </p>
-            </div>
-            {b.can_undo ? (
+        {batches.map((b) => {
+          const openable = b.id === currentBatchId
+          return (
+            <div key={b.id} className="px-4 py-3 flex items-center gap-3">
               <button
-                onClick={() => onUndo(b.id)}
-                disabled={undoingId === b.id}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[13px] font-semibold text-[#B91C1C] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:opacity-60 transition-colors shrink-0"
+                type="button"
+                onClick={() => onOpen(b.id)}
+                title={openable ? 'Open this import’s details' : 'Detailed rows are only kept right after importing'}
+                className="flex-1 min-w-0 flex items-center gap-2 text-left group"
               >
-                {undoingId === b.id ? <Loader2 size={13} className="animate-spin" /> : <Undo2 size={13} />}
-                Undo
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[#0F172A] truncate group-hover:text-[#2563EB] transition-colors">
+                    {b.file_name || 'Untitled import'}
+                    {b.status !== 'committed' && (
+                      <span className="ml-2 text-[11px] font-semibold text-[#94A3B8] uppercase">{b.status.replace('_', ' ')}</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-[#64748B] mt-0.5">
+                    {new Date(b.created_at).toLocaleString()} · by {b.imported_by} · {b.created_count} created
+                    {b.failed_count > 0 ? `, ${b.failed_count} failed` : ''} · {b.remaining} still present
+                  </p>
+                </div>
+                <ChevronRight
+                  size={16}
+                  className={`shrink-0 ${openable ? 'text-[#94A3B8] group-hover:text-[#2563EB]' : 'text-[#E2E8F0]'} transition-colors`}
+                />
               </button>
-            ) : (
-              <span className="text-[11px] text-[#94A3B8] shrink-0">
-                {b.status === 'committed' ? 'Undo window passed' : 'Undone'}
-              </span>
-            )}
-          </div>
-        ))}
+              {b.can_undo ? (
+                <button
+                  onClick={() => onUndo(b.id)}
+                  disabled={undoingId === b.id}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[13px] font-semibold text-[#B91C1C] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:opacity-60 transition-colors shrink-0"
+                >
+                  {undoingId === b.id ? <Loader2 size={13} className="animate-spin" /> : <Undo2 size={13} />}
+                  Undo
+                </button>
+              ) : (
+                <span className="text-[11px] text-[#94A3B8] shrink-0">
+                  {b.status === 'committed' ? 'Undo window passed' : 'Undone'}
+                </span>
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
