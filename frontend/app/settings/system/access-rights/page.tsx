@@ -33,6 +33,7 @@ import {
   DATA_SCOPE_HELP,
   SCOPE_RANK,
   type RegistryModule,
+  type RegistrySubModule,
   type RoleMatrix,
   type SystemRole,
   type SubjectPolicy,
@@ -59,12 +60,81 @@ type LineScopes = Record<string, Record<string, Partial<Record<PermAction, DataS
 type ModuleScopes = Record<string, Record<string, DataScope>> // roleId → moduleKey → scope (override)
 type DefaultScopes = Record<string, DataScope> // roleId → global scope
 
+type SectionKey =
+  | 'goals'
+  | 'learning'
+  | 'communication'
+  | 'work'
+  | 'ecs'
+  | 'governance'
+  | 'performance'
+  | 'settings'
+
+interface ActorSubModuleView {
+  key: string
+  label: string
+  moduleKey: string
+  features: RegistrySubModule['features']
+  displayOnly?: boolean
+}
+
+interface ActorSectionView {
+  key: SectionKey
+  label: string
+  subModules: ActorSubModuleView[]
+}
+
+interface SubjectPolicyView extends SubjectPolicy {
+  moduleKey: string
+}
+
+interface SubjectSubModuleView {
+  key: string
+  label: string
+  moduleKey: string
+  policies: SubjectPolicyView[]
+}
+
+interface SubjectSectionView {
+  key: SectionKey
+  label: string
+  subModules: SubjectSubModuleView[]
+}
+
 interface Derived {
   working: Working
   lineScopes: LineScopes
   moduleScopes: ModuleScopes
   defaultScopes: DefaultScopes
   split: Record<string, boolean> // `${roleId}:${leafKey}` → shown per-action
+}
+
+const SECTION_ORDER: { key: SectionKey; label: string }[] = [
+  { key: 'goals', label: 'Goals' },
+  { key: 'learning', label: 'Learning' },
+  { key: 'communication', label: 'Communication' },
+  { key: 'work', label: 'Work' },
+  { key: 'ecs', label: 'ESS' },
+  { key: 'governance', label: 'Governance' },
+  { key: 'performance', label: 'Performance' },
+  { key: 'settings', label: 'Settings' },
+]
+
+const MODULE_TO_SECTION: Record<string, SectionKey> = {
+  goals: 'goals',
+  learning: 'learning',
+  communication: 'communication',
+  tasks: 'work',
+  tickets: 'work',
+  projects: 'work',
+  workflows: 'work',
+  ecs: 'ecs',
+  governance: 'governance',
+  performance: 'performance',
+  holidays: 'settings',
+  employees: 'settings',
+  organization: 'settings',
+  admin: 'settings',
 }
 
 function ScopeSelect({
@@ -198,29 +268,106 @@ export default function AccessControlPage() {
   }, [load])
 
   // Modules with at least one configurable (actor + feature) leaf, + leaf→module map.
-  const actorModules = useMemo(
-    () =>
-      registry
-        .map((m) => ({
-          ...m,
-          subModules: m.subModules
-            .map((s) => ({ ...s, features: s.features.filter((f) => f.axis === 'actor' && f.kind === 'feature') }))
-            .filter((s) => s.features.length > 0),
+  const actorSections = useMemo<ActorSectionView[]>(() => {
+    const sections = new Map<SectionKey, ActorSectionView>()
+    for (const { key, label } of SECTION_ORDER) sections.set(key, { key, label, subModules: [] })
+
+    for (const mod of registry) {
+      const sectionKey = MODULE_TO_SECTION[mod.key]
+      if (!sectionKey) continue
+      const section = sections.get(sectionKey)
+      if (!section) continue
+
+      const actorSubModules = mod.subModules
+        .map((sub) => ({
+          key: sub.key,
+          label: sub.label,
+          moduleKey: mod.key,
+          features: sub.features.filter((f) => f.axis === 'actor' && f.kind === 'feature'),
         }))
-        .filter((m) => m.subModules.length > 0),
-    [registry],
-  )
+        .filter((sub) => sub.features.length > 0)
+
+      section.subModules.push(...actorSubModules)
+
+      if (mod.key === 'workflows') {
+        section.subModules.push({
+          key: 'workflows.display',
+          label: mod.label,
+          moduleKey: mod.key,
+          features: [],
+          displayOnly: true,
+        })
+      }
+    }
+
+    return SECTION_ORDER
+      .map(({ key }) => sections.get(key)!)
+      .filter((section) => section.subModules.length > 0)
+  }, [registry])
   const leafModule = useMemo(() => {
     const map: Record<string, string> = {}
-    for (const m of actorModules) for (const s of m.subModules) for (const f of s.features) map[f.key] = m.key
+    for (const section of actorSections) {
+      for (const sub of section.subModules) {
+        for (const f of sub.features) map[f.key] = sub.moduleKey
+      }
+    }
     return map
-  }, [actorModules])
+  }, [actorSections])
 
-  const modulePairs = useCallback((mod: (typeof actorModules)[number]) => {
+  const subModulePairs = useCallback((sub: ActorSubModuleView) => {
     const pairs: { leafKey: string; action: PermAction }[] = []
-    mod.subModules.forEach((s) => s.features.forEach((f) => f.actions.forEach((a) => pairs.push({ leafKey: f.key, action: a }))))
+    sub.features.forEach((f) => f.actions.forEach((a) => pairs.push({ leafKey: f.key, action: a })))
     return pairs
   }, [])
+  const actorModules = actorSections
+  const modulePairs = useCallback(
+    (mod: ActorSectionView) => mod.subModules.flatMap((sub) => subModulePairs(sub)),
+    [subModulePairs],
+  )
+
+  const subjectSections = useMemo<SubjectSectionView[]>(() => {
+    const subjectMeta = new Map<string, { sectionKey: SectionKey; subModuleKey: string; subModuleLabel: string; moduleKey: string }>()
+    for (const mod of registry) {
+      const sectionKey = MODULE_TO_SECTION[mod.key]
+      if (!sectionKey) continue
+      for (const sub of mod.subModules) {
+        for (const feature of sub.features) {
+          if (feature.axis !== 'subject') continue
+          subjectMeta.set(feature.key, {
+            sectionKey,
+            subModuleKey: sub.key,
+            subModuleLabel: sub.label,
+            moduleKey: mod.key,
+          })
+        }
+      }
+    }
+
+    const sections = new Map<SectionKey, SubjectSectionView>()
+    for (const { key, label } of SECTION_ORDER) sections.set(key, { key, label, subModules: [] })
+
+    for (const policy of policies) {
+      const meta = subjectMeta.get(policy.subject_key)
+      if (!meta) continue
+      const section = sections.get(meta.sectionKey)
+      if (!section) continue
+      let sub = section.subModules.find((item) => item.key === meta.subModuleKey)
+      if (!sub) {
+        sub = {
+          key: meta.subModuleKey,
+          label: meta.subModuleLabel,
+          moduleKey: meta.moduleKey,
+          policies: [],
+        }
+        section.subModules.push(sub)
+      }
+      sub.policies.push({ ...policy, moduleKey: meta.moduleKey })
+    }
+
+    return SECTION_ORDER
+      .map(({ key }) => sections.get(key)!)
+      .filter((section) => section.subModules.length > 0)
+  }, [registry, policies])
 
   const scopableSet = useMemo(() => new Set(matrix?.scopableLeaves ?? []), [matrix])
   const isScopable = useCallback((leafKey: string) => scopableSet.has(leafKey), [scopableSet])
@@ -452,10 +599,16 @@ export default function AccessControlPage() {
   const enabledCount = useCallback(
     (roleId: string) => {
       let n = 0
-      for (const mod of actorModules) for (const { leafKey, action } of modulePairs(mod)) if (d.working[roleId]?.[leafKey]?.[action]) n++
+      for (const section of actorSections) {
+        for (const sub of section.subModules) {
+          for (const { leafKey, action } of subModulePairs(sub)) {
+            if (d.working[roleId]?.[leafKey]?.[action]) n++
+          }
+        }
+      }
       return n
     },
-    [actorModules, modulePairs, d],
+    [actorSections, subModulePairs, d],
   )
 
   // ─── Subject policies ────────────────────────────────────────────────────────
@@ -800,8 +953,18 @@ export default function AccessControlPage() {
                             {!isCollapsed &&
                               mod.subModules.map((sub) => (
                                 <div key={sub.key}>
-                                  {mod.subModules.length > 1 && (
-                                    <p className="px-4 pt-2 pb-1 pl-9 text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">{sub.label}</p>
+                                  <div className="px-4 pt-2 pb-1 pl-9 flex items-center gap-2">
+                                    <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">{sub.label}</p>
+                                    {sub.displayOnly && (
+                                      <span className="text-[10px] font-semibold text-[#64748B] bg-[#F1F5F9] rounded-[999px] px-2 py-0.5">
+                                        Entitlement only
+                                      </span>
+                                    )}
+                                  </div>
+                                  {sub.displayOnly && (
+                                    <p className="px-4 pb-2 pl-9 text-xs text-[#64748B]">
+                                      Workflow access is controlled by module entitlement and workflow ownership rules.
+                                    </p>
                                   )}
                                   {sub.features.map((f) => {
                                     const scopable = isScopable(f.key)
@@ -933,26 +1096,40 @@ export default function AccessControlPage() {
               module themselves. Per-person exceptions are set on the employee&apos;s record.
             </p>
           </div>
-          {policies.map((p) => {
-            const on = policyEdits[p.subject_key]
-            return (
-              <div key={p.subject_key} className="flex items-center justify-between gap-4 px-5 py-3.5 border-b border-[#F8FAFC] last:border-0">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-[#0F172A]">{p.label}</p>
-                  <p className="text-xs text-[#64748B] mt-0.5">{on ? 'Everyone eligible unless revoked' : 'No one eligible unless granted'}</p>
-                </div>
-                <button
-                  role="switch"
-                  aria-checked={on}
-                  onClick={() => setPolicyEdits((e) => ({ ...e, [p.subject_key]: !e[p.subject_key] }))}
-                  className={['relative w-11 h-6 rounded-full transition-colors shrink-0', on ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]'].join(' ')}
-                >
-                  <span className={['absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform', on ? 'translate-x-5' : ''].join(' ')} />
-                </button>
+          {subjectSections.map((section) => (
+            <div key={section.key} className="border-b border-[#F1F5F9] last:border-0">
+              <div className="px-5 py-3 bg-[#F8FAFC]">
+                <p className="text-sm font-bold text-[#0F172A] uppercase tracking-wide">{section.label}</p>
               </div>
-            )
-          })}
-          {policies.length === 0 && <p className="px-5 py-8 text-sm text-[#94A3B8] text-center">No subject permissions defined.</p>}
+              {section.subModules.map((sub) => (
+                <div key={sub.key} className="border-t border-[#F8FAFC]">
+                  <div className="px-5 pt-3 pb-1">
+                    <p className="text-[11px] font-semibold text-[#94A3B8] uppercase tracking-wider">{sub.label}</p>
+                  </div>
+                  {sub.policies.map((p) => {
+                    const on = policyEdits[p.subject_key]
+                    return (
+                      <div key={p.subject_key} className="flex items-center justify-between gap-4 px-5 py-3.5">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-[#0F172A]">{p.label}</p>
+                          <p className="text-xs text-[#64748B] mt-0.5">{on ? 'Everyone eligible unless revoked' : 'No one eligible unless granted'}</p>
+                        </div>
+                        <button
+                          role="switch"
+                          aria-checked={on}
+                          onClick={() => setPolicyEdits((e) => ({ ...e, [p.subject_key]: !e[p.subject_key] }))}
+                          className={['relative w-11 h-6 rounded-full transition-colors shrink-0', on ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]'].join(' ')}
+                        >
+                          <span className={['absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform', on ? 'translate-x-5' : ''].join(' ')} />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          ))}
+          {subjectSections.length === 0 && <p className="px-5 py-8 text-sm text-[#94A3B8] text-center">No subject permissions defined.</p>}
         </div>
       )}
     </div>
