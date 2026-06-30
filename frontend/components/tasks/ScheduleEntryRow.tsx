@@ -5,6 +5,7 @@ import { X } from 'lucide-react'
 import type { RecurringScheduleType, RecurringEndCondition, YearlyDate } from '@/lib/types/tasks'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
+import StyledSelect from '@/components/ui/StyledSelect'
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -198,15 +199,12 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
           <label className={`${labelCls} block`}>On date(s) each year</label>
           {entry.yearly_dates.map((yd, i) => (
             <div key={i} className="flex items-center gap-2">
-              <select
-                value={yd.month}
-                onChange={(e) => updateYearlyDate(i, { month: Number(e.target.value) })}
-                className={`flex-1 ${inputCls}`}
-              >
-                {MONTH_LABELS.map((m, mi) => (
-                  <option key={mi} value={mi + 1}>{m}</option>
-                ))}
-              </select>
+              <StyledSelect
+                value={String(yd.month)}
+                onChange={(v) => updateYearlyDate(i, { month: Number(v) })}
+                wrapperClassName="flex-1"
+                options={MONTH_LABELS.map((m, mi) => ({ value: String(mi + 1), label: m }))}
+              />
               <input
                 type="number"
                 min={1}

@@ -8,6 +8,7 @@ import type {
   RecurringTemplate, RecurringScheduleEntry,
   TaskCategory, TaskPriority, CompletionMode, SelectedAssignee, YearlyDate,
 } from '@/lib/types/tasks'
+import StyledSelect from '@/components/ui/StyledSelect'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
 import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
@@ -211,17 +212,27 @@ export default function EditRecurringModal({ template, orgId, categories, priori
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
-                <select value={priorityId} onChange={(e) => setPriorityId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
-                  <option value="">No priority</option>
-                  {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
+                <StyledSelect
+                  value={priorityId}
+                  onChange={(v) => setPriorityId(v)}
+                  placeholder="No priority"
+                  options={[
+                    { value: '', label: 'No priority' },
+                    ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
+                  ]}
+                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-[#374151] mb-1.5">Category</label>
-                <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white">
-                  <option value="">No category</option>
-                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                <StyledSelect
+                  value={categoryId}
+                  onChange={(v) => setCategoryId(v)}
+                  placeholder="No category"
+                  options={[
+                    { value: '', label: 'No category' },
+                    ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color })),
+                  ]}
+                />
               </div>
             </div>
           </div>

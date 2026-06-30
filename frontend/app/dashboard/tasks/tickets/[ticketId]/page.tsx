@@ -13,6 +13,7 @@ import ConfirmResolutionBanner from '@/components/tickets/ConfirmResolutionBanne
 import RatingWidget from '@/components/tickets/RatingWidget'
 import TicketCommentThread from '@/components/tickets/TicketCommentThread'
 import TicketActivityFeed from '@/components/tickets/TicketActivityFeed'
+import StyledSelect from '@/components/ui/StyledSelect'
 
 type DetailTab = 'details' | 'activity'
 
@@ -509,11 +510,15 @@ export default function TicketDetailPage() {
               actionPanel === 'transfer' ? (
                 <div className="flex flex-col gap-2 p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[10px]">
                   <p className="text-xs font-semibold text-[#0F172A]">Transfer to resolver group</p>
-                  <select value={transferGroupId} onChange={(e) => setTransferGroupId(e.target.value)}
-                    className="w-full px-2 py-1.5 border border-[#CBD5E1] rounded-[6px] text-sm text-[#0F172A] focus:border-[#2563EB] focus:outline-none bg-white">
-                    <option value="">Select a resolver group...</option>
-                    {resolverGroups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-                  </select>
+                  <StyledSelect
+                    value={transferGroupId}
+                    onChange={(v) => setTransferGroupId(v)}
+                    placeholder="Select a resolver group..."
+                    options={[
+                      { value: '', label: 'Select a resolver group...' },
+                      ...resolverGroups.map((g) => ({ value: g.id, label: g.name })),
+                    ]}
+                  />
                   <textarea value={reason} onChange={(e) => setReason(e.target.value)} rows={2} placeholder="Reason (optional)..." className="w-full px-2 py-1.5 border border-[#CBD5E1] rounded-[6px] text-sm resize-none focus:border-[#2563EB] focus:outline-none bg-white" />
                   <div className="flex gap-2">
                     <button type="button" disabled={!transferGroupId || actionLoading}

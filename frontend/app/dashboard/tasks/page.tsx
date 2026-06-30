@@ -34,7 +34,7 @@ import SegmentDrawer from '@/components/tasks/overview/SegmentDrawer'
 import TaskRow from '@/components/tasks/overview/TaskRow'
 import TaskDrawer from '@/components/tasks/overview/TaskDrawer'
 import BulkActionBar from '@/components/tasks/overview/BulkActionBar'
-import SelectField from '@/components/ui/SelectField'
+import StyledSelect from '@/components/ui/StyledSelect'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
 import { usePermissions } from '@/lib/auth/use-permissions'
@@ -503,43 +503,66 @@ export default function TasksOverviewPage() {
           className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-[8px] border border-[#E2E8F0] text-sm font-medium text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-60 transition-colors">
           <Download size={15} /> {exporting ? 'Exporting…' : 'Export'}
         </button>
-        <SelectField value={sort} onChange={(e) => setSort(e.target.value)} wrapperClassName="w-[170px]">
-          <option value="created_desc">Newest first</option>
-          <option value="created_asc">Oldest first</option>
-          <option value="deadline_asc">Deadline ↑</option>
-          <option value="deadline_desc">Deadline ↓</option>
-          <option value="updated_desc">Recently updated</option>
-        </SelectField>
+        <StyledSelect
+          value={sort}
+          onChange={setSort}
+          wrapperClassName="w-[170px]"
+          options={[
+            { value: 'created_desc', label: 'Newest first' },
+            { value: 'created_asc', label: 'Oldest first' },
+            { value: 'deadline_asc', label: 'Deadline ↑' },
+            { value: 'deadline_desc', label: 'Deadline ↓' },
+            { value: 'updated_desc', label: 'Recently updated' },
+          ]}
+        />
       </div>
 
       {/* Filter panel */}
       {showFilters && (
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <SelectField value={statusId} onChange={(e) => setStatusId(e.target.value)}>
-            <option value="">All statuses</option>
-            {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </SelectField>
-          <SelectField value={priorityId} onChange={(e) => setPriorityId(e.target.value)}>
-            <option value="">All priorities</option>
-            {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </SelectField>
-          <SelectField value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-            <option value="">All categories</option>
-            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </SelectField>
-          <SelectField value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-            <option value="">All departments</option>
-            {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </SelectField>
-          <SelectField value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-            <option value="">All types</option>
-            <option value="one_time">One-time</option>
-            <option value="recurring">Recurring</option>
-          </SelectField>
-          <SelectField value={timingFilter} onChange={(e) => setTimingFilter(e.target.value)}>
-            <option value="">All timing</option>
-            {(['early', 'on_time', 'late', 'overdue', 'pending'] as Timing[]).map((t) => <option key={t} value={t}>{TIMING_META[t].label}</option>)}
-          </SelectField>
+          <StyledSelect
+            value={statusId}
+            onChange={setStatusId}
+            placeholder="All statuses"
+            options={[{ value: '', label: 'All statuses' }, ...statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))]}
+          />
+          <StyledSelect
+            value={priorityId}
+            onChange={setPriorityId}
+            placeholder="All priorities"
+            options={[{ value: '', label: 'All priorities' }, ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color }))]}
+          />
+          <StyledSelect
+            value={categoryId}
+            onChange={setCategoryId}
+            placeholder="All categories"
+            options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color }))]}
+          />
+          <StyledSelect
+            value={departmentId}
+            onChange={setDepartmentId}
+            placeholder="All departments"
+            options={[{ value: '', label: 'All departments' }, ...departments.map((d) => ({ value: d.id, label: d.name }))]}
+          />
+          <StyledSelect
+            value={typeFilter}
+            onChange={(v) => setTypeFilter(v as typeof typeFilter)}
+            placeholder="All types"
+            options={[
+              { value: '', label: 'All types' },
+              { value: 'one_time', label: 'One-time' },
+              { value: 'recurring', label: 'Recurring' },
+            ]}
+          />
+          <StyledSelect
+            value={timingFilter}
+            onChange={(v) => setTimingFilter(v as typeof timingFilter)}
+            placeholder="All timing"
+            options={[
+              { value: '', label: 'All timing' },
+              ...(['early', 'on_time', 'late', 'overdue', 'pending'] as Timing[]).map((t) => ({ value: t, label: TIMING_META[t].label })),
+            ]}
+          />
           <DateRangePicker from={fromDate} to={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} placeholder="Created date range" />
         </div>
       )}

@@ -9,6 +9,7 @@ import type { Task, TaskComment, TaskActivityLog, TaskCategory, TaskPriority, Ta
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import EditTaskModal from '@/components/tasks/EditTaskModal'
+import StyledSelect from '@/components/ui/StyledSelect'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -727,15 +728,11 @@ export default function TaskDetailPage() {
                 <p className="text-[11px] font-bold text-[#2563EB] uppercase tracking-widest">Status</p>
               </div>
               <div className="p-4">
-                <select
+                <StyledSelect
                   value={selectedStatusId}
-                  onChange={(e) => handleStatusChange(e.target.value)}
-                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                >
-                  {statuses.map((s) => (
-                    <option key={s.id} value={s.id}>{s.label}</option>
-                  ))}
-                </select>
+                  onChange={(v) => handleStatusChange(v)}
+                  options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                />
               </div>
             </div>
 

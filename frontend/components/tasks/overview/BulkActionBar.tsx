@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { X, CheckCircle2, CalendarClock } from 'lucide-react'
 import type { TaskStatus } from '@/lib/types/tasks'
-import SelectField from '@/components/ui/SelectField'
+import StyledSelect from '@/components/ui/StyledSelect'
 import DatePicker from '@/components/ui/DatePicker'
 
 /**
@@ -37,16 +37,18 @@ export default function BulkActionBar({
         <div className="h-5 w-px bg-[#334155] hidden sm:block" />
 
         <div className="flex items-center gap-2 flex-wrap flex-1">
-          <SelectField
+          <StyledSelect
             value=""
             disabled={busy}
-            onChange={(e) => e.target.value && onStatus(e.target.value)}
+            onChange={(v) => v && onStatus(v)}
             wrapperClassName="w-[150px]"
-            className="!bg-[#1E293B] !border-[#334155] !text-white"
-          >
-            <option value="">Set status…</option>
-            {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-          </SelectField>
+            triggerClassName="!bg-[#1E293B] hover:!bg-[#1E293B] focus:!bg-[#1E293B] !border-[#334155] !text-white"
+            placeholder="Set status…"
+            options={[
+              { value: '', label: 'Set status…' },
+              ...statuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+            ]}
+          />
 
           <div className="w-[160px]">
             <DatePicker

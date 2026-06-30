@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth/context'
 import { ticketsApi } from '@/lib/api/tickets'
 import type { TicketTemplate, TicketType, TicketCategory, TicketPriority } from '@/lib/types/tickets'
 import TicketTemplateCard from '@/components/tickets/TicketTemplateCard'
+import StyledSelect from '@/components/ui/StyledSelect'
 
 type Step = 'template' | 'form'
 
@@ -228,25 +229,31 @@ export default function NewTicketPage() {
           {filteredCategories.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Category</label>
-              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)} className={inputCls}>
-                <option value="">Select category (optional)</option>
-                {filteredCategories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <StyledSelect
+                value={categoryId}
+                onChange={(v) => setCategoryId(v)}
+                placeholder="Select category (optional)"
+                options={[
+                  { value: '', label: 'Select category (optional)' },
+                  ...filteredCategories.map((c) => ({ value: c.id, label: c.name, color: c.color })),
+                ]}
+              />
             </div>
           )}
 
           {priorities.length > 0 && (
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
-              <select
+              <StyledSelect
                 value={priorityId}
-                onChange={(e) => setPriorityId(e.target.value)}
+                onChange={(v) => setPriorityId(v)}
                 disabled={priorityLocked}
-                className={`${inputCls} ${priorityLocked ? 'bg-[#F1F5F9] text-[#475569] cursor-not-allowed' : ''}`}
-              >
-                <option value="">Select priority (optional)</option>
-                {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+                placeholder="Select priority (optional)"
+                options={[
+                  { value: '', label: 'Select priority (optional)' },
+                  ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
+                ]}
+              />
               {priorityLocked && (
                 <p className="text-xs text-[#64748B] mt-1">Locked by template</p>
               )}

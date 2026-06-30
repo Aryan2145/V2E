@@ -8,6 +8,7 @@ import { ticketsApi } from '@/lib/api/tickets'
 import type { Ticket, TicketType, TicketCategory, TicketPriority, TicketStatus, TicketStats } from '@/lib/types/tickets'
 import TicketCard from '@/components/tickets/TicketCard'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
+import StyledSelect from '@/components/ui/StyledSelect'
 import { usePermissions } from '@/lib/auth/use-permissions'
 
 export default function TicketsPage() {
@@ -63,7 +64,6 @@ export default function TicketsPage() {
 
   useEffect(() => { load() }, [load])
 
-  const selectCls = 'px-2.5 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none'
   const statCard = (label: string, value: number, color: string) => (
     <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.06)] p-4 flex-1">
       <p className="text-xs font-medium text-[#475569] mb-1">{label}</p>
@@ -121,27 +121,57 @@ export default function TicketsPage() {
             className="w-full pl-9 pr-3 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-[#2563EB] focus:outline-none"
           />
         </div>
-        <select value={filterType} onChange={(e) => setFilterType(e.target.value)} className={selectCls}>
-          <option value="">All Types</option>
-          {types.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
-        </select>
-        <select value={filterCategory} onChange={(e) => setFilterCategory(e.target.value)} className={selectCls}>
-          <option value="">All Categories</option>
-          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className={selectCls}>
-          <option value="">All Priorities</option>
-          {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
-        <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={selectCls}>
-          <option value="">All Statuses</option>
-          {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-        </select>
-        <select value={filterSla} onChange={(e) => setFilterSla(e.target.value)} className={selectCls}>
-          <option value="">SLA Status</option>
-          <option value="breached">Breached</option>
-          <option value="ok">Within SLA</option>
-        </select>
+        <StyledSelect
+          value={filterType}
+          onChange={(v) => setFilterType(v)}
+          placeholder="All Types"
+          wrapperClassName="w-40"
+          options={[
+            { value: '', label: 'All Types' },
+            ...types.map((t) => ({ value: t.id, label: `${t.icon} ${t.name}`, color: t.color })),
+          ]}
+        />
+        <StyledSelect
+          value={filterCategory}
+          onChange={(v) => setFilterCategory(v)}
+          placeholder="All Categories"
+          wrapperClassName="w-40"
+          options={[
+            { value: '', label: 'All Categories' },
+            ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color })),
+          ]}
+        />
+        <StyledSelect
+          value={filterPriority}
+          onChange={(v) => setFilterPriority(v)}
+          placeholder="All Priorities"
+          wrapperClassName="w-40"
+          options={[
+            { value: '', label: 'All Priorities' },
+            ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
+          ]}
+        />
+        <StyledSelect
+          value={filterStatus}
+          onChange={(v) => setFilterStatus(v)}
+          placeholder="All Statuses"
+          wrapperClassName="w-40"
+          options={[
+            { value: '', label: 'All Statuses' },
+            ...statuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+          ]}
+        />
+        <StyledSelect
+          value={filterSla}
+          onChange={(v) => setFilterSla(v)}
+          placeholder="SLA Status"
+          wrapperClassName="w-40"
+          options={[
+            { value: '', label: 'SLA Status' },
+            { value: 'breached', label: 'Breached' },
+            { value: 'ok', label: 'Within SLA' },
+          ]}
+        />
         {hasFilters && (
           <button
             type="button"

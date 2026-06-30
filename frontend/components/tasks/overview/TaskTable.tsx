@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { ArrowDown, ArrowUp, CheckSquare } from 'lucide-react'
-import SelectField from '@/components/ui/SelectField'
+import StyledSelect from '@/components/ui/StyledSelect'
 import {
   TIMINGS, TIMING_META, taskTiming,
   type Task, type TaskStatus, type TaskPriority, type TaskCategory,
@@ -76,11 +76,15 @@ export default function TaskTable({
     return names.length <= 2 ? names.join(', ') : `${names.slice(0, 2).join(', ')} +${names.length - 2}`
   }
 
-  const filterCell = (key: TableFilterKey, allLabel: string, options: { value: string; label: string }[]) => (
-    <SelectField value={filters[key]} onChange={(e) => onFilter(key, e.target.value)} wrapperClassName="w-full" className="!py-1 !text-[12px]">
-      <option value="">{allLabel}</option>
-      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </SelectField>
+  const filterCell = (key: TableFilterKey, allLabel: string, options: { value: string; label: string; color?: string }[]) => (
+    <StyledSelect
+      value={filters[key]}
+      onChange={(v) => onFilter(key, v)}
+      placeholder={allLabel}
+      wrapperClassName="w-full"
+      triggerClassName="!py-1 !text-[12px]"
+      options={[{ value: '', label: allLabel }, ...options]}
+    />
   )
 
   return (
@@ -117,13 +121,13 @@ export default function TaskTable({
                 {filterCell('department_id', 'All depts', departments.map((d) => ({ value: d.id, label: d.name })))}
               </td>
               <td className="px-3 py-2 align-top min-w-[130px]">
-                {filterCell('category_id', 'All', categories.map((c) => ({ value: c.id, label: c.name })))}
+                {filterCell('category_id', 'All', categories.map((c) => ({ value: c.id, label: c.name, color: c.color })))}
               </td>
               <td className="px-3 py-2 align-top min-w-[120px]">
-                {filterCell('priority_id', 'All', priorities.map((p) => ({ value: p.id, label: p.label })))}
+                {filterCell('priority_id', 'All', priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })))}
               </td>
               <td className="px-3 py-2 align-top min-w-[130px]">
-                {filterCell('status_id', 'All', statuses.map((s) => ({ value: s.id, label: s.label })))}
+                {filterCell('status_id', 'All', statuses.map((s) => ({ value: s.id, label: s.label, color: s.color })))}
               </td>
               <td className="px-3 py-2 align-top min-w-[130px]">
                 {filterCell('timing', 'All', TIMINGS.map((t) => ({ value: t, label: TIMING_META[t].label })))}

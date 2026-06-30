@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { X, Plus, Trash2 } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
+import StyledSelect from '@/components/ui/StyledSelect'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
@@ -423,41 +424,36 @@ export default function CreateTaskModal({
           <div className="grid grid-cols-3 gap-3">
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
-              <select
+              <StyledSelect
                 value={priorityId}
-                onChange={(e) => setPriorityId(e.target.value)}
-                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              >
-                <option value="">No priority</option>
-                {priorities.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
+                onChange={setPriorityId}
+                placeholder="No priority"
+                options={[
+                  { value: '', label: 'No priority' },
+                  ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
+                ]}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Category</label>
-              <select
+              <StyledSelect
                 value={categoryId}
-                onChange={(e) => setCategoryId(e.target.value)}
-                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              >
-                <option value="">No category</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </select>
+                onChange={setCategoryId}
+                placeholder="No category"
+                options={[
+                  { value: '', label: 'No category' },
+                  ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color })),
+                ]}
+              />
             </div>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Status</label>
-              <select
+              <StyledSelect
                 value={statusId}
-                onChange={(e) => setStatusId(e.target.value)}
-                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              >
-                {statuses.map((s) => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </select>
+                onChange={setStatusId}
+                placeholder="Select status"
+                options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+              />
             </div>
           </div>
 
@@ -488,16 +484,15 @@ export default function CreateTaskModal({
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Checklist</label>
             {checklistTemplates.length > 0 && (
               <div className="mb-3">
-                <select
+                <StyledSelect
                   value={selectedTemplateId}
-                  onChange={(e) => applyTemplate(e.target.value)}
-                  className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-base sm:text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                >
-                  <option value="">Apply a checklist template…</option>
-                  {checklistTemplates.map((t) => (
-                    <option key={t.id} value={t.id}>{t.name}</option>
-                  ))}
-                </select>
+                  onChange={applyTemplate}
+                  placeholder="Apply a checklist template…"
+                  options={[
+                    { value: '', label: 'Apply a checklist template…' },
+                    ...checklistTemplates.map((t) => ({ value: t.id, label: t.name })),
+                  ]}
+                />
                 <p className="mt-1 text-xs text-[#64748B]">Pre-fills the checklist below; you can still edit the items.</p>
               </div>
             )}

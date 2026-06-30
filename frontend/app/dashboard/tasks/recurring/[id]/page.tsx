@@ -10,6 +10,7 @@ import type {
 } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
+import StyledSelect from '@/components/ui/StyledSelect'
 import {
   ArrowLeft, RotateCcw, Play, Pause, Edit2, Zap,
   CheckCircle2, Clock, ListChecks, BarChart2, Filter, Users,
@@ -277,22 +278,27 @@ export default function RecurringDetailPage() {
                 <Filter size={14} />
                 <span className="font-medium">Filter</span>
               </div>
-              <select
+              <StyledSelect
                 value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-              >
-                <option value="all">All Statuses</option>
-                {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-              </select>
-              <select
+                onChange={(v) => setFilterStatus(v)}
+                placeholder="All Statuses"
+                wrapperClassName="w-40"
+                options={[
+                  { value: 'all', label: 'All Statuses' },
+                  ...statuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+                ]}
+              />
+              <StyledSelect
                 value={filterPriority}
-                onChange={(e) => setFilterPriority(e.target.value)}
-                className="px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]"
-              >
-                <option value="all">All Priorities</option>
-                {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+                onChange={(v) => setFilterPriority(v)}
+                placeholder="All Priorities"
+                wrapperClassName="w-40"
+                options={[
+                  { value: 'all', label: 'All Priorities' },
+                  ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
+                ]}
+              />
+
               {isFiltered && (
                 <button
                   onClick={() => { setFilterStatus('all'); setFilterPriority('all') }}

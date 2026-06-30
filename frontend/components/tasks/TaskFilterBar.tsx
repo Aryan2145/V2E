@@ -2,6 +2,7 @@
 
 import React, { useMemo } from 'react'
 import { Filter } from 'lucide-react'
+import StyledSelect from '@/components/ui/StyledSelect'
 import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 
 export interface TaskFilters {
@@ -25,9 +26,6 @@ export function applyTaskFilters(tasks: Task[], f: TaskFilters): Task[] {
     (f.user === 'all' || (t.assignees ?? []).some((a) => a.user_id === f.user)),
   )
 }
-
-const selectCls =
-  'px-3 py-[7px] text-sm rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A]'
 
 /**
  * Shared task filter toolbar: status / priority / category / user, with live
@@ -99,38 +97,42 @@ export default function TaskFilterBar({
         <Filter size={15} />
         <span className="font-medium">Filter</span>
       </div>
-      <select value={filters.status} onChange={(e) => set({ status: e.target.value })} className={selectCls}>
-        <option value="all">All Statuses</option>
-        {statuses.map((s) => (
-          <option key={s.id} value={s.id}>
-            {s.label} ({counts.status.get(s.id) ?? 0})
-          </option>
-        ))}
-      </select>
-      <select value={filters.priority} onChange={(e) => set({ priority: e.target.value })} className={selectCls}>
-        <option value="all">All Priorities</option>
-        {priorities.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.label} ({counts.priority.get(p.id) ?? 0})
-          </option>
-        ))}
-      </select>
-      <select value={filters.category} onChange={(e) => set({ category: e.target.value })} className={selectCls}>
-        <option value="all">All Categories</option>
-        {categories.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name} ({counts.category.get(c.id) ?? 0})
-          </option>
-        ))}
-      </select>
-      <select value={filters.user} onChange={(e) => set({ user: e.target.value })} className={selectCls}>
-        <option value="all">All Users</option>
-        {userOptions.map((u) => (
-          <option key={u.id} value={u.id}>
-            {u.name} ({counts.user.get(u.id) ?? 0})
-          </option>
-        ))}
-      </select>
+      <StyledSelect
+        value={filters.status}
+        onChange={(v) => set({ status: v })}
+        wrapperClassName="w-44"
+        options={[
+          { value: 'all', label: 'All Statuses' },
+          ...statuses.map((s) => ({ value: s.id, label: `${s.label} (${counts.status.get(s.id) ?? 0})`, color: s.color })),
+        ]}
+      />
+      <StyledSelect
+        value={filters.priority}
+        onChange={(v) => set({ priority: v })}
+        wrapperClassName="w-44"
+        options={[
+          { value: 'all', label: 'All Priorities' },
+          ...priorities.map((p) => ({ value: p.id, label: `${p.label} (${counts.priority.get(p.id) ?? 0})`, color: p.color })),
+        ]}
+      />
+      <StyledSelect
+        value={filters.category}
+        onChange={(v) => set({ category: v })}
+        wrapperClassName="w-44"
+        options={[
+          { value: 'all', label: 'All Categories' },
+          ...categories.map((c) => ({ value: c.id, label: `${c.name} (${counts.category.get(c.id) ?? 0})`, color: c.color })),
+        ]}
+      />
+      <StyledSelect
+        value={filters.user}
+        onChange={(v) => set({ user: v })}
+        wrapperClassName="w-44"
+        options={[
+          { value: 'all', label: 'All Users' },
+          ...userOptions.map((u) => ({ value: u.id, label: `${u.name} (${counts.user.get(u.id) ?? 0})` })),
+        ]}
+      />
       {isTaskFiltered(filters) && (
         <button
           onClick={() => onChange({ ...EMPTY_TASK_FILTERS })}

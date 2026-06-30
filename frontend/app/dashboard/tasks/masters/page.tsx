@@ -34,6 +34,7 @@ import type {
   TicketTemplateAccessMode,
 } from '@/lib/types/tickets'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import StyledSelect from '@/components/ui/StyledSelect'
 import { Plus, Pencil, Trash2, Save, X, Settings2, Tag, BarChart, Activity, List, Users, Ticket as TicketIcon, CheckSquare, Bell, Loader2, GripVertical, ChevronUp, ChevronDown, ArrowLeft, Upload } from 'lucide-react'
 import { notificationsApi, type NotificationMaster } from '@/lib/api/notifications'
 import { AssigneeVisibilityTab } from '@/components/tasks/AssigneeVisibilityTab'
@@ -58,7 +59,6 @@ function apiError(e: unknown): string | null {
 }
 
 const inputCls = 'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white'
-const selectCls = 'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white'
 
 /** Solid blue count pill beside a heading; hidden when the count is 0. */
 function CountPill({ n }: { n: number }) {
@@ -1006,10 +1006,15 @@ function TktTypesTab({ orgId }: { orgId: string }) {
           <FormField label="Default SLA Days"><input type="number" min={1} value={f.default_sla_days} onChange={(e) => setF({ ...f, default_sla_days: parseInt(e.target.value) || 1 })} className={inputCls} /></FormField>
           <FormField label="Default Response SLA (hours, optional)"><input type="number" min={1} value={f.default_response_sla_hours} onChange={(e) => setF({ ...f, default_response_sla_hours: e.target.value })} placeholder="No response SLA" className={inputCls} /></FormField>
           <FormField label="Resolver Group (optional)">
-            <select value={f.resolver_group_id} onChange={(e) => setF({ ...f, resolver_group_id: e.target.value })} className={selectCls}>
-              <option value="">None</option>
-              {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-            </select>
+            <StyledSelect
+              value={f.resolver_group_id}
+              onChange={(v) => setF({ ...f, resolver_group_id: v })}
+              placeholder="None"
+              options={[
+                { value: '', label: 'None' },
+                ...groups.map((g) => ({ value: g.id, label: g.name })),
+              ]}
+            />
           </FormField>
         </div>
         <FormField label="Description (optional)"><input type="text" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} placeholder="Brief description..." className={inputCls} /></FormField>
@@ -1116,18 +1121,28 @@ function TktCategoriesTab({ orgId }: { orgId: string }) {
               </div>
             </FormField>
             <FormField label="Ticket Type (optional)">
-              <select value={form.ticket_type_id} onChange={(e) => setForm({ ...form, ticket_type_id: e.target.value })} className={selectCls}>
-                <option value="">All types</option>
-                {types.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
-              </select>
+              <StyledSelect
+                value={form.ticket_type_id}
+                onChange={(v) => setForm({ ...form, ticket_type_id: v })}
+                placeholder="All types"
+                options={[
+                  { value: '', label: 'All types' },
+                  ...types.map((t) => ({ value: t.id, label: `${t.icon} ${t.name}`, color: t.color })),
+                ]}
+              />
             </FormField>
             <FormField label="SLA Override (days, optional)"><input type="number" min={1} value={form.default_sla_days} onChange={(e) => setForm({ ...form, default_sla_days: e.target.value })} placeholder="Inherits from type" className={inputCls} /></FormField>
             <FormField label="Response SLA (hours, optional)"><input type="number" min={1} value={form.default_response_sla_hours} onChange={(e) => setForm({ ...form, default_response_sla_hours: e.target.value })} placeholder="Inherits from type" className={inputCls} /></FormField>
             <FormField label="Resolver Group (optional)">
-              <select value={form.resolver_group_id} onChange={(e) => setForm({ ...form, resolver_group_id: e.target.value })} className={selectCls}>
-                <option value="">None</option>
-                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
+              <StyledSelect
+                value={form.resolver_group_id}
+                onChange={(v) => setForm({ ...form, resolver_group_id: v })}
+                placeholder="None"
+                options={[
+                  { value: '', label: 'None' },
+                  ...groups.map((g) => ({ value: g.id, label: g.name })),
+                ]}
+              />
             </FormField>
           </div>
           <FormField label="Description (optional)"><input type="text" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className={inputCls} /></FormField>
@@ -1265,9 +1280,11 @@ function TktStatusesTab({ orgId }: { orgId: string }) {
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Label"><input type="text" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} placeholder="e.g. Pending Review" className={inputCls} /></FormField>
             <FormField label="Type">
-              <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as TicketStatusType })} className={selectCls}>
-                {statusTypes.map((t) => <option key={t} value={t}>{t.replace(/_/g, ' ')}</option>)}
-              </select>
+              <StyledSelect
+                value={form.type}
+                onChange={(v) => setForm({ ...form, type: v as TicketStatusType })}
+                options={statusTypes.map((t) => ({ value: t, label: t.replace(/_/g, ' ') }))}
+              />
             </FormField>
             <FormField label="Color">
               <div className="flex gap-2 items-center">
@@ -1681,28 +1698,48 @@ function TktTemplatesTab({ orgId }: { orgId: string }) {
               </div>
             </FormField>
             <FormField label="Ticket Type (optional)">
-              <select value={form.ticket_type_id} onChange={(e) => setForm({ ...form, ticket_type_id: e.target.value })} className={selectCls}>
-                <option value="">Any type</option>
-                {types.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.name}</option>)}
-              </select>
+              <StyledSelect
+                value={form.ticket_type_id}
+                onChange={(v) => setForm({ ...form, ticket_type_id: v })}
+                placeholder="Any type"
+                options={[
+                  { value: '', label: 'Any type' },
+                  ...types.map((t) => ({ value: t.id, label: `${t.icon} ${t.name}`, color: t.color })),
+                ]}
+              />
             </FormField>
             <FormField label="Category (optional)">
-              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })} className={selectCls}>
-                <option value="">Any category</option>
-                {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <StyledSelect
+                value={form.category_id}
+                onChange={(v) => setForm({ ...form, category_id: v })}
+                placeholder="Any category"
+                options={[
+                  { value: '', label: 'Any category' },
+                  ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color })),
+                ]}
+              />
             </FormField>
             <FormField label="Priority (optional)">
-              <select value={form.priority_id} onChange={(e) => setForm({ ...form, priority_id: e.target.value })} className={selectCls}>
-                <option value="">Any priority</option>
-                {priorities.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
+              <StyledSelect
+                value={form.priority_id}
+                onChange={(v) => setForm({ ...form, priority_id: v })}
+                placeholder="Any priority"
+                options={[
+                  { value: '', label: 'Any priority' },
+                  ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
+                ]}
+              />
             </FormField>
             <FormField label="Resolver Group (optional)">
-              <select value={form.resolver_group_id} onChange={(e) => setForm({ ...form, resolver_group_id: e.target.value })} className={selectCls}>
-                <option value="">None</option>
-                {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
-              </select>
+              <StyledSelect
+                value={form.resolver_group_id}
+                onChange={(v) => setForm({ ...form, resolver_group_id: v })}
+                placeholder="None"
+                options={[
+                  { value: '', label: 'None' },
+                  ...groups.map((g) => ({ value: g.id, label: g.name })),
+                ]}
+              />
             </FormField>
             <FormField label="Catalog Department (optional)">
               <DepartmentSelect

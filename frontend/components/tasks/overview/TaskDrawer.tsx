@@ -8,7 +8,7 @@ import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskStatus, TaskComment } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from '@/components/tasks/AssigneeAvatars'
-import SelectField from '@/components/ui/SelectField'
+import StyledSelect from '@/components/ui/StyledSelect'
 
 const TERMINAL = new Set(['completed', 'incomplete'])
 
@@ -239,14 +239,13 @@ export default function TaskDrawer({
             <div className="border-t border-[#E2E8F0] px-6 py-3 space-y-3">
               {/* Status row */}
               <div className="flex items-center gap-2">
-                <SelectField
+                <StyledSelect
                   value={task.status_id}
-                  onChange={(e) => changeStatus(e.target.value)}
+                  onChange={(v) => changeStatus(v)}
                   disabled={busy}
                   wrapperClassName="flex-1"
-                >
-                  {statuses.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                </SelectField>
+                  options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                />
                 {!isTerminal && (
                   <button
                     onClick={complete}

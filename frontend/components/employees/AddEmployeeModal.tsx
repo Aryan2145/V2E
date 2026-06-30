@@ -12,7 +12,7 @@ import { usePermissions } from '@/lib/auth/use-permissions'
 import DeptFormDrawer from '@/components/org-chart/DeptFormDrawer'
 import RoleFormDrawer from '@/components/roles/RoleFormDrawer'
 import DatePicker from '@/components/ui/DatePicker'
-import SelectField from '@/components/ui/SelectField'
+import StyledSelect from '@/components/ui/StyledSelect'
 import ReportsToSelect from './ReportsToSelect'
 import DepartmentSelect from './DepartmentSelect'
 import RoleSelect from './RoleSelect'
@@ -411,31 +411,24 @@ export default function AddEmployeeModal({
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div>
                 <label className={labelClass}>System Role *</label>
-                <SelectField
+                <StyledSelect
                   value={form.system_role_id}
-                  onChange={(e) => set('system_role_id', e.target.value)}
+                  onChange={(v) => set('system_role_id', v)}
                   disabled={prefillSelf}
-                >
-                  <option value="">— Select —</option>
-                  {systemRoles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </SelectField>
+                  placeholder="— Select —"
+                  options={[
+                    { value: '', label: '— Select —' },
+                    ...systemRoles.map((r) => ({ value: r.id, label: r.name })),
+                  ]}
+                />
               </div>
               <div>
                 <label className={labelClass}>Employment type</label>
-                <SelectField
+                <StyledSelect
                   value={form.employment_type}
-                  onChange={(e) => set('employment_type', e.target.value)}
-                >
-                  {EMPLOYMENT_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </SelectField>
+                  onChange={(v) => set('employment_type', v)}
+                  options={EMPLOYMENT_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+                />
               </div>
               <div>
                 <label className={labelClass}>Employee code</label>
