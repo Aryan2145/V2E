@@ -70,7 +70,7 @@ const HEADER_LABEL: Record<Column, string> = {
   email: 'email *',
   password: 'password',
   department: 'department *',
-  is_department_head: 'is_department_head',
+  is_department_head: 'is_department_head (X = Yes)',
   role: 'role *',
   system_role: 'system_role *',
   employment_type: 'employment_type',
@@ -282,10 +282,10 @@ export default function ImportEmployeesModal({
       )
       wsMgr.columns.forEach((c: any, i: number) => (c.width = i === 0 ? 8 : i === 4 ? 40 : 24))
 
-      // System Roles — Sr. No. | System Role (sorted by name).
+      // System Roles — Sr. No. | System Role. Preserve the API order
+      // (Employee, Manager, Leadership, …, Administrator) rather than re-sorting.
       refHeader(wsSys, ['Sr. No.', 'System Role'])
-      const sysSorted = [...systemRoles].sort((a, b) => a.name.localeCompare(b.name))
-      sysSorted.forEach((s, i) => wsSys.addRow([i + 1, s.name]))
+      systemRoles.forEach((s, i) => wsSys.addRow([i + 1, s.name]))
       wsSys.columns.forEach((c: any, i: number) => (c.width = i === 0 ? 8 : 30))
 
       // Main sheet header.
@@ -310,12 +310,12 @@ export default function ImportEmployeesModal({
       const sampleRole = roleRows[0]
       const deptName = sampleDept?.name ?? 'Engineering'
       const roleValue = sampleRole ? `${sampleRole.title}${VALUE_SEPARATOR}${sampleRole.dept}` : 'Software Engineer · Engineering'
-      const sysName = sysSorted[0]?.name ?? 'Member'
+      const sysName = systemRoles[0]?.name ?? 'Member'
       const mgrValue = mgrRows[0]
         ? `${mgrRows[0].name}${VALUE_SEPARATOR}${mgrRows[0].dept}${VALUE_SEPARATOR}${mgrRows[0].role}`
         : ''
-      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, '☑ Yes', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
-      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, '☐ No', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
+      ws.addRow(['Jane Doe', 'jane.doe@company.com', '', deptName, 'X', roleValue, sysName, 'full_time', 'EMP-001', '', '2024-01-15', '1995-06-20', ''])
+      ws.addRow(['John Smith', 'john.smith@company.com', '', deptName, '', roleValue, sysName, 'part_time', 'EMP-002', mgrValue, '2024-03-01', '1990-11-02', '2019-12-10'])
 
       // Dropdowns + date constraints for rows 2..LAST.
       const LAST = 500
@@ -363,9 +363,16 @@ export default function ImportEmployeesModal({
         }
       }
       addListDV('department', `'Departments'!$B$2:$B$${deptSorted.length + 1}`)
-      addListDV('is_department_head', '"☑ Yes,☐ No"')
+      // Department Head is a simple checkbox-style column: type "X" to mark a
+      // head, leave blank otherwise. No dropdown — a free cell toggles far more
+      // easily (type X / press Delete) and stays portable across Excel,
+      // LibreOffice and Google Sheets, none of which can share a native
+      // checkbox control written by the library.
+      for (let r = 2; r <= LAST; r++) {
+        ws.getCell(`${colLetter.is_department_head}${r}`).alignment = { horizontal: 'center' }
+      }
       addListDV('role', `'Roles'!$D$2:$D$${roleRows.length + 1}`)
-      addListDV('system_role', `'System Roles'!$B$2:$B$${sysSorted.length + 1}`)
+      addListDV('system_role', `'System Roles'!$B$2:$B$${systemRoles.length + 1}`)
       addListDV('reporting_to', `'Reports To'!$E$2:$E$${mgrRows.length + 1}`)
       addListDV('employment_type', '"full_time,part_time,contract"')
       addDateDV('date_of_joining')

@@ -505,9 +505,12 @@ export class EmployeeImportService {
 
       const rawDeptHead = (row.is_department_head ?? '').trim().toLowerCase();
       const isDepartmentHead =
+        rawDeptHead === 'x' ||
         rawDeptHead === 'yes' ||
         rawDeptHead === 'true' ||
         rawDeptHead === '1' ||
+        rawDeptHead === '✓' ||
+        rawDeptHead === '✔' ||
         rawDeptHead.includes('☑') ||
         rawDeptHead.includes('yes');
       if (isDepartmentHead && dept && dept.head_user_id) {
