@@ -193,8 +193,9 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Setup banner */}
-      {setupProgress < 100 && (
+      {/* Setup banner — only for admins, who are the only ones who can reach
+          Settings/Setup. Members (no settings gear) must never see this. */}
+      {user?.is_admin && setupProgress < 100 && (
         <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[12px] p-5">
           <div className="flex items-start justify-between gap-4 mb-3">
             <div>

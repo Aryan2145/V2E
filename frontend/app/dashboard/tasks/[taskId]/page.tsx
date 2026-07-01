@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
@@ -11,7 +11,8 @@ import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import EditTaskModal from '@/components/tasks/EditTaskModal'
 import StyledSelect from '@/components/ui/StyledSelect'
 import FileDropzone from '@/components/ui/FileDropzone'
-import { AttachmentList, AttachmentChips, PendingFileList } from '@/components/ui/AttachmentList'
+import { AttachmentList, AttachmentChips } from '@/components/ui/AttachmentList'
+import { formatBytes } from '@/lib/attachments'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -26,6 +27,8 @@ import {
   CheckSquare,
   Eye,
   Pencil,
+  FileText,
+  X,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -200,6 +203,7 @@ export default function TaskDetailPage() {
   const [commentText, setCommentText] = useState('')
   const [commentFiles, setCommentFiles] = useState<File[]>([])
   const [sendingComment, setSendingComment] = useState(false)
+  const commentFileInputRef = useRef<HTMLInputElement>(null)
   const [proofUrl, setProofUrl] = useState('')
   const [submittingProof, setSubmittingProof] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -321,8 +325,8 @@ export default function TaskDetailPage() {
   }
 
   async function handleSendComment() {
+    // A comment may be text-only, file-only, or both — but never entirely empty.
     if (!commentText.trim() && commentFiles.length === 0) return
-    if (!commentText.trim()) return // a comment always needs a body
     setSendingComment(true)
     try {
       const c = await tasksApi.addComment(orgId, taskId, commentText.trim())
@@ -786,38 +790,80 @@ export default function TaskDetailPage() {
                   ))
                 )}
               </div>
-              {/* Comment input */}
-              <div className="flex gap-2 items-end">
-                <textarea
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      handleSendComment()
-                    }
-                  }}
-                  placeholder="Add a comment... (Enter to send, Shift+Enter for new line)"
-                  rows={2}
-                  className="flex-1 border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white resize-none"
-                />
-                <button
-                  onClick={handleSendComment}
-                  disabled={sendingComment || !commentText.trim()}
-                  className="px-4 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors flex items-center gap-2 shrink-0"
-                >
-                  <Send size={14} />
-                  Send
-                </button>
-              </div>
-              {/* Attach documents to the comment */}
-              <div className="mt-2">
-                <FileDropzone onFiles={(fs) => setCommentFiles((prev) => [...prev, ...fs])} disabled={sendingComment} compact />
-                <PendingFileList
-                  files={commentFiles}
-                  uploading={sendingComment && commentFiles.length > 0}
-                  onRemove={(idx) => setCommentFiles((prev) => prev.filter((_, i) => i !== idx))}
-                />
+              {/* Comment composer — WhatsApp-style: a single write box that holds
+                  the attach (pin) button, the text field, and — once files are
+                  picked — their chips, so attachments feel part of the comment. */}
+              <div className="rounded-[12px] border border-[#CBD5E1] bg-white focus-within:border-2 focus-within:border-[#2563EB] transition-colors">
+                {/* Selected-file chips — live inside the write box */}
+                {commentFiles.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 px-3 pt-3">
+                    {commentFiles.map((f, i) => (
+                      <span
+                        key={`${f.name}-${i}`}
+                        className="inline-flex items-center gap-1.5 max-w-[220px] bg-[#EFF6FF] border border-[#BFDBFE] text-[#2563EB] text-xs font-medium pl-2 pr-1 py-1 rounded-[6px]"
+                      >
+                        <FileText size={12} className="shrink-0" />
+                        <span className="truncate">{f.name}</span>
+                        <span className="text-[#94A3B8] shrink-0">{formatBytes(f.size)}</span>
+                        <button
+                          type="button"
+                          onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                          disabled={sendingComment}
+                          className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[#2563EB] hover:bg-[#BFDBFE] hover:text-[#1D4ED8] disabled:opacity-50 transition-colors"
+                          title="Remove file"
+                          aria-label={`Remove ${f.name}`}
+                        >
+                          <X size={11} />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Input row: pin • textarea • send */}
+                <div className="flex items-end gap-2 p-2">
+                  <button
+                    type="button"
+                    onClick={() => commentFileInputRef.current?.click()}
+                    disabled={sendingComment}
+                    className="shrink-0 w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#2563EB] disabled:text-[#CBD5E1] disabled:cursor-not-allowed transition-colors"
+                    title="Attach files"
+                    aria-label="Attach files"
+                  >
+                    <Paperclip size={18} />
+                  </button>
+                  <input
+                    ref={commentFileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const picked = Array.from(e.target.files ?? [])
+                      if (picked.length > 0) setCommentFiles((prev) => [...prev, ...picked])
+                      e.target.value = '' // reset so the same file can be re-picked
+                    }}
+                  />
+                  <textarea
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        handleSendComment()
+                      }
+                    }}
+                    placeholder="Add a comment... (Enter to send, Shift+Enter for new line)"
+                    rows={2}
+                    className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none resize-none"
+                  />
+                  <button
+                    onClick={handleSendComment}
+                    disabled={sendingComment || (!commentText.trim() && commentFiles.length === 0)}
+                    className="px-4 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors flex items-center gap-2 shrink-0"
+                  >
+                    <Send size={14} />
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
           </div>
