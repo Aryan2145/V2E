@@ -6,10 +6,13 @@ import { X, Plus, Trash2 } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import StyledSelect from '@/components/ui/StyledSelect'
+import FileDropzone, { AttachmentErrorBox } from '@/components/ui/FileDropzone'
+import { PendingFileList } from '@/components/ui/AttachmentList'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
 import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate } from '@/lib/types/tasks'
+import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
 // import QuadrantBadge from './QuadrantBadge'
@@ -22,6 +25,17 @@ import { expandLeaveDays, leaveHorizon } from '@/lib/leave-availability'
 
 interface ChecklistEntry {
   title: string
+}
+
+// A task can carry several checklists at once — e.g. one applied from a template
+// plus a fresh custom one. Each group is an independent, editable section.
+interface ChecklistGroup {
+  key: string // stable local id for React + edits
+  title: string // section heading (shown only when 2+ groups exist)
+  source: 'template' | 'custom'
+  templateId?: string // set when source === 'template' (re-validated server-side)
+  items: ChecklistEntry[]
+  draft: string // the in-progress "add item" text for this group
 }
 
 interface CreateTaskModalProps {
@@ -59,6 +73,10 @@ export default function CreateTaskModal({
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
 
+  // A brand-new task can't start in a terminal state — hide completed/incomplete
+  // from the picker (and from default selection).
+  const selectableStatuses = statuses.filter((s) => !TERMINAL_STATUS_PHASES.includes(s.type))
+
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   // const [quadrant, setQuadrant] = useState<TaskQuadrant>('Q2')
@@ -76,10 +94,12 @@ export default function CreateTaskModal({
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
-  const [checklist, setChecklist] = useState<ChecklistEntry[]>([])
-  const [newChecklistItem, setNewChecklistItem] = useState('')
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([])
+  const [attachErrors, setAttachErrors] = useState<string[]>([])
+  const [checklistGroups, setChecklistGroups] = useState<ChecklistGroup[]>([])
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
-  const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const groupSeq = useRef(0)
+  const nextGroupKey = () => `g${(groupSeq.current += 1)}`
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
@@ -95,14 +115,67 @@ export default function CreateTaskModal({
     tasksApi.getAccessibleChecklistTemplates(orgId).then(setChecklistTemplates).catch(() => setChecklistTemplates([]))
   }, [isOpen, orgId])
 
-  // Apply a template: replace the checklist with its items (still editable).
-  function applyTemplate(templateId: string) {
-    setSelectedTemplateId(templateId)
+  // Add a checklist sourced from a template — its items are copied in and stay
+  // fully editable. Applying a template never wipes other checklists; it adds one.
+  function addTemplateGroup(templateId: string) {
     if (!templateId) return
     const tpl = checklistTemplates.find((t) => t.id === templateId)
     if (!tpl) return
     const sorted = [...(tpl.items ?? [])].sort((a, b) => a.order_index - b.order_index)
-    setChecklist(sorted.map((i) => ({ title: i.title })))
+    setChecklistGroups((prev) => [
+      ...prev,
+      {
+        key: nextGroupKey(),
+        title: tpl.name,
+        source: 'template',
+        templateId: tpl.id,
+        items: sorted.map((i) => ({ title: i.title })),
+        draft: '',
+      },
+    ])
+  }
+
+  // Add an empty checklist the user fills in themselves.
+  function addBlankGroup() {
+    setChecklistGroups((prev) => [
+      ...prev,
+      {
+        key: nextGroupKey(),
+        title: prev.length === 0 ? 'Checklist' : `Checklist ${prev.length + 1}`,
+        source: 'custom',
+        items: [],
+        draft: '',
+      },
+    ])
+  }
+
+  function removeGroup(key: string) {
+    setChecklistGroups((prev) => prev.filter((g) => g.key !== key))
+  }
+
+  function updateGroupTitle(key: string, title: string) {
+    setChecklistGroups((prev) => prev.map((g) => (g.key === key ? { ...g, title } : g)))
+  }
+
+  function updateGroupDraft(key: string, draft: string) {
+    setChecklistGroups((prev) => prev.map((g) => (g.key === key ? { ...g, draft } : g)))
+  }
+
+  function addItemToGroup(key: string) {
+    setChecklistGroups((prev) =>
+      prev.map((g) => {
+        if (g.key !== key) return g
+        const t = g.draft.trim()
+        if (!t) return g
+        return { ...g, items: [...g.items, { title: t }], draft: '' }
+      }),
+    )
+  }
+
+  function removeItemFromGroup(key: string, idx: number) {
+    setChecklistGroups((prev) =>
+      prev.map((g) => (g.key === key ? { ...g, items: g.items.filter((_, i) => i !== idx) } : g)),
+    )
   }
 
   const primaryAssignees = assignees.filter((a) => !a.is_cc)
@@ -131,13 +204,13 @@ export default function CreateTaskModal({
     if (primaryAssigneeCount <= 1) setCompletionMode('any_can_complete')
   }, [primaryAssigneeCount])
 
-  // Set default status
+  // Set default status (never a terminal one)
   useEffect(() => {
-    if (statuses.length > 0 && !statusId) {
-      const def = statuses.find((s) => s.is_default) ?? statuses[0]
+    if (selectableStatuses.length > 0 && !statusId) {
+      const def = selectableStatuses.find((s) => s.is_default) ?? selectableStatuses[0]
       setStatusId(def.id)
     }
-  }, [statuses, statusId])
+  }, [selectableStatuses, statusId])
 
   // Close on Escape
   useEffect(() => {
@@ -177,33 +250,23 @@ export default function CreateTaskModal({
     // setQuadrant('Q2')
     setPriorityId('')
     setCategoryId('')
-    setStatusId(statuses.find((s) => s.is_default)?.id ?? statuses[0]?.id ?? '')
+    setStatusId(
+      selectableStatuses.find((s) => s.is_default)?.id ?? selectableStatuses[0]?.id ?? '',
+    )
     setDeadlineDate('')
     setDeadlineTime('')
     setCompletionMode('any_can_complete')
     setProofRequired(false)
     setAssignees([])
-    setChecklist([])
-    setNewChecklistItem('')
-    setSelectedTemplateId('')
+    setAttachmentFiles([])
+    setChecklistGroups([])
     setError(null)
     setHolidayCheck(null)
-  }, [statuses])
+  }, [selectableStatuses])
 
   function handleClose() {
     reset()
     onClose()
-  }
-
-  function addChecklistItem() {
-    const t = newChecklistItem.trim()
-    if (!t) return
-    setChecklist((prev) => [...prev, { title: t }])
-    setNewChecklistItem('')
-  }
-
-  function removeChecklistItem(idx: number) {
-    setChecklist((prev) => prev.filter((_, i) => i !== idx))
   }
 
   function handleDeadlineDateChange(val: string) {
@@ -238,11 +301,44 @@ export default function CreateTaskModal({
         proof_required: proofRequired,
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
-        checklist_items: checklist.length > 0
-          ? checklist.map((item, idx) => ({ title: item.title, order_index: idx }))
-          : undefined,
-        checklist_template_id: selectedTemplateId || undefined,
+        // Flatten every group into one ordered list. A group is labelled (keeps its
+        // heading) when there are 2+ groups, OR when it came from a template — so a
+        // single applied template still shows its name (e.g. "Onboarding Checklist").
+        // A lone blank checklist stays unlabelled and renders as a plain list.
+        checklist_items: (() => {
+          const groups = checklistGroups.filter((g) => g.items.length > 0)
+          if (groups.length === 0) return undefined
+          const multiple = groups.length >= 2
+          let order = 0
+          return groups.flatMap((g) => {
+            const labelled = multiple || g.source === 'template'
+            return g.items.map((item) => ({
+              title: item.title,
+              order_index: order++,
+              group_title: labelled ? g.title.trim() || 'Checklist' : undefined,
+            }))
+          })
+        })(),
+        checklist_template_ids: Array.from(
+          new Set(checklistGroups.filter((g) => g.templateId).map((g) => g.templateId as string)),
+        ),
       })
+      // Upload any attached documents to the freshly-created task. Files upload
+      // sequentially so a partial failure is easy to surface without losing the task.
+      if (attachmentFiles.length > 0) {
+        try {
+          for (const file of attachmentFiles) {
+            await tasksApi.uploadTaskAttachment(orgId, newTask.id, file)
+          }
+        } catch {
+          // The task exists — only the upload failed. Keep the modal open so the user
+          // sees why; the task will still appear in the list once they close it.
+          setError('Task created, but an attachment failed to upload. Open the task to add it again.')
+          onTaskCreated?.(newTask)
+          onCreated()
+          return
+        }
+      }
       reset()
       onTaskCreated?.(newTask)
       onCreated()
@@ -306,7 +402,7 @@ export default function CreateTaskModal({
               onChange={setAssignees}
               currentUser={user ? { user_id: user.id, name: user.name } : undefined}
             />
-            <p className="text-[11px] text-[#94A3B8] mt-1">Add people · click their badge to toggle between Assignee and CC</p>
+            <p className="text-[11px] text-[#475569] mt-1">Add people · click their badge to toggle between Assignee and CC</p>
           </div>
 
           {/* Completion mode — only relevant when multiple assignees are selected */}
@@ -342,7 +438,7 @@ export default function CreateTaskModal({
                 <button
                   type="button"
                   onClick={() => { setDeadlineDate(''); setDeadlineTime('') }}
-                  className="flex items-center gap-1 text-[11px] text-[#94A3B8] hover:text-[#DC2626] transition-colors"
+                  className="flex items-center gap-1 text-[11px] text-[#475569] hover:text-[#DC2626] transition-colors"
                 >
                   <X size={10} />
                   Clear
@@ -389,6 +485,46 @@ export default function CreateTaskModal({
               rows={3}
               className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white resize-none"
             />
+          </div>
+
+          {/* Attachments — real document upload (stored after the task is created) */}
+          <div>
+            <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-hidden">
+              {/* Card header — label + count live inside the card */}
+              <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
+                <label className="text-sm font-medium text-[#374151]">Attachments</label>
+                <span className="text-xs font-normal text-[#475569]">Optional</span>
+                {attachmentFiles.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {attachmentFiles.length}
+                  </span>
+                )}
+              </div>
+              {/* Body — fixed dropzone button on top; errors + pending files
+                  share ONE scroll region below so the error box scrolls away
+                  with the list instead of staying pinned. */}
+              <div className="p-3">
+                <FileDropzone
+                  onFiles={(fs) => setAttachmentFiles((prev) => [...prev, ...fs])}
+                  onReject={setAttachErrors}
+                  disabled={submitting}
+                />
+                {(attachErrors.length > 0 || attachmentFiles.length > 0) && (
+                  <div className="max-h-[220px] overflow-y-auto mt-2 space-y-2">
+                    {attachErrors.length > 0 && (
+                      <AttachmentErrorBox errors={attachErrors} onDismiss={() => setAttachErrors([])} />
+                    )}
+                    {attachmentFiles.length > 0 && (
+                      <PendingFileList
+                        files={attachmentFiles}
+                        uploading={submitting && attachmentFiles.length > 0}
+                        onRemove={(idx) => setAttachmentFiles((prev) => prev.filter((_, i) => i !== idx))}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
           {/* Quadrant — hidden */}
@@ -452,7 +588,7 @@ export default function CreateTaskModal({
                 value={statusId}
                 onChange={setStatusId}
                 placeholder="Select status"
-                options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                options={selectableStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
               />
             </div>
           </div>
@@ -479,66 +615,154 @@ export default function CreateTaskModal({
             <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
           </div>
 
-          {/* Checklist */}
+          {/* Checklist — optional, and you can attach more than one */}
           <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">Checklist</label>
-            {checklistTemplates.length > 0 && (
-              <div className="mb-3">
-                <StyledSelect
-                  value={selectedTemplateId}
-                  onChange={applyTemplate}
-                  placeholder="Apply a checklist template…"
-                  options={[
-                    { value: '', label: 'Apply a checklist template…' },
-                    ...checklistTemplates.map((t) => ({ value: t.id, label: t.name })),
-                  ]}
-                />
-                <p className="mt-1 text-xs text-[#64748B]">Pre-fills the checklist below; you can still edit the items.</p>
+            {/* Empty state: still a card — heading in the header, choices in the body.
+                overflow-visible so the template dropdown can open upward past the card. */}
+            {checklistGroups.length === 0 ? (
+              <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-visible">
+                {/* Card header — label lives inside the card */}
+                <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
+                  <label className="text-sm font-medium text-[#374151]">Checklist</label>
+                  <span className="text-xs font-normal text-[#475569]">Optional</span>
+                </div>
+                {/* Body — explain the choice, then the two ways to add one */}
+                <div className="p-4">
+                  <p className="text-xs text-[#475569] mb-3">
+                    Apply a template, build your own, or combine both. You can add several checklists to one task.
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    {checklistTemplates.length > 0 && (
+                      <StyledSelect
+                        value=""
+                        onChange={addTemplateGroup}
+                        placeholder="Apply a template…"
+                        wrapperClassName="sm:flex-1"
+                        options={checklistTemplates.map((t) => ({ value: t.id, label: t.name }))}
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={addBlankGroup}
+                      className="flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors whitespace-nowrap"
+                    >
+                      <Plus size={14} />
+                      Blank checklist
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-hidden">
+                {/* Card header — label + count live inside the card */}
+                <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
+                  <label className="text-sm font-medium text-[#374151]">Checklist</label>
+                  <span className="text-xs font-normal text-[#475569]">Optional</span>
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {checklistGroups.length}
+                  </span>
+                </div>
+                {/* Scrollable body — multiple checklists live here and scroll internally
+                    so the card never stretches the modal, no matter how many you add. */}
+                <div className="max-h-[300px] overflow-y-auto p-3 space-y-3">
+                {checklistGroups.map((g) => {
+                  const multi = checklistGroups.length >= 2
+                  return (
+                    <div key={g.key} className="rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] p-3">
+                      {/* Group header: editable name (only meaningful with 2+ groups) + template tag + remove */}
+                      <div className="flex items-center gap-2 mb-2">
+                        {multi ? (
+                          <input
+                            type="text"
+                            value={g.title}
+                            onChange={(e) => updateGroupTitle(g.key, e.target.value)}
+                            placeholder="Checklist name"
+                            className="flex-1 min-w-0 border-b border-transparent hover:border-[#E2E8F0] focus:border-[#2563EB] px-0.5 py-0.5 text-sm font-semibold text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none bg-transparent"
+                          />
+                        ) : (
+                          <span className="flex-1 text-sm font-semibold text-[#0F172A]">{g.title.trim() || 'Checklist'}</span>
+                        )}
+                        {g.source === 'template' && (
+                          <span className="shrink-0 text-[11px] font-medium text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-full px-2 py-0.5">
+                            Template
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeGroup(g.key)}
+                          className="shrink-0 text-[#94A3B8] hover:text-[#DC2626] transition-colors"
+                          aria-label="Remove checklist"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+
+                      {/* Items */}
+                      {g.items.map((item, idx) => (
+                        <div key={idx} className="flex items-center gap-2 mb-1.5">
+                          <div className="w-4 h-4 rounded border border-[#CBD5E1] shrink-0" />
+                          <span className="flex-1 text-sm text-[#0F172A]">{item.title}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeItemFromGroup(g.key, idx)}
+                            className="text-[#94A3B8] hover:text-[#DC2626] transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+
+                      {/* Add item to this group */}
+                      <div className="flex gap-2 mt-2">
+                        <input
+                          type="text"
+                          value={g.draft}
+                          onChange={(e) => updateGroupDraft(g.key, e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItemToGroup(g.key) } }}
+                          placeholder="Add an item…"
+                          className="flex-1 border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-base sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => addItemToGroup(g.key)}
+                          className="flex items-center gap-1.5 px-3 py-[8px] text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+                        >
+                          <Plus size={14} />
+                          Add
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+                </div>
+
+                {/* Sticky footer — stays put while the checklists above scroll */}
+                <div className="flex flex-col sm:flex-row gap-2 border-t border-[#E2E8F0] bg-[#F8FAFC] p-3">
+                  {checklistTemplates.length > 0 && (
+                    <StyledSelect
+                      value=""
+                      onChange={addTemplateGroup}
+                      placeholder="Add from a template…"
+                      wrapperClassName="sm:flex-1"
+                      options={checklistTemplates.map((t) => ({ value: t.id, label: t.name }))}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={addBlankGroup}
+                    className="flex items-center justify-center gap-1.5 px-3 py-2.5 text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] bg-white hover:bg-[#EFF6FF] transition-colors whitespace-nowrap"
+                  >
+                    <Plus size={14} />
+                    Add checklist
+                  </button>
+                </div>
               </div>
             )}
-            {checklist.map((item, idx) => (
-              <div key={idx} className="flex items-center gap-2 mb-1.5">
-                <div className="w-4 h-4 rounded border border-[#CBD5E1] shrink-0" />
-                <span className="flex-1 text-sm text-[#0F172A]">{item.title}</span>
-                <button
-                  type="button"
-                  onClick={() => removeChecklistItem(idx)}
-                  className="text-[#94A3B8] hover:text-[#DC2626] transition-colors"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-            <div className="flex gap-2 mt-2">
-              <input
-                type="text"
-                value={newChecklistItem}
-                onChange={(e) => setNewChecklistItem(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addChecklistItem() } }}
-                placeholder="Add checklist item..."
-                className="flex-1 border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-base sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              />
-              <button
-                type="button"
-                onClick={addChecklistItem}
-                className="flex items-center gap-1.5 px-3 py-[8px] text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
-              >
-                <Plus size={14} />
-                Add
-              </button>
-            </div>
           </div>
         </form>
 
-        {/* Footer */}
+        {/* Footer — no Cancel button; the header X closes the modal (see DESIGN_RULES) */}
         <div className="shrink-0 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
-          <button
-            type="button"
-            onClick={handleClose}
-            className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
-          >
-            Cancel
-          </button>
           <button
             type="button"
             onClick={handleSubmit}

@@ -1,0 +1,193 @@
+import { randomUUID } from 'crypto';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { R2Service } from '../storage/r2.service';
+
+/** 25 MB cap, matching the product decision for document attachments. */
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Allowed file types (documents, images, archives + common video/audio), keyed
+ * by lowercase extension. We validate on extension
+ * (reliable across browsers) and keep the browser-provided MIME for display/download.
+ */
+const ALLOWED_EXTENSIONS = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'txt',
+  'csv',
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'webp',
+  'zip',
+  'mp4',
+  'webm',
+  'mov',
+  'mp3',
+]);
+
+export interface UploadedFile {
+  originalname: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
+
+@Injectable()
+export class TaskAttachmentsService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly r2: R2Service,
+  ) {}
+
+  private extensionOf(name: string): string {
+    const dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+  }
+
+  private validate(file: UploadedFile | undefined): void {
+    if (!file) throw new BadRequestException('No file was provided.');
+    if (file.size <= 0) throw new BadRequestException('File is empty.');
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      throw new BadRequestException('File exceeds the 25 MB limit.');
+    }
+    const ext = this.extensionOf(file.originalname);
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      throw new BadRequestException(
+        `File type ".${ext || 'unknown'}" is not allowed. Allowed: ${Array.from(ALLOWED_EXTENSIONS).join(', ')}.`,
+      );
+    }
+  }
+
+  private async assertTask(orgId: string, taskId: string) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, organization_id: orgId, is_deleted: false },
+      select: { id: true },
+    });
+    if (!task) throw new NotFoundException(`Task ${taskId} not found`);
+  }
+
+  /** Attach a document to a task (commentId null) or one of its comments. */
+  async upload(
+    orgId: string,
+    userId: string,
+    taskId: string,
+    file: UploadedFile | undefined,
+    commentId?: string,
+  ) {
+    this.validate(file);
+    await this.assertTask(orgId, taskId);
+
+    if (commentId) {
+      const comment = await this.prisma.taskComment.findFirst({
+        where: { id: commentId, organization_id: orgId, task_id: taskId, is_deleted: false },
+        select: { id: true },
+      });
+      if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
+    }
+
+    const f = file as UploadedFile;
+    const key = `org/${orgId}/tasks/${taskId}/${randomUUID()}.${this.extensionOf(f.originalname)}`;
+    await this.r2.putObject(key, f.buffer, f.mimetype || 'application/octet-stream');
+
+    // The object is now in R2 but not yet tracked in the DB. If the row insert
+    // fails, delete the just-uploaded object so we never strand an orphan file.
+    let attachment;
+    try {
+      attachment = await this.prisma.taskAttachment.create({
+        data: {
+          organization_id: orgId,
+          task_id: taskId,
+          comment_id: commentId ?? null,
+          file_name: f.originalname,
+          mime_type: f.mimetype || 'application/octet-stream',
+          size_bytes: f.size,
+          storage_key: key,
+          uploaded_by_user_id: userId,
+        },
+      });
+    } catch (err) {
+      await this.r2.deleteObject(key); // best-effort; never throws
+      throw err;
+    }
+
+    await this.prisma.taskActivityLog.create({
+      data: {
+        organization_id: orgId,
+        task_id: taskId,
+        performed_by_user_id: userId,
+        action: 'file_attached',
+        metadata: { attachment_id: attachment.id, file_name: f.originalname, comment_id: commentId ?? null },
+      },
+    });
+
+    return this.enrich(attachment.id);
+  }
+
+  /** Task-level attachments (not tied to a comment), newest first. */
+  async listForTask(orgId: string, taskId: string) {
+    await this.assertTask(orgId, taskId);
+    const rows = await this.prisma.taskAttachment.findMany({
+      where: { organization_id: orgId, task_id: taskId, comment_id: null, is_deleted: false },
+      orderBy: { created_at: 'desc' },
+    });
+    return this.attachUploaderNames(rows);
+  }
+
+  /** A short-lived signed URL that streams the file with its original name. */
+  async getDownloadUrl(orgId: string, taskId: string, attachmentId: string) {
+    const att = await this.prisma.taskAttachment.findFirst({
+      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false },
+    });
+    if (!att) throw new NotFoundException('Attachment not found');
+    const url = await this.r2.getSignedDownloadUrl(att.storage_key, att.file_name);
+    return { url, file_name: att.file_name };
+  }
+
+  /** Soft-delete + purge from R2. Only the uploader may remove their attachment. */
+  async remove(orgId: string, userId: string, taskId: string, attachmentId: string) {
+    const att = await this.prisma.taskAttachment.findFirst({
+      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false },
+    });
+    if (!att) throw new NotFoundException('Attachment not found');
+    if (att.uploaded_by_user_id !== userId) {
+      throw new ForbiddenException('You can only remove attachments you uploaded.');
+    }
+
+    await this.prisma.taskAttachment.update({
+      where: { id: attachmentId },
+      data: { is_deleted: true, deleted_at: new Date() },
+    });
+    await this.r2.deleteObject(att.storage_key);
+    return { message: 'Attachment removed' };
+  }
+
+  // ─── helpers ──────────────────────────────────────────────────────────────
+
+  private async enrich(id: string) {
+    const row = await this.prisma.taskAttachment.findUniqueOrThrow({ where: { id } });
+    const [enriched] = await this.attachUploaderNames([row]);
+    return enriched;
+  }
+
+  private async attachUploaderNames<T extends { uploaded_by_user_id: string }>(rows: T[]) {
+    const ids = Array.from(new Set(rows.map((r) => r.uploaded_by_user_id)));
+    const users = ids.length
+      ? await this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } })
+      : [];
+    const nameById = new Map(users.map((u) => [u.id, u.name]));
+    return rows.map((r) => ({ ...r, uploaded_by_name: nameById.get(r.uploaded_by_user_id) ?? null }));
+  }
+}

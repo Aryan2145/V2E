@@ -69,6 +69,8 @@ export interface TaskChecklistItem {
   id: string
   task_id: string
   title: string
+  /** Section label when a task carries multiple checklists; null/undefined = single ungrouped list. */
+  group_title?: string | null
   is_completed: boolean
   order_index: number
 }
@@ -124,10 +126,25 @@ export interface TaskComment {
   user_email: string
   body: string
   attachment_urls?: { name: string; url: string; type: string }[]
+  /** Real uploaded documents attached to this comment (stored in R2). */
+  attachments?: TaskAttachment[]
   reply_to_comment_id?: string
   is_deleted: boolean
   created_at: string
   replies?: TaskComment[]
+}
+
+/** A document attached to a task or a task comment, stored in object storage. */
+export interface TaskAttachment {
+  id: string
+  task_id?: string
+  comment_id?: string | null
+  file_name: string
+  mime_type: string
+  size_bytes: number
+  uploaded_by_user_id?: string
+  uploaded_by_name?: string | null
+  created_at: string
 }
 
 export interface TaskActivityLog {

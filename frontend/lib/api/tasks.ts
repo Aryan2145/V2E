@@ -1,6 +1,7 @@
 import apiClient from './client'
 import type {
   Task,
+  TaskAttachment,
   TaskMasterConfig,
   TaskCategory,
   TaskPriority,
@@ -254,8 +255,9 @@ export const tasksApi = {
     proof_required?: boolean
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
-    checklist_items?: { title: string; order_index: number }[]
+    checklist_items?: { title: string; order_index: number; group_title?: string }[]
     checklist_template_id?: string
+    checklist_template_ids?: string[]
     goal_id?: string
   }): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}`, dto)
@@ -308,6 +310,57 @@ export const tasksApi = {
 
   deleteComment: async (orgId: string, taskId: string, commentId: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/${taskId}/comments/${commentId}`)
+  },
+
+  // ── Attachments (real document upload → R2) ────────────────────────────────
+
+  listAttachments: async (orgId: string, taskId: string): Promise<TaskAttachment[]> => {
+    const res = await apiClient.get(`${base(orgId)}/${taskId}/attachments`)
+    return unwrap<TaskAttachment[]>(res)
+  },
+
+  uploadTaskAttachment: async (
+    orgId: string,
+    taskId: string,
+    file: File,
+    onProgress?: (pct: number) => void,
+  ): Promise<TaskAttachment> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/attachments`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
+    })
+    return unwrap<TaskAttachment>(res)
+  },
+
+  uploadCommentAttachment: async (
+    orgId: string,
+    taskId: string,
+    commentId: string,
+    file: File,
+  ): Promise<TaskAttachment> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await apiClient.post(
+      `${base(orgId)}/${taskId}/comments/${commentId}/attachments`,
+      form,
+      { headers: { 'Content-Type': 'multipart/form-data' } },
+    )
+    return unwrap<TaskAttachment>(res)
+  },
+
+  /** Resolve a short-lived signed URL then trigger the browser download. */
+  downloadAttachment: async (orgId: string, taskId: string, attachmentId: string): Promise<void> => {
+    const res = await apiClient.get(`${base(orgId)}/${taskId}/attachments/${attachmentId}/download`)
+    const { url } = unwrap<{ url: string; file_name: string }>(res)
+    if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener')
+  },
+
+  deleteAttachment: async (orgId: string, taskId: string, attachmentId: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/${taskId}/attachments/${attachmentId}`)
   },
 
   toggleChecklist: async (orgId: string, taskId: string, itemId: string): Promise<TaskChecklistItem> => {

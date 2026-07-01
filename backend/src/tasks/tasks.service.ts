@@ -200,9 +200,14 @@ export class TasksService {
     await this.subjects.assertAllEligible(orgId, TasksService.TASK_SUBJECT, dto.assignee_user_ids ?? []);
 
     // Checklist template access: the creator may only apply a template they're
-    // allowed to use (by department / role / explicit grant).
-    if (dto.checklist_template_id) {
-      const allowed = await this.checklistAccess.isAccessible(orgId, userId, dto.checklist_template_id);
+    // allowed to use (by department / role / explicit grant). A task may now
+    // combine several template-sourced checklists, so validate every applied id.
+    const appliedTemplateIds = [
+      ...(dto.checklist_template_id ? [dto.checklist_template_id] : []),
+      ...(dto.checklist_template_ids ?? []),
+    ].filter((id, idx, arr) => arr.indexOf(id) === idx);
+    for (const templateId of appliedTemplateIds) {
+      const allowed = await this.checklistAccess.isAccessible(orgId, userId, templateId);
       if (!allowed) {
         throw new ForbiddenException('You are not allowed to use this checklist template.');
       }
@@ -325,6 +330,7 @@ export class TasksService {
           organization_id: orgId,
           task_id: task.id,
           title: item.title,
+          group_title: item.group_title ?? null,
           order_index: item.order_index,
         })),
       });
@@ -1506,9 +1512,21 @@ export class TasksService {
 
   async getComments(orgId: string, taskId: string) {
     await this.findTaskOrFail(orgId, taskId);
+    const attachmentSelect = {
+      where: { is_deleted: false },
+      select: { id: true, file_name: true, mime_type: true, size_bytes: true, created_at: true },
+      orderBy: { created_at: 'asc' as const },
+    };
     const comments = await this.prisma.taskComment.findMany({
       where: { task_id: taskId, organization_id: orgId, is_deleted: false, reply_to_comment_id: null },
-      include: { replies: { where: { is_deleted: false }, orderBy: { created_at: 'asc' } } },
+      include: {
+        attachments: attachmentSelect,
+        replies: {
+          where: { is_deleted: false },
+          orderBy: { created_at: 'asc' },
+          include: { attachments: attachmentSelect },
+        },
+      },
       orderBy: { created_at: 'asc' },
     });
 

@@ -1071,6 +1071,7 @@ model Task {
   escalations TaskEscalation[]
   activity_logs TaskActivityLog[]
   comments   TaskComment[]
+  attachments TaskAttachment[]
 
   @@index([goal_id])
   @@index([organization_id])
@@ -1102,6 +1103,7 @@ model TaskChecklist {
   organization_id String
   task_id         String
   title           String
+  group_title     String? // section label when a task carries multiple checklists; null = single ungrouped list
   is_completed    Boolean  @default(false)
   order_index     Int      @default(0)
   created_at      DateTime @default(now())
@@ -1253,10 +1255,38 @@ model TaskComment {
   task             Task          @relation(fields: [task_id], references: [id], onDelete: Cascade)
   reply_to_comment TaskComment?  @relation("CommentReplies", fields: [reply_to_comment_id], references: [id])
   replies          TaskComment[] @relation("CommentReplies")
+  attachments      TaskAttachment[]
 
   @@index([task_id])
   @@index([organization_id])
   @@map("task_comments")
+}
+
+// Real uploaded documents stored in object storage (Cloudflare R2), attached to a
+// task itself or to one of its comments. The bytes live in R2 under `storage_key`;
+// this row is the metadata + access record. Cascade-deletes with its task/comment so
+// orphaned rows never linger (the R2 object is purged by the service on delete).
+model TaskAttachment {
+  id                  String    @id @default(uuid())
+  organization_id     String
+  task_id             String
+  comment_id          String? // set when attached to a comment rather than the task itself
+  file_name           String // original filename, shown to users and used on download
+  mime_type           String
+  size_bytes          Int
+  storage_key         String // object key within the R2 bucket
+  uploaded_by_user_id String
+  is_deleted          Boolean   @default(false)
+  deleted_at          DateTime?
+  created_at          DateTime  @default(now())
+
+  task    Task         @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  comment TaskComment? @relation(fields: [comment_id], references: [id], onDelete: Cascade)
+
+  @@index([task_id])
+  @@index([comment_id])
+  @@index([organization_id])
+  @@map("task_attachments")
 }
 
 model RecurringTemplate {

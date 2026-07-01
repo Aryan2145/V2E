@@ -42,7 +42,25 @@ export default function StyledSelect({
   disabled = false,
 }: Props) {
   const [open, setOpen] = useState(false)
+  // Open upward when the trigger sits low in the viewport (e.g. bottom of a modal),
+  // so the list never opens below the fold where it can't be reached.
+  const [dropUp, setDropUp] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+
+  const PANEL_MAX = 260
+
+  const toggle = () => {
+    if (!open) {
+      const rect = btnRef.current?.getBoundingClientRect()
+      if (rect) {
+        const spaceBelow = window.innerHeight - rect.bottom
+        const spaceAbove = rect.top
+        setDropUp(spaceBelow < PANEL_MAX && spaceAbove > spaceBelow)
+      }
+    }
+    setOpen((o) => !o)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -73,9 +91,10 @@ export default function StyledSelect({
   return (
     <div ref={wrapRef} className={`relative ${wrapperClassName}`}>
       <button
+        ref={btnRef}
         type="button"
         disabled={disabled}
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         className={`${triggerCls} ${triggerClassName}`}
       >
         {selected ? (
@@ -98,7 +117,7 @@ export default function StyledSelect({
       </button>
 
       {open && (
-        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 flex flex-col max-h-[260px] border border-[#E2E8F0] rounded-[10px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] overflow-hidden">
+        <div className={`absolute left-0 right-0 ${dropUp ? 'bottom-[calc(100%+6px)]' : 'top-[calc(100%+6px)]'} z-50 flex flex-col max-h-[260px] border border-[#E2E8F0] rounded-[10px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] overflow-hidden`}>
           <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 py-1">
             {options.length === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-[#94A3B8]">No options.</p>

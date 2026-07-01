@@ -2,13 +2,16 @@
 
 import React, { useEffect, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Calendar, Send, CheckCircle2, ExternalLink, MessageSquare, User } from 'lucide-react'
+import { X, Calendar, Send, CheckCircle2, ExternalLink, MessageSquare, Paperclip, User } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
-import type { Task, TaskStatus, TaskComment } from '@/lib/types/tasks'
+import type { Task, TaskStatus, TaskComment, TaskAttachment } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from '@/components/tasks/AssigneeAvatars'
 import StyledSelect from '@/components/ui/StyledSelect'
+import { useAuth } from '@/lib/auth/context'
+import FileDropzone from '@/components/ui/FileDropzone'
+import { AttachmentList, AttachmentChips, PendingFileList } from '@/components/ui/AttachmentList'
 
 const TERMINAL = new Set(['completed', 'incomplete'])
 
@@ -47,22 +50,28 @@ export default function TaskDrawer({
   onChanged: () => void
 }) {
   const router = useRouter()
+  const { user } = useAuth()
   const [task, setTask] = useState<Task | null>(null)
   const [comments, setComments] = useState<TaskComment[]>([])
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([])
+  const [uploadingAtt, setUploadingAtt] = useState(false)
   const [loading, setLoading] = useState(true)
   const [draft, setDraft] = useState('')
+  const [draftFiles, setDraftFiles] = useState<File[]>([])
   const [sending, setSending] = useState(false)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [t, c] = await Promise.all([
+      const [t, c, a] = await Promise.all([
         tasksApi.getTask(orgId, taskId),
         tasksApi.getComments(orgId, taskId).catch(() => []),
+        tasksApi.listAttachments(orgId, taskId).catch(() => []),
       ])
       setTask(t)
       setComments(c)
+      setAttachments(a)
     } finally {
       setLoading(false)
     }
@@ -83,12 +92,34 @@ export default function TaskDrawer({
     if (!draft.trim() || sending) return
     setSending(true)
     try {
-      await tasksApi.addComment(orgId, taskId, draft.trim())
+      const c = await tasksApi.addComment(orgId, taskId, draft.trim())
+      for (const file of draftFiles) {
+        await tasksApi.uploadCommentAttachment(orgId, taskId, c.id, file)
+      }
       setDraft('')
+      setDraftFiles([])
       setComments(await tasksApi.getComments(orgId, taskId))
     } finally {
       setSending(false)
     }
+  }
+
+  async function uploadAttachments(files: File[]) {
+    if (files.length === 0) return
+    setUploadingAtt(true)
+    try {
+      for (const file of files) {
+        const att = await tasksApi.uploadTaskAttachment(orgId, taskId, file)
+        setAttachments((prev) => [att, ...prev])
+      }
+    } finally {
+      setUploadingAtt(false)
+    }
+  }
+
+  async function removeAttachment(a: TaskAttachment) {
+    await tasksApi.deleteAttachment(orgId, taskId, a.id)
+    setAttachments((prev) => prev.filter((x) => x.id !== a.id))
   }
 
   async function changeStatus(statusId: string) {
@@ -187,6 +218,30 @@ export default function TaskDrawer({
                 </div>
               )}
 
+              {/* Attachments */}
+              <div>
+                <p className="text-[13px] font-semibold text-[#0F172A] mb-2 flex items-center gap-1.5">
+                  <Paperclip size={14} className="text-[#475569]" />
+                  Attachments
+                  {attachments.length > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#2563EB] text-white text-[10px] font-semibold">
+                      {attachments.length}
+                    </span>
+                  )}
+                </p>
+                {attachments.length > 0 && (
+                  <div className="mb-2">
+                    <AttachmentList
+                      attachments={attachments}
+                      onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+                      onRemove={removeAttachment}
+                      canRemove={(a) => a.uploaded_by_user_id === user?.id}
+                    />
+                  </div>
+                )}
+                <FileDropzone onFiles={uploadAttachments} disabled={uploadingAtt} compact />
+              </div>
+
               {/* Checklist */}
               {task.checklist && task.checklist.length > 0 && (
                 <div>
@@ -227,6 +282,12 @@ export default function TaskDrawer({
                             <span className="text-[#94A3B8] ml-2 text-[11px]">{formatWhen(c.created_at)}</span>
                           </p>
                           <p className="text-[14px] text-[#1E293B] whitespace-pre-wrap break-words mt-0.5">{c.body}</p>
+                          {c.attachments && c.attachments.length > 0 && (
+                            <AttachmentChips
+                              attachments={c.attachments}
+                              onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+                            />
+                          )}
                         </div>
                       </div>
                     ))}
@@ -281,6 +342,13 @@ export default function TaskDrawer({
                   <Send size={16} />
                 </button>
               </div>
+              {/* Attach documents to the comment */}
+              <FileDropzone onFiles={(fs) => setDraftFiles((prev) => [...prev, ...fs])} disabled={sending} compact />
+              <PendingFileList
+                files={draftFiles}
+                uploading={sending && draftFiles.length > 0}
+                onRemove={(idx) => setDraftFiles((prev) => prev.filter((_, i) => i !== idx))}
+              />
             </div>
           </>
         )}

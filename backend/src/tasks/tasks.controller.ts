@@ -8,15 +8,19 @@ import {
   Post,
   Query,
   Request,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { DataScope } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { TasksService } from './tasks.service';
+import { TaskAttachmentsService, MAX_ATTACHMENT_BYTES, type UploadedFile as UploadedFileType } from './task-attachments.service';
 import { principalFromUser } from '../access-rights/permissions.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -34,7 +38,10 @@ function toDataScope(raw?: string): DataScope | undefined {
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
 @Controller('api/v1/org/:orgId/tasks')
 export class TasksController {
-  constructor(private readonly service: TasksService) {}
+  constructor(
+    private readonly service: TasksService,
+    private readonly attachments: TaskAttachmentsService,
+  ) {}
 
   // ─── Task CRUD ────────────────────────────────────────────────────────────────
 
@@ -390,6 +397,62 @@ export class TasksController {
     @Param('commentId') commentId: string,
   ) {
     return this.service.deleteComment(orgId, req.user.id, commentId);
+  }
+
+  // ─── Attachments (real document upload → Cloudflare R2) ──────────────────────
+
+  @Post(':id/attachments')
+  @ApiOperation({ summary: 'Upload a document attachment to a task' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadTaskAttachment(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @UploadedFile() file: UploadedFileType,
+  ) {
+    return this.attachments.upload(orgId, req.user.id, id, file);
+  }
+
+  @Post(':id/comments/:commentId/attachments')
+  @ApiOperation({ summary: 'Upload a document attachment to a task comment' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadCommentAttachment(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+    @UploadedFile() file: UploadedFileType,
+  ) {
+    return this.attachments.upload(orgId, req.user.id, id, file, commentId);
+  }
+
+  @Get(':id/attachments')
+  @ApiOperation({ summary: 'List task-level attachments' })
+  listAttachments(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.attachments.listForTask(orgId, id);
+  }
+
+  @Get(':id/attachments/:attachmentId/download')
+  @ApiOperation({ summary: 'Get a short-lived signed download URL for an attachment' })
+  downloadAttachment(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.attachments.getDownloadUrl(orgId, id, attachmentId);
+  }
+
+  @Delete(':id/attachments/:attachmentId')
+  @ApiOperation({ summary: 'Remove an attachment (uploader only)' })
+  removeAttachment(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.attachments.remove(orgId, req.user.id, id, attachmentId);
   }
 
   // ─── Checklist ────────────────────────────────────────────────────────────────

@@ -5,11 +5,13 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
-import type { Task, TaskComment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
+import type { Task, TaskComment, TaskAttachment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import EditTaskModal from '@/components/tasks/EditTaskModal'
 import StyledSelect from '@/components/ui/StyledSelect'
+import FileDropzone from '@/components/ui/FileDropzone'
+import { AttachmentList, AttachmentChips, PendingFileList } from '@/components/ui/AttachmentList'
 import {
   ArrowLeft,
   CheckCircle2,
@@ -17,6 +19,7 @@ import {
   Trash2,
   Send,
   Link as LinkIcon,
+  Paperclip,
   Calendar,
   User,
   Clock,
@@ -131,6 +134,12 @@ function CommentItem({
           <span className="text-xs text-[#94A3B8]">{formatDate(comment.created_at)}</span>
         </div>
         <p className="mt-1 text-sm text-[#1E293B] leading-relaxed">{comment.body}</p>
+        {comment.attachments && comment.attachments.length > 0 && (
+          <AttachmentChips
+            attachments={comment.attachments}
+            onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+          />
+        )}
       </div>
       {comment.user_id === currentUserId && (
         <button
@@ -183,10 +192,13 @@ export default function TaskDetailPage() {
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [comments, setComments] = useState<TaskComment[]>([])
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([])
+  const [uploadingAttachment, setUploadingAttachment] = useState(false)
   const [activityLogs, setActivityLogs] = useState<TaskActivityLog[]>([])
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState<TabType>('details')
   const [commentText, setCommentText] = useState('')
+  const [commentFiles, setCommentFiles] = useState<File[]>([])
   const [sendingComment, setSendingComment] = useState(false)
   const [proofUrl, setProofUrl] = useState('')
   const [submittingProof, setSubmittingProof] = useState(false)
@@ -216,13 +228,14 @@ export default function TaskDetailPage() {
   const loadTask = useCallback(async () => {
     if (!orgId || !taskId) return
     try {
-      const [t, cats, pris, sts, cmts, logs] = await Promise.all([
+      const [t, cats, pris, sts, cmts, logs, atts] = await Promise.all([
         tasksApi.getTask(orgId, taskId).catch(() => null),
         tasksApi.getCategories(orgId).catch(() => []),
         tasksApi.getPriorities(orgId).catch(() => []),
         tasksApi.getStatuses(orgId).catch(() => []),
         tasksApi.getComments(orgId, taskId).catch(() => []),
         tasksApi.getLogs(orgId, taskId).catch(() => []),
+        tasksApi.listAttachments(orgId, taskId).catch(() => []),
       ])
       setTask(t)
       setCategories(cats)
@@ -230,6 +243,7 @@ export default function TaskDetailPage() {
       setStatuses(sts)
       setComments(cmts)
       setActivityLogs(logs)
+      setAttachments(atts)
       if (t) setSelectedStatusId(t.status_id)
     } finally {
       setLoading(false)
@@ -307,15 +321,43 @@ export default function TaskDetailPage() {
   }
 
   async function handleSendComment() {
-    if (!commentText.trim()) return
+    if (!commentText.trim() && commentFiles.length === 0) return
+    if (!commentText.trim()) return // a comment always needs a body
     setSendingComment(true)
     try {
       const c = await tasksApi.addComment(orgId, taskId, commentText.trim())
-      setComments((prev) => [...prev, c])
+      if (commentFiles.length > 0) {
+        for (const file of commentFiles) {
+          await tasksApi.uploadCommentAttachment(orgId, taskId, c.id, file)
+        }
+        // Reload so the comment shows its now-persisted attachments.
+        setComments(await tasksApi.getComments(orgId, taskId).catch(() => [...comments, c]))
+      } else {
+        setComments((prev) => [...prev, c])
+      }
       setCommentText('')
+      setCommentFiles([])
     } finally {
       setSendingComment(false)
     }
+  }
+
+  async function handleUploadTaskAttachment(files: File[]) {
+    if (files.length === 0) return
+    setUploadingAttachment(true)
+    try {
+      for (const file of files) {
+        const att = await tasksApi.uploadTaskAttachment(orgId, taskId, file)
+        setAttachments((prev) => [att, ...prev])
+      }
+    } finally {
+      setUploadingAttachment(false)
+    }
+  }
+
+  async function handleRemoveTaskAttachment(a: TaskAttachment) {
+    await tasksApi.deleteAttachment(orgId, taskId, a.id)
+    setAttachments((prev) => prev.filter((x) => x.id !== a.id))
   }
 
   async function handleSubmitProof() {
@@ -593,36 +635,65 @@ export default function TaskDetailPage() {
                     ({task.checklist.filter((c) => c.is_completed).length}/{task.checklist.length})
                   </span>
                 </h3>
-                <div className="space-y-2">
-                  {task.checklist.map((item) => (
-                    <label
-                      key={item.id}
-                      className="flex items-center gap-3 cursor-pointer group"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleToggleChecklist(item.id)}
-                        className={[
-                          'w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
-                          item.is_completed
-                            ? 'bg-[#16A34A] border-[#16A34A]'
-                            : 'border-[#CBD5E1] hover:border-[#2563EB]',
-                        ].join(' ')}
-                        aria-checked={item.is_completed}
-                        role="checkbox"
-                      >
-                        {item.is_completed && (
-                          <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none">
-                            <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </button>
-                      <span className={`text-sm ${item.is_completed ? 'line-through text-[#94A3B8]' : 'text-[#1E293B]'}`}>
-                        {item.title}
-                      </span>
-                    </label>
-                  ))}
-                </div>
+                {(() => {
+                  // A task may carry several checklists (each item tagged with a
+                  // group_title). Render them as sections, preserving order; when
+                  // nothing is grouped it collapses to one plain list.
+                  const order: string[] = []
+                  const byGroup = new Map<string, typeof task.checklist>()
+                  for (const item of task.checklist) {
+                    const key = item.group_title ?? ''
+                    if (!byGroup.has(key)) { byGroup.set(key, []); order.push(key) }
+                    byGroup.get(key)!.push(item)
+                  }
+                  const grouped = order.some((k) => k !== '')
+                  return (
+                    <div className="space-y-4">
+                      {order.map((key) => {
+                        const items = byGroup.get(key)!
+                        const done = items.filter((c) => c.is_completed).length
+                        return (
+                          <div key={key || '__ungrouped'} className="space-y-2">
+                            {grouped && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[13px] font-semibold text-[#334155]">{key || 'Checklist'}</span>
+                                <span className="text-xs text-[#94A3B8]">({done}/{items.length})</span>
+                              </div>
+                            )}
+                            {items.map((item) => (
+                              <label
+                                key={item.id}
+                                className="flex items-center gap-3 cursor-pointer group"
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleChecklist(item.id)}
+                                  className={[
+                                    'w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
+                                    item.is_completed
+                                      ? 'bg-[#16A34A] border-[#16A34A]'
+                                      : 'border-[#CBD5E1] hover:border-[#2563EB]',
+                                  ].join(' ')}
+                                  aria-checked={item.is_completed}
+                                  role="checkbox"
+                                >
+                                  {item.is_completed && (
+                                    <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none">
+                                      <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  )}
+                                </button>
+                                <span className={`text-sm ${item.is_completed ? 'line-through text-[#94A3B8]' : 'text-[#1E293B]'}`}>
+                                  {item.title}
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )
+                })()}
               </div>
             )}
 
@@ -670,6 +741,30 @@ export default function TaskDetailPage() {
               </div>
             )}
 
+            {/* Attachments */}
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Paperclip size={15} className="text-[#475569]" />
+                <h3 className="text-[15px] font-semibold text-[#0F172A]">Attachments</h3>
+                {attachments.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {attachments.length}
+                  </span>
+                )}
+              </div>
+              {attachments.length > 0 && (
+                <div className="mb-4">
+                  <AttachmentList
+                    attachments={attachments}
+                    onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+                    onRemove={handleRemoveTaskAttachment}
+                    canRemove={(a) => a.uploaded_by_user_id === user?.id}
+                  />
+                </div>
+              )}
+              <FileDropzone onFiles={handleUploadTaskAttachment} disabled={uploadingAttachment} />
+            </div>
+
             {/* Comments */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
               <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">
@@ -715,15 +810,24 @@ export default function TaskDetailPage() {
                   Send
                 </button>
               </div>
+              {/* Attach documents to the comment */}
+              <div className="mt-2">
+                <FileDropzone onFiles={(fs) => setCommentFiles((prev) => [...prev, ...fs])} disabled={sendingComment} compact />
+                <PendingFileList
+                  files={commentFiles}
+                  uploading={sendingComment && commentFiles.length > 0}
+                  onRemove={(idx) => setCommentFiles((prev) => prev.filter((_, i) => i !== idx))}
+                />
+              </div>
             </div>
           </div>
 
           {/* Right panel — 40% */}
           <div className="w-full lg:w-80 shrink-0 space-y-4">
 
-            {/* Status */}
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#EFF6FF] border-b border-[#BFDBFE]">
+            {/* Status — overflow-visible so the status dropdown can extend past the card */}
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-visible">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#EFF6FF] border-b border-[#BFDBFE] rounded-t-[12px]">
                 <span className="w-2 h-2 rounded-full bg-[#2563EB]" />
                 <p className="text-[11px] font-bold text-[#2563EB] uppercase tracking-widest">Status</p>
               </div>

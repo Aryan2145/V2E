@@ -17,6 +17,11 @@ class ChecklistItemDto {
 
   @IsNumber()
   order_index: number;
+
+  // Section label when the task carries multiple checklists (template + custom, etc.).
+  @IsOptional()
+  @IsString()
+  group_title?: string;
 }
 
 export class CreateTaskDto {
@@ -83,6 +88,13 @@ export class CreateTaskDto {
   @IsOptional()
   @IsString()
   checklist_template_id?: string;
+
+  // When multiple template-sourced checklists are attached, every applied
+  // template id — each re-validated for access alongside checklist_template_id.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  checklist_template_ids?: string[];
 
   @IsOptional()
   @IsArray()
