@@ -192,6 +192,29 @@ export async function undoImport(orgId: string, batchId: string): Promise<UndoIm
   return data.data;
 }
 
+export interface ImportBatchDetailRow {
+  row: number;
+  name: string | null;
+  email: string | null;
+  status: 'created' | 'failed';
+  error: string | null;
+  still_present: boolean;
+  data: Record<string, string>;
+}
+
+export interface ImportBatchDetail extends ImportBatchSummary {
+  undo_summary: { undone: number; kept: UndoKeptRow[] } | null;
+  rows: ImportBatchDetailRow[];
+  rows_reconstructed: boolean;
+}
+
+export async function getImportBatchDetail(orgId: string, batchId: string): Promise<ImportBatchDetail> {
+  const { data } = await apiClient.get<ApiResponse<ImportBatchDetail>>(
+    `/api/v1/org/${orgId}/employees/imports/${batchId}`
+  );
+  return data.data;
+}
+
 export async function updateEmployee(
   orgId: string,
   id: string,

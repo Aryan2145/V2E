@@ -374,12 +374,39 @@ model EmployeeImportBatch {
   created_at          DateTime          @default(now())
   undone_at           DateTime?
 
-  organization Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  imported_by  User              @relation("EmployeeImportedBy", fields: [imported_by_user_id], references: [id])
+  organization Organization        @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  imported_by  User                @relation("EmployeeImportedBy", fields: [imported_by_user_id], references: [id])
   profiles     EmployeeProfile[]
+  rows         EmployeeImportRow[]
 
   @@index([organization_id])
   @@map("employee_import_batches")
+}
+
+enum ImportRowResultStatus {
+  created
+  failed
+}
+
+// One submitted row of a bulk import, retained so a past batch can be reopened
+// from Import History (detail view) and its failed / undo-removed rows can be
+// re-exported for correction. Cascade-deleted with its batch.
+model EmployeeImportRow {
+  id              String                @id @default(uuid())
+  batch_id        String
+  row_num         Int // 1-based sheet row (header = row 1, first data row = 2)
+  name            String?
+  email           String?
+  status          ImportRowResultStatus
+  error           String? // failure reason at commit time (null when created)
+  payload         Json // original cell values (BulkImportRowDto), for re-export
+  created_user_id String? // user created for this row; null when the row failed
+  created_at      DateTime              @default(now())
+
+  batch EmployeeImportBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@index([batch_id])
+  @@map("employee_import_rows")
 }
 
 model DepartmentImportBatch {

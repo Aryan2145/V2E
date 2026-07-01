@@ -70,6 +70,13 @@ export class EmployeesController {
     return this.importService.listImportBatches(orgId);
   }
 
+  @Get('imports/:batchId')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Full detail of one past import batch (rows, present vs removed)' })
+  getImportDetail(@Param('orgId') orgId: string, @Param('batchId') batchId: string) {
+    return this.importService.getImportBatchDetail(orgId, batchId);
+  }
+
   @Get('me')
   @ApiOperation({ summary: "The caller's own employee profile (self-service)" })
   findMine(@Param('orgId') orgId: string, @CurrentUser('id') userId: string) {

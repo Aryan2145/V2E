@@ -23,11 +23,13 @@ import {
   commitImport,
   listImportBatches,
   undoImport,
+  getImportBatchDetail,
   type BulkImportRow,
   type ImportValidationResult,
   type ImportValidationRow,
   type BulkImportResult,
   type ImportBatchSummary,
+  type ImportBatchDetail,
   type UndoImportResult,
 } from '@/lib/api/employees'
 import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
@@ -171,6 +173,57 @@ const STATUS_STYLES: Record<ImportValidationRow['status'], { dot: string; text: 
   error: { dot: 'bg-[#DC2626]', text: 'text-[#991B1B]', label: 'Error' },
 }
 
+/**
+ * Fixed vocabulary for the exported "failure_status" column. The same categories
+ * are used for every file so the column is reliably sortable/filterable in Excel
+ * — never a new label invented per import.
+ */
+const FIELD_FAILURE_LABEL: Record<string, string> = {
+  name: 'Name',
+  email: 'Email',
+  password: 'Password',
+  department: 'Department',
+  is_department_head: 'Department Head',
+  role: 'Role',
+  system_role: 'System Role',
+  employment_type: 'Employment Type',
+  employee_code: 'Employee Code',
+  reporting_to: 'Manager',
+  date_of_joining: 'Date',
+  date_of_birth: 'Date',
+  marriage_date: 'Date',
+}
+
+/** Categorise a validation row's blocking problems into the fixed vocabulary. */
+function failureStatusesFromRow(row: ImportValidationRow): string[] {
+  const set = new Set<string>()
+  if (row.status === 'duplicate') set.add('Duplicate')
+  for (const iss of row.issues) {
+    if (iss.severity !== 'error') continue
+    set.add(FIELD_FAILURE_LABEL[iss.field ?? ''] ?? 'Other')
+  }
+  if (set.size === 0) set.add('Other')
+  return Array.from(set)
+}
+
+/** Best-effort category when only a commit/undo error message is available. */
+function failureStatusFromMessage(msg: string): string {
+  const m = msg.toLowerCase()
+  if (m.includes('already exists') || m.includes('already a member') || m.includes('duplicate')) return 'Duplicate'
+  if (m.includes('system role')) return 'System Role'
+  if (m.includes('department head') || m.includes('head for') || m.includes('head of')) return 'Department Head'
+  if (m.includes('department')) return 'Department'
+  if (m.includes('role')) return 'Role'
+  if (m.includes('manager') || m.includes('report')) return 'Manager'
+  if (m.includes('email')) return 'Email'
+  if (m.includes('employment')) return 'Employment Type'
+  if (m.includes('code')) return 'Employee Code'
+  if (m.includes('date') || m.includes('birth') || m.includes('joining') || m.includes('marriage')) return 'Date'
+  if (m.includes('password')) return 'Password'
+  if (m.includes('name')) return 'Name'
+  return 'Other'
+}
+
 export default function ImportEmployeesModal({
   orgId,
   departments,
@@ -199,7 +252,7 @@ export default function ImportEmployeesModal({
       .catch(() => setSystemRoles([]))
   }, [orgId])
 
-  type Phase = 'upload' | 'preview' | 'result' | 'history'
+  type Phase = 'upload' | 'preview' | 'result' | 'history' | 'batch-detail'
   const [phase, setPhase] = useState<Phase>('upload')
   const [fileName, setFileName] = useState('')
   const [parsedRows, setParsedRows] = useState<BulkImportRow[]>([])
@@ -210,12 +263,15 @@ export default function ImportEmployeesModal({
   const [validating, setValidating] = useState(false)
   const [importing, setImporting] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [onlyProblems, setOnlyProblems] = useState(false)
+  const [chipFilter, setChipFilter] = useState<'total' | 'ready' | 'duplicate' | 'error' | 'warning'>('total')
 
   const [batches, setBatches] = useState<ImportBatchSummary[]>([])
   const [undoResult, setUndoResult] = useState<UndoImportResult | null>(null)
   const [undoingId, setUndoingId] = useState<string | null>(null)
   const [undoConfirm, setUndoConfirm] = useState<string | null>(null)
+  const [batchDetail, setBatchDetail] = useState<ImportBatchDetail | null>(null)
+  const [loadingDetail, setLoadingDetail] = useState(false)
+  const [detailOrigin, setDetailOrigin] = useState<'history' | 'import'>('history')
 
   const deptNameById = useMemo(
     () => new Map(departments.map((d) => [d.id, d.name])),
@@ -527,33 +583,37 @@ export default function ImportEmployeesModal({
   // ─── Failed-rows export ───────────────────────────────────────────────────────
 
   /**
-   * Write the original cells for the given rows to an .xlsx, with a trailing
-   * `reason_for_failure` column explaining what happened. That header is not a
-   * known import column, so re-uploading this exact file ignores it — the user
-   * fixes the cells and uploads again without stripping anything.
+   * Write the original cells for the given rows to an .xlsx, with two trailing
+   * columns: `failure_status` (a fixed-vocabulary category — Duplicate, Role,
+   * Department, … — for sorting/filtering in Excel) and `reason_for_failure`
+   * (the human-readable detail). Neither header is a known import column, so
+   * re-uploading this exact file ignores both — the user fixes the cells and
+   * uploads again without stripping anything.
    */
-  async function exportRows(entries: { rowNum: number; reason: string }[], filename: string) {
+  async function exportRows(
+    entries: { payload: Record<string, any>; status: string; reason: string }[],
+    filename: string,
+  ) {
     if (entries.length === 0) return
     try {
       const mod: any = await import('exceljs')
       const ExcelJS = mod.default ?? mod
       const wb = new ExcelJS.Workbook()
       const ws = wb.addWorksheet('Fix these')
-      ws.addRow([...COLUMNS.map((c) => HEADER_LABEL[c]), 'reason_for_failure'])
+      ws.addRow([...COLUMNS.map((c) => HEADER_LABEL[c]), 'failure_status', 'reason_for_failure'])
       const hr = ws.getRow(1)
       hr.eachCell((cell: any, col: number) => {
         cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: col === COLUMNS.length + 1 ? 'FFDC2626' : 'FF475569' },
-        }
+        const fg =
+          col === COLUMNS.length + 1 ? 'FFB45309' : col === COLUMNS.length + 2 ? 'FFDC2626' : 'FF475569'
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fg } }
       })
       for (const e of entries) {
-        const orig = parsedRows[e.rowNum - 2] ?? {}
-        ws.addRow([...COLUMNS.map((c) => (orig as any)[c] ?? ''), e.reason])
+        ws.addRow([...COLUMNS.map((c) => (e.payload as any)[c] ?? ''), e.status, e.reason])
       }
       ws.columns.forEach((c: any) => (c.width = 22))
+      // AutoFilter so the user can sort/filter by failure_status right away.
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: COLUMNS.length + 2 } }
       const buf = await wb.xlsx.writeBuffer()
       const blob = new Blob([buf], {
         type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -575,7 +635,8 @@ export default function ImportEmployeesModal({
     const entries = validation.rows
       .filter((r) => r.status !== 'ready')
       .map((vr) => ({
-        rowNum: vr.row,
+        payload: parsedRows[vr.row - 2] ?? {},
+        status: failureStatusesFromRow(vr).join(', '),
         reason: vr.issues.filter((i) => i.severity === 'error').map((i) => i.message).join('; '),
       }))
     void exportRows(entries, 'employee-import-failures.xlsx')
@@ -589,15 +650,44 @@ export default function ImportEmployeesModal({
   function downloadResultRows() {
     if (!commitResult) return
     const keptEmails = new Set((undoResult?.kept ?? []).map((k) => k.email.toLowerCase()))
-    const entries: { rowNum: number; reason: string }[] = []
+    const entries: { payload: Record<string, any>; status: string; reason: string }[] = []
     for (const r of commitResult.results) {
+      const payload = parsedRows[r.row - 2] ?? {}
       if (r.status === 'failed') {
-        entries.push({ rowNum: r.row, reason: r.error || 'Failed to import' })
+        entries.push({ payload, status: failureStatusFromMessage(r.error || ''), reason: r.error || 'Failed to import' })
       } else if (undoResult && !keptEmails.has(r.email.toLowerCase())) {
-        entries.push({ rowNum: r.row, reason: 'Removed by undo — re-upload this row to re-create the employee' })
+        entries.push({ payload, status: 'Removed', reason: 'Removed by undo — re-upload this row to re-create the employee' })
       }
     }
     void exportRows(entries, 'employee-import-fixes.xlsx')
+  }
+
+  /** History detail: failed rows + rows removed by an undo, from stored payloads. */
+  function downloadBatchDetailRows(detail: ImportBatchDetail) {
+    const entries: { payload: Record<string, any>; status: string; reason: string }[] = []
+    for (const r of detail.rows) {
+      if (r.status === 'failed') {
+        entries.push({ payload: r.data, status: failureStatusFromMessage(r.error || ''), reason: r.error || 'Failed to import' })
+      } else if (!r.still_present) {
+        entries.push({ payload: r.data, status: 'Removed', reason: 'Removed by undo — re-upload this row to re-create the employee' })
+      }
+    }
+    void exportRows(entries, 'employee-import-fixes.xlsx')
+  }
+
+  async function openBatch(batchId: string, origin: 'history' | 'import' = 'history') {
+    setDetailOrigin(origin)
+    setPhase('batch-detail')
+    setBatchDetail(null)
+    setLoadingDetail(true)
+    try {
+      setBatchDetail(await getImportBatchDetail(orgId, batchId))
+    } catch {
+      addToast('Could not load this import’s details.', 'error')
+      if (origin === 'history') setPhase('history')
+    } finally {
+      setLoadingDetail(false)
+    }
   }
 
   // ─── Commit ───────────────────────────────────────────────────────────────────
@@ -608,14 +698,22 @@ export default function ImportEmployeesModal({
     try {
       const res = await commitImport(orgId, parsedRows, fileName)
       setCommitResult(res)
-      setPhase('result')
       if (res.created > 0) {
         addToast(
           `Imported ${res.created} employee${res.created !== 1 ? 's' : ''}`,
           res.failed > 0 ? 'warning' : 'success',
         )
         onImported()
+        // Land on the full Import details page for the batch just created.
+        if (res.batch_id) {
+          await openBatch(res.batch_id, 'import')
+        } else {
+          setPhase('result')
+        }
       } else {
+        // Nothing created (every row failed) — no batch exists; show the result
+        // screen so the failed rows and their reasons are still visible.
+        setPhase('result')
         addToast('No employees were imported', 'error')
       }
     } catch (err: any) {
@@ -649,6 +747,14 @@ export default function ImportEmployeesModal({
       )
       onImported()
       setBatches(await listImportBatches(orgId))
+      // If a detail view is open for this batch, refresh it to reflect removals.
+      if (batchDetail?.id === batchId) {
+        try {
+          setBatchDetail(await getImportBatchDetail(orgId, batchId))
+        } catch {
+          /* keep the stale detail rather than blanking the view */
+        }
+      }
     } catch (err: any) {
       const msg = err?.response?.data?.message ?? 'Undo failed.'
       addToast(Array.isArray(msg) ? msg.join(', ') : msg, 'error')
@@ -669,20 +775,52 @@ export default function ImportEmployeesModal({
 
   const visibleRows = useMemo(() => {
     if (!validation) return []
-    return onlyProblems ? validation.rows.filter((r) => r.status !== 'ready' || r.issues.length > 0) : validation.rows
-  }, [validation, onlyProblems])
+    const rows = validation.rows
+    switch (chipFilter) {
+      case 'ready':
+        return rows.filter((r) => r.status === 'ready')
+      case 'duplicate':
+        return rows.filter((r) => r.status === 'duplicate')
+      case 'error':
+        return rows.filter((r) => r.status === 'error')
+      case 'warning':
+        return rows.filter((r) => r.status === 'ready' && r.issues.some((i) => i.severity === 'warning'))
+      default:
+        return rows
+    }
+  }, [validation, chipFilter])
 
   if (!mounted) return null
 
+  // The review step ("Review before importing") is a full-page workspace so the
+  // whole row table is visible at once; every other phase stays a compact modal.
+  const isFullPage = phase === 'preview'
+
   return createPortal(
-    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
-      <div className="bg-white w-full sm:max-w-3xl sm:rounded-[12px] rounded-t-[16px] shadow-xl max-h-[92vh] flex flex-col">
+    <div
+      className={`fixed inset-0 z-[60] flex justify-center bg-black/40 ${
+        isFullPage ? 'items-stretch p-0' : 'items-end sm:items-center p-0 sm:p-4'
+      }`}
+    >
+      <div
+        className={`bg-white shadow-xl flex flex-col ${
+          isFullPage
+            ? 'w-full h-full max-h-none rounded-none'
+            : 'w-full sm:max-w-3xl sm:rounded-[12px] rounded-t-[16px] max-h-[92vh]'
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
           <div className="flex items-center gap-3">
-            {(phase === 'preview' || phase === 'history') && (
+            {(phase === 'history' || phase === 'batch-detail') && (
               <button
-                onClick={phase === 'history' ? resetToUpload : () => setPhase('upload')}
+                onClick={
+                  phase === 'history'
+                    ? resetToUpload
+                    : detailOrigin === 'import'
+                      ? resetToUpload
+                      : openHistory
+                }
                 className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
                 aria-label="Back"
               >
@@ -690,7 +828,13 @@ export default function ImportEmployeesModal({
               </button>
             )}
             <h2 className="text-[18px] font-semibold text-[#0F172A]">
-              {phase === 'preview' ? 'Review before importing' : phase === 'history' ? 'Import history' : 'Import Employees'}
+              {phase === 'preview'
+                ? 'Review before importing'
+                : phase === 'history'
+                  ? 'Import history'
+                  : phase === 'batch-detail'
+                    ? 'Import details'
+                    : 'Import Employees'}
             </h2>
           </div>
           <div className="flex items-center gap-1">
@@ -712,8 +856,11 @@ export default function ImportEmployeesModal({
           </div>
         </div>
 
-        {/* Body */}
-        <div className="px-6 py-5 overflow-y-auto space-y-5">
+        {/* Body — in full-page review this is the single scroll region so the
+            whole content (summary + table) scrolls under a pinned header/footer. */}
+        <div
+          className={`px-6 py-5 overflow-y-auto space-y-5 ${isFullPage ? 'flex-1 min-h-0' : ''}`}
+        >
           {/* ── Upload ── */}
           {phase === 'upload' && (
             <>
@@ -778,61 +925,29 @@ export default function ImportEmployeesModal({
           {/* ── Preview ── */}
           {phase === 'preview' && validation && (
             <>
+              {/* Clickable filter chips — click a category to show only those
+                  rows below; "total" (default) shows everything. */}
               <div className="flex items-center gap-2 flex-wrap">
-                <SummaryChip color="green" label={`${validation.ready} ready`} />
-                {validation.duplicates > 0 && <SummaryChip color="red" label={`${validation.duplicates} duplicate`} />}
-                {validation.errors > 0 && <SummaryChip color="red" label={`${validation.errors} error`} />}
-                {validation.warnings > 0 && <SummaryChip color="amber" label={`${validation.warnings} warning`} />}
+                <FilterChip color="slate" label={`${validation.total} total`} active={chipFilter === 'total'} onClick={() => setChipFilter('total')} />
+                <FilterChip color="green" label={`${validation.ready} ready`} active={chipFilter === 'ready'} onClick={() => setChipFilter('ready')} />
+                {validation.duplicates > 0 && (
+                  <FilterChip color="red" label={`${validation.duplicates} duplicate`} active={chipFilter === 'duplicate'} onClick={() => setChipFilter('duplicate')} />
+                )}
+                {validation.errors > 0 && (
+                  <FilterChip color="red" label={`${validation.errors} error`} active={chipFilter === 'error'} onClick={() => setChipFilter('error')} />
+                )}
+                {validation.warnings > 0 && (
+                  <FilterChip color="amber" label={`${validation.warnings} warning`} active={chipFilter === 'warning'} onClick={() => setChipFilter('warning')} />
+                )}
                 <span className="ml-auto text-xs text-[#64748B]">from {fileName}</span>
               </div>
 
-              {/* Fix-loop guidance: import the good rows now, then correct only
-                  the failed ones from a pre-filled file and re-upload just that. */}
-              {(() => {
-                const notReady = validation.rows.filter((r) => r.status !== 'ready').length
-                if (notReady === 0) return null
-                const total = validation.rows.length
-                const rowWord = notReady === 1 ? 'row' : 'rows'
-                return (
-                  <div className="flex items-start gap-3 p-3.5 rounded-[10px] bg-[#EFF6FF] border border-[#BFDBFE]">
-                    <Wrench size={18} className="text-[#2563EB] mt-0.5 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[13px] text-[#1E3A8A]">
-                        <strong>{validation.ready} of {total} rows are ready</strong> and will be imported now. The
-                        other <strong>{notReady} {rowWord}</strong> {notReady === 1 ? 'has a problem' : 'have problems'} and
-                        will be skipped — your ready rows aren’t affected.
-                      </p>
-                      <p className="text-[13px] text-[#1E40AF] mt-1">
-                        Download a file with <strong>only those {notReady} {rowWord}</strong> (each tagged with the reason it
-                        failed), fix them there, and re-upload just that file — no need to touch the rows that already passed.
-                      </p>
-                      <button
-                        onClick={downloadFailures}
-                        className="mt-2.5 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[8px] text-[13px] font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
-                      >
-                        <Download size={14} /> Download {notReady} {rowWord} to fix
-                      </button>
-                    </div>
-                  </div>
-                )
-              })()}
-
-              <div className="flex items-center justify-between">
-                <label className="inline-flex items-center gap-2 text-[13px] text-[#475569] cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={onlyProblems}
-                    onChange={(e) => setOnlyProblems(e.target.checked)}
-                    className="rounded border-[#CBD5E1]"
-                  />
-                  Show only rows with problems
-                </label>
-              </div>
-
+              {/* Row table — bounded height with its own scroll so the list never
+                  stretches the page; the outer body still scrolls normally. */}
               <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
-                <div className="max-h-[46vh] overflow-auto">
+                <div className="max-h-[72vh] overflow-auto">
                   <table className="w-full text-[13px]">
-                    <thead className="bg-[#F8FAFC] sticky top-0">
+                    <thead className="bg-[#F8FAFC] sticky top-0 z-10">
                       <tr className="text-left text-[#64748B]">
                         <th className="px-3 py-2 font-semibold">#</th>
                         <th className="px-3 py-2 font-semibold">Status</th>
@@ -844,7 +959,14 @@ export default function ImportEmployeesModal({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#E2E8F0]">
-                      {visibleRows.map((r, i) => {
+                      {visibleRows.length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="px-3 py-8 text-center text-[13px] text-[#94A3B8]">
+                            No rows in this category.
+                          </td>
+                        </tr>
+                      ) : (
+                        visibleRows.map((r, i) => {
                         const s = STATUS_STYLES[r.status]
                         // Zebra striping + a clearly visible divider so two
                         // adjacent rows never blur together; problem rows keep a
@@ -892,21 +1014,41 @@ export default function ImportEmployeesModal({
                             </td>
                           </tr>
                         )
-                      })}
+                        })
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
 
-              <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A]">
-                <ShieldAlert size={16} className="text-[#B45309] mt-0.5 shrink-0" />
-                <p className="text-[13px] text-[#92400E]">
-                  Importing creates live user accounts and is <strong>not automatically reversible</strong> — please check
-                  the rows above thoroughly. Only the <strong>{validation.ready} ready</strong> row
-                  {validation.ready !== 1 ? 's' : ''} will be imported; the rest are skipped (download them to fix and
-                  re-upload). A short-lived undo is available right after import.
-                </p>
-              </div>
+              {/* Fix-loop guidance + download — below the table. */}
+              {(() => {
+                const notReady = validation.rows.filter((r) => r.status !== 'ready').length
+                if (notReady === 0) return null
+                const rowWord = notReady === 1 ? 'row' : 'rows'
+                return (
+                  <div className="flex items-start gap-3 p-3.5 rounded-[10px] bg-[#EFF6FF] border border-[#BFDBFE]">
+                    <Wrench size={18} className="text-[#2563EB] mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13px] text-[#1E3A8A]">
+                        <strong>{validation.ready} of {validation.total} rows are ready</strong> and will be imported now.
+                        The other <strong>{notReady} {rowWord}</strong> {notReady === 1 ? 'has a problem' : 'have problems'} and
+                        will be skipped — your ready rows aren’t affected.
+                      </p>
+                      <p className="text-[13px] text-[#1E40AF] mt-1">
+                        Download a file with <strong>only those {notReady} {rowWord}</strong> (each tagged with the reason it
+                        failed), fix them there, and re-upload just that file — no need to touch the rows that already passed.
+                      </p>
+                      <button
+                        onClick={downloadFailures}
+                        className="mt-2.5 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-[8px] text-[13px] font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
+                      >
+                        <Download size={14} /> Download {notReady} {rowWord} to fix
+                      </button>
+                    </div>
+                  </div>
+                )
+              })()}
             </>
           )}
 
@@ -926,28 +1068,42 @@ export default function ImportEmployeesModal({
             <HistoryView
               batches={batches}
               onUndo={(id) => setUndoConfirm(id)}
-              onOpen={(id) =>
-                commitResult?.batch_id === id
-                  ? setPhase('result')
-                  : addToast('The detailed row view is only available right after importing this batch.', 'info')
-              }
-              currentBatchId={commitResult?.batch_id ?? null}
+              onOpen={openBatch}
               undoingId={undoingId}
               undoResult={undoResult}
+            />
+          )}
+
+          {/* ── Batch detail (after import, or reopened from history) ── */}
+          {phase === 'batch-detail' && (
+            <BatchDetailView
+              detail={batchDetail}
+              loading={loadingDetail}
+              origin={detailOrigin}
+              onUndo={(id) => setUndoConfirm(id)}
+              undoing={!!batchDetail && undoingId === batchDetail.id}
+              onDownload={() => batchDetail && downloadBatchDetailRows(batchDetail)}
             />
           )}
         </div>
 
         {/* Footer */}
         {phase === 'preview' && validation && (
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
-            <span className="mr-auto text-[12px] text-[#94A3B8] hidden sm:flex items-center gap-1.5">
-              <ShieldAlert size={13} className="text-[#B45309]" /> This action can’t be undone automatically — review first.
-            </span>
+          <div className="flex items-center gap-4 px-6 py-4 border-t border-[#E2E8F0]">
+            {/* Warning fills the empty space on the left of the button bar. */}
+            <div className="flex items-start gap-2 flex-1 min-w-0">
+              <ShieldAlert size={16} className="text-[#B45309] mt-0.5 shrink-0" />
+              <p className="text-[12px] leading-snug text-[#92400E]">
+                Importing creates live user accounts and is <strong>not automatically reversible</strong> — please check the
+                rows above thoroughly. Only the <strong>{validation.ready} ready</strong> row
+                {validation.ready !== 1 ? 's' : ''} will be imported; the rest are skipped (download them to fix and
+                re-upload). A short-lived undo is available right after import.
+              </p>
+            </div>
             <button
               type="button"
               onClick={() => setPhase('upload')}
-              className="px-5 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+              className="shrink-0 px-5 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
             >
               Choose another file
             </button>
@@ -955,7 +1111,7 @@ export default function ImportEmployeesModal({
               type="button"
               onClick={() => setConfirmOpen(true)}
               disabled={validation.ready === 0 || importing}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+              className="shrink-0 inline-flex items-center gap-2 px-5 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
             >
               {importing && <Loader2 size={15} className="animate-spin" />}
               {importing ? 'Importing…' : `Import ${validation.ready} ready`}
@@ -964,6 +1120,25 @@ export default function ImportEmployeesModal({
         )}
 
         {phase === 'result' && (
+          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
+            <button
+              onClick={resetToUpload}
+              className="px-5 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+            >
+              Import another file
+            </button>
+            <button
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {/* Footer only after a fresh import (finish actions). When opened from
+            history, the top-left back arrow is the only affordance needed. */}
+        {phase === 'batch-detail' && detailOrigin === 'import' && (
           <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
             <button
               onClick={resetToUpload}
@@ -1061,13 +1236,33 @@ export default function ImportEmployeesModal({
 
 // ─── Sub-components ───────────────────────────────────────────────────────────────
 
-function SummaryChip({ color, label }: { color: 'green' | 'red' | 'amber'; label: string }) {
-  const styles = {
-    green: 'bg-[#DCFCE7] border-[#BBF7D0] text-[#166534]',
-    red: 'bg-[#FEE2E2] border-[#FECACA] text-[#991B1B]',
-    amber: 'bg-[#FEF3C7] border-[#FDE68A] text-[#92400E]',
+function FilterChip({
+  color,
+  label,
+  active,
+  onClick,
+}: {
+  color: 'slate' | 'green' | 'red' | 'amber'
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  const palette = {
+    slate: { on: 'bg-[#0F172A] text-white border-[#0F172A]', off: 'bg-[#F1F5F9] text-[#475569] border-[#E2E8F0] hover:bg-[#E2E8F0]' },
+    green: { on: 'bg-[#16A34A] text-white border-[#16A34A]', off: 'bg-[#DCFCE7] text-[#166534] border-[#BBF7D0] hover:bg-[#BBF7D0]' },
+    red: { on: 'bg-[#DC2626] text-white border-[#DC2626]', off: 'bg-[#FEE2E2] text-[#991B1B] border-[#FECACA] hover:bg-[#FECACA]' },
+    amber: { on: 'bg-[#B45309] text-white border-[#B45309]', off: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A] hover:bg-[#FDE68A]' },
   }[color]
-  return <span className={`inline-flex items-center px-2.5 py-1 rounded-[8px] border text-xs font-semibold ${styles}`}>{label}</span>
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex items-center px-2.5 py-1 rounded-[8px] border text-xs font-semibold transition-colors ${active ? palette.on : palette.off}`}
+    >
+      {label}
+    </button>
+  )
 }
 
 function ResultView({
@@ -1232,14 +1427,12 @@ function HistoryView({
   batches,
   onUndo,
   onOpen,
-  currentBatchId,
   undoingId,
   undoResult,
 }: {
   batches: ImportBatchSummary[]
   onUndo: (batchId: string) => void
   onOpen: (batchId: string) => void
-  currentBatchId: string | null
   undoingId: string | null
   undoResult: UndoImportResult | null
 }) {
@@ -1251,13 +1444,12 @@ function HistoryView({
       {undoResult && <UndoSummary undoResult={undoResult} />}
       <div className="border border-[#E2E8F0] rounded-[10px] divide-y divide-[#F1F5F9]">
         {batches.map((b) => {
-          const openable = b.id === currentBatchId
           return (
             <div key={b.id} className="px-4 py-3 flex items-center gap-3">
               <button
                 type="button"
                 onClick={() => onOpen(b.id)}
-                title={openable ? 'Open this import’s details' : 'Detailed rows are only kept right after importing'}
+                title="Open this import’s details"
                 className="flex-1 min-w-0 flex items-center gap-2 text-left group"
               >
                 <div className="flex-1 min-w-0">
@@ -1274,7 +1466,7 @@ function HistoryView({
                 </div>
                 <ChevronRight
                   size={16}
-                  className={`shrink-0 ${openable ? 'text-[#94A3B8] group-hover:text-[#2563EB]' : 'text-[#E2E8F0]'} transition-colors`}
+                  className="shrink-0 text-[#94A3B8] group-hover:text-[#2563EB] transition-colors"
                 />
               </button>
               {b.can_undo ? (
@@ -1295,6 +1487,205 @@ function HistoryView({
           )
         })}
       </div>
+    </div>
+  )
+}
+
+function BatchDetailView({
+  detail,
+  loading,
+  origin,
+  onUndo,
+  undoing,
+  onDownload,
+}: {
+  detail: ImportBatchDetail | null
+  loading: boolean
+  origin: 'history' | 'import'
+  onUndo: (batchId: string) => void
+  undoing: boolean
+  onDownload: () => void
+}) {
+  if (loading || !detail) {
+    return (
+      <div className="flex items-center justify-center py-16 text-[#94A3B8]">
+        <Loader2 size={20} className="animate-spin mr-2" /> Loading import details…
+      </div>
+    )
+  }
+
+  const createdPresent = detail.rows.filter((r) => r.status === 'created' && r.still_present)
+  const removed = detail.rows.filter((r) => r.status === 'created' && !r.still_present)
+  const failed = detail.rows.filter((r) => r.status === 'failed')
+  const downloadCount = failed.length + removed.length
+  const noRowDetail = detail.rows.length === 0
+  // For reconstructed (pre-persistence) batches the removed rows aren't stored,
+  // but the undo summary still records how many were removed.
+  const removedCount = removed.length || (detail.rows_reconstructed ? detail.undo_summary?.undone ?? 0 : 0)
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-sm font-semibold text-[#0F172A]">{detail.file_name || 'Untitled import'}</p>
+        <p className="text-xs text-[#64748B] mt-0.5">
+          {new Date(detail.created_at).toLocaleString()} · by {detail.imported_by}
+          {detail.status !== 'committed' && (
+            <span className="ml-2 text-[11px] font-semibold text-[#94A3B8] uppercase">{detail.status.replace('_', ' ')}</span>
+          )}
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#DCFCE7] border border-[#BBF7D0]">
+          <CheckCircle2 size={16} className="text-[#16A34A]" />
+          <span className="text-sm font-semibold text-[#166534]">{createdPresent.length} present</span>
+        </div>
+        {removedCount > 0 && (
+          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#F1F5F9] border border-[#E2E8F0]">
+            <Undo2 size={16} className="text-[#475569]" />
+            <span className="text-sm font-semibold text-[#334155]">{removedCount} removed</span>
+          </div>
+        )}
+        {failed.length > 0 && (
+          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] bg-[#FEE2E2] border border-[#FECACA]">
+            <AlertCircle size={16} className="text-[#DC2626]" />
+            <span className="text-sm font-semibold text-[#991B1B]">{failed.length} failed</span>
+          </div>
+        )}
+        {detail.can_undo && (
+          <button
+            onClick={() => onUndo(detail.id)}
+            disabled={undoing}
+            className="ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-sm font-semibold text-[#B91C1C] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:opacity-60 transition-colors"
+          >
+            {undoing ? <Loader2 size={14} className="animate-spin" /> : <Undo2 size={14} />}
+            Undo this import
+          </button>
+        )}
+      </div>
+
+      {noRowDetail ? (
+        <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0]">
+          <AlertTriangle size={16} className="text-[#94A3B8] mt-0.5 shrink-0" />
+          <p className="text-[13px] text-[#64748B]">
+            Row-level details weren’t recorded for this import (it predates detailed history). The summary above still
+            applies: {detail.created_count} created, {detail.failed_count} failed, {detail.remaining} still present.
+          </p>
+        </div>
+      ) : (
+        <>
+          {detail.rows_reconstructed && (
+            <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0]">
+              <AlertTriangle size={16} className="text-[#94A3B8] mt-0.5 shrink-0" />
+              <p className="text-[13px] text-[#64748B]">
+                This import predates detailed history, so the list below is rebuilt from the employees still in the
+                system. Original cell values and any failed rows weren’t recorded, so re-export isn’t available for this
+                one. New imports keep full row-level detail.
+              </p>
+            </div>
+          )}
+
+          {downloadCount > 0 && (
+            <button
+              onClick={onDownload}
+              className="inline-flex items-center gap-2 px-3.5 py-2 rounded-[8px] text-[13px] font-semibold text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] transition-colors"
+            >
+              <Download size={14} />
+              {removed.length > 0
+                ? `Download ${downloadCount} rows to fix & re-upload (${failed.length} failed + ${removed.length} removed)`
+                : `Download ${failed.length} ${failed.length === 1 ? 'row' : 'rows'} to fix & re-upload`}
+            </button>
+          )}
+
+          {detail.undo_summary && detail.undo_summary.kept.length > 0 && (
+            <div className="border border-[#E2E8F0] rounded-[10px] p-4 space-y-2">
+              <p className="text-[13px] text-[#B45309]">
+                Kept {detail.undo_summary.kept.length} on undo — they already had activity and were left untouched:
+              </p>
+              <ul className="space-y-1 max-h-52 overflow-y-auto pr-1">
+                {detail.undo_summary.kept.map((k) => (
+                  <li key={k.email} className="text-[13px] text-[#475569]">
+                    <span className="font-medium text-[#0F172A]">{k.name}</span> — {k.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {removed.length > 0 && (
+            <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
+              <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                <p className="text-xs font-semibold text-[#475569] uppercase tracking-wider">Removed ({removed.length})</p>
+              </div>
+              <div className="max-h-52 overflow-y-auto divide-y divide-[#F1F5F9]">
+                {removed.map((r) => (
+                  <div key={r.row} className="px-4 py-2">
+                    <p className="text-[13px] text-[#0F172A]">
+                      <span className="font-medium">{r.name || `Row ${r.row}`}</span>
+                      {r.email && <span className="text-[#94A3B8]"> · {r.email}</span>}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {createdPresent.length > 0 && (
+            <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
+              <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                <p className="text-xs font-semibold text-[#475569] uppercase tracking-wider">Imported &amp; present ({createdPresent.length})</p>
+              </div>
+              <div className="max-h-52 overflow-y-auto divide-y divide-[#F1F5F9]">
+                {createdPresent.map((r) => (
+                  <div key={r.row} className="px-4 py-2">
+                    <p className="text-[13px] text-[#0F172A]">
+                      <span className="font-medium">{r.name || `Row ${r.row}`}</span>
+                      {r.email && <span className="text-[#94A3B8]"> · {r.email}</span>}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {failed.length > 0 && (
+            <div className="border border-[#E2E8F0] rounded-[10px] overflow-hidden">
+              <div className="px-4 py-2.5 bg-[#F8FAFC] border-b border-[#E2E8F0]">
+                <p className="text-xs font-semibold text-[#475569] uppercase tracking-wider">Rows that need fixing ({failed.length})</p>
+              </div>
+              <div className="max-h-56 overflow-y-auto divide-y divide-[#F1F5F9]">
+                {failed.map((r) => (
+                  <div key={r.row} className="px-4 py-2.5">
+                    <p className="text-sm font-medium text-[#0F172A]">
+                      Row {r.row}
+                      {r.email ? ` · ${r.email}` : r.name ? ` · ${r.name}` : ''}
+                    </p>
+                    <p className="text-sm text-[#DC2626] mt-0.5">{r.error}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {origin === 'import' && (
+        <>
+          {createdPresent.length > 0 && (
+            <p className="text-[13px] text-[#475569]">
+              New accounts use the password from the sheet, or{' '}
+              <span className="font-semibold text-[#0F172A]">Welcome@123</span> when the password column is blank. Ask staff
+              to change it after first sign-in.
+            </p>
+          )}
+          <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0]">
+            <History size={15} className="text-[#94A3B8] mt-0.5 shrink-0" />
+            <p className="text-[13px] text-[#64748B]">
+              You can reopen this import anytime from <span className="font-semibold text-[#0F172A]">Import → History</span>.
+            </p>
+          </div>
+        </>
+      )}
     </div>
   )
 }

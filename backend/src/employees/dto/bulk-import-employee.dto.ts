@@ -181,3 +181,21 @@ export interface ImportBatchSummary {
   created_at: string;
   undone_at: string | null;
 }
+
+// ─── Import batch detail (reopen a past batch from history) ──────────────────────
+
+export interface ImportBatchDetailRow {
+  row: number;
+  name: string | null;
+  email: string | null;
+  status: 'created' | 'failed';
+  error: string | null;
+  still_present: boolean; // created row whose profile still exists (false = removed by undo)
+  data: Record<string, string>; // original cell values, for re-export
+}
+
+export interface ImportBatchDetail extends ImportBatchSummary {
+  undo_summary: { undone: number; kept: UndoKeptRow[] } | null;
+  rows: ImportBatchDetailRow[];
+  rows_reconstructed: boolean; // true when rows were rebuilt from surviving profiles (pre-persistence batch)
+}

@@ -8,6 +8,7 @@ import {
   BulkImportRowDto,
   BulkImportResult,
   BulkImportRowResult,
+  ImportBatchDetail,
   ImportBatchSummary,
   ImportResolved,
   ImportRowIssue,
@@ -208,6 +209,21 @@ export class EmployeeImportService {
       data: { created_count: created, failed_count: failed },
     });
 
+    // Retain every submitted row so the batch can be reopened from Import
+    // History later (detail view) and its failed / undo-removed rows re-exported.
+    await this.prisma.employeeImportRow.createMany({
+      data: results.map((r) => ({
+        batch_id: batch.id,
+        row_num: r.row,
+        name: r.name || null,
+        email: r.email || null,
+        status: r.status,
+        error: r.error ?? null,
+        payload: (rows[r.row - 2] ?? {}) as Prisma.InputJsonValue,
+        created_user_id: r.status === 'created' ? (createdUserByEmail.get(r.email) ?? null) : null,
+      })),
+    });
+
     if (created > 0) this.assigneeVisibility.invalidate(orgId);
     return { batch_id: batch.id, created, failed, results: this.sortResults(results) };
   }
@@ -236,6 +252,73 @@ export class EmployeeImportService {
       created_at: b.created_at.toISOString(),
       undone_at: b.undone_at ? b.undone_at.toISOString() : null,
     }));
+  }
+
+  /** Full detail of one past batch: every stored row plus which created rows are
+   *  still present (vs removed by a later undo). Lets Import History reopen it. */
+  async getImportBatchDetail(orgId: string, batchId: string): Promise<ImportBatchDetail> {
+    const batch = await this.prisma.employeeImportBatch.findFirst({
+      where: { id: batchId, organization_id: orgId },
+      include: {
+        imported_by: { select: { name: true } },
+        rows: { orderBy: { row_num: 'asc' } },
+        _count: { select: { profiles: true } },
+      },
+    });
+    if (!batch) throw new NotFoundException('Import batch not found');
+
+    // Profiles from this batch that still exist — i.e. NOT removed by a later
+    // undo. Used to mark each created row present vs removed, and to reconstruct
+    // a detail view for old batches that predate row-level persistence.
+    const present = await this.prisma.employeeProfile.findMany({
+      where: { import_batch_id: batchId, organization_id: orgId },
+      select: { user_id: true, user: { select: { name: true, email: true } } },
+    });
+    const presentUserIds = new Set(present.map((p) => p.user_id));
+
+    // Batches imported before row persistence have no stored rows. Fall back to
+    // the surviving profiles so the user still sees who is in the batch (the
+    // undo_summary, returned below, covers what was removed/kept).
+    const rows: ImportBatchDetail['rows'] =
+      batch.rows.length > 0
+        ? batch.rows.map((r) => ({
+            row: r.row_num,
+            name: r.name,
+            email: r.email,
+            status: r.status,
+            error: r.error,
+            still_present: r.status === 'created' && !!r.created_user_id && presentUserIds.has(r.created_user_id),
+            data: (r.payload as Record<string, string>) ?? {},
+          }))
+        : present.map((p, i) => ({
+            row: i + 1,
+            name: p.user?.name ?? null,
+            email: p.user?.email ?? null,
+            status: 'created' as const,
+            error: null,
+            still_present: true,
+            data: {},
+          }));
+
+    const cutoff = Date.now() - UNDO_WINDOW_MINUTES * 60_000;
+    return {
+      id: batch.id,
+      file_name: batch.file_name,
+      imported_by: batch.imported_by?.name ?? 'Unknown',
+      total_rows: batch.total_rows,
+      created_count: batch.created_count,
+      failed_count: batch.failed_count,
+      remaining: batch._count.profiles,
+      status: batch.status,
+      can_undo: batch.status === 'committed' && batch._count.profiles > 0 && batch.created_at.getTime() >= cutoff,
+      created_at: batch.created_at.toISOString(),
+      undone_at: batch.undone_at ? batch.undone_at.toISOString() : null,
+      undo_summary: (batch.undo_summary as ImportBatchDetail['undo_summary']) ?? null,
+      rows,
+      // True only when this batch predates row-level persistence (no stored rows
+      // yet still created people) — lets the UI explain why per-row data is thin.
+      rows_reconstructed: batch.rows.length === 0 && present.length > 0,
+    };
   }
 
   /**
@@ -736,7 +819,10 @@ export class EmployeeImportService {
       ready: rows.filter((r) => r.status === 'ready').length,
       duplicates: rows.filter((r) => r.status === 'duplicate').length,
       errors: rows.filter((r) => r.status === 'error').length,
-      warnings: rows.filter((r) => r.issues.some((i) => i.severity === 'warning')).length,
+      // Only surface warnings that matter — a soft flag on a row that will
+      // actually import. Warnings on duplicate/error rows are moot (those rows
+      // are skipped anyway) and double-count what the other chips already show.
+      warnings: rows.filter((r) => r.status === 'ready' && r.issues.some((i) => i.severity === 'warning')).length,
       rows,
     };
   }
