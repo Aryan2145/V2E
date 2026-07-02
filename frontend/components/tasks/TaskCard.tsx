@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Calendar, GitBranch, MessageSquare, Paperclip, ChevronDown, Check } from 'lucide-react'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
+import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from './AssigneeAvatars'
 // import QuadrantBadge from './QuadrantBadge'
 
@@ -157,6 +158,12 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
   const unread = task.unread_comments ?? 0
   const attachmentCount = task._count?.attachments ?? 0
 
+  // The inline control only moves a task between OPEN states. Terminal states
+  // (completed / incomplete) are reached via the Complete / Reopen actions on the
+  // task, so a task already in a terminal state shows a read-only pill.
+  const isTerminalStatus = !!status && TERMINAL_STATUS_PHASES.includes(status.type)
+  const openStatuses = statuses.filter((s) => !TERMINAL_STATUS_PHASES.includes(s.type))
+
   // Who assigned the task. Hidden when the viewer is the assigner (no "By me").
   const assignerName = task.created_by?.name ?? null
   const showAssigner = !!assignerName && task.created_by_user_id !== currentUserId
@@ -274,10 +281,11 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
         </div>
       )}
 
-      {/* Status — interactive change control when onStatusChange is provided, else a static pill */}
+      {/* Status — interactive control for open states only; terminal states are a
+          read-only pill (close/reopen happens via actions on the task). */}
       {status && (
-        onStatusChange ? (
-          <StatusControl status={status} statuses={statuses} onChange={onStatusChange} />
+        onStatusChange && !isTerminalStatus ? (
+          <StatusControl status={status} statuses={openStatuses} onChange={onStatusChange} />
         ) : (
           <div className="shrink-0">
             <span

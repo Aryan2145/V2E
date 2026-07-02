@@ -10,6 +10,7 @@ import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
 import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
+import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
 import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
 import LeaveWarningBadge from '@/components/leave/LeaveWarningBadge'
@@ -47,6 +48,12 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   const [priorityId, setPriorityId] = useState(task.priority_id ?? '')
   const [categoryId, setCategoryId] = useState(task.category_id ?? '')
   const [statusId, setStatusId] = useState(task.status_id)
+  // Terminal states (Complete / Incomplete) are managed via the task's actions, not
+  // edited here — so a closed task shows its status read-only, and the picker only
+  // offers open states.
+  const currentStatus = statuses.find((s) => s.id === task.status_id)
+  const taskIsTerminal = !!currentStatus && TERMINAL_STATUS_PHASES.includes(currentStatus.type)
+  const openStatuses = statuses.filter((s) => !TERMINAL_STATUS_PHASES.includes(s.type))
   const [completionMode, setCompletionMode] = useState<CompletionMode>(task.completion_mode ?? 'any_can_complete')
   const [proofRequired, setProofRequired] = useState(task.proof_required ?? false)
   const [deadlineDate, setDeadlineDate] = useState(() => task.deadline ? toLocalDateStr(task.deadline) : '')
@@ -121,7 +128,8 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
         description: description.trim() || undefined,
         priority_id: priorityId || undefined,
         category_id: categoryId || undefined,
-        status_id: statusId || undefined,
+        // Don't touch status for a closed task — that's the Reopen action's job.
+        status_id: taskIsTerminal ? undefined : (statusId || undefined),
         deadline: deadline || undefined,
         completion_mode: completionMode,
         proof_required: proofRequired,
@@ -274,11 +282,22 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
             </div>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Status</label>
-              <StyledSelect
-                value={statusId}
-                onChange={(v) => setStatusId(v)}
-                options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
-              />
+              {taskIsTerminal && currentStatus ? (
+                <div className="flex items-center h-[42px]">
+                  <span
+                    className="inline-flex items-center rounded-[999px] px-3 py-1 text-sm font-medium"
+                    style={{ backgroundColor: currentStatus.color + '22', color: currentStatus.color, border: `1px solid ${currentStatus.color}44` }}
+                  >
+                    {currentStatus.label}
+                  </span>
+                </div>
+              ) : (
+                <StyledSelect
+                  value={statusId}
+                  onChange={(v) => setStatusId(v)}
+                  options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                />
+              )}
             </div>
           </div>
 

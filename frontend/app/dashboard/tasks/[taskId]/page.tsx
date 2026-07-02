@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskComment, TaskAttachment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
+import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import EditTaskModal from '@/components/tasks/EditTaskModal'
@@ -627,6 +628,10 @@ export default function TaskDetailPage() {
   const category = categories.find((c) => c.id === task.category_id) ?? task.category
   const priority = priorities.find((p) => p.id === task.priority_id) ?? task.priority
   const status = statuses.find((s) => s.id === selectedStatusId) ?? task.status
+  // The Status control only moves a task between OPEN states; terminal states
+  // (Complete / Incomplete) are reached via the actions and shown read-only here.
+  const isTerminalStatus = !!status && TERMINAL_STATUS_PHASES.includes(status.type)
+  const openStatuses = statuses.filter((s) => !TERMINAL_STATUS_PHASES.includes(s.type))
   const assignees = task.assignees?.filter((a) => !a.is_cc) ?? []
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
   const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
@@ -1066,11 +1071,23 @@ export default function TaskDetailPage() {
                 <p className="text-[11px] font-bold text-[#2563EB] uppercase tracking-widest">Status</p>
               </div>
               <div className="p-4">
-                <StyledSelect
-                  value={selectedStatusId}
-                  onChange={(v) => handleStatusChange(v)}
-                  options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
-                />
+                {isTerminalStatus && status ? (
+                  <div>
+                    <span
+                      className="inline-flex items-center rounded-[999px] px-3 py-1 text-sm font-medium"
+                      style={{ backgroundColor: status.color + '22', color: status.color, border: `1px solid ${status.color}44` }}
+                    >
+                      {status.label}
+                    </span>
+                    <p className="mt-2 text-[11px] text-[#94A3B8]">Reopen the task to change its status.</p>
+                  </div>
+                ) : (
+                  <StyledSelect
+                    value={selectedStatusId}
+                    onChange={(v) => handleStatusChange(v)}
+                    options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                  />
+                )}
               </div>
             </div>
 

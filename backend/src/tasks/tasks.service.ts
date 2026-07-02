@@ -1305,24 +1305,21 @@ export class TasksService {
     if (dto.status_id !== undefined && dto.status_id !== old.status_id) {
       const st = await this.prisma.taskStatus.findFirst({ where: { id: dto.status_id, organization_id: orgId } });
       if (!st) throw new BadRequestException(`Status ${dto.status_id} not found`);
+      const oldType = (old as any).status?.type;
+      // Terminal transitions carry business rules (proof, per-assignee completion,
+      // the reopen window) — they must go through the dedicated actions, never a raw
+      // status change. The status control only moves a task between OPEN states.
+      if (isTerminal(st.type)) {
+        throw new BadRequestException(
+          'To close a task, use the Complete or Mark Incomplete action — the status control only moves between open states.',
+        );
+      }
+      if (isTerminal(oldType)) {
+        throw new BadRequestException('Reopen the task to change its status.');
+      }
       newStatusLabel = st.label;
       changedFields.push({ field: 'status_id', from: old.status_id, to: dto.status_id });
       updateData.status_id = dto.status_id;
-      // Keep completion stamps in sync with the phase change (completed | incomplete | open).
-      const oldType = (old as any).status?.type;
-      if (st.type === 'completed') {
-        const completionNow = await this.clock.now(orgId);
-        const effectiveDeadline = updateData.deadline !== undefined ? updateData.deadline : old.deadline;
-        updateData.completed_at = completionNow;
-        updateData.completion_timing = this.completionTiming(completionNow, effectiveDeadline);
-      } else if (st.type === 'incomplete') {
-        updateData.completed_at = await this.clock.now(orgId);
-        updateData.completion_timing = CompletionTiming.incomplete;
-      } else if (oldType === 'completed' || oldType === 'incomplete') {
-        // Moved back to an open phase → drop the stamps.
-        updateData.completed_at = null;
-        updateData.completion_timing = null;
-      }
     }
 
     const updated = await this.prisma.task.update({
