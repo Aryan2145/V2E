@@ -24,8 +24,23 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
+  // Drain in-flight requests on SIGTERM/SIGINT instead of severing them —
+  // otherwise a restart can commit a write and still hand the client a 500.
+  app.enableShutdownHooks();
+
   const port = process.env.PORT ?? 3001;
   await app.listen(port);
+
+  // The Next.js dev server proxies /api/* to us over keep-alive sockets whose
+  // agent reuses connections idle up to ~5s — exactly Node's default server
+  // keepAliveTimeout. When both sides act at once the proxy writes into a
+  // socket we're closing and surfaces a spurious 500 (ECONNRESET) to the
+  // browser. The server must always close LAST, so hold sockets open well
+  // past any client/proxy reuse window.
+  const server = app.getHttpServer();
+  server.keepAliveTimeout = 65_000;
+  server.headersTimeout = 66_000;
+
   console.log(`V2E API running on http://localhost:${port}`);
   console.log(`Swagger docs: http://localhost:${port}/api/docs`);
 }

@@ -3,6 +3,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,6 +70,8 @@ export function validateAttachmentFile(file: UploadedFile | undefined): void {
 
 @Injectable()
 export class TaskAttachmentsService {
+  private readonly logger = new Logger(TaskAttachmentsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
@@ -127,47 +130,54 @@ export class TaskAttachmentsService {
       throw err;
     }
 
-    await this.prisma.taskActivityLog.create({
-      data: {
-        organization_id: orgId,
-        task_id: taskId,
-        performed_by_user_id: userId,
-        action: 'file_attached',
-        metadata: { attachment_id: attachment.id, file_name: f.originalname, comment_id: commentId ?? null },
-      },
-    });
-
-    // Files added straight to the task (not via a comment — comments notify on their
-    // own) should ping everyone on the task except the uploader.
-    if (!commentId) {
-      const task = await this.prisma.task.findUnique({
-        where: { id: taskId },
-        select: {
-          title: true,
-          created_by_user_id: true,
-          assignees: { select: { user_id: true } },
+    // Everything below runs AFTER the attachment is committed — activity trail
+    // and notifications are best-effort and must never fail the upload itself.
+    try {
+      await this.prisma.taskActivityLog.create({
+        data: {
+          organization_id: orgId,
+          task_id: taskId,
+          performed_by_user_id: userId,
+          action: 'file_attached',
+          metadata: { attachment_id: attachment.id, file_name: f.originalname, comment_id: commentId ?? null },
         },
       });
-      if (task) {
-        const uploaderName = await this.notifications.userName(userId);
-        const recipients = [
-          task.created_by_user_id,
-          ...task.assignees.map((a) => a.user_id),
-        ].filter((uid) => uid !== userId);
-        await this.notifications.emit({
-          orgId,
-          module: 'tasks',
-          event_type: 'task_attachment_added',
-          recipients,
-          title: `${uploaderName} attached a file`,
-          body: `“${f.originalname}”\non “${task.title}”`,
-          link: `/dashboard/tasks/${taskId}`,
-          entity: { type: 'task', id: taskId },
+
+      // Files added straight to the task (not via a comment — comments notify on their
+      // own) should ping everyone on the task except the uploader.
+      if (!commentId) {
+        const task = await this.prisma.task.findUnique({
+          where: { id: taskId },
+          select: {
+            title: true,
+            created_by_user_id: true,
+            assignees: { select: { user_id: true } },
+          },
         });
+        if (task) {
+          const uploaderName = await this.notifications.userName(userId);
+          const recipients = [
+            task.created_by_user_id,
+            ...task.assignees.map((a) => a.user_id),
+          ].filter((uid) => uid !== userId);
+          await this.notifications.emit({
+            orgId,
+            module: 'tasks',
+            event_type: 'task_attachment_added',
+            recipients,
+            title: `${uploaderName} attached a file`,
+            body: `“${f.originalname}”\non “${task.title}”`,
+            link: `/dashboard/tasks/${taskId}`,
+            entity: { type: 'task', id: taskId },
+          });
+        }
       }
+    } catch (err) {
+      this.logger.warn(`Post-upload activity/notify failed for attachment ${attachment.id}: ${(err as Error).message}`);
     }
 
-    return this.enrich(attachment.id);
+    // Post-commit enrichment read — fall back to the raw row on a transient.
+    return this.enrich(attachment.id).catch(() => ({ ...attachment, uploaded_by_name: null }));
   }
 
   /** Task-level attachments (not tied to a comment), newest first. */

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -76,6 +77,8 @@ export interface TaskListFilters {
 
 @Injectable()
 export class TasksService {
+  private readonly logger = new Logger(TasksService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly workflowEngine: WorkflowEngineService,
@@ -199,15 +202,23 @@ export class TasksService {
     action: TaskActionType,
     metadata?: Record<string, unknown>,
   ) {
-    return this.prisma.taskActivityLog.create({
-      data: {
-        organization_id: orgId,
-        task_id: taskId,
-        performed_by_user_id: userId,
-        action,
-        metadata: metadata ? (metadata as any) : undefined,
-      },
-    });
+    // The activity trail is best-effort: it is written AFTER the business
+    // mutation has committed, so a transient failure here must never turn an
+    // already-successful action into a 500.
+    try {
+      return await this.prisma.taskActivityLog.create({
+        data: {
+          organization_id: orgId,
+          task_id: taskId,
+          performed_by_user_id: userId,
+          action,
+          metadata: metadata ? (metadata as any) : undefined,
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Activity log (${action}) failed for task ${taskId}: ${(err as Error).message}`);
+      return null;
+    }
   }
 
   private async enrichAssignees(assignees: { user_id: string; is_cc: boolean; is_completed: boolean; completed_at: Date | null; id: string }[]) {
@@ -1217,10 +1228,12 @@ export class TasksService {
       await this.assertParticipantView(orgId, principal, task.created_by_user_id, task.assignees);
 
       // Opening the task marks it read for this user — clears its unread-comment badge.
+      // Use the org clock so it lines up with comment timestamps on a test org.
+      const viewedAt = await this.clock.now(orgId);
       await this.prisma.taskView.upsert({
         where: { task_id_user_id: { task_id: taskId, user_id: principal.userId } },
-        create: { organization_id: orgId, task_id: taskId, user_id: principal.userId, last_viewed_at: new Date() },
-        update: { last_viewed_at: new Date() },
+        create: { organization_id: orgId, task_id: taskId, user_id: principal.userId, last_viewed_at: viewedAt },
+        update: { last_viewed_at: viewedAt },
       });
     }
 
@@ -1691,6 +1704,9 @@ export class TasksService {
 
   async addComment(orgId: string, userId: string, taskId: string, dto: CreateCommentDto) {
     const task = await this.findTaskOrFail(orgId, taskId);
+    // Stamp with the org's clock (respects a test org's simulated time) rather than
+    // the DB's real-time default, so comments read in the timeline the user is in.
+    const now = await this.clock.now(orgId);
     const comment = await this.prisma.taskComment.create({
       data: {
         organization_id: orgId,
@@ -1699,10 +1715,15 @@ export class TasksService {
         body: dto.body,
         reply_to_comment_id: dto.reply_to_comment_id,
         attachment_urls: dto.attachment_urls as any,
+        created_at: now,
       },
     });
     await this.logActivity(orgId, taskId, userId, 'comment_added', { comment_id: comment.id });
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true } });
+    // Post-commit enrichment read — the comment already exists, so degrade to a
+    // nameless response rather than failing the whole request on a transient.
+    const user = await this.prisma.user
+      .findUnique({ where: { id: userId }, select: { id: true, name: true, email: true } })
+      .catch(() => null);
 
     // Notify everyone on the task (assignees + CC + creator) except the commenter.
     // Lead with WHO commented; show the comment itself, then the task for context.
