@@ -161,7 +161,7 @@ export default function NotificationsPage() {
                       {n.module}
                     </span>
                   </div>
-                  <p className="text-sm text-[#475569] mt-0.5">{n.body}</p>
+                  <p className="text-sm text-[#475569] mt-0.5 whitespace-pre-line">{n.body}</p>
                   <p className="text-xs text-[#94A3B8] mt-1.5">{formatWhen(n.created_at)}</p>
                 </div>
               </div>

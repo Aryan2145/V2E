@@ -159,8 +159,8 @@ export class TaskAttachmentsService {
           module: 'tasks',
           event_type: 'task_attachment_added',
           recipients,
-          title: `New attachment on "${task.title}"`,
-          body: `${uploaderName} attached "${f.originalname}"`,
+          title: `${uploaderName} attached a file`,
+          body: `“${f.originalname}”\non “${task.title}”`,
           link: `/dashboard/tasks/${taskId}`,
           entity: { type: 'task', id: taskId },
         });

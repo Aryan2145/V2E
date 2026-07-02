@@ -440,8 +440,8 @@ export class TasksService {
       module: 'tasks',
       event_type: 'task_assigned',
       recipients: assigneeIds.filter((uid) => uid !== userId),
-      title: 'New task assigned',
-      body: `${creatorName} assigned you "${task.title}"`,
+      title: `${creatorName} assigned you a task`,
+      body: `“${task.title}”`,
       link: `/dashboard/tasks/${task.id}`,
       entity: { type: 'task', id: task.id },
     });
@@ -450,8 +450,8 @@ export class TasksService {
       module: 'tasks',
       event_type: 'task_assigned',
       recipients: ccIds.filter((uid) => uid !== userId),
-      title: "You're CC'd on a task",
-      body: `${creatorName} CC'd you on "${task.title}"`,
+      title: `${creatorName} CC’d you on a task`,
+      body: `“${task.title}”`,
       link: `/dashboard/tasks/${task.id}`,
       entity: { type: 'task', id: task.id },
     });
@@ -1345,8 +1345,8 @@ export class TasksService {
         module: 'tasks',
         event_type: 'task_status_changed',
         recipients,
-        title: `Status updated on "${old.title}"`,
-        body: `${actorName} moved it to "${newStatusLabel}"`,
+        title: `${actorName} changed status`,
+        body: `Moved to “${newStatusLabel}”\non “${old.title}”`,
         link: `/dashboard/tasks/${taskId}`,
         entity: { type: 'task', id: taskId },
       });
@@ -1513,8 +1513,8 @@ export class TasksService {
         task.created_by_user_id,
         ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
       ].filter((uid) => uid !== userId),
-      title: 'Task completed',
-      body: `${completerName} completed "${task.title}"`,
+      title: `${completerName} completed a task`,
+      body: `“${task.title}”`,
       link: `/dashboard/tasks/${taskId}`,
       entity: { type: 'task', id: taskId },
     });
@@ -1594,8 +1594,8 @@ export class TasksService {
         task.created_by_user_id,
         ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
       ].filter((uid) => uid !== userId),
-      title: 'Task reopened',
-      body: `${reopenerName} reopened "${task.title}"${reason ? ` — ${reason}` : ''}`,
+      title: `${reopenerName} reopened a task`,
+      body: `“${task.title}”${reason ? `\n${reason}` : ''}`,
       link: `/dashboard/tasks/${taskId}`,
       entity: { type: 'task', id: taskId },
     });
@@ -1704,8 +1704,12 @@ export class TasksService {
     await this.logActivity(orgId, taskId, userId, 'comment_added', { comment_id: comment.id });
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, email: true } });
 
-    // Notify everyone on the task (assignees + CC + creator) except the commenter
-    const snippet = dto.body.length > 80 ? `${dto.body.slice(0, 80)}…` : dto.body;
+    // Notify everyone on the task (assignees + CC + creator) except the commenter.
+    // Lead with WHO commented; show the comment itself, then the task for context.
+    // A file-only comment (no text yet) reads as an attachment rather than a blank line.
+    const trimmed = (dto.body ?? '').trim();
+    const snippet = trimmed.length > 100 ? `${trimmed.slice(0, 100)}…` : trimmed;
+    const payload = snippet ? `“${snippet}”` : 'Shared an attachment';
     await this.notifications.emit({
       orgId,
       module: 'tasks',
@@ -1714,8 +1718,8 @@ export class TasksService {
         task.created_by_user_id,
         ...(task.assignees ?? []).map((a: any) => a.user_id),
       ].filter((uid) => uid !== userId),
-      title: `New comment on "${task.title}"`,
-      body: `${user?.name ?? 'Someone'}: ${snippet}`,
+      title: `${user?.name ?? 'Someone'} commented`,
+      body: `${payload}\non “${task.title}”`,
       link: `/dashboard/tasks/${taskId}`,
       entity: { type: 'task', id: taskId },
     });
@@ -1790,8 +1794,8 @@ export class TasksService {
         module: 'tasks',
         event_type: 'task_assigned',
         recipients: [dto.user_id],
-        title: dto.is_cc ? "You're CC'd on a task" : 'New task assigned',
-        body: `${assignerName} ${dto.is_cc ? "CC'd you on" : 'assigned you'} "${task.title}"`,
+        title: dto.is_cc ? `${assignerName} CC’d you on a task` : `${assignerName} assigned you a task`,
+        body: `“${task.title}”`,
         link: `/dashboard/tasks/${taskId}`,
         entity: { type: 'task', id: taskId },
       });
@@ -1834,8 +1838,8 @@ export class TasksService {
         module: 'tasks',
         event_type: 'task_unassigned',
         recipients: [assigneeUserId],
-        title: 'You have been removed from a task',
-        body: `${removerName} has removed you from "${task.title}". You are no longer responsible for this task. Thank you for your contribution.`,
+        title: `${removerName} removed you from a task`,
+        body: `“${task.title}”\nYou’re no longer responsible for this task — thank you for your contribution.`,
         link: `/dashboard/tasks/${taskId}`,
         entity: { type: 'task', id: taskId },
       });
@@ -2001,7 +2005,13 @@ export class TasksService {
 
     if (search?.trim()) {
       const q = search.toLowerCase();
-      eligibleProfiles = eligibleProfiles.filter((p) => p.name.toLowerCase().includes(q));
+      // Match name, role, or department so you can find people by any of them.
+      eligibleProfiles = eligibleProfiles.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.role_title ?? '').toLowerCase().includes(q) ||
+          (p.department_name ?? '').toLowerCase().includes(q),
+      );
     }
 
     // Get active task counts
@@ -2097,7 +2107,13 @@ export class TasksService {
       .filter((p): p is NonNullable<typeof p> => !!p);
     if (search?.trim()) {
       const q = search.toLowerCase();
-      eligibleProfiles = eligibleProfiles.filter((p) => p.name.toLowerCase().includes(q));
+      // Match name, role, or department so you can find people by any of them.
+      eligibleProfiles = eligibleProfiles.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) ||
+          (p.role_title ?? '').toLowerCase().includes(q) ||
+          (p.department_name ?? '').toLowerCase().includes(q),
+      );
     }
 
     const ids = eligibleProfiles.map((p) => p.user_id);

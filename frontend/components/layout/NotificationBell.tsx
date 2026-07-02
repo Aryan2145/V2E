@@ -2,7 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Bell, BellRing, CheckCheck, Monitor, CheckCircle2 } from 'lucide-react'
+import {
+  Bell, BellRing, CheckCheck, Monitor, CheckCircle2,
+  MessageSquare, ArrowRightLeft, Paperclip, UserPlus, UserMinus, RotateCcw, AlertTriangle, RefreshCw,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useNotifications } from '@/lib/notifications/NotificationsProvider'
 import { useToast } from '@/components/ui/Toast'
@@ -17,6 +21,22 @@ const MODULE_COLORS: Record<string, string> = {
   meetings: 'bg-[#F0FDF4] text-[#16A34A]',
   communication: 'bg-[#FDF2F8] text-[#BE185D]',
   system: 'bg-[#F1F5F9] text-[#475569]',
+}
+
+// A glanceable icon + tint per notification type, keyed loosely on the event so you
+// can scan the list by shape (comment vs status vs file …) instead of reading each one.
+function eventVisual(eventType: string, moduleKey: string): { Icon: LucideIcon; className: string } {
+  const e = eventType || ''
+  if (e.includes('comment')) return { Icon: MessageSquare, className: 'bg-[#EFF6FF] text-[#2563EB]' }
+  if (e.includes('status')) return { Icon: ArrowRightLeft, className: 'bg-[#EEF2FF] text-[#4F46E5]' }
+  if (e.includes('attachment')) return { Icon: Paperclip, className: 'bg-[#F0F9FF] text-[#0EA5E9]' }
+  if (e.includes('completed')) return { Icon: CheckCircle2, className: 'bg-[#F0FDF4] text-[#16A34A]' }
+  if (e.includes('reopen')) return { Icon: RotateCcw, className: 'bg-[#FFFBEB] text-[#D97706]' }
+  if (e.includes('unassigned')) return { Icon: UserMinus, className: 'bg-[#FEF2F2] text-[#DC2626]' }
+  if (e.includes('assigned')) return { Icon: UserPlus, className: 'bg-[#EFF6FF] text-[#2563EB]' }
+  if (e.includes('overdue') || e.includes('escalat') || e.includes('breach')) return { Icon: AlertTriangle, className: 'bg-[#FEF2F2] text-[#DC2626]' }
+  if (e.includes('recurring') || e.includes('reminder')) return { Icon: RefreshCw, className: 'bg-[#F1F5F9] text-[#475569]' }
+  return { Icon: Bell, className: MODULE_COLORS[moduleKey] ?? MODULE_COLORS.system }
 }
 
 function timeAgo(iso: string): string {
@@ -146,21 +166,31 @@ export default function NotificationBell() {
                     n.is_read ? '' : 'bg-[#EFF6FF]/40',
                   ].join(' ')}
                 >
-                  <div className="flex items-start gap-2.5">
-                    {!n.is_read && <span className="mt-1.5 w-2 h-2 rounded-full bg-[#2563EB] shrink-0" />}
-                    <div className={`flex-1 min-w-0 ${n.is_read ? 'pl-[18px]' : ''}`}>
-                      <div className="flex items-center gap-2">
-                        <p className="text-[13px] font-semibold text-[#0F172A] truncate">{n.title}</p>
-                        <span
-                          className={`shrink-0 inline-flex rounded-[999px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${MODULE_COLORS[n.module] ?? MODULE_COLORS.system}`}
-                        >
-                          {n.module}
+                  {(() => {
+                    const { Icon, className } = eventVisual(n.event_type, n.module)
+                    return (
+                      <div className="flex items-start gap-2.5">
+                        {/* Type icon badge */}
+                        <span className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${className}`}>
+                          <Icon size={15} />
                         </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="text-[13px] font-semibold text-[#0F172A] truncate">{n.title}</p>
+                            {!n.is_read && <span className="w-2 h-2 rounded-full bg-[#2563EB] shrink-0" />}
+                            <span
+                              className={`ml-auto shrink-0 inline-flex rounded-[999px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${MODULE_COLORS[n.module] ?? MODULE_COLORS.system}`}
+                            >
+                              {n.module}
+                            </span>
+                          </div>
+                          {/* Body may carry a second "on <task>" line — keep the break. */}
+                          <p className="text-xs text-[#475569] mt-0.5 line-clamp-3 whitespace-pre-line">{n.body}</p>
+                          <p className="text-[11px] text-[#94A3B8] mt-1">{timeAgo(n.created_at)}</p>
+                        </div>
                       </div>
-                      <p className="text-xs text-[#475569] mt-0.5 line-clamp-2">{n.body}</p>
-                      <p className="text-[11px] text-[#94A3B8] mt-1">{timeAgo(n.created_at)}</p>
-                    </div>
-                  </div>
+                    )
+                  })()}
                 </button>
               ))
             )}

@@ -300,7 +300,7 @@ export default function AssigneeSelector({ orgId, value, onChange, disabled, cur
                   type="text"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search by name..."
+                  placeholder="Search by name, role, or department…"
                   className="w-full pl-8 pr-3 py-[7px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] border border-[#E2E8F0] rounded-[8px] focus:border-[#2563EB] focus:outline-none bg-white"
                 />
               </div>
