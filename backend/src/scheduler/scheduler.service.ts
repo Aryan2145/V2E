@@ -766,6 +766,32 @@ export class SchedulerService {
         this.logger.error(`Failed to mark task ${task.id} overdue: ${err}`);
       }
     }
+
+    // Reconcile the OTHER direction: a task flagged overdue may no longer be — its
+    // deadline was extended past `now`, cleared, or (on a test org) the simulated
+    // clock was rewound behind the deadline. Without this, is_overdue is a one-way
+    // latch and a future-dated task keeps showing overdue. Clear the stale flag so
+    // is_overdue stays an accurate mirror of "open & past deadline".
+    const stale = await this.prisma.task.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        is_overdue: true,
+        status: { type: { notIn: TERMINAL_TYPES } },
+        OR: [{ deadline: null }, { deadline: { gte: now } }],
+      },
+      select: { id: true },
+    });
+    for (const task of stale) {
+      try {
+        await this.prisma.task.update({
+          where: { id: task.id },
+          data: { is_overdue: false, overdue_at: null },
+        });
+      } catch (err) {
+        this.logger.error(`Failed to clear overdue on task ${task.id}: ${err}`);
+      }
+    }
     return flagged;
   }
 }

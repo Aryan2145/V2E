@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
-import type { Task, TaskComment, TaskAttachment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
+import type { Task, TaskComment, TaskAttachment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus, TaskMasterConfig } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
@@ -273,6 +273,7 @@ export default function TaskDetailPage() {
   const attachInputRef = useRef<HTMLInputElement>(null)
   const [activityLogs, setActivityLogs] = useState<TaskActivityLog[]>([])
   const [loading, setLoading] = useState(true)
+  const [config, setConfig] = useState<TaskMasterConfig | null>(null)
   const [showActivity, setShowActivity] = useState(false)
   // Overflow (kebab) menu that holds the destructive Delete action.
   const [showActionsMenu, setShowActionsMenu] = useState(false)
@@ -315,7 +316,7 @@ export default function TaskDetailPage() {
   const loadTask = useCallback(async () => {
     if (!orgId || !taskId) return
     try {
-      const [t, cats, pris, sts, cmts, logs, atts] = await Promise.all([
+      const [t, cats, pris, sts, cmts, logs, atts, cfg] = await Promise.all([
         tasksApi.getTask(orgId, taskId).catch(() => null),
         tasksApi.getCategories(orgId).catch(() => []),
         tasksApi.getPriorities(orgId).catch(() => []),
@@ -323,6 +324,7 @@ export default function TaskDetailPage() {
         tasksApi.getComments(orgId, taskId).catch(() => []),
         tasksApi.getLogs(orgId, taskId).catch(() => []),
         tasksApi.listAllAttachments(orgId, taskId).catch(() => []),
+        tasksApi.getConfig(orgId).catch(() => null),
       ])
       setTask(t)
       setCategories(cats)
@@ -331,6 +333,7 @@ export default function TaskDetailPage() {
       setComments(cmts)
       setActivityLogs(logs)
       setAllAttachments(atts)
+      setConfig(cfg)
       if (t) setSelectedStatusId(t.status_id)
     } finally {
       setLoading(false)
@@ -597,7 +600,11 @@ export default function TaskDetailPage() {
   }
 
   const isCompletedStatus = task?.status?.type === 'completed'
-  const canDelete = user?.is_admin || task?.created_by_user_id === user?.id
+  // Mirror the backend rule (checkTaskPermission → 'task_delete_roles'): delete is
+  // allowed only for platform admins, or when the org opens it to all members
+  // ('employee' in task_delete_roles). Being the creator does NOT grant delete — so
+  // don't show the button to creators who'd just get a 403.
+  const canDelete = !!user?.is_admin || (config?.task_delete_roles ?? []).includes('employee')
 
   if (!orgId) {
     return (
