@@ -46,9 +46,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     }
 
     // Always log server-side so 500s are never opaque in the server console.
+    let debug: { name?: string; message?: string; stack?: string[] } | null = null;
     if (status >= 500) {
       const stack = exception instanceof Error ? exception.stack : String(exception);
       this.logger.error(`${request.method} ${request.url} -> ${status}: ${stack}`);
+      // In non-production, surface the real error to the client so it's diagnosable
+      // straight from the browser Network tab (never leak internals in production).
+      if (process.env.NODE_ENV !== 'production' && exception instanceof Error) {
+        debug = {
+          name: exception.name,
+          message: exception.message,
+          stack: (exception.stack ?? '').split('\n').slice(0, 6),
+        };
+      }
     } else if (status >= 400) {
       this.logger.warn(`${request.method} ${request.url} -> ${status}: ${Array.isArray(message) ? message.join(', ') : message}`);
     }
@@ -58,6 +68,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       data: null,
       message: Array.isArray(message) ? message.join(', ') : message,
       meta: null,
+      ...(debug ? { debug } : {}),
     });
   }
 }
