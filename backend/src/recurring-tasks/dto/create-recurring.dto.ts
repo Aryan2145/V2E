@@ -9,8 +9,21 @@ import {
   ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsNumber } from 'class-validator';
 import { CompletionMode, TaskQuadrant } from '@prisma/client';
 import { CreateScheduleEntryDto } from './create-schedule-entry.dto';
+
+class RecurringChecklistItemDto {
+  @IsString()
+  title: string;
+
+  @IsNumber()
+  order_index: number;
+
+  @IsOptional()
+  @IsString()
+  group_title?: string;
+}
 
 export class CreateRecurringDto {
   @IsString()
@@ -56,6 +69,12 @@ export class CreateRecurringDto {
   @IsArray()
   @IsString({ each: true })
   cc_user_ids?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RecurringChecklistItemDto)
+  checklist_items?: RecurringChecklistItemDto[];
 
   @IsOptional()
   @IsString()

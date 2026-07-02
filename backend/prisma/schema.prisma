@@ -1303,6 +1303,9 @@ model RecurringTemplate {
   proof_required         Boolean  @default(false)
   assignee_user_ids      Json     @default("[]")
   cc_user_ids            Json     @default("[]")
+  // Flattened checklist definition ([{ title, group_title?, order_index }]) copied
+  // into every spawned instance as TaskChecklist rows.
+  checklist_items        Json     @default("[]")
   department_id          String?
   linked_goal_id         String?
   created_by_user_id     String

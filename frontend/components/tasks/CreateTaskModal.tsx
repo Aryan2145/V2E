@@ -233,10 +233,13 @@ export default function CreateTaskModal({
     if (primaryAssigneeCount <= 1) setCompletionMode('any_can_complete')
   }, [primaryAssigneeCount])
 
-  // Set default status (never a terminal one)
+  // New tasks always start in the "Not Started" phase (the org's birth status).
   useEffect(() => {
     if (selectableStatuses.length > 0 && !statusId) {
-      const def = selectableStatuses.find((s) => s.is_default) ?? selectableStatuses[0]
+      const def =
+        selectableStatuses.find((s) => s.type === 'not_started') ??
+        selectableStatuses.find((s) => s.is_default) ??
+        selectableStatuses[0]
       setStatusId(def.id)
     }
   }, [selectableStatuses, statusId])
@@ -280,7 +283,10 @@ export default function CreateTaskModal({
     setPriorityId('')
     setCategoryId('')
     setStatusId(
-      selectableStatuses.find((s) => s.is_default)?.id ?? selectableStatuses[0]?.id ?? '',
+      selectableStatuses.find((s) => s.type === 'not_started')?.id ??
+        selectableStatuses.find((s) => s.is_default)?.id ??
+        selectableStatuses[0]?.id ??
+        '',
     )
     setDeadlineDate('')
     setDeadlineTime('')
@@ -309,6 +315,25 @@ export default function CreateTaskModal({
     if (!deadlineTime) setDeadlineTime('23:59')
   }
 
+  // Flatten every checklist group into one ordered list. A group is labelled
+  // (keeps its heading) when there are 2+ groups OR when it came from a template
+  // — so a single applied template still shows its name. A lone blank checklist
+  // stays unlabelled and renders as a plain list. Shared by both create paths.
+  function buildChecklistItems(): { title: string; order_index: number; group_title?: string }[] | undefined {
+    const groups = checklistGroups.filter((g) => g.items.length > 0)
+    if (groups.length === 0) return undefined
+    const multiple = groups.length >= 2
+    let order = 0
+    return groups.flatMap((g) => {
+      const labelled = multiple || g.source === 'template'
+      return g.items.map((item) => ({
+        title: item.title,
+        order_index: order++,
+        group_title: labelled ? g.title.trim() || 'Checklist' : undefined,
+      }))
+    })
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (mode === 'recurring') { await handleCreateRecurring(); return }
@@ -334,24 +359,7 @@ export default function CreateTaskModal({
         proof_required: proofRequired,
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
-        // Flatten every group into one ordered list. A group is labelled (keeps its
-        // heading) when there are 2+ groups, OR when it came from a template — so a
-        // single applied template still shows its name (e.g. "Onboarding Checklist").
-        // A lone blank checklist stays unlabelled and renders as a plain list.
-        checklist_items: (() => {
-          const groups = checklistGroups.filter((g) => g.items.length > 0)
-          if (groups.length === 0) return undefined
-          const multiple = groups.length >= 2
-          let order = 0
-          return groups.flatMap((g) => {
-            const labelled = multiple || g.source === 'template'
-            return g.items.map((item) => ({
-              title: item.title,
-              order_index: order++,
-              group_title: labelled ? g.title.trim() || 'Checklist' : undefined,
-            }))
-          })
-        })(),
+        checklist_items: buildChecklistItems(),
         checklist_template_ids: Array.from(
           new Set(checklistGroups.filter((g) => g.templateId).map((g) => g.templateId as string)),
         ),
@@ -427,6 +435,7 @@ export default function CreateTaskModal({
         proof_required: proofRequired,
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
+        checklist_items: buildChecklistItems(),
       })
       // Upload the template's attachments — copied into every spawned instance.
       if (attachmentFiles.length > 0) {
@@ -747,9 +756,9 @@ export default function CreateTaskModal({
             </div>
           </div> */}
 
-          {/* Priority + Category (+ Status for one-time; recurring instances get the
-              default status at spawn time, so it isn't set on the template) */}
-          <div className={mode === 'one_time' ? 'grid grid-cols-3 gap-3' : 'grid grid-cols-2 gap-3'}>
+          {/* Priority + Category — every new task starts in "Not Started", so status
+              is not shown here (set automatically). */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
               <StyledSelect
@@ -774,17 +783,6 @@ export default function CreateTaskModal({
                 ]}
               />
             </div>
-            {mode === 'one_time' && (
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">Status</label>
-                <StyledSelect
-                  value={statusId}
-                  onChange={setStatusId}
-                  placeholder="Select status"
-                  options={selectableStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
-                />
-              </div>
-            )}
           </div>
 
           {/* Proof required */}
@@ -809,9 +807,8 @@ export default function CreateTaskModal({
             <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
           </div>
 
-          {/* Checklist — optional, and you can attach more than one.
-              One-time only: recurring templates don't carry checklists. */}
-          {mode === 'one_time' && (
+          {/* Checklist — optional, and you can attach more than one. On a recurring
+              task these repeat on every spawned instance. */}
           <div>
             {/* Empty state: still a card — heading in the header, choices in the body.
                 overflow-visible so the template dropdown can open upward past the card. */}
@@ -955,7 +952,6 @@ export default function CreateTaskModal({
               </div>
             )}
           </div>
-          )}
         </form>
 
         {/* Footer — no Cancel button; the header X closes the modal (see DESIGN_RULES) */}

@@ -398,6 +398,7 @@ export const tasksApi = {
     proof_required?: boolean
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
+    checklist_items?: { title: string; order_index: number; group_title?: string }[]
     department_id?: string
   }): Promise<RecurringTemplate> => {
     const res = await apiClient.post(`${base(orgId)}/recurring`, dto)

@@ -67,6 +67,7 @@ export class RecurringTasksService {
         proof_required: dto.proof_required ?? false,
         assignee_user_ids: dto.assignee_user_ids ?? [],
         cc_user_ids: dto.cc_user_ids ?? [],
+        checklist_items: (dto.checklist_items ?? []) as never,
         department_id: dto.department_id,
       },
     });

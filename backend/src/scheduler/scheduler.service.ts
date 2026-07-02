@@ -292,6 +292,22 @@ export class SchedulerService {
       // Carry the template's attachments into this instance (best-effort).
       await this.copyTemplateAttachmentsToTask(template, task.id);
 
+      // Recreate the template's checklist on this instance.
+      const checklistItems = Array.isArray(template.checklist_items)
+        ? (template.checklist_items as Array<{ title: string; group_title?: string; order_index: number }>)
+        : [];
+      if (checklistItems.length > 0) {
+        await this.prisma.taskChecklist.createMany({
+          data: checklistItems.map((item, idx) => ({
+            organization_id: template.organization_id,
+            task_id: task.id,
+            title: item.title,
+            group_title: item.group_title ?? null,
+            order_index: item.order_index ?? idx,
+          })),
+        });
+      }
+
       const newCount = entry.occurrence_count + 1;
       await this.prisma.recurringScheduleEntry.update({
         where: { id: entry.id },
