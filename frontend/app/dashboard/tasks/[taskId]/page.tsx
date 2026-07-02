@@ -265,6 +265,10 @@ export default function TaskDetailPage() {
   // comments — shown together in the sidebar Attachments card.
   const [allAttachments, setAllAttachments] = useState<TaskAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
+  const [attachmentError, setAttachmentError] = useState<string | null>(null)
+  // Attachment pending deletion — drives the confirm dialog.
+  const [attachmentToDelete, setAttachmentToDelete] = useState<TaskAttachment | null>(null)
+  const [deletingAttachment, setDeletingAttachment] = useState(false)
   const attachInputRef = useRef<HTMLInputElement>(null)
   const [activityLogs, setActivityLogs] = useState<TaskActivityLog[]>([])
   const [loading, setLoading] = useState(true)
@@ -275,6 +279,7 @@ export default function TaskDetailPage() {
   const [commentText, setCommentText] = useState('')
   const [commentFiles, setCommentFiles] = useState<File[]>([])
   const [sendingComment, setSendingComment] = useState(false)
+  const [commentError, setCommentError] = useState<string | null>(null)
   const commentFileInputRef = useRef<HTMLInputElement>(null)
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [proofUrl, setProofUrl] = useState('')
@@ -428,21 +433,59 @@ export default function TaskDetailPage() {
     // A comment may be text-only, file-only, or both — but never entirely empty.
     if (!commentText.trim() && commentFiles.length === 0) return
     setSendingComment(true)
+    setCommentError(null)
+    const hadText = !!commentText.trim()
+    let created: TaskComment | null = null
     try {
-      const c = await tasksApi.addComment(orgId, taskId, commentText.trim())
+      created = await tasksApi.addComment(orgId, taskId, commentText.trim())
       if (commentFiles.length > 0) {
-        for (const file of commentFiles) {
-          await tasksApi.uploadCommentAttachment(orgId, taskId, c.id, file)
+        try {
+          for (const file of commentFiles) {
+            await tasksApi.uploadCommentAttachment(orgId, taskId, created.id, file)
+          }
+        } catch {
+          // The comment posted but a file upload failed (e.g. storage error).
+          if (!hadText) {
+            // Nothing worth keeping — roll back the empty, attachment-less comment.
+            await tasksApi.deleteComment(orgId, taskId, created.id).catch(() => {})
+            setCommentError('Couldn’t upload the file. Nothing was posted — please try again.')
+          } else {
+            // Keep the text; just report the failed attachment and refresh state.
+            setComments(await tasksApi.getComments(orgId, taskId).catch(() => comments))
+            await refreshAllAttachments()
+            setCommentText('')
+            setCommentError('Your comment was posted, but the file failed to upload. Try attaching it again.')
+          }
+          return
         }
         // Reload so the comment shows its now-persisted attachments.
-        setComments(await tasksApi.getComments(orgId, taskId).catch(() => [...comments, c]))
+        setComments(await tasksApi.getComments(orgId, taskId).catch(() => [...comments, created!]))
         // Comment files also belong in the sidebar Attachments card.
         await refreshAllAttachments()
       } else {
-        setComments((prev) => [...prev, c])
+        setComments((prev) => [...prev, created!])
       }
       setCommentText('')
       setCommentFiles([])
+    } catch (err) {
+      // The request errored, but the comment may still have been created server-side
+      // (a flaky/slow response after the DB write — the recipient can even get the
+      // notification). Reconcile: if our comment is now on the server, treat it as
+      // posted rather than showing a false failure.
+      console.error('addComment failed:', err)
+      const sent = commentText.trim()
+      const fresh = await tasksApi.getComments(orgId, taskId).catch(() => null)
+      const posted =
+        !!fresh &&
+        fresh.some((c) => c.user_id === user?.id && c.body === sent && !comments.some((old) => old.id === c.id))
+      if (fresh && posted) {
+        setComments(fresh)
+        await refreshAllAttachments()
+        setCommentText('')
+        setCommentFiles([])
+      } else {
+        setCommentError('Couldn’t post your comment. Please try again.')
+      }
     } finally {
       setSendingComment(false)
     }
@@ -455,21 +498,37 @@ export default function TaskDetailPage() {
   async function handleUploadTaskAttachment(files: File[]) {
     if (files.length === 0) return
     setUploadingAttachment(true)
+    setAttachmentError(null)
     try {
       for (const file of files) {
         await tasksApi.uploadTaskAttachment(orgId, taskId, file)
       }
       await refreshAllAttachments()
+    } catch {
+      // Reflect whatever did upload, then surface a friendly message.
+      await refreshAllAttachments()
+      setAttachmentError('Couldn’t upload the file. Please try again.')
     } finally {
       setUploadingAttachment(false)
     }
   }
 
   // Only the uploader can remove — the card only surfaces the button in that case,
-  // and the backend enforces it regardless.
+  // and the backend enforces it regardless. Confirmed via a dialog first.
   async function handleRemoveAttachment(a: TaskAttachment) {
-    await tasksApi.deleteAttachment(orgId, taskId, a.id)
-    setAllAttachments((prev) => prev.filter((x) => x.id !== a.id))
+    setAttachmentError(null)
+    setDeletingAttachment(true)
+    const prev = allAttachments
+    setAllAttachments((list) => list.filter((x) => x.id !== a.id)) // optimistic
+    try {
+      await tasksApi.deleteAttachment(orgId, taskId, a.id)
+    } catch {
+      setAllAttachments(prev) // revert
+      setAttachmentError('Couldn’t remove the attachment. Please try again.')
+    } finally {
+      setDeletingAttachment(false)
+      setAttachmentToDelete(null)
+    }
   }
 
   async function handleSubmitProof() {
@@ -989,6 +1048,11 @@ export default function TaskDetailPage() {
                   </button>
                 </div>
               </div>
+              {commentError && (
+                <p className="mt-2 text-xs text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-3 py-2">
+                  {commentError}
+                </p>
+              )}
             </div>
           </div>
 
@@ -1129,7 +1193,7 @@ export default function TaskDetailPage() {
                         {a.uploaded_by_user_id === user?.id && (
                           <button
                             type="button"
-                            onClick={() => handleRemoveAttachment(a)}
+                            onClick={() => setAttachmentToDelete(a)}
                             title="Remove"
                             className="text-[#94A3B8] hover:text-[#DC2626] shrink-0 transition-colors"
                           >
@@ -1142,6 +1206,11 @@ export default function TaskDetailPage() {
                 )}
                 {uploadingAttachment && (
                   <p className="text-xs text-[#64748B] mt-3">Uploading…</p>
+                )}
+                {attachmentError && (
+                  <p className="mt-3 text-xs text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-3 py-2">
+                    {attachmentError}
+                  </p>
                 )}
               </div>
               <input
@@ -1360,6 +1429,49 @@ export default function TaskDetailPage() {
             )}
           </div>
         </div>
+      )}
+
+      {/* Attachment delete confirmation */}
+      {attachmentToDelete && createPortal(
+        <div
+          className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget && !deletingAttachment) setAttachmentToDelete(null) }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-sm bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-[#FEE2E2] flex items-center justify-center shrink-0">
+                <Trash2 size={18} className="text-[#DC2626]" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-[16px] font-semibold text-[#0F172A]">Delete this attachment?</h3>
+                <p className="text-sm text-[#475569] mt-1">
+                  <span className="font-medium text-[#0F172A] break-all">{attachmentToDelete.file_name}</span> will be permanently removed. This can’t be undone.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setAttachmentToDelete(null)}
+                disabled={deletingAttachment}
+                className="w-full sm:w-auto px-4 py-[9px] text-sm font-semibold text-[#475569] bg-white border border-[#CBD5E1] rounded-[8px] hover:bg-[#F8FAFC] disabled:opacity-60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemoveAttachment(attachmentToDelete)}
+                disabled={deletingAttachment}
+                className="w-full sm:w-auto px-4 py-[9px] text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:opacity-60 transition-colors"
+              >
+                {deletingAttachment ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       {/* Activity Log — popup opened from the top-right history icon */}

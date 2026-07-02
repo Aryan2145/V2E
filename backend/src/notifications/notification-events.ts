@@ -6,6 +6,8 @@ export const NOTIF_EVENTS = {
   tasks: [
     'task_assigned',
     'task_unassigned', // removed from a task's assignees/CC
+    'task_status_changed', // status moved (e.g. In Progress → Done) outside the Complete action
+    'task_attachment_added', // a file attached directly to the task (not via a comment)
     'task_completed',
     'task_reopened',
     'task_comment',

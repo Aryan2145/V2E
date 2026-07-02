@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { Calendar, User, GitBranch, MessageSquare, Paperclip, ChevronDown, Check } from 'lucide-react'
+import { Calendar, GitBranch, MessageSquare, Paperclip, ChevronDown, Check } from 'lucide-react'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from './AssigneeAvatars'
@@ -249,25 +249,21 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
         </div>
       </div>
 
-      {/* People — who assigned it, and the other assignees (everyone but you) */}
-      <div className="shrink-0 flex flex-col items-end gap-1 min-w-0">
+      {/* People — a single clean line: who assigned it (muted) + the assignee
+          avatars, or a "Self" tag when it's a task you assigned to yourself. */}
+      <div className="shrink-0 flex items-center gap-2 justify-end max-w-[240px]">
         {showAssigner && (
-          <div className="flex items-center gap-1.5 max-w-[180px]">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">By</span>
-            <span className="text-xs text-[#475569] truncate" title={`Assigned by ${assignerName}`}>{assignerName}</span>
-          </div>
+          <span className="text-[11px] text-[#94A3B8] truncate max-w-[120px]" title={`Assigned by ${assignerName}`}>
+            by {assignerName}
+          </span>
         )}
-        {otherPeople.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-[#94A3B8]">With</span>
-            <AssigneeAvatars people={otherPeople} max={3} size="sm" />
-          </div>
-        )}
-        {!showAssigner && otherPeople.length === 0 && (
-          <div className="w-7 h-7 rounded-full bg-[#F1F5F9] flex items-center justify-center" title="Just you">
-            <User size={13} className="text-[#94A3B8]" />
-          </div>
-        )}
+        {otherPeople.length > 0 ? (
+          <AssigneeAvatars people={otherPeople} max={3} size="sm" />
+        ) : !showAssigner ? (
+          <span className="inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">
+            Self
+          </span>
+        ) : null}
       </div>
 
       {/* Deadline */}

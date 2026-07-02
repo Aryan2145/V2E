@@ -1301,9 +1301,11 @@ export class TasksService {
       }
     }
 
+    let newStatusLabel: string | null = null;
     if (dto.status_id !== undefined && dto.status_id !== old.status_id) {
       const st = await this.prisma.taskStatus.findFirst({ where: { id: dto.status_id, organization_id: orgId } });
       if (!st) throw new BadRequestException(`Status ${dto.status_id} not found`);
+      newStatusLabel = st.label;
       changedFields.push({ field: 'status_id', from: old.status_id, to: dto.status_id });
       updateData.status_id = dto.status_id;
       // Keep completion stamps in sync with the phase change (completed | incomplete | open).
@@ -1332,6 +1334,25 @@ export class TasksService {
     if (changedFields.length > 0) {
       const action: TaskActionType = changedFields.some((f) => f.field === 'status_id') ? 'status_changed' : 'edited';
       await this.logActivity(orgId, taskId, userId, action, { changes: changedFields });
+    }
+
+    // A status move should ping everyone on the task (except whoever changed it).
+    if (newStatusLabel) {
+      const actorName = await this.notifications.userName(userId);
+      const recipients = [
+        old.created_by_user_id,
+        ...((old as any).assignees ?? []).map((a: any) => a.user_id),
+      ].filter((uid: string) => uid !== userId);
+      await this.notifications.emit({
+        orgId,
+        module: 'tasks',
+        event_type: 'task_status_changed',
+        recipients,
+        title: `Status updated on "${old.title}"`,
+        body: `${actorName} moved it to "${newStatusLabel}"`,
+        link: `/dashboard/tasks/${taskId}`,
+        entity: { type: 'task', id: taskId },
+      });
     }
 
     return updated;

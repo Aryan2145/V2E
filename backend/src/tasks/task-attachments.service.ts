@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 /** 25 MB cap, matching the product decision for document attachments. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -71,6 +72,7 @@ export class TaskAttachmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private async assertTask(orgId: string, taskId: string) {
@@ -134,6 +136,36 @@ export class TaskAttachmentsService {
         metadata: { attachment_id: attachment.id, file_name: f.originalname, comment_id: commentId ?? null },
       },
     });
+
+    // Files added straight to the task (not via a comment — comments notify on their
+    // own) should ping everyone on the task except the uploader.
+    if (!commentId) {
+      const task = await this.prisma.task.findUnique({
+        where: { id: taskId },
+        select: {
+          title: true,
+          created_by_user_id: true,
+          assignees: { select: { user_id: true } },
+        },
+      });
+      if (task) {
+        const uploaderName = await this.notifications.userName(userId);
+        const recipients = [
+          task.created_by_user_id,
+          ...task.assignees.map((a) => a.user_id),
+        ].filter((uid) => uid !== userId);
+        await this.notifications.emit({
+          orgId,
+          module: 'tasks',
+          event_type: 'task_attachment_added',
+          recipients,
+          title: `New attachment on "${task.title}"`,
+          body: `${uploaderName} attached "${f.originalname}"`,
+          link: `/dashboard/tasks/${taskId}`,
+          entity: { type: 'task', id: taskId },
+        });
+      }
+    }
 
     return this.enrich(attachment.id);
   }
