@@ -2,16 +2,19 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Plus, Trash2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { X, Plus, Trash2, Calendar, RotateCcw, CheckCircle2 } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import StyledSelect from '@/components/ui/StyledSelect'
 import FileDropzone, { AttachmentErrorBox } from '@/components/ui/FileDropzone'
 import { PendingFileList } from '@/components/ui/AttachmentList'
+import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
+import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate } from '@/lib/types/tasks'
+import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate, RecurringTemplate } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
@@ -36,6 +39,25 @@ interface ChecklistGroup {
   templateId?: string // set when source === 'template' (re-validated server-side)
   items: ChecklistEntry[]
   draft: string // the in-progress "add item" text for this group
+}
+
+// One-time = a single task with a fixed deadline. Recurring = a template that
+// auto-spawns instances on a schedule (reuses the existing recurring engine).
+type TaskMode = 'one_time' | 'recurring'
+
+function defaultScheduleEntry(): ScheduleEntryDraft {
+  return {
+    schedule_type: 'daily',
+    every: 1,
+    days: [],
+    month_days: [],
+    yearly_dates: [],
+    time: '09:00',
+    start_date: new Date().toISOString().slice(0, 10),
+    end_condition: 'never',
+    end_date: '',
+    end_after: 10,
+  }
 }
 
 interface CreateTaskModalProps {
@@ -71,7 +93,14 @@ export default function CreateTaskModal({
   statuses,
 }: CreateTaskModalProps) {
   const { user } = useAuth()
+  const router = useRouter()
   const orgId = user?.organizationId ?? ''
+
+  // One-time vs recurring. One-time is the default.
+  const [mode, setMode] = useState<TaskMode>('one_time')
+  const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryDraft[]>([defaultScheduleEntry()])
+  // Set once a recurring template is created — drives the success confirmation.
+  const [createdRecurring, setCreatedRecurring] = useState<RecurringTemplate | null>(null)
 
   // A brand-new task can't start in a terminal state — hide completed/incomplete
   // from the picker (and from default selection).
@@ -255,6 +284,9 @@ export default function CreateTaskModal({
     )
     setDeadlineDate('')
     setDeadlineTime('')
+    setMode('one_time')
+    setScheduleEntries([defaultScheduleEntry()])
+    setCreatedRecurring(null)
     setCompletionMode('any_can_complete')
     setProofRequired(false)
     setAssignees([])
@@ -279,6 +311,7 @@ export default function CreateTaskModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (mode === 'recurring') { await handleCreateRecurring(); return }
     if (!title.trim()) { setError('Title is required.'); return }
     if (assignees.filter((a) => !a.is_cc).length === 0) { setError('At least one assignee is required. CC-only tasks are not allowed.'); return }
     if (!deadlineDate) { setError('Deadline is required.'); return }
@@ -349,7 +382,121 @@ export default function CreateTaskModal({
     }
   }
 
+  // Recurring path — creates a template (reusing the existing recurring engine),
+  // uploads its attachments (which the scheduler copies into every spawned
+  // instance), then shows a confirmation pointing to the Recurring tab.
+  async function handleCreateRecurring() {
+    if (!title.trim()) { setError('Title is required.'); return }
+    if (assignees.filter((a) => !a.is_cc).length === 0) { setError('At least one assignee is required. CC-only tasks are not allowed.'); return }
+    for (const entry of scheduleEntries) {
+      if (entry.schedule_type === 'weekly' && entry.days.length === 0) {
+        setError('Select at least one day of the week for each weekly schedule.'); return
+      }
+      if (entry.schedule_type === 'monthly' && entry.month_days.length === 0) {
+        setError('Select at least one day of the month for each monthly schedule.'); return
+      }
+      if (entry.schedule_type === 'yearly' && entry.yearly_dates.length === 0) {
+        setError('Select at least one date for each yearly schedule.'); return
+      }
+      if (entry.end_condition === 'on_date' && !entry.end_date) {
+        setError('End date is required for schedules ending "On date".'); return
+      }
+    }
+    setSubmitting(true)
+    setError(null)
+    try {
+      const template = await tasksApi.createRecurring(orgId, {
+        title: title.trim(),
+        description: description.trim() || undefined,
+        category_id: categoryId || undefined,
+        priority_id: priorityId || undefined,
+        schedule_entries: scheduleEntries.map((en, idx) => ({
+          schedule_type: en.schedule_type,
+          every: en.every,
+          days: en.days,
+          month_days: en.month_days,
+          yearly_dates: en.yearly_dates,
+          time: en.time,
+          start_date: en.start_date,
+          end_condition: en.end_condition,
+          end_date: en.end_condition === 'on_date' ? en.end_date : undefined,
+          end_after: en.end_condition === 'after_n' ? en.end_after : undefined,
+          order_index: idx,
+        })),
+        completion_mode: completionMode,
+        proof_required: proofRequired,
+        assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
+        cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
+      })
+      // Upload the template's attachments — copied into every spawned instance.
+      if (attachmentFiles.length > 0) {
+        try {
+          for (const file of attachmentFiles) {
+            await tasksApi.uploadRecurringAttachment(orgId, template.id, file)
+          }
+        } catch {
+          setError('Recurring task created, but an attachment failed to upload. Open it in the Recurring tab to add it again.')
+          setCreatedRecurring(template)
+          return
+        }
+      }
+      setCreatedRecurring(template)
+    } catch {
+      setError('Failed to create recurring task. Please try again.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
   if (!isOpen || !mounted) return null
+
+  // ── Success confirmation (recurring only) ───────────────────────────────────
+  if (createdRecurring) {
+    return createPortal(
+      <div
+        className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+        onClick={(e) => { if (e.target === e.currentTarget) handleClose() }}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="relative w-full max-w-md bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] p-6">
+          <div className="flex flex-col items-center text-center">
+            <div className="w-14 h-14 rounded-full bg-[#DCFCE7] flex items-center justify-center mb-4">
+              <CheckCircle2 size={28} className="text-[#16A34A]" />
+            </div>
+            <h2 className="text-[20px] font-semibold text-[#0F172A]">Recurring task created</h2>
+            <p className="text-sm text-[#475569] mt-2">
+              <span className="font-medium text-[#0F172A]">“{createdRecurring.title}”</span> now lives in the{' '}
+              <span className="font-medium text-[#2563EB]">Recurring</span> tab under Work. New task instances will be
+              created automatically on schedule — with these attachments included each time.
+            </p>
+            {error && (
+              <div className="w-full mt-4 bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3 text-sm text-[#DC2626]">
+                {error}
+              </div>
+            )}
+            <div className="flex flex-col-reverse sm:flex-row gap-2 w-full mt-6">
+              <button
+                type="button"
+                onClick={() => { onCreated(); handleClose() }}
+                className="w-full sm:flex-1 px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                onClick={() => { onCreated(); handleClose(); router.push('/dashboard/tasks/recurring') }}
+                className="w-full sm:flex-1 px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] transition-colors"
+              >
+                Go to Recurring
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )
+  }
 
   return createPortal(
     <div
@@ -430,7 +577,42 @@ export default function CreateTaskModal({
             </div>
           </div>}
 
-          {/* Deadline */}
+          {/* Schedule mode — one-time (single deadline) vs recurring (auto-spawns) */}
+          <div>
+            <label className="block text-sm font-medium text-[#374151] mb-2">Schedule</label>
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-[10px] bg-[#F1F5F9] border border-[#E2E8F0]">
+              {([
+                { value: 'one_time' as TaskMode, label: 'One-time', icon: Calendar },
+                { value: 'recurring' as TaskMode, label: 'Recurring', icon: RotateCcw },
+              ]).map((opt) => {
+                const active = mode === opt.value
+                const Icon = opt.icon
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => { setMode(opt.value); setError(null) }}
+                    className={[
+                      'flex items-center justify-center gap-2 px-3 py-2 rounded-[8px] text-sm font-medium transition-colors',
+                      active ? 'bg-[#2563EB] text-white shadow-sm' : 'text-[#475569] hover:bg-white',
+                    ].join(' ')}
+                    aria-pressed={active}
+                  >
+                    <Icon size={15} />
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-[11px] text-[#475569] mt-1.5">
+              {mode === 'one_time'
+                ? 'A single task with a fixed deadline.'
+                : 'Auto-creates task instances on a schedule. Managed in the Recurring tab; attachments repeat on every instance.'}
+            </p>
+          </div>
+
+          {mode === 'one_time' ? (
+          /* Deadline */
           <div>
             <div className="flex items-center justify-between mb-2">
               <label className="text-sm font-medium text-[#374151]">Deadline <span className="text-[#DC2626]">*</span></label>
@@ -474,6 +656,15 @@ export default function CreateTaskModal({
             <HolidayWarningBadge check={holidayCheck} />
             {deadlineDate && <LeaveWarningBadge availability={leaveAvail} deadline={deadlineDate} today={todayStr} />}
           </div>
+          ) : (
+          /* Recurring schedule — reuses the recurring engine's schedule builder */
+          <div>
+            <label className="block text-sm font-medium text-[#374151] mb-2">
+              Recurrence <span className="text-[#DC2626]">*</span>
+            </label>
+            <ScheduleEntryList entries={scheduleEntries} onChange={setScheduleEntries} />
+          </div>
+          )}
 
           {/* Description */}
           <div>
@@ -556,8 +747,9 @@ export default function CreateTaskModal({
             </div>
           </div> */}
 
-          {/* Priority + Category + Status */}
-          <div className="grid grid-cols-3 gap-3">
+          {/* Priority + Category (+ Status for one-time; recurring instances get the
+              default status at spawn time, so it isn't set on the template) */}
+          <div className={mode === 'one_time' ? 'grid grid-cols-3 gap-3' : 'grid grid-cols-2 gap-3'}>
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
               <StyledSelect
@@ -582,15 +774,17 @@ export default function CreateTaskModal({
                 ]}
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Status</label>
-              <StyledSelect
-                value={statusId}
-                onChange={setStatusId}
-                placeholder="Select status"
-                options={selectableStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
-              />
-            </div>
+            {mode === 'one_time' && (
+              <div>
+                <label className="block text-sm font-medium text-[#374151] mb-1.5">Status</label>
+                <StyledSelect
+                  value={statusId}
+                  onChange={setStatusId}
+                  placeholder="Select status"
+                  options={selectableStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                />
+              </div>
+            )}
           </div>
 
           {/* Proof required */}
@@ -615,7 +809,9 @@ export default function CreateTaskModal({
             <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
           </div>
 
-          {/* Checklist — optional, and you can attach more than one */}
+          {/* Checklist — optional, and you can attach more than one.
+              One-time only: recurring templates don't carry checklists. */}
+          {mode === 'one_time' && (
           <div>
             {/* Empty state: still a card — heading in the header, choices in the body.
                 overflow-visible so the template dropdown can open upward past the card. */}
@@ -759,6 +955,7 @@ export default function CreateTaskModal({
               </div>
             )}
           </div>
+          )}
         </form>
 
         {/* Footer — no Cancel button; the header X closes the modal (see DESIGN_RULES) */}
@@ -766,10 +963,10 @@ export default function CreateTaskModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || (holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day)}
+            disabled={submitting || (mode === 'one_time' && holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day)}
             className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
           >
-            {submitting ? 'Creating...' : 'Create Task'}
+            {submitting ? 'Creating...' : mode === 'recurring' ? 'Create Recurring Task' : 'Create Task'}
           </button>
         </div>
       </div>

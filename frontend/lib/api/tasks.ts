@@ -404,6 +404,39 @@ export const tasksApi = {
     return unwrap<RecurringTemplate>(res)
   },
 
+  // Upload a document to a recurring template — copied into every spawned instance.
+  uploadRecurringAttachment: async (
+    orgId: string,
+    templateId: string,
+    file: File,
+    onProgress?: (pct: number) => void,
+  ): Promise<TaskAttachment> => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await apiClient.post(`${base(orgId)}/recurring/${templateId}/attachments`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
+    })
+    return unwrap<TaskAttachment>(res)
+  },
+
+  listRecurringAttachments: async (orgId: string, templateId: string): Promise<TaskAttachment[]> => {
+    const res = await apiClient.get(`${base(orgId)}/recurring/${templateId}/attachments`)
+    return unwrap<TaskAttachment[]>(res)
+  },
+
+  downloadRecurringAttachment: async (orgId: string, templateId: string, attachmentId: string): Promise<void> => {
+    const res = await apiClient.get(`${base(orgId)}/recurring/${templateId}/attachments/${attachmentId}/download`)
+    const { url } = unwrap<{ url: string; file_name: string }>(res)
+    if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener')
+  },
+
+  deleteRecurringAttachment: async (orgId: string, templateId: string, attachmentId: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/recurring/${templateId}/attachments/${attachmentId}`)
+  },
+
   updateRecurring: async (orgId: string, id: string, dto: Partial<{
     title: string
     description: string

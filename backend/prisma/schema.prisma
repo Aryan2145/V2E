@@ -1310,8 +1310,32 @@ model RecurringTemplate {
   updated_at             DateTime @updatedAt
 
   schedule_entries RecurringScheduleEntry[]
+  attachments      RecurringTemplateAttachment[]
 
   @@map("recurring_templates")
+}
+
+// Attachments defined once on a recurring template. On each spawn the scheduler
+// copies these into the child task as normal TaskAttachment rows (a fresh R2
+// object per child), so every generated instance carries the same documents.
+model RecurringTemplateAttachment {
+  id                    String    @id @default(uuid())
+  organization_id       String
+  recurring_template_id String
+  file_name             String
+  mime_type             String
+  size_bytes            Int
+  storage_key           String // master object key within the R2 bucket
+  uploaded_by_user_id   String
+  is_deleted            Boolean   @default(false)
+  deleted_at            DateTime?
+  created_at            DateTime  @default(now())
+
+  template RecurringTemplate @relation(fields: [recurring_template_id], references: [id], onDelete: Cascade)
+
+  @@index([recurring_template_id])
+  @@index([organization_id])
+  @@map("recurring_template_attachments")
 }
 
 model RecurringScheduleEntry {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
@@ -5,6 +6,8 @@ import { HolidaysService } from '../holidays/holidays.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditWriterService } from '../audit/audit-writer.service';
 import { LeaveService } from '../leave/leave.service';
+import { R2Service } from '../storage/r2.service';
+import { extensionOf } from '../tasks/task-attachments.service';
 import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
 import { isTerminal, TERMINAL_TYPES } from '../tasks/status-phase';
 
@@ -18,7 +21,49 @@ export class SchedulerService {
     private readonly notifications: NotificationsService,
     private readonly auditWriter: AuditWriterService,
     private readonly leave: LeaveService,
+    private readonly r2: R2Service,
   ) {}
+
+  /**
+   * Copy every (non-deleted) attachment from a recurring template into a freshly
+   * spawned child task. Each copy is an independent R2 object + TaskAttachment row,
+   * so the child behaves exactly like a manually-attached task (its own download,
+   * per-instance delete). Best-effort: a copy failure is logged and skipped so it
+   * never aborts the spawn.
+   */
+  private async copyTemplateAttachmentsToTask(
+    template: { id: string; organization_id: string; created_by_user_id: string },
+    taskId: string,
+  ): Promise<void> {
+    const masters = await this.prisma.recurringTemplateAttachment.findMany({
+      where: { recurring_template_id: template.id, organization_id: template.organization_id, is_deleted: false },
+    });
+    if (masters.length === 0) return;
+    if (!this.r2.isConfigured) {
+      this.logger.warn(`Skipping ${masters.length} template attachment copies for task ${taskId}: R2 not configured`);
+      return;
+    }
+
+    for (const master of masters) {
+      try {
+        const destKey = `org/${template.organization_id}/tasks/${taskId}/${randomUUID()}.${extensionOf(master.file_name)}`;
+        await this.r2.copyObject(master.storage_key, destKey);
+        await this.prisma.taskAttachment.create({
+          data: {
+            organization_id: template.organization_id,
+            task_id: taskId,
+            file_name: master.file_name,
+            mime_type: master.mime_type,
+            size_bytes: master.size_bytes,
+            storage_key: destKey,
+            uploaded_by_user_id: master.uploaded_by_user_id,
+          },
+        });
+      } catch (err) {
+        this.logger.error(`Failed to copy template attachment ${master.id} to task ${taskId}: ${err}`);
+      }
+    }
+  }
 
   // ─── Recurring Task Spawn Engine ──────────────────────────────────────────────
 
@@ -243,6 +288,9 @@ export class SchedulerService {
           skipDuplicates: true,
         });
       }
+
+      // Carry the template's attachments into this instance (best-effort).
+      await this.copyTemplateAttachmentsToTask(template, task.id);
 
       const newCount = entry.occurrence_count + 1;
       await this.prisma.recurringScheduleEntry.update({

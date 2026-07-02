@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
@@ -67,6 +68,22 @@ export class R2Service {
     } catch (err) {
       this.logger.error(`R2 putObject failed for ${key}: ${(err as Error).message}`);
       throw new InternalServerErrorException('Failed to upload file to storage.');
+    }
+  }
+
+  /** Server-side copy of an existing object to a new key (no bytes leave R2). */
+  async copyObject(srcKey: string, destKey: string): Promise<void> {
+    try {
+      await this.getClient().send(
+        new CopyObjectCommand({
+          Bucket: this.bucket,
+          CopySource: `${this.bucket}/${encodeURIComponent(srcKey)}`,
+          Key: destKey,
+        }),
+      );
+    } catch (err) {
+      this.logger.error(`R2 copyObject failed ${srcKey} → ${destKey}: ${(err as Error).message}`);
+      throw new InternalServerErrorException('Failed to copy file in storage.');
     }
   }
 

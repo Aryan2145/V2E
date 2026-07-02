@@ -16,7 +16,7 @@ export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
  * by lowercase extension. We validate on extension
  * (reliable across browsers) and keep the browser-provided MIME for display/download.
  */
-const ALLOWED_EXTENSIONS = new Set([
+export const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
   'pdf',
   'doc',
   'docx',
@@ -45,31 +45,33 @@ export interface UploadedFile {
   buffer: Buffer;
 }
 
+/** Lowercase file extension (no dot), or '' when none. */
+export function extensionOf(name: string): string {
+  const dot = name.lastIndexOf('.');
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+}
+
+/** Shared size/type validation for document attachments (tasks + recurring templates). */
+export function validateAttachmentFile(file: UploadedFile | undefined): void {
+  if (!file) throw new BadRequestException('No file was provided.');
+  if (file.size <= 0) throw new BadRequestException('File is empty.');
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new BadRequestException('File exceeds the 25 MB limit.');
+  }
+  const ext = extensionOf(file.originalname);
+  if (!ALLOWED_ATTACHMENT_EXTENSIONS.has(ext)) {
+    throw new BadRequestException(
+      `File type ".${ext || 'unknown'}" is not allowed. Allowed: ${Array.from(ALLOWED_ATTACHMENT_EXTENSIONS).join(', ')}.`,
+    );
+  }
+}
+
 @Injectable()
 export class TaskAttachmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
   ) {}
-
-  private extensionOf(name: string): string {
-    const dot = name.lastIndexOf('.');
-    return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
-  }
-
-  private validate(file: UploadedFile | undefined): void {
-    if (!file) throw new BadRequestException('No file was provided.');
-    if (file.size <= 0) throw new BadRequestException('File is empty.');
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      throw new BadRequestException('File exceeds the 25 MB limit.');
-    }
-    const ext = this.extensionOf(file.originalname);
-    if (!ALLOWED_EXTENSIONS.has(ext)) {
-      throw new BadRequestException(
-        `File type ".${ext || 'unknown'}" is not allowed. Allowed: ${Array.from(ALLOWED_EXTENSIONS).join(', ')}.`,
-      );
-    }
-  }
 
   private async assertTask(orgId: string, taskId: string) {
     const task = await this.prisma.task.findFirst({
@@ -87,7 +89,7 @@ export class TaskAttachmentsService {
     file: UploadedFile | undefined,
     commentId?: string,
   ) {
-    this.validate(file);
+    validateAttachmentFile(file);
     await this.assertTask(orgId, taskId);
 
     if (commentId) {
@@ -99,7 +101,7 @@ export class TaskAttachmentsService {
     }
 
     const f = file as UploadedFile;
-    const key = `org/${orgId}/tasks/${taskId}/${randomUUID()}.${this.extensionOf(f.originalname)}`;
+    const key = `org/${orgId}/tasks/${taskId}/${randomUUID()}.${extensionOf(f.originalname)}`;
     await this.r2.putObject(key, f.buffer, f.mimetype || 'application/octet-stream');
 
     // The object is now in R2 but not yet tracked in the DB. If the row insert

@@ -9,16 +9,21 @@ import {
   Query,
   Request,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { RecurringTasksService } from './recurring-tasks.service';
+import { RecurringAttachmentsService } from './recurring-attachments.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { ClockService } from '../clock/clock.service';
 import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
 import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
+import { MAX_ATTACHMENT_BYTES, type UploadedFile as UploadedFileType } from '../tasks/task-attachments.service';
 
 @ApiTags('recurring-tasks')
 @ApiBearerAuth()
@@ -27,6 +32,7 @@ import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
 export class RecurringTasksController {
   constructor(
     private readonly service: RecurringTasksService,
+    private readonly attachments: RecurringAttachmentsService,
     private readonly scheduler: SchedulerService,
     private readonly clock: ClockService,
   ) {}
@@ -96,6 +102,48 @@ export class RecurringTasksController {
   @ApiOperation({ summary: 'Get completion stats for a recurring template' })
   getStats(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.getStats(orgId, id);
+  }
+
+  // ─── Attachments (carried into every spawned instance) ───────────────────────
+
+  @Post(':id/attachments')
+  @ApiOperation({ summary: 'Upload a document attachment to a recurring template' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadAttachment(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @UploadedFile() file: UploadedFileType,
+  ) {
+    return this.attachments.upload(orgId, req.user.id, id, file);
+  }
+
+  @Get(':id/attachments')
+  @ApiOperation({ summary: 'List attachments on a recurring template' })
+  listAttachments(@Param('orgId') orgId: string, @Param('id') id: string) {
+    return this.attachments.listForTemplate(orgId, id);
+  }
+
+  @Get(':id/attachments/:attachmentId/download')
+  @ApiOperation({ summary: 'Get a short-lived signed download URL for a template attachment' })
+  downloadAttachment(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.attachments.getDownloadUrl(orgId, id, attachmentId);
+  }
+
+  @Delete(':id/attachments/:attachmentId')
+  @ApiOperation({ summary: 'Remove a template attachment (uploader only)' })
+  removeAttachment(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    return this.attachments.remove(orgId, req.user.id, id, attachmentId);
   }
 
   // ─── Schedule Entries ───────────────────────────────────────────────────────
