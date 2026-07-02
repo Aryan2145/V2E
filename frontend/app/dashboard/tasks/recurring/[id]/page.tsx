@@ -337,6 +337,7 @@ export default function RecurringDetailPage() {
                   priorities={priorities}
                   statuses={statuses}
                   categories={categories}
+                  currentUserId={user?.id}
                 />
               ))}
             </div>

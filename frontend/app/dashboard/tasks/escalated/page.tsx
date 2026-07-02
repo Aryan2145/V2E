@@ -99,6 +99,7 @@ export default function EscalatedPage() {
               priorities={priorities}
               statuses={statuses}
               categories={categories}
+              currentUserId={user?.id}
             />
           ))}
         </div>

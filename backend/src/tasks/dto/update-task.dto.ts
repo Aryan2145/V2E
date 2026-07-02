@@ -5,12 +5,14 @@ import {
   IsEnum,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 import { CompletionMode, TaskQuadrant, TaskType } from '@prisma/client';
 
 export class UpdateTaskDto {
   @IsOptional()
   @IsString()
+  @MaxLength(50)
   title?: string;
 
   @IsOptional()

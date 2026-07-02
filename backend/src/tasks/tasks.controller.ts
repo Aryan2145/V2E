@@ -311,8 +311,8 @@ export class TasksController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Get task by ID' })
-  getOne(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.getTask(orgId, id);
+  getOne(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.getTask(orgId, id, principalFromUser(req.user));
   }
 
   @Patch(':id')
@@ -366,16 +366,16 @@ export class TasksController {
 
   @Get(':id/logs')
   @ApiOperation({ summary: 'Get task activity log' })
-  getLogs(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.getActivityLog(orgId, id);
+  getLogs(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.getActivityLog(orgId, id, principalFromUser(req.user));
   }
 
   // ─── Comments ────────────────────────────────────────────────────────────────
 
   @Get(':id/comments')
   @ApiOperation({ summary: 'Get task comments' })
-  getComments(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.getComments(orgId, id);
+  getComments(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.getComments(orgId, id, principalFromUser(req.user));
   }
 
   @Post(':id/comments')
@@ -430,17 +430,27 @@ export class TasksController {
 
   @Get(':id/attachments')
   @ApiOperation({ summary: 'List task-level attachments' })
-  listAttachments(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async listAttachments(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
     return this.attachments.listForTask(orgId, id);
+  }
+
+  @Get(':id/attachments/all')
+  @ApiOperation({ summary: 'List every attachment on the task (task-level + comment files)' })
+  async listAllAttachments(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.attachments.listAllForTask(orgId, id);
   }
 
   @Get(':id/attachments/:attachmentId/download')
   @ApiOperation({ summary: 'Get a short-lived signed download URL for an attachment' })
-  downloadAttachment(
+  async downloadAttachment(
     @Param('orgId') orgId: string,
     @Param('id') id: string,
     @Param('attachmentId') attachmentId: string,
+    @Request() req: any,
   ) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
     return this.attachments.getDownloadUrl(orgId, id, attachmentId);
   }
 

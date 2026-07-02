@@ -8,6 +8,7 @@ import {
   CompletionMode,
   CompletionTiming,
   DataScope,
+  PermissionAction,
   TaskActionType,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,6 +29,7 @@ import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
 import { TERMINAL_TYPES, isSuccessful, isTerminal } from './status-phase';
+import { resolveRemindAt, expandReminderRows } from '../common/reminders/reminder-spec';
 import { ancestorChain, descendantIds } from '../holidays/dept-tree.util';
 import { TasksAnalyticsService } from './tasks-analytics.service';
 
@@ -39,6 +41,14 @@ const TASK_INCLUDE = {
   checklist: { orderBy: { order_index: 'asc' as const } },
   escalations: true,
   reminders: true,
+  // Glanceable counts for the task list — comments ("chats") and attachments,
+  // filtered to exclude soft-deleted rows. Flows to every list/detail query.
+  _count: {
+    select: {
+      comments: { where: { is_deleted: false } },
+      attachments: { where: { is_deleted: false } },
+    },
+  },
 };
 
 /** Shared filter shape for list / paged / dashboard task queries. */
@@ -120,6 +130,49 @@ export class TasksService {
     if (!allowed) {
       throw new ForbiddenException(`Your role is not permitted to perform this action`);
     }
+  }
+
+  /**
+   * A task is a private record. Given its participants, allow a viewer only if they
+   * are directly on it (creator, assignee, or CC) OR the task falls within their read
+   * scope (team / department / org) over one of its core participants. Fails closed —
+   * knowing a task's id must never be enough to read it or its comments/attachments.
+   */
+  private async assertParticipantView(
+    orgId: string,
+    principal: Principal,
+    createdByUserId: string,
+    assignees: { user_id: string; is_cc: boolean }[],
+  ): Promise<void> {
+    const onTask =
+      createdByUserId === principal.userId ||
+      assignees.some((a) => a.user_id === principal.userId);
+    if (onTask) return;
+    const coreParticipants = [
+      createdByUserId,
+      ...assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
+    ];
+    await this.scope.assertCanActOn(
+      orgId,
+      principal,
+      TasksService.TASK_LEAF,
+      PermissionAction.read,
+      coreParticipants,
+    );
+  }
+
+  /**
+   * Guard for a task's sub-resources (comments, logs, attachments). External callers
+   * pass their principal; internal callers pass none (already authorized upstream).
+   */
+  async assertCanViewTask(orgId: string, principal: Principal | undefined, taskId: string): Promise<void> {
+    if (!principal) return;
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, organization_id: orgId, is_deleted: false },
+      select: { created_by_user_id: true, assignees: { select: { user_id: true, is_cc: true } } },
+    });
+    if (!task) throw new NotFoundException(`Task ${taskId} not found`);
+    await this.assertParticipantView(orgId, principal, task.created_by_user_id, task.assignees);
   }
 
   private async getOrgConfig(orgId: string) {
@@ -349,8 +402,20 @@ export class TasksService {
       });
     }
 
-    // Create default reminder based on deadline and config
-    if (task.deadline) {
+    // Reminders. When the creator supplies `reminders` (even an empty array), those
+    // are authoritative; otherwise fall back to the single admin-default reminder.
+    if (dto.reminders !== undefined) {
+      const remindNow = await this.clock.now(orgId);
+      const rows = dto.reminders.flatMap((spec) => {
+        const at = resolveRemindAt(spec, task.deadline, remindNow);
+        if (!at) return []; // past reminders are dropped by resolveRemindAt
+        // Never schedule a (non-yearly) reminder after the deadline.
+        if (!spec.yearly && task.deadline && at > task.deadline) return [];
+        return expandReminderRows(spec, at).map((r) => ({ organization_id: orgId, task_id: task.id, ...r }));
+      });
+      if (rows.length > 0) await this.prisma.taskReminder.createMany({ data: rows });
+    } else if (task.deadline) {
+      // Legacy default: one assignee reminder `default_reminder_days_before` before the deadline.
       const remindAt = new Date(task.deadline);
       remindAt.setDate(remindAt.getDate() - config.default_reminder_days_before);
       if (remindAt > new Date()) {
@@ -993,7 +1058,7 @@ export class TasksService {
       include: TASK_INCLUDE,
       orderBy: { created_at: 'desc' },
     });
-    return this.enrichTaskList(tasks);
+    return this.enrichTaskList(tasks, userId);
   }
 
   async getMyCCTasks(orgId: string, userId: string) {
@@ -1006,7 +1071,7 @@ export class TasksService {
       include: TASK_INCLUDE,
       orderBy: { created_at: 'desc' },
     });
-    return this.enrichTaskList(tasks);
+    return this.enrichTaskList(tasks, userId);
   }
 
   async getTasksAssignedByMe(orgId: string, userId: string) {
@@ -1015,7 +1080,7 @@ export class TasksService {
       include: TASK_INCLUDE,
       orderBy: { created_at: 'desc' },
     });
-    return this.enrichTaskList(tasks);
+    return this.enrichTaskList(tasks, userId);
   }
 
   async getEscalatedTasks(orgId: string, userId: string) {
@@ -1031,10 +1096,41 @@ export class TasksService {
       include: TASK_INCLUDE,
       orderBy: { created_at: 'desc' },
     });
-    return this.enrichTaskList(tasks);
+    return this.enrichTaskList(tasks, userId);
   }
 
-  private async enrichTaskList(tasks: any[]) {
+  /**
+   * Compute, per task, how many comments the viewer hasn't seen yet: comments
+   * created after the viewer last opened the task (or ever, if never opened),
+   * excluding the viewer's own comments and soft-deleted ones. Returns a map of
+   * task_id → unread count. No-op (empty map) when there's no viewer.
+   */
+  private async computeUnreadComments(viewerId: string, taskIds: string[]): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (!viewerId || taskIds.length === 0) return result;
+    const [views, comments] = await Promise.all([
+      this.prisma.taskView.findMany({
+        where: { user_id: viewerId, task_id: { in: taskIds } },
+        select: { task_id: true, last_viewed_at: true },
+      }),
+      // Only other people's live comments matter for "unread". Bounded to the
+      // viewer's visible task list, so pulling timestamps is cheap.
+      this.prisma.taskComment.findMany({
+        where: { task_id: { in: taskIds }, is_deleted: false, user_id: { not: viewerId } },
+        select: { task_id: true, created_at: true },
+      }),
+    ]);
+    const lastViewed = new Map(views.map((v) => [v.task_id, v.last_viewed_at.getTime()]));
+    for (const c of comments) {
+      const seenAt = lastViewed.get(c.task_id) ?? 0; // never opened → everything is unread
+      if (c.created_at.getTime() > seenAt) {
+        result.set(c.task_id, (result.get(c.task_id) ?? 0) + 1);
+      }
+    }
+    return result;
+  }
+
+  private async enrichTaskList(tasks: any[], viewerId?: string) {
     const allUserIds = new Set<string>();
     const allOrgIds = new Set<string>();
     for (const task of tasks) {
@@ -1043,6 +1139,9 @@ export class TasksService {
       for (const a of task.assignees ?? []) allUserIds.add(a.user_id);
     }
     const userIds = Array.from(allUserIds);
+    const unreadMap = viewerId
+      ? await this.computeUnreadComments(viewerId, tasks.map((t) => t.id))
+      : new Map<string, number>();
     // Profiles are per-org, so key them by org+user (collective view spans orgs).
     const [users, profiles] = await Promise.all([
       this.prisma.user.findMany({
@@ -1065,6 +1164,7 @@ export class TasksService {
     return tasks.map((task) => ({
       ...task,
       created_by: userMap.get(task.created_by_user_id) ?? null,
+      unread_comments: unreadMap.get(task.id) ?? 0,
       assignees: (task.assignees ?? []).map((a: any) => {
         const u = userMap.get(a.user_id);
         const p = profileMap.get(`${task.organization_id}:${a.user_id}`);
@@ -1096,7 +1196,7 @@ export class TasksService {
 
   // ─── Get Single Task ──────────────────────────────────────────────────────────
 
-  async getTask(orgId: string, taskId: string) {
+  async getTask(orgId: string, taskId: string, principal?: Principal) {
     const task = await this.prisma.task.findFirst({
       where: { id: taskId, organization_id: orgId, is_deleted: false },
       include: {
@@ -1110,6 +1210,19 @@ export class TasksService {
       },
     });
     if (!task) throw new NotFoundException(`Task ${taskId} not found`);
+
+    // Authorization (external callers only — internal post-mutation reads pass no
+    // principal). Reuses the already-fetched participants to avoid a second query.
+    if (principal) {
+      await this.assertParticipantView(orgId, principal, task.created_by_user_id, task.assignees);
+
+      // Opening the task marks it read for this user — clears its unread-comment badge.
+      await this.prisma.taskView.upsert({
+        where: { task_id_user_id: { task_id: taskId, user_id: principal.userId } },
+        create: { organization_id: orgId, task_id: taskId, user_id: principal.userId, last_viewed_at: new Date() },
+        update: { last_viewed_at: new Date() },
+      });
+    }
 
     const allUserIds = new Set<string>();
     allUserIds.add(task.created_by_user_id);
@@ -1492,8 +1605,9 @@ export class TasksService {
 
   // ─── Activity Logs ────────────────────────────────────────────────────────────
 
-  async getActivityLog(orgId: string, taskId: string) {
+  async getActivityLog(orgId: string, taskId: string, principal?: Principal) {
     await this.findTaskOrFail(orgId, taskId);
+    await this.assertCanViewTask(orgId, principal, taskId);
     const logs = await this.prisma.taskActivityLog.findMany({
       where: { task_id: taskId, organization_id: orgId },
       orderBy: { created_at: 'desc' },
@@ -1510,8 +1624,9 @@ export class TasksService {
 
   // ─── Comments ────────────────────────────────────────────────────────────────
 
-  async getComments(orgId: string, taskId: string) {
+  async getComments(orgId: string, taskId: string, principal?: Principal) {
     await this.findTaskOrFail(orgId, taskId);
+    await this.assertCanViewTask(orgId, principal, taskId);
     const attachmentSelect = {
       where: { is_deleted: false },
       select: { id: true, file_name: true, mime_type: true, size_bytes: true, created_at: true },
@@ -1629,6 +1744,11 @@ export class TasksService {
 
   async addAssignee(orgId: string, userId: string, taskId: string, dto: AddAssigneeDto) {
     const task = await this.findTaskOrFail(orgId, taskId);
+    // Only the creator (or someone with edit permission) may change who a task is
+    // assigned to — a plain assignee can't reassign the work.
+    if (task.created_by_user_id !== userId) {
+      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
+    }
     // A real assignee (not a CC) must be eligible to be assigned a task. Fail loud.
     if (!dto.is_cc) {
       await this.subjects.assertEligible(orgId, TasksService.TASK_SUBJECT, dto.user_id);
@@ -1662,15 +1782,46 @@ export class TasksService {
   }
 
   async removeAssignee(orgId: string, userId: string, taskId: string, assigneeUserId: string) {
-    await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId);
+    // Only the creator (or someone with edit permission) may change assignees.
+    if (task.created_by_user_id !== userId) {
+      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
+    }
     const existing = await this.prisma.taskAssignee.findUnique({
       where: { task_id_user_id: { task_id: taskId, user_id: assigneeUserId } },
     });
     if (!existing) throw new NotFoundException(`Assignee ${assigneeUserId} not found on task`);
+    // A task must always have at least one real assignee (someone to do the work).
+    // Removing the last primary — leaving only CCs — is not allowed.
+    if (!existing.is_cc) {
+      const primaryCount = await this.prisma.taskAssignee.count({
+        where: { task_id: taskId, is_cc: false },
+      });
+      if (primaryCount <= 1) {
+        throw new BadRequestException(
+          'A task must have at least one assignee. Add another assignee before removing this one.',
+        );
+      }
+    }
     await this.prisma.taskAssignee.delete({
       where: { task_id_user_id: { task_id: taskId, user_id: assigneeUserId } },
     });
     await this.logActivity(orgId, taskId, userId, 'reassigned', { removed_user_id: assigneeUserId });
+
+    // Let the removed person know — politely — that they're no longer on the task.
+    if (assigneeUserId !== userId) {
+      const removerName = await this.notifications.userName(userId);
+      await this.notifications.emit({
+        orgId,
+        module: 'tasks',
+        event_type: 'task_unassigned',
+        recipients: [assigneeUserId],
+        title: 'You have been removed from a task',
+        body: `${removerName} has removed you from "${task.title}". You are no longer responsible for this task. Thank you for your contribution.`,
+        link: `/dashboard/tasks/${taskId}`,
+        entity: { type: 'task', id: taskId },
+      });
+    }
     return { message: 'Assignee removed' };
   }
 

@@ -5,6 +5,7 @@
 export const NOTIF_EVENTS = {
   tasks: [
     'task_assigned',
+    'task_unassigned', // removed from a task's assignees/CC
     'task_completed',
     'task_reopened',
     'task_comment',

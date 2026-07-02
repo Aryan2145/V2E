@@ -97,6 +97,7 @@ export default function CCTasksPage() {
               priorities={priorities}
               statuses={statuses}
               categories={categories}
+              currentUserId={user?.id}
             />
           ))}
         </div>

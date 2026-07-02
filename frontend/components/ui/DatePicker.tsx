@@ -16,6 +16,8 @@ interface DatePickerProps {
   markedDates?: string[]
   /** Tooltip shown on marked days. */
   markedHint?: string
+  /** Tighter vertical padding + smaller font for dense inline rows. */
+  compact?: boolean
 }
 
 const MONTHS = [
@@ -66,6 +68,7 @@ export default function DatePicker({
   id,
   markedDates,
   markedHint,
+  compact = false,
 }: DatePickerProps) {
   const [open, setOpen] = useState(false)
   const markedSet = useMemo(() => new Set(markedDates ?? []), [markedDates])
@@ -126,7 +129,9 @@ export default function DatePicker({
   // Year grid range (12 years around the view year)
   const yearBase = view.getFullYear() - (view.getFullYear() % 12)
 
-  const triggerCls = `w-full flex items-center gap-0 rounded-[8px] border bg-[#F8FAFC] text-left text-[15px] transition-colors ${
+  const vpad = compact ? 'py-1.5' : 'py-2.5'
+  const fsize = compact ? 'text-[13px]' : 'text-[15px]'
+  const triggerCls = `w-full flex items-center gap-0 rounded-[8px] border bg-[#F8FAFC] text-left ${fsize} transition-colors ${
     disabled
       ? 'border-[#E2E8F0] cursor-not-allowed opacity-70'
       : 'border-[#CBD5E1] cursor-pointer hover:bg-white hover:border-[#94A3B8]'
@@ -141,10 +146,10 @@ export default function DatePicker({
         onClick={() => setOpen((o) => !o)}
         className={triggerCls}
       >
-        <span className="flex items-center px-2.5 py-2.5 border-r border-[#E2E8F0] rounded-l-[8px] text-[#64748B]">
+        <span className={`flex items-center px-2.5 ${vpad} border-r border-[#E2E8F0] rounded-l-[8px] text-[#64748B]`}>
           <Calendar size={15} />
         </span>
-        <span className={`flex-1 px-3 py-2.5 truncate ${selected ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
+        <span className={`flex-1 px-3 ${vpad} truncate ${selected ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
           {selected ? formatDisplay(value) : placeholder}
         </span>
         {selected && !disabled && (

@@ -148,6 +148,20 @@ export class TaskAttachmentsService {
     return this.attachUploaderNames(rows);
   }
 
+  /**
+   * Every attachment on the task — those added at creation time / on the task itself
+   * AND those shared inside comments — newest first. Each row keeps its `comment_id`
+   * so the UI can show where it came from, plus the uploader's name.
+   */
+  async listAllForTask(orgId: string, taskId: string) {
+    await this.assertTask(orgId, taskId);
+    const rows = await this.prisma.taskAttachment.findMany({
+      where: { organization_id: orgId, task_id: taskId, is_deleted: false },
+      orderBy: { created_at: 'desc' },
+    });
+    return this.attachUploaderNames(rows);
+  }
+
   /** A short-lived signed URL that streams the file with its original name. */
   async getDownloadUrl(orgId: string, taskId: string, attachmentId: string) {
     const att = await this.prisma.taskAttachment.findFirst({

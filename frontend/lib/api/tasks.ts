@@ -28,6 +28,7 @@ import type {
   PeopleTree,
   EmployeeReport,
   BulkAction,
+  ReminderSpec,
 } from '@/lib/types/tasks'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/tasks`
@@ -258,6 +259,7 @@ export const tasksApi = {
     checklist_items?: { title: string; order_index: number; group_title?: string }[]
     checklist_template_id?: string
     checklist_template_ids?: string[]
+    reminders?: ReminderSpec[]
     goal_id?: string
   }): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}`, dto)
@@ -316,6 +318,12 @@ export const tasksApi = {
 
   listAttachments: async (orgId: string, taskId: string): Promise<TaskAttachment[]> => {
     const res = await apiClient.get(`${base(orgId)}/${taskId}/attachments`)
+    return unwrap<TaskAttachment[]>(res)
+  },
+
+  // Every attachment on the task — task-level + files shared in comments.
+  listAllAttachments: async (orgId: string, taskId: string): Promise<TaskAttachment[]> => {
+    const res = await apiClient.get(`${base(orgId)}/${taskId}/attachments/all`)
     return unwrap<TaskAttachment[]>(res)
   },
 
@@ -399,6 +407,7 @@ export const tasksApi = {
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
     checklist_items?: { title: string; order_index: number; group_title?: string }[]
+    reminders?: ReminderSpec[]
     department_id?: string
   }): Promise<RecurringTemplate> => {
     const res = await apiClient.post(`${base(orgId)}/recurring`, dto)

@@ -2,6 +2,23 @@ export type TaskQuadrant = 'Q1' | 'Q2' | 'Q3' | 'Q4'
 export type TaskType = 'one_time' | 'recurring'
 export type CompletionMode = 'all_must_complete' | 'any_can_complete'
 
+// Who a reminder notifies (mirrors backend ReminderType).
+export type ReminderRecipient = 'assignee' | 'assigner' | 'cc'
+
+// A creator-set reminder sent with createTask/createRecurring.
+// - relative: fires `offset_days` before the deadline at `time` (HH:mm). For a
+//   one-time task the client precomputes `remind_at`; for a recurring template it
+//   is omitted so each spawned instance recomputes it against its own deadline.
+// - absolute: fires at the precomputed instant `remind_at`; `yearly` re-arms it.
+export interface ReminderSpec {
+  kind: 'relative' | 'absolute'
+  offset_days?: number
+  time?: string
+  remind_at?: string
+  yearly?: boolean
+  recipients: ReminderRecipient[]
+}
+
 export interface TaskMasterConfig {
   id: string
   organization_id: string
@@ -115,7 +132,9 @@ export interface Task {
   checklist?: TaskChecklistItem[]
   /** The user who created/assigned the task (resolved server-side). */
   created_by?: { id: string; name: string; email?: string } | null
-  _count?: { assignees: number; checklist: number; comments: number }
+  _count?: { comments: number; attachments: number }
+  /** Comments the current viewer hasn't seen since last opening the task. */
+  unread_comments?: number
 }
 
 export interface TaskComment {

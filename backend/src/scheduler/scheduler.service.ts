@@ -9,6 +9,7 @@ import { LeaveService } from '../leave/leave.service';
 import { R2Service } from '../storage/r2.service';
 import { extensionOf } from '../tasks/task-attachments.service';
 import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
+import { resolveRemindAt, expandReminderRows, type ReminderSpec } from '../common/reminders/reminder-spec';
 import { isTerminal, TERMINAL_TYPES } from '../tasks/status-phase';
 
 @Injectable()
@@ -308,6 +309,21 @@ export class SchedulerService {
         });
       }
 
+      // Recreate the template's reminders on this instance — relative ones are
+      // recomputed against THIS instance's (holiday-adjusted) deadline.
+      const reminderSpecs = Array.isArray(template.reminder_specs)
+        ? (template.reminder_specs as ReminderSpec[])
+        : [];
+      if (reminderSpecs.length > 0) {
+        const reminderRows = reminderSpecs.flatMap((spec) => {
+          const at = resolveRemindAt(spec, adjustedDeadline, now);
+          return at
+            ? expandReminderRows(spec, at).map((r) => ({ organization_id: template.organization_id, task_id: task.id, ...r }))
+            : [];
+        });
+        if (reminderRows.length > 0) await this.prisma.taskReminder.createMany({ data: reminderRows });
+      }
+
       const newCount = entry.occurrence_count + 1;
       await this.prisma.recurringScheduleEntry.update({
         where: { id: entry.id },
@@ -385,7 +401,8 @@ export class SchedulerService {
     });
     if (dueReminders.length === 0) return 0;
 
-    // Load the reminded tasks (title + assignees) for notification messages.
+    // Load the reminded tasks (title + assignees + creator + status) for recipient
+    // routing (by reminder.type) and yearly re-arm decisions.
     const taskIds = Array.from(new Set(dueReminders.map((r) => r.task_id)));
     const tasks = await this.prisma.task.findMany({
       where: { id: { in: taskIds } },
@@ -393,7 +410,9 @@ export class SchedulerService {
         id: true,
         title: true,
         deadline: true,
-        assignees: { where: { is_cc: false }, select: { user_id: true } },
+        created_by_user_id: true,
+        status: { select: { type: true } },
+        assignees: { select: { user_id: true, is_cc: true } },
       },
     });
     const taskMap = new Map(tasks.map((t) => [t.id, t]));
@@ -402,10 +421,20 @@ export class SchedulerService {
     let sent = 0;
     for (const reminder of dueReminders) {
       try {
-        await this.prisma.taskReminder.update({
-          where: { id: reminder.id },
-          data: { is_sent: true },
-        });
+        const task = taskMap.get(reminder.task_id);
+
+        // Yearly reminders re-arm to next year (until the task closes); everything
+        // else is marked sent once.
+        const rearm =
+          reminder.recurrence === 'yearly' && task && !isTerminal(task.status?.type);
+        if (rearm) {
+          const next = new Date(reminder.remind_at);
+          while (next <= now) next.setFullYear(next.getFullYear() + 1);
+          await this.prisma.taskReminder.update({ where: { id: reminder.id }, data: { remind_at: next } });
+        } else {
+          await this.prisma.taskReminder.update({ where: { id: reminder.id }, data: { is_sent: true } });
+        }
+
         await this.prisma.taskActivityLog.create({
           data: {
             organization_id: reminder.organization_id,
@@ -416,21 +445,29 @@ export class SchedulerService {
           },
         });
 
-        const task = taskMap.get(reminder.task_id);
         if (task) {
-          const due = task.deadline
-            ? ` (due ${task.deadline.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})`
-            : '';
-          await this.notifications.emit({
-            orgId,
-            module: 'tasks',
-            event_type: 'task_reminder',
-            recipients: task.assignees.map((a) => a.user_id),
-            title: 'Task reminder',
-            body: `Reminder: "${task.title}"${due}`,
-            link: `/dashboard/tasks/${task.id}`,
-            entity: { type: 'task', id: task.id },
-          });
+          // Route recipients by the reminder's type.
+          const recipients =
+            reminder.type === 'assigner'
+              ? [task.created_by_user_id]
+              : reminder.type === 'cc'
+                ? task.assignees.filter((a) => a.is_cc).map((a) => a.user_id)
+                : task.assignees.filter((a) => !a.is_cc).map((a) => a.user_id);
+          if (recipients.length > 0) {
+            const due = task.deadline
+              ? ` (due ${task.deadline.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})`
+              : '';
+            await this.notifications.emit({
+              orgId,
+              module: 'tasks',
+              event_type: 'task_reminder',
+              recipients,
+              title: 'Task reminder',
+              body: `Reminder: "${task.title}"${due}`,
+              link: `/dashboard/tasks/${task.id}`,
+              entity: { type: 'task', id: task.id },
+            });
+          }
         }
         sent++;
       } catch (err) {

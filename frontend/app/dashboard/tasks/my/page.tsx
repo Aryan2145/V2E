@@ -55,8 +55,15 @@ export default function MyTasksPage() {
   const isFiltered = isTaskFiltered(filters)
 
   async function handleStatusChange(taskId: string, newStatusId: string) {
-    await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
-    loadData()
+    // Optimistic — patch the row in place so the list doesn't flash the spinner.
+    const prev = tasks
+    const nextStatus = statuses.find((s) => s.id === newStatusId)
+    setTasks((ts) => ts.map((t) => (t.id === taskId ? { ...t, status_id: newStatusId, status: nextStatus ?? t.status } : t)))
+    try {
+      await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
+    } catch {
+      setTasks(prev) // revert on failure
+    }
   }
 
   if (!orgId) {
@@ -142,6 +149,8 @@ export default function MyTasksPage() {
                   priorities={priorities}
                   statuses={statuses}
                   categories={categories}
+                  onStatusChange={(sid) => handleStatusChange(task.id, sid)}
+                  currentUserId={user?.id}
                 />
               ))}
             </div>

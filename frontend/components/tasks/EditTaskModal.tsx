@@ -285,11 +285,8 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
           </div>
         </form>
 
-        {/* Footer */}
+        {/* Footer — no Cancel button; the header X / Escape / backdrop close the modal */}
         <div className="shrink-0 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
-          <button type="button" onClick={onClose} className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors">
-            Cancel
-          </button>
           <button
             type="button"
             onClick={handleSubmit}

@@ -153,6 +153,7 @@ export default function AssignedByMePage() {
                   priorities={priorities}
                   statuses={statuses}
                   categories={categories}
+                  currentUserId={user?.id}
                 />
               ))}
             </div>

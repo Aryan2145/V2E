@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, Plus, Trash2, Calendar, RotateCcw, CheckCircle2 } from 'lucide-react'
+import { X, Plus, Trash2, Calendar, RotateCcw, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import StyledSelect from '@/components/ui/StyledSelect'
@@ -14,7 +14,7 @@ import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate, RecurringTemplate } from '@/lib/types/tasks'
+import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate, RecurringTemplate, ReminderSpec, ReminderRecipient } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
@@ -44,6 +44,18 @@ interface ChecklistGroup {
 // One-time = a single task with a fixed deadline. Recurring = a template that
 // auto-spawns instances on a schedule (reuses the existing recurring engine).
 type TaskMode = 'one_time' | 'recurring'
+
+// A reminder being edited in the form. The assignee is always notified; the
+// assigner / CC toggles add extra recipients.
+interface ReminderRow {
+  key: string
+  kind: 'relative' | 'absolute'
+  offsetDays: number // relative: days before deadline
+  date: string // absolute: yyyy-mm-dd
+  time: string // HH:mm — fire time (relative) / time on the date (absolute)
+  toAssigner: boolean
+  toCc: boolean
+}
 
 function defaultScheduleEntry(): ScheduleEntryDraft {
   return {
@@ -120,6 +132,9 @@ export default function CreateTaskModal({
     ? new Date(deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`).toISOString()
     : ''
   const todayStr = new Date().toISOString().split('T')[0]
+  // Reminders can only be set once their timing is anchored: a deadline (one-time) or
+  // a schedule (recurring). Until then the section is gated.
+  const remindersAvailable = mode === 'recurring' || !!deadlineDate
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
@@ -129,6 +144,10 @@ export default function CreateTaskModal({
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
   // Checklist is likewise collapsed by default — expand via the + button.
   const [checklistOpen, setChecklistOpen] = useState(false)
+  // Reminders collapse to a read-only summary until expanded for editing.
+  const [remindersOpen, setRemindersOpen] = useState(false)
+  // Inline gate message shown under the Reminders card (one-time needs a deadline first).
+  const [reminderGate, setReminderGate] = useState<string | null>(null)
   const [checklistGroups, setChecklistGroups] = useState<ChecklistGroup[]>([])
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
   const groupSeq = useRef(0)
@@ -138,6 +157,20 @@ export default function CreateTaskModal({
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
   const holidayDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [leaveAvail, setLeaveAvail] = useState<LeaveAvailability | null>(null)
+  // Reminders — one seeded from the admin default on open, all editable/removable.
+  const [reminders, setReminders] = useState<ReminderRow[]>([])
+  const reminderSeq = useRef(0)
+  const makeReminderRow = useCallback((partial?: Partial<ReminderRow>): ReminderRow => ({
+    key: `r${(reminderSeq.current += 1)}`,
+    kind: 'relative',
+    offsetDays: 1,
+    date: '',
+    time: '09:00',
+    toAssigner: false,
+    toCc: false,
+    ...partial,
+  }), [])
+
   // Portal target only exists on the client — guard against SSR mismatch.
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
@@ -147,6 +180,19 @@ export default function CreateTaskModal({
     if (!isOpen || !orgId) return
     tasksApi.getAccessibleChecklistTemplates(orgId).then(setChecklistTemplates).catch(() => setChecklistTemplates([]))
   }, [isOpen, orgId])
+
+  // The gate clears itself once reminders become available (deadline set / recurring).
+  useEffect(() => {
+    if (deadlineDate || mode === 'recurring') setReminderGate(null)
+  }, [deadlineDate, mode])
+
+  // On open, seed a single reminder from the admin default (removable).
+  useEffect(() => {
+    if (!isOpen || !orgId) return
+    tasksApi.getConfig(orgId)
+      .then((cfg) => setReminders([makeReminderRow({ offsetDays: cfg?.default_reminder_days_before ?? 1 })]))
+      .catch(() => setReminders([makeReminderRow({ offsetDays: 1 })]))
+  }, [isOpen, orgId, makeReminderRow])
 
   // Add a checklist sourced from a template — its items are copied in and stay
   // fully editable. Applying a template never wipes other checklists; it adds one.
@@ -303,7 +349,10 @@ export default function CreateTaskModal({
     setAttachmentFiles([])
     setAttachmentsOpen(false)
     setChecklistOpen(false)
+    setRemindersOpen(false)
+    setReminderGate(null)
     setChecklistGroups([])
+    setReminders([])
     setError(null)
     setHolidayCheck(null)
   }, [selectableStatuses])
@@ -315,7 +364,7 @@ export default function CreateTaskModal({
 
   function handleDeadlineDateChange(val: string) {
     // Clearing the date also clears the time. Range is enforced by the DatePicker.
-    if (!val) { setDeadlineDate(''); setDeadlineTime(''); return }
+    if (!val) { setDeadlineDate(''); setDeadlineTime(''); setRemindersOpen(false); return }
     setDeadlineDate(val)
     // Surface the end-of-day default on the clock once a date is picked.
     if (!deadlineTime) setDeadlineTime('23:59')
@@ -340,6 +389,81 @@ export default function CreateTaskModal({
     })
   }
 
+  function updateReminder(key: string, patch: Partial<ReminderRow>) {
+    setReminders((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)))
+  }
+  function removeReminder(key: string) {
+    setReminders((prev) => prev.filter((r) => r.key !== key))
+  }
+  function addReminder() {
+    setReminders((prev) => [...prev, makeReminderRow()])
+  }
+
+  // Short read-only label for a reminder, shown in the collapsed summary.
+  function reminderLabel(r: ReminderRow): string {
+    const extra = [r.toAssigner && 'assigner', r.toCc && 'CC'].filter(Boolean).join(' + ')
+    const who = extra ? ` → +${extra}` : ''
+    if (r.kind === 'relative') {
+      const d = r.offsetDays === 0 ? 'On the day' : `${r.offsetDays} day${r.offsetDays !== 1 ? 's' : ''} before`
+      return `${d} · ${r.time || '09:00'}${who}`
+    }
+    const date = r.date ? new Date(`${r.date}T00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : 'no date'
+    return `On ${date} · ${r.time || '09:00'}${who}`
+  }
+
+  // Convert the reminder rows into ReminderSpecs for the API. For one-time tasks
+  // (resolveRelative), relative reminders are precomputed to an absolute instant in
+  // the user's local timezone; for recurring templates they stay relative so each
+  // spawned instance recomputes against its own deadline.
+  function buildReminderSpecs(resolveRelative: boolean): ReminderSpec[] {
+    return reminders.flatMap((r) => {
+      const recipients: ReminderRecipient[] = [
+        'assignee',
+        ...(r.toAssigner ? (['assigner'] as const) : []),
+        ...(r.toCc ? (['cc'] as const) : []),
+      ]
+      if (r.kind === 'relative') {
+        const spec: ReminderSpec = { kind: 'relative', offset_days: r.offsetDays, time: r.time || '09:00', recipients }
+        if (resolveRelative && deadlineDate) {
+          const d = new Date(`${deadlineDate}T${r.time || '09:00'}`)
+          d.setDate(d.getDate() - r.offsetDays)
+          spec.remind_at = d.toISOString()
+        }
+        return [spec]
+      }
+      if (!r.date) return []
+      return [{ kind: 'absolute', remind_at: new Date(`${r.date}T${r.time || '09:00'}`).toISOString(), recipients }]
+    })
+  }
+
+  // The absolute moment a reminder would fire (given the current one-time deadline).
+  function reminderInstant(r: ReminderRow): Date | null {
+    if (r.kind === 'relative') {
+      if (!deadlineDate) return null
+      const d = new Date(`${deadlineDate}T${r.time || '09:00'}`)
+      d.setDate(d.getDate() - r.offsetDays)
+      return d
+    }
+    return r.date ? new Date(`${r.date}T${r.time || '09:00'}`) : null
+  }
+
+  // Reminders must fall between now (task creation) and the deadline. One-time mode
+  // only — recurring recomputes per instance. Returns an error string, or null if valid.
+  function validateRemindersAgainstDeadline(): string | null {
+    if (reminders.some((r) => r.kind === 'absolute' && !r.date)) return 'Pick a date for each “on a date” reminder.'
+    const now = new Date()
+    const deadlineInstant = deadline ? new Date(deadline) : null
+    for (const r of reminders) {
+      const at = reminderInstant(r)
+      if (!at) continue
+      if (at.getTime() <= now.getTime()) return `A reminder (${reminderLabel(r)}) falls in the past. Reminders must be after now.`
+      if (deadlineInstant && at.getTime() > deadlineInstant.getTime()) {
+        return `A reminder (${reminderLabel(r)}) is after the deadline. Reminders must be on or before the due date.`
+      }
+    }
+    return null
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (mode === 'recurring') { await handleCreateRecurring(); return }
@@ -350,6 +474,8 @@ export default function CreateTaskModal({
       if (deadlineDate < todayStr) { setError('Deadline cannot be in the past.'); return }
       if (deadlineDate > '2100-12-31') { setError('Deadline year cannot exceed 2100.'); return }
     }
+    const reminderError = validateRemindersAgainstDeadline()
+    if (reminderError) { setError(reminderError); return }
     setSubmitting(true)
     setError(null)
     try {
@@ -369,6 +495,7 @@ export default function CreateTaskModal({
         checklist_template_ids: Array.from(
           new Set(checklistGroups.filter((g) => g.templateId).map((g) => g.templateId as string)),
         ),
+        reminders: buildReminderSpecs(true),
       })
       // Upload any attached documents to the freshly-created task. Files upload
       // sequentially so a partial failure is easy to surface without losing the task.
@@ -416,6 +543,7 @@ export default function CreateTaskModal({
         setError('End date is required for schedules ending "On date".'); return
       }
     }
+    if (reminders.some((r) => r.kind === 'absolute' && !r.date)) { setError('Pick a date for each “on a date” reminder.'); return }
     setSubmitting(true)
     setError(null)
     try {
@@ -442,6 +570,7 @@ export default function CreateTaskModal({
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
         checklist_items: buildChecklistItems(),
+        reminders: buildReminderSpecs(false),
       })
       // Upload the template's attachments — copied into every spawned instance.
       if (attachmentFiles.length > 0) {
@@ -543,13 +672,19 @@ export default function CreateTaskModal({
 
           {/* Title */}
           <div>
-            <label className="block text-sm font-medium text-[#374151] mb-1.5">
-              Title <span className="text-[#DC2626]">*</span>
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-sm font-medium text-[#374151]">
+                Title <span className="text-[#DC2626]">*</span>
+              </label>
+              <span className={`text-[11px] ${title.length >= 50 ? 'text-[#DC2626]' : 'text-[#94A3B8]'}`}>
+                {title.length}/50
+              </span>
+            </div>
             <input
               type="text"
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e) => setTitle(e.target.value.slice(0, 50))}
+              maxLength={50}
               placeholder="Task title..."
               className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-base sm:text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
             />
@@ -634,7 +769,7 @@ export default function CreateTaskModal({
               {deadlineDate && (
                 <button
                   type="button"
-                  onClick={() => { setDeadlineDate(''); setDeadlineTime('') }}
+                  onClick={() => { setDeadlineDate(''); setDeadlineTime(''); setRemindersOpen(false) }}
                   className="flex items-center gap-1 text-[11px] text-[#475569] hover:text-[#DC2626] transition-colors"
                 >
                   <X size={10} />
@@ -680,6 +815,178 @@ export default function CreateTaskModal({
             <ScheduleEntryList entries={scheduleEntries} onChange={setScheduleEntries} />
           </div>
           )}
+
+          {/* Reminders — notify the assignee (and optionally the assigner / CC)
+              before the deadline. Multiple entries; on a recurring task they apply
+              to every spawned instance. */}
+          <div>
+            <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-visible">
+              {/* Header — click to expand/collapse; collapsed shows a read-only summary */}
+              <button
+                type="button"
+                onClick={() => {
+                  // In one-time mode reminders are relative to the deadline, so it must
+                  // be set first. Recurring recomputes per instance, so it's allowed.
+                  if (!remindersAvailable) {
+                    setReminderGate('Please select a deadline first, then set reminders.')
+                    return
+                  }
+                  setReminderGate(null)
+                  setRemindersOpen((v) => !v)
+                }}
+                aria-expanded={remindersOpen}
+                className="w-full flex items-center gap-2 px-3 py-3 text-left hover:bg-[#F8FAFC] transition-colors"
+              >
+                <label className="text-sm font-medium text-[#374151] cursor-pointer shrink-0">Reminders</label>
+                <span className="text-xs font-normal text-[#475569] shrink-0">Optional</span>
+                {remindersAvailable && reminders.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold shrink-0">
+                    {reminders.length}
+                  </span>
+                )}
+                {!remindersOpen && remindersAvailable && (
+                  <span className="min-w-0 flex-1 truncate text-xs text-[#475569]">
+                    {reminders.length === 0
+                      ? 'None'
+                      : reminders.length === 1
+                        ? reminderLabel(reminders[0])
+                        : `${reminderLabel(reminders[0])}  ·  +${reminders.length - 1} more`}
+                  </span>
+                )}
+                <span className="ml-auto flex items-center justify-center w-6 h-6 rounded-[6px] text-[#2563EB] shrink-0" aria-hidden>
+                  {remindersAvailable && reminders.length > 0 ? (
+                    // Has data → collapse/expand affordance
+                    remindersOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />
+                  ) : (
+                    // Empty / not yet available → plus to add, rotating to a cross when open
+                    <Plus size={18} className={remindersOpen ? 'rotate-45 transition-transform' : 'transition-transform'} />
+                  )}
+                </span>
+              </button>
+              {remindersOpen && (
+              <div className="px-3 pb-3 pt-0 space-y-2 max-h-[340px] overflow-y-auto">
+                {reminders.length === 0 ? (
+                  <p className="text-xs text-[#475569] px-1 py-2">No reminders — the assignee won’t be nudged before the deadline.</p>
+                ) : (
+                  reminders.map((r) => {
+                    let hint: string | null = null
+                    if (r.kind === 'relative' && mode === 'one_time' && deadlineDate) {
+                      const d = new Date(`${deadlineDate}T00:00`)
+                      d.setDate(d.getDate() - r.offsetDays)
+                      hint = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })
+                    }
+                    return (
+                      <div key={r.key} className="relative rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] p-3 space-y-2.5">
+                        {/* remove — top-right corner */}
+                        <button
+                          type="button"
+                          onClick={() => removeReminder(r.key)}
+                          className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-white transition-colors"
+                          aria-label="Remove reminder"
+                        >
+                          <X size={14} />
+                        </button>
+
+                        {/* kind toggle — full width, with room reserved for the corner X */}
+                        <div className="grid grid-cols-2 gap-1 p-1 rounded-[8px] bg-[#F1F5F9] border border-[#E2E8F0] mr-7">
+                          {([
+                            { k: 'relative' as const, label: 'Days before' },
+                            { k: 'absolute' as const, label: 'On a date' },
+                          ]).map(({ k, label }) => {
+                            const active = r.kind === k
+                            return (
+                              <button
+                                key={k}
+                                type="button"
+                                onClick={() => updateReminder(r.key, { kind: k })}
+                                className={[
+                                  'px-2 py-1.5 rounded-[6px] text-xs font-medium transition-colors',
+                                  active ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-white',
+                                ].join(' ')}
+                              >
+                                {label}
+                              </button>
+                            )
+                          })}
+                        </div>
+
+                        {/* timing + recipients on one line (wraps only when too narrow) */}
+                        <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
+                          {r.kind === 'relative' ? (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={0}
+                                value={r.offsetDays}
+                                onChange={(e) => updateReminder(r.key, { offsetDays: Math.max(0, parseInt(e.target.value) || 0) })}
+                                className="w-11 text-center border border-[#CBD5E1] rounded-[8px] px-2 py-1.5 text-[13px] text-[#0F172A] bg-[#F8FAFC] hover:bg-white hover:border-[#94A3B8] focus:bg-white focus:border-2 focus:border-[#2563EB] focus:outline-none"
+                              />
+                              <span className="text-[13px] text-[#475569]">days before</span>
+                              <div className="w-[104px]">
+                                <TimeField value={r.time} onChange={(v) => updateReminder(r.key, { time: v })} label="Reminder time" compact />
+                              </div>
+                              {hint && <span className="text-xs font-medium text-[#2563EB]">→ {hint}</span>}
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <div className="w-[140px]">
+                                <DatePicker
+                                  value={r.date}
+                                  onChange={(v) => updateReminder(r.key, { date: v })}
+                                  min={todayStr}
+                                  max={mode === 'one_time' && deadlineDate ? deadlineDate : '2100-12-31'}
+                                  placeholder="Pick date"
+                                  compact
+                                />
+                              </div>
+                              <div className="w-[104px]">
+                                <TimeField value={r.time} onChange={(v) => updateReminder(r.key, { time: v })} label="Reminder time" compact />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* recipients — sit at the right of the same row, wrap under if tight */}
+                          <div className="flex items-center gap-1.5 ml-auto">
+                            <span className="text-xs text-[#475569]">Notify:</span>
+                            <span className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#2563EB] text-white">Assignee</span>
+                            <button
+                              type="button"
+                              onClick={() => updateReminder(r.key, { toAssigner: !r.toAssigner })}
+                              className={[
+                                'px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors',
+                                r.toAssigner ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#94A3B8]',
+                              ].join(' ')}
+                            >
+                              Assigner
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => updateReminder(r.key, { toCc: !r.toCc })}
+                              className={[
+                                'px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors',
+                                r.toCc ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#94A3B8]',
+                              ].join(' ')}
+                            >
+                              CC
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                )}
+                <button
+                  type="button"
+                  onClick={addReminder}
+                  className="flex items-center justify-center gap-1.5 w-full px-3 py-2 text-sm font-medium text-[#2563EB] border border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+                >
+                  <Plus size={14} /> Add reminder
+                </button>
+              </div>
+              )}
+            </div>
+            {reminderGate && <p className="mt-1.5 text-xs text-[#DC2626]">{reminderGate}</p>}
+          </div>
 
           {/* Description */}
           <div>

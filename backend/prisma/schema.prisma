@@ -805,6 +805,11 @@ enum CompletionTiming {
   incomplete
 }
 
+enum ReminderRecurrence {
+  one_time
+  yearly
+}
+
 enum ReminderType {
   assignee
   assigner
@@ -1072,12 +1077,31 @@ model Task {
   activity_logs TaskActivityLog[]
   comments   TaskComment[]
   attachments TaskAttachment[]
+  views      TaskView[]
 
   @@index([goal_id])
   @@index([organization_id])
   @@index([created_by_user_id])
   @@index([department_id])
   @@map("tasks")
+}
+
+// Per-user "last opened" marker for a task. Drives the unread-comment count on the
+// task list: comments created after `last_viewed_at` (and not authored by the viewer)
+// are considered unread. Upserted whenever a user opens the task detail.
+model TaskView {
+  id              String   @id @default(uuid())
+  organization_id String
+  task_id         String
+  user_id         String
+  last_viewed_at  DateTime @default(now())
+
+  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+
+  @@unique([task_id, user_id])
+  @@index([user_id])
+  @@index([organization_id])
+  @@map("task_views")
 }
 
 model TaskAssignee {
@@ -1192,7 +1216,9 @@ model TaskReminder {
   organization_id String
   task_id         String
   remind_at       DateTime
-  type            ReminderType @default(assignee)
+  type            ReminderType @default(assignee) // who is notified: assignee | assigner | cc
+  offset_days     Int? // relative provenance: days-before-deadline this was set from (null = absolute date)
+  recurrence      ReminderRecurrence @default(one_time) // yearly re-arms after firing (until the task closes)
   is_sent         Boolean      @default(false)
   created_at      DateTime     @default(now())
 
@@ -1306,6 +1332,9 @@ model RecurringTemplate {
   // Flattened checklist definition ([{ title, group_title?, order_index }]) copied
   // into every spawned instance as TaskChecklist rows.
   checklist_items        Json     @default("[]")
+  // Reminder specs ([ReminderSpec]) — resolved to TaskReminder rows per spawned
+  // instance (relative ones recomputed against that instance's deadline).
+  reminder_specs         Json     @default("[]")
   department_id          String?
   linked_goal_id         String?
   created_by_user_id     String

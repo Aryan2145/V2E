@@ -12,6 +12,7 @@ import { Type } from 'class-transformer';
 import { IsNumber } from 'class-validator';
 import { CompletionMode, TaskQuadrant } from '@prisma/client';
 import { CreateScheduleEntryDto } from './create-schedule-entry.dto';
+import { ReminderSpecDto } from '../../common/reminders/reminder-spec.dto';
 
 class RecurringChecklistItemDto {
   @IsString()
@@ -27,7 +28,7 @@ class RecurringChecklistItemDto {
 
 export class CreateRecurringDto {
   @IsString()
-  @MaxLength(200)
+  @MaxLength(50)
   title: string;
 
   @IsOptional()
@@ -75,6 +76,12 @@ export class CreateRecurringDto {
   @ValidateNested({ each: true })
   @Type(() => RecurringChecklistItemDto)
   checklist_items?: RecurringChecklistItemDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReminderSpecDto)
+  reminders?: ReminderSpecDto[];
 
   @IsOptional()
   @IsString()

@@ -6,10 +6,12 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  MaxLength,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CompletionMode, TaskQuadrant, TaskType } from '@prisma/client';
+import { ReminderSpecDto } from '../../common/reminders/reminder-spec.dto';
 
 class ChecklistItemDto {
   @IsString()
@@ -26,6 +28,7 @@ class ChecklistItemDto {
 
 export class CreateTaskDto {
   @IsString()
+  @MaxLength(50)
   title: string;
 
   @IsOptional()
@@ -100,6 +103,14 @@ export class CreateTaskDto {
   @IsArray()
   @IsString({ each: true })
   escalation_user_ids?: string[];
+
+  // Creator-set reminders. Undefined = legacy single default reminder;
+  // [] = user explicitly cleared all; otherwise one+ specs.
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReminderSpecDto)
+  reminders?: ReminderSpecDto[];
 
   // Links this task as an initiative under a QUARTERLY goal.
   @IsOptional()

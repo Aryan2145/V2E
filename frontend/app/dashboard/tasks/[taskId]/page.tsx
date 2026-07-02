@@ -10,8 +10,7 @@ import type { Task, TaskComment, TaskAttachment, TaskActivityLog, TaskCategory, 
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import EditTaskModal from '@/components/tasks/EditTaskModal'
 import StyledSelect from '@/components/ui/StyledSelect'
-import FileDropzone from '@/components/ui/FileDropzone'
-import { AttachmentList, AttachmentChips } from '@/components/ui/AttachmentList'
+import { AttachmentChips } from '@/components/ui/AttachmentList'
 import { formatBytes } from '@/lib/attachments'
 import {
   ArrowLeft,
@@ -24,11 +23,15 @@ import {
   Calendar,
   User,
   Clock,
+  Flag,
+  Plus,
+  Download,
   CheckSquare,
   Eye,
   Pencil,
   FileText,
   X,
+  History,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -181,8 +184,6 @@ function ActivityItem({ log }: { log: TaskActivityLog }) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-type TabType = 'details' | 'activity'
-
 export default function TaskDetailPage() {
   const { user } = useAuth()
   const params = useParams()
@@ -195,11 +196,14 @@ export default function TaskDetailPage() {
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [comments, setComments] = useState<TaskComment[]>([])
-  const [attachments, setAttachments] = useState<TaskAttachment[]>([])
+  // Every attachment on the task — creation-time/task-level files AND files shared in
+  // comments — shown together in the sidebar Attachments card.
+  const [allAttachments, setAllAttachments] = useState<TaskAttachment[]>([])
   const [uploadingAttachment, setUploadingAttachment] = useState(false)
+  const attachInputRef = useRef<HTMLInputElement>(null)
   const [activityLogs, setActivityLogs] = useState<TaskActivityLog[]>([])
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<TabType>('details')
+  const [showActivity, setShowActivity] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [commentFiles, setCommentFiles] = useState<File[]>([])
   const [sendingComment, setSendingComment] = useState(false)
@@ -213,6 +217,10 @@ export default function TaskDetailPage() {
   const [editingAssignees, setEditingAssignees] = useState(false)
   const [editAssigneesList, setEditAssigneesList] = useState<import('@/lib/types/tasks').SelectedAssignee[]>([])
   const [savingAssignees, setSavingAssignees] = useState(false)
+  const [assigneeError, setAssigneeError] = useState<string | null>(null)
+  const [editingCompletionMode, setEditingCompletionMode] = useState(false)
+  const [completionModeDraft, setCompletionModeDraft] = useState<'any_can_complete' | 'all_must_complete'>('any_can_complete')
+  const [savingCompletionMode, setSavingCompletionMode] = useState(false)
   const [reopenSecondsLeft, setReopenSecondsLeft] = useState(0)
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
@@ -239,7 +247,7 @@ export default function TaskDetailPage() {
         tasksApi.getStatuses(orgId).catch(() => []),
         tasksApi.getComments(orgId, taskId).catch(() => []),
         tasksApi.getLogs(orgId, taskId).catch(() => []),
-        tasksApi.listAttachments(orgId, taskId).catch(() => []),
+        tasksApi.listAllAttachments(orgId, taskId).catch(() => []),
       ])
       setTask(t)
       setCategories(cats)
@@ -247,7 +255,7 @@ export default function TaskDetailPage() {
       setStatuses(sts)
       setComments(cmts)
       setActivityLogs(logs)
-      setAttachments(atts)
+      setAllAttachments(atts)
       if (t) setSelectedStatusId(t.status_id)
     } finally {
       setLoading(false)
@@ -336,6 +344,8 @@ export default function TaskDetailPage() {
         }
         // Reload so the comment shows its now-persisted attachments.
         setComments(await tasksApi.getComments(orgId, taskId).catch(() => [...comments, c]))
+        // Comment files also belong in the sidebar Attachments card.
+        await refreshAllAttachments()
       } else {
         setComments((prev) => [...prev, c])
       }
@@ -346,22 +356,28 @@ export default function TaskDetailPage() {
     }
   }
 
+  async function refreshAllAttachments() {
+    setAllAttachments(await tasksApi.listAllAttachments(orgId, taskId).catch(() => []))
+  }
+
   async function handleUploadTaskAttachment(files: File[]) {
     if (files.length === 0) return
     setUploadingAttachment(true)
     try {
       for (const file of files) {
-        const att = await tasksApi.uploadTaskAttachment(orgId, taskId, file)
-        setAttachments((prev) => [att, ...prev])
+        await tasksApi.uploadTaskAttachment(orgId, taskId, file)
       }
+      await refreshAllAttachments()
     } finally {
       setUploadingAttachment(false)
     }
   }
 
-  async function handleRemoveTaskAttachment(a: TaskAttachment) {
+  // Only the uploader can remove — the card only surfaces the button in that case,
+  // and the backend enforces it regardless.
+  async function handleRemoveAttachment(a: TaskAttachment) {
     await tasksApi.deleteAttachment(orgId, taskId, a.id)
-    setAttachments((prev) => prev.filter((x) => x.id !== a.id))
+    setAllAttachments((prev) => prev.filter((x) => x.id !== a.id))
   }
 
   async function handleSubmitProof() {
@@ -378,6 +394,13 @@ export default function TaskDetailPage() {
 
   async function handleSaveAssignees() {
     if (!task) return
+    // A task must have someone to actually do the work — at least one primary
+    // (non-CC) assignee. A CC-only assignment is not allowed.
+    if (editAssigneesList.filter((a) => !a.is_cc).length === 0) {
+      setAssigneeError('At least one assignee is required — CC-only is not allowed. Someone must be responsible for the work.')
+      return
+    }
+    setAssigneeError(null)
     setSavingAssignees(true)
     try {
       const currentIds = new Set((task.assignees ?? []).map((a) => a.user_id))
@@ -405,6 +428,19 @@ export default function TaskDetailPage() {
       setEditingAssignees(false)
     } finally {
       setSavingAssignees(false)
+    }
+  }
+
+  async function handleSaveCompletionMode() {
+    if (!task) return
+    if (completionModeDraft === task.completion_mode) { setEditingCompletionMode(false); return }
+    setSavingCompletionMode(true)
+    try {
+      await tasksApi.updateTask(orgId, taskId, { completion_mode: completionModeDraft })
+      await loadTask()
+      setEditingCompletionMode(false)
+    } finally {
+      setSavingCompletionMode(false)
     }
   }
 
@@ -447,17 +483,43 @@ export default function TaskDetailPage() {
   const canEdit = isCreator || user?.is_admin
 
   return (
-    <div className="space-y-6 max-w-7xl">
-      {/* Back + actions row */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-2 text-sm font-medium text-[#475569] hover:text-[#0F172A] transition-colors"
-        >
-          <ArrowLeft size={16} />
-          Back to Tasks
-        </button>
-        <div className="flex items-center gap-2">
+    // On lg+, fill the fixed-height <main> so the two detail columns can scroll
+    // independently instead of the whole page. On mobile it's a normal flowing page.
+    <div className="space-y-6 max-w-7xl lg:h-full lg:flex lg:flex-col lg:overflow-hidden">
+      {/* Header — a small, unobtrusive back arrow, then the title; actions on the right */}
+      <div className="flex items-start justify-between gap-4 flex-wrap shrink-0">
+        <div className="flex items-start gap-2 min-w-0 flex-1">
+          <button
+            onClick={() => router.back()}
+            aria-label="Back"
+            title="Back"
+            className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight min-w-0">{task.title}</h1>
+          {/* Edit — a pencil right beside the title */}
+          {canEdit && (
+            <button
+              onClick={() => setShowEditModal(true)}
+              aria-label="Edit task"
+              title="Edit task"
+              className="mt-1.5 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
+            >
+              <Pencil size={16} />
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* Activity Log — opens in a popup instead of a tab */}
+          <button
+            onClick={() => setShowActivity(true)}
+            aria-label="Activity log"
+            title="Activity log"
+            className="w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] hover:text-[#0F172A] transition-colors"
+          >
+            <History size={16} />
+          </button>
           {!isCompletedStatus && !currentUserIsCC ? (
             <button
               onClick={handleComplete}
@@ -492,15 +554,6 @@ export default function TaskDetailPage() {
                 Completed
               </span>
             )
-          )}
-          {canEdit && (
-            <button
-              onClick={() => setShowEditModal(true)}
-              className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#475569] border border-[#CBD5E1] bg-white rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
-            >
-              <Pencil size={15} />
-              Edit
-            </button>
           )}
           {canDelete && !showDeleteConfirm && (
             <button
@@ -596,39 +649,15 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex border-b border-[#E2E8F0]">
-        {(['details', 'activity'] as TabType[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={[
-              'px-5 py-2.5 text-sm font-medium transition-colors border-b-2',
-              tab === t
-                ? 'text-[#2563EB] border-[#2563EB]'
-                : 'text-[#475569] border-transparent hover:text-[#0F172A]',
-            ].join(' ')}
-          >
-            {t === 'details' ? 'Details' : 'Activity Log'}
-          </button>
-        ))}
-      </div>
+      {/* Description — right under the title, no box around it. */}
+      {task.description && (
+        <p className="text-sm text-[#1E293B] leading-relaxed whitespace-pre-wrap shrink-0 pl-8">{task.description}</p>
+      )}
 
-      {tab === 'details' && (
-        <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left panel — 60% */}
-          <div className="flex-1 min-w-0 space-y-6">
-            {/* Title */}
-            <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">{task.title}</h1>
-
-            {/* Description */}
-            {task.description && (
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-                <h3 className="text-[15px] font-semibold text-[#0F172A] mb-3">Description</h3>
-                <p className="text-sm text-[#1E293B] leading-relaxed whitespace-pre-wrap">{task.description}</p>
-              </div>
-            )}
-
+      {(
+        <div className="flex flex-col lg:flex-row gap-6 lg:flex-1 lg:min-h-0">
+          {/* Left panel — 60%; scrolls on its own within the viewport on lg+ */}
+          <div className="flex-1 min-w-0 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-3">
             {/* Checklist */}
             {task.checklist && task.checklist.length > 0 && (
               <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
@@ -745,30 +774,6 @@ export default function TaskDetailPage() {
               </div>
             )}
 
-            {/* Attachments */}
-            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-              <div className="flex items-center gap-2 mb-4">
-                <Paperclip size={15} className="text-[#475569]" />
-                <h3 className="text-[15px] font-semibold text-[#0F172A]">Attachments</h3>
-                {attachments.length > 0 && (
-                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
-                    {attachments.length}
-                  </span>
-                )}
-              </div>
-              {attachments.length > 0 && (
-                <div className="mb-4">
-                  <AttachmentList
-                    attachments={attachments}
-                    onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
-                    onRemove={handleRemoveTaskAttachment}
-                    canRemove={(a) => a.uploaded_by_user_id === user?.id}
-                  />
-                </div>
-              )}
-              <FileDropzone onFiles={handleUploadTaskAttachment} disabled={uploadingAttachment} />
-            </div>
-
             {/* Comments */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
               <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">
@@ -868,8 +873,8 @@ export default function TaskDetailPage() {
             </div>
           </div>
 
-          {/* Right panel — 40% */}
-          <div className="w-full lg:w-80 shrink-0 space-y-4">
+          {/* Right panel — 40%; scrolls on its own within the viewport on lg+ */}
+          <div className="w-full lg:w-80 shrink-0 space-y-4 lg:min-h-0 lg:overflow-y-auto lg:pr-3">
 
             {/* Status — overflow-visible so the status dropdown can extend past the card */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-visible">
@@ -893,32 +898,32 @@ export default function TaskDetailPage() {
                 <p className="text-[11px] font-bold text-[#7C3AED] uppercase tracking-widest">Details</p>
               </div>
               <div className="p-4 space-y-4">
-                <div className="flex flex-wrap gap-2">
-                  {status && (
-                    <span
-                      className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
-                      style={{ backgroundColor: status.color + '22', color: status.color, border: `1px solid ${status.color}44` }}
-                    >
-                      {status.label}
-                    </span>
-                  )}
-                  {priority && (
-                    <span
-                      className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
-                      style={{ backgroundColor: priority.color + '22', color: priority.color, border: `1px solid ${priority.color}44` }}
-                    >
-                      {priority.label}
-                    </span>
-                  )}
-                  {category && (
+                {/* Status lives in its own card above — not repeated here. */}
+                {category && (
+                  <div className="flex flex-wrap gap-2">
                     <span
                       className="inline-flex items-center rounded-[8px] px-3 py-1.5 text-sm font-medium"
                       style={{ backgroundColor: category.color + '22', color: category.color, border: `1px solid ${category.color}44` }}
                     >
                       {category.name}
                     </span>
-                  )}
-                </div>
+                  </div>
+                )}
+
+                {priority && (
+                  <div className="flex items-center gap-2.5">
+                    <div
+                      className="w-7 h-7 rounded-[6px] flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: priority.color + '22' }}
+                    >
+                      <Flag size={13} style={{ color: priority.color }} />
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide">Priority</p>
+                      <p className="text-sm font-medium" style={{ color: priority.color }}>{priority.label}</p>
+                    </div>
+                  </div>
+                )}
 
                 {task.deadline && (
                   <div className="flex items-center gap-2.5">
@@ -944,6 +949,95 @@ export default function TaskDetailPage() {
               </div>
             </div>
 
+            {/* Attachments — every file on the task: creation-time uploads + files
+                shared in comments. Only the uploader may remove their own file. */}
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-[#F0F9FF] border-b border-[#BAE6FD]">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#0EA5E9]" />
+                  <p className="text-[11px] font-bold text-[#0EA5E9] uppercase tracking-widest">Attachments</p>
+                  {allAttachments.length > 0 && (
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#0EA5E9] text-white text-[10px] font-semibold">
+                      {allAttachments.length}
+                    </span>
+                  )}
+                </div>
+                {/* Only the assigner / admin may add files here. */}
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => attachInputRef.current?.click()}
+                    disabled={uploadingAttachment}
+                    className="flex items-center gap-1 text-xs font-semibold text-[#0EA5E9] hover:text-[#0284C7] disabled:opacity-60 transition-colors"
+                  >
+                    <Plus size={14} />
+                    Add
+                  </button>
+                )}
+              </div>
+              <div className="p-4">
+                {allAttachments.length === 0 ? (
+                  <p className="text-sm text-[#94A3B8]">No attachments</p>
+                ) : (
+                  <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
+                    {allAttachments.map((a) => (
+                      <div key={a.id} className="flex items-start gap-2.5">
+                        {/* Download */}
+                        <button
+                          type="button"
+                          onClick={() => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+                          title="Download"
+                          className="w-7 h-7 rounded-[6px] bg-[#EFF6FF] flex items-center justify-center shrink-0 hover:bg-[#DBEAFE] transition-colors"
+                        >
+                          <Download size={13} className="text-[#2563EB]" />
+                        </button>
+                        <div className="min-w-0 flex-1">
+                          <button
+                            type="button"
+                            onClick={() => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+                            className="block max-w-full text-left text-sm font-medium text-[#0F172A] hover:text-[#2563EB] truncate transition-colors"
+                            title={a.file_name}
+                          >
+                            {a.file_name}
+                          </button>
+                          {/* Who shared it + where + when */}
+                          <p className="text-[11px] text-[#64748B] truncate">
+                            {a.uploaded_by_name ?? 'Unknown'}
+                            {a.comment_id ? ' · in a comment' : ''} · {formatDate(a.created_at)}
+                          </p>
+                        </div>
+                        {/* Remove — uploader only */}
+                        {a.uploaded_by_user_id === user?.id && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveAttachment(a)}
+                            title="Remove"
+                            className="text-[#94A3B8] hover:text-[#DC2626] shrink-0 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {uploadingAttachment && (
+                  <p className="text-xs text-[#64748B] mt-3">Uploading…</p>
+                )}
+              </div>
+              <input
+                ref={attachInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files ?? [])
+                  if (files.length) handleUploadTaskAttachment(files)
+                  e.target.value = '' // allow re-selecting the same file
+                }}
+              />
+            </div>
+
             {/* Assignees */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
               <div className="flex items-center justify-between px-4 py-2.5 bg-[#F0FDF4] border-b border-[#BBF7D0]">
@@ -951,7 +1045,8 @@ export default function TaskDetailPage() {
                   <span className="w-2 h-2 rounded-full bg-[#16A34A]" />
                   <p className="text-[11px] font-bold text-[#16A34A] uppercase tracking-widest">Assignees</p>
                 </div>
-                {!editingAssignees ? (
+                {/* Only the creator / admin may change assignees — a plain assignee cannot. */}
+                {canEdit && (!editingAssignees ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -960,6 +1055,7 @@ export default function TaskDetailPage() {
                         name: a.user?.name ?? a.user_name ?? 'Unknown',
                         is_cc: a.is_cc,
                       })))
+                      setAssigneeError(null)
                       setEditingAssignees(true)
                     }}
                     className="text-xs font-semibold text-[#16A34A] hover:text-[#15803D] transition-colors"
@@ -978,22 +1074,29 @@ export default function TaskDetailPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setEditingAssignees(false)}
+                      onClick={() => { setEditingAssignees(false); setAssigneeError(null) }}
                       className="text-xs font-medium text-[#475569] hover:text-[#0F172A]"
                     >
                       Cancel
                     </button>
                   </div>
-                )}
+                ))}
               </div>
               <div className="p-4">
                 {editingAssignees ? (
-                  <AssigneeSelector
-                    orgId={orgId}
-                    value={editAssigneesList}
-                    onChange={setEditAssigneesList}
-                    currentUser={user ? { user_id: user.id, name: user.name } : undefined}
-                  />
+                  <div className="space-y-2">
+                    <AssigneeSelector
+                      orgId={orgId}
+                      value={editAssigneesList}
+                      onChange={(v) => { setEditAssigneesList(v); if (assigneeError) setAssigneeError(null) }}
+                      currentUser={user ? { user_id: user.id, name: user.name } : undefined}
+                    />
+                    {assigneeError && (
+                      <p className="text-xs text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-[6px] px-2.5 py-2">
+                        {assigneeError}
+                      </p>
+                    )}
+                  </div>
                 ) : (
                   <div className="space-y-3">
                     {assignees.map((a) => {
@@ -1045,16 +1148,79 @@ export default function TaskDetailPage() {
 
             {/* Completion Mode */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#FFFBEB] border-b border-[#FDE68A]">
-                <span className="w-2 h-2 rounded-full bg-[#D97706]" />
-                <p className="text-[11px] font-bold text-[#D97706] uppercase tracking-widest">Completion Mode</p>
+              <div className="flex items-center justify-between px-4 py-2.5 bg-[#FFFBEB] border-b border-[#FDE68A]">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#D97706]" />
+                  <p className="text-[11px] font-bold text-[#D97706] uppercase tracking-widest">Completion Mode</p>
+                </div>
+                {/* Editable only when it matters — 2+ assignees — and the viewer can edit. */}
+                {canEdit && assignees.length > 1 && (!editingCompletionMode ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCompletionModeDraft(task.completion_mode === 'all_must_complete' ? 'all_must_complete' : 'any_can_complete')
+                      setEditingCompletionMode(true)
+                    }}
+                    className="text-xs font-semibold text-[#D97706] hover:text-[#B45309] transition-colors"
+                  >
+                    Edit
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleSaveCompletionMode}
+                      disabled={savingCompletionMode}
+                      className="text-xs font-semibold text-white bg-[#D97706] px-2.5 py-1 rounded-[6px] hover:bg-[#B45309] disabled:opacity-60 transition-colors"
+                    >
+                      {savingCompletionMode ? 'Saving…' : 'Save'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEditingCompletionMode(false)}
+                      className="text-xs font-medium text-[#475569] hover:text-[#0F172A]"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ))}
               </div>
               <div className="p-4">
-                <p className="text-sm font-medium text-[#0F172A]">
-                  {task.completion_mode === 'all_must_complete'
-                    ? 'All assignees must complete'
-                    : 'Any assignee can complete'}
-                </p>
+                {editingCompletionMode ? (
+                  <div className="space-y-2">
+                    {([
+                      { value: 'any_can_complete', label: 'Any assignee can complete' },
+                      { value: 'all_must_complete', label: 'All assignees must complete' },
+                    ] as const).map((opt) => {
+                      const active = completionModeDraft === opt.value
+                      return (
+                        <label
+                          key={opt.value}
+                          className={[
+                            'flex items-center gap-2.5 rounded-[8px] border px-3 py-2.5 cursor-pointer transition-colors',
+                            active ? 'border-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] bg-white hover:border-[#CBD5E1]',
+                          ].join(' ')}
+                        >
+                          <input
+                            type="radio"
+                            name="completion_mode"
+                            value={opt.value}
+                            checked={active}
+                            onChange={() => setCompletionModeDraft(opt.value)}
+                            className="accent-[#2563EB]"
+                          />
+                          <span className={`text-sm font-medium ${active ? 'text-[#2563EB]' : 'text-[#0F172A]'}`}>{opt.label}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm font-medium text-[#0F172A]">
+                    {task.completion_mode === 'all_must_complete'
+                      ? 'All assignees must complete'
+                      : 'Any assignee can complete'}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -1077,21 +1243,43 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {tab === 'activity' && (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-          <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">Activity Log</h3>
-          {activityLogs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12">
-              <User size={24} className="text-[#94A3B8] mb-3" />
-              <p className="text-sm text-[#475569]">No activity recorded yet.</p>
+      {/* Activity Log — popup opened from the top-right history icon */}
+      {showActivity && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowActivity(false) }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-lg bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 pt-5 pb-3 border-b border-[#E2E8F0] shrink-0">
+              <h3 className="text-[16px] font-semibold text-[#0F172A] flex items-center gap-2">
+                <History size={16} className="text-[#2563EB]" />
+                Activity Log
+              </h3>
+              <button
+                onClick={() => setShowActivity(false)}
+                aria-label="Close"
+                className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+              >
+                <X size={18} />
+              </button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {activityLogs.map((log) => (
-                <ActivityItem key={log.id} log={log} />
-              ))}
+            <div className="overflow-y-auto flex-1 px-6 py-4">
+              {activityLogs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12">
+                  <User size={24} className="text-[#94A3B8] mb-3" />
+                  <p className="text-sm text-[#475569]">No activity recorded yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {activityLogs.map((log) => (
+                    <ActivityItem key={log.id} log={log} />
+                  ))}
+                </div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
