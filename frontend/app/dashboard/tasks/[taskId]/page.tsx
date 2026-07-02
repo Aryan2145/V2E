@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useEffect, useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
@@ -117,10 +118,21 @@ function CommentItem({
   currentUserId: string
   onDeleted: () => void
 }) {
-  async function handleDelete() {
-    if (!confirm('Delete this comment?')) return
-    await tasksApi.deleteComment(orgId, taskId, comment.id)
-    onDeleted()
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  // Long comments are collapsed by default; toggle to read the whole thing.
+  const [expanded, setExpanded] = useState(false)
+  const isLong = comment.body.length > 280
+
+  async function confirmDelete() {
+    setDeleting(true)
+    try {
+      await tasksApi.deleteComment(orgId, taskId, comment.id)
+      onDeleted()
+    } finally {
+      setDeleting(false)
+      setConfirmOpen(false)
+    }
   }
 
   return (
@@ -140,7 +152,18 @@ function CommentItem({
           <span className="text-sm font-semibold text-[#0F172A]">{comment.user_name}</span>
           <span className="text-xs text-[#94A3B8]">{formatDate(comment.created_at)}</span>
         </div>
-        <p className="mt-1 text-sm text-[#1E293B] leading-relaxed">{comment.body}</p>
+        <p className={`mt-1 text-sm text-[#1E293B] leading-relaxed whitespace-pre-wrap ${isLong && !expanded ? 'line-clamp-4' : ''}`}>
+          {comment.body}
+        </p>
+        {isLong && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-0.5 text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+          >
+            {expanded ? 'Show less' : 'Read more'}
+          </button>
+        )}
         {comment.attachments && comment.attachments.length > 0 && (
           <AttachmentChips
             attachments={comment.attachments}
@@ -150,12 +173,53 @@ function CommentItem({
       </div>
       {comment.user_id === currentUserId && (
         <button
-          onClick={handleDelete}
+          onClick={() => setConfirmOpen(true)}
           className="text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"
           title="Delete comment"
         >
           <Trash2 size={13} />
         </button>
+      )}
+
+      {/* Our own confirmation dialog (no browser confirm) */}
+      {confirmOpen && createPortal(
+        <div
+          className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+          onClick={(e) => { if (e.target === e.currentTarget && !deleting) setConfirmOpen(false) }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="relative w-full max-w-sm bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] p-6">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-[#FEE2E2] flex items-center justify-center shrink-0">
+                <Trash2 size={18} className="text-[#DC2626]" />
+              </div>
+              <div className="min-w-0">
+                <h3 className="text-[16px] font-semibold text-[#0F172A]">Delete this comment?</h3>
+                <p className="text-sm text-[#475569] mt-1">This can’t be undone. The comment will be removed for everyone.</p>
+              </div>
+            </div>
+            <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={deleting}
+                className="w-full sm:w-auto px-4 py-[9px] text-sm font-semibold text-[#475569] bg-white border border-[#CBD5E1] rounded-[8px] hover:bg-[#F8FAFC] disabled:opacity-60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDelete}
+                disabled={deleting}
+                className="w-full sm:w-auto px-4 py-[9px] text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:opacity-60 transition-colors"
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
@@ -212,6 +276,7 @@ export default function TaskDetailPage() {
   const [commentFiles, setCommentFiles] = useState<File[]>([])
   const [sendingComment, setSendingComment] = useState(false)
   const commentFileInputRef = useRef<HTMLInputElement>(null)
+  const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
   const [proofUrl, setProofUrl] = useState('')
   const [submittingProof, setSubmittingProof] = useState(false)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -267,6 +332,16 @@ export default function TaskDetailPage() {
   }, [orgId, taskId])
 
   useEffect(() => { loadTask() }, [loadTask])
+
+  // WhatsApp-style auto-grow comment box: shrinks to a single line when empty,
+  // grows with the text up to a cap, then scrolls internally. Runs on every
+  // change (typing, and reset to empty after send).
+  useEffect(() => {
+    const el = commentTextareaRef.current
+    if (!el) return
+    el.style.height = 'auto' // reset so it can shrink back to the default
+    el.style.height = `${Math.min(el.scrollHeight, 120)}px` // cap ≈ 4 lines, then scroll
+  }, [commentText])
 
   // Close the kebab menu on outside click / Escape. The menu is absolutely anchored
   // to its button (not a fixed portal), so it never drifts.
@@ -878,6 +953,7 @@ export default function TaskDetailPage() {
                     }}
                   />
                   <textarea
+                    ref={commentTextareaRef}
                     value={commentText}
                     onChange={(e) => setCommentText(e.target.value.slice(0, 1000))}
                     maxLength={1000}
@@ -888,8 +964,8 @@ export default function TaskDetailPage() {
                       }
                     }}
                     placeholder="Add a comment... (Enter to send, Shift+Enter for new line)"
-                    rows={2}
-                    className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none resize-none"
+                    rows={1}
+                    className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none resize-none max-h-[120px] overflow-y-auto"
                   />
                   {/* Attach files — sits right before Send */}
                   <button
