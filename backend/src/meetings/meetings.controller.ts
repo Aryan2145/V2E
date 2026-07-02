@@ -85,14 +85,15 @@ export class MeetingsController {
 
   @Get(':id/analytics')
   @RequirePermission(MEETINGS, PermissionAction.read)
-  analytics(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async analytics(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    await this.service.assertCanViewMeeting(orgId, actorOf(req), id);
     return this.reports.analytics(orgId, id);
   }
 
   @Get(':id/edit-log')
   @RequirePermission(MEETINGS, PermissionAction.read)
-  editLog(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.getEditLog(orgId, id);
+  editLog(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.getEditLog(orgId, id, actorOf(req));
   }
 
   // ─── Create / update / delete ─────────────────────────────────────────────────

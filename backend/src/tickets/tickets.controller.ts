@@ -114,23 +114,23 @@ export class TicketsController {
   }
 
   @Get(':id')
-  getOne(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.ticketsService.getTicket(orgId, id)
+  getOne(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketsService.getTicket(orgId, id, principalFromUser(user))
   }
 
   @Patch(':id')
   update(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: UpdateTicketDto) {
-    return this.ticketsService.updateTicket(orgId, user.id, id, dto)
+    return this.ticketsService.updateTicket(orgId, user.id, id, dto, principalFromUser(user))
   }
 
   @Delete(':id')
   remove(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: DeleteTicketDto) {
-    return this.ticketsService.softDeleteTicket(orgId, user.id, id, dto.reason)
+    return this.ticketsService.softDeleteTicket(orgId, user.id, id, dto.reason, principalFromUser(user))
   }
 
   @Post(':id/assign')
   assign(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AssignTicketDto) {
-    return this.ticketsService.assignTicket(orgId, user.id, !!user.is_admin, id, dto)
+    return this.ticketsService.assignTicket(orgId, user.id, !!user.is_admin, id, dto, principalFromUser(user))
   }
 
   @Post(':id/accept')
@@ -145,7 +145,7 @@ export class TicketsController {
 
   @Post(':id/close')
   close(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: CloseTicketDto) {
-    return this.ticketsService.closeTicket(orgId, user.id, id, dto)
+    return this.ticketsService.closeTicket(orgId, user.id, id, dto, principalFromUser(user))
   }
 
   @Post(':id/confirm')
@@ -185,22 +185,22 @@ export class TicketsController {
 
   @Post(':id/proof')
   proof(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body('proof_url') proofUrl: string) {
-    return this.ticketsService.submitProof(orgId, user.id, id, proofUrl)
+    return this.ticketsService.submitProof(orgId, user.id, id, proofUrl, principalFromUser(user))
   }
 
   @Get(':id/logs')
-  getLogs(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.ticketsService.getActivityLog(orgId, id)
+  getLogs(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketsService.getActivityLog(orgId, id, principalFromUser(user))
   }
 
   @Get(':id/comments')
-  getComments(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.ticketsService.getComments(orgId, id)
+  getComments(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.ticketsService.getComments(orgId, id, principalFromUser(user))
   }
 
   @Post(':id/comments')
   addComment(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: AddTicketCommentDto) {
-    return this.ticketsService.addComment(orgId, user.id, id, dto)
+    return this.ticketsService.addComment(orgId, user.id, id, dto, principalFromUser(user))
   }
 
   @Delete(':id/comments/:cid')
@@ -210,6 +210,6 @@ export class TicketsController {
 
   @Patch(':id/checklist/:iid')
   toggleChecklist(@Param('orgId') orgId: string, @CurrentUser() user: AuthUser, @Param('id') id: string, @Param('iid') iid: string) {
-    return this.ticketsService.toggleChecklist(orgId, user.id, id, iid)
+    return this.ticketsService.toggleChecklist(orgId, user.id, id, iid, principalFromUser(user))
   }
 }

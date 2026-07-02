@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { PermissionAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -252,6 +252,11 @@ export class MeetingsService {
     });
     if (!meeting) throw new NotFoundException('Meeting not found');
 
+    // Row-level read gate: manage rights imply visibility; everyone else must be
+    // on the meeting or hold read scope over one of its participants.
+    const canManage = await this.canManage(orgId, meeting, actor);
+    if (!canManage) await this.assertParticipantView(orgId, actor, meeting);
+
     const myNote = await this.prisma.meetingPrivateNote.findUnique({
       where: { meeting_id_user_id: { meeting_id: id, user_id: actor.id } },
     });
@@ -277,7 +282,7 @@ export class MeetingsService {
       my_note: myNote?.body ?? '',
       can_convert_to_poll: meeting.mode === 'fixed' && meeting.status === 'scheduled' && rescheduleCount >= RESCHEDULE_THRESHOLD,
       conflicts,
-      can_manage: await this.canManage(orgId, meeting.created_by_user_id, actor),
+      can_manage: canManage,
     };
   }
 
@@ -736,8 +741,9 @@ export class MeetingsService {
   }
 
   // ─── Edit log (reads the shared audit log) ─────────────────────────────────────
-  async getEditLog(orgId: string, id: string) {
-    await this.findOrFail(orgId, id);
+  async getEditLog(orgId: string, id: string, actor?: Actor) {
+    const meeting = await this.findOrFail(orgId, id);
+    if (actor) await this.assertParticipantView(orgId, actor, meeting);
     return this.audit.list(orgId, { resource: 'meeting', entity_id: id, take: 200 });
   }
 
@@ -757,25 +763,72 @@ export class MeetingsService {
   private async requireAttendee(orgId: string, meeting: { id: string; created_by_user_id: string }, actor: Actor) {
     if (actor.id === meeting.created_by_user_id) return;
     const a = await this.prisma.meetingAttendee.findUnique({ where: { meeting_id_user_id: { meeting_id: meeting.id, user_id: actor.id } } });
-    if (!a && !(await this.canManage(orgId, meeting.created_by_user_id, actor))) {
+    if (!a && !(await this.canManage(orgId, meeting, actor))) {
       throw new ForbiddenException('You are not part of this meeting.');
     }
   }
 
-  private async canManage(orgId: string, organizerId: string, actor: Actor): Promise<boolean> {
-    if (actor.id === organizerId) return true;
-    return this.permissions.hasEffective(
+  private async participantIds(meeting: { id: string; created_by_user_id: string }): Promise<string[]> {
+    const attendees = await this.prisma.meetingAttendee.findMany({
+      where: { meeting_id: meeting.id },
+      select: { user_id: true },
+    });
+    return [meeting.created_by_user_id, ...attendees.map((a) => a.user_id)];
+  }
+
+  /**
+   * Scope-aware manage check: an edit entitlement must actually COVER this
+   * meeting's participants — holding `meetings.edit` at own/team scope is not a
+   * skeleton key for every meeting in the org.
+   */
+  private async canManage(orgId: string, meeting: { id: string; created_by_user_id: string }, actor: Actor): Promise<boolean> {
+    if (actor.id === meeting.created_by_user_id) return true;
+    if (!(await this.permissions.hasEffective(
       orgId,
       { userId: actor.id, systemRoleId: actor.system_role_id, isAdmin: actor.is_admin, isSuperAdmin: actor.isSuperAdmin },
       MEETING,
       'edit',
-    );
+    ))) {
+      return false;
+    }
+    try {
+      await this.scope.assertCanActOn(
+        orgId,
+        principalFromUser(actor),
+        MEETING,
+        PermissionAction.edit,
+        await this.participantIds(meeting),
+      );
+      return true;
+    } catch {
+      return false;
+    }
   }
 
-  private async requireManage(orgId: string, meeting: { created_by_user_id: string }, actor: Actor) {
-    if (!(await this.canManage(orgId, meeting.created_by_user_id, actor))) {
+  private async requireManage(orgId: string, meeting: { id: string; created_by_user_id: string }, actor: Actor) {
+    if (!(await this.canManage(orgId, meeting, actor))) {
       throw new ForbiddenException('Only the organiser (or a user with edit rights) can do this.');
     }
+  }
+
+  /**
+   * A meeting is a private record. Allow a viewer only if they are directly on it
+   * (organizer or attendee) OR it falls within their read scope over one of its
+   * participants. Fails closed — knowing a meeting's id must never be enough to
+   * read its record, analytics, or edit log.
+   */
+  private async assertParticipantView(orgId: string, actor: Actor, meeting: { id: string; created_by_user_id: string }) {
+    if (actor.id === meeting.created_by_user_id) return;
+    const participants = await this.participantIds(meeting);
+    if (participants.includes(actor.id)) return;
+    await this.scope.assertCanActOn(orgId, principalFromUser(actor), MEETING, PermissionAction.read, participants);
+  }
+
+  /** Guard for meeting reads and sub-resources. Internal callers pass no actor. */
+  async assertCanViewMeeting(orgId: string, actor: Actor | undefined, id: string): Promise<void> {
+    if (!actor) return;
+    const meeting = await this.findOrFail(orgId, id);
+    await this.assertParticipantView(orgId, actor, meeting);
   }
 
   private assertOpen(meeting: { status: string }) {

@@ -132,7 +132,9 @@ export class BulletinService {
   }
 
   async togglePin(postId: string, boardId: string, orgId: string) {
-    const post = await this.prisma.bulletinPost.findFirst({ where: { id: postId, bulletin_board_id: boardId } });
+    const post = await this.prisma.bulletinPost.findFirst({
+      where: { id: postId, bulletin_board_id: boardId, organization_id: orgId },
+    });
     if (!post) throw new NotFoundException(`Post ${postId} not found`);
     return this.prisma.bulletinPost.update({ where: { id: postId }, data: { is_pinned: !post.is_pinned } });
   }

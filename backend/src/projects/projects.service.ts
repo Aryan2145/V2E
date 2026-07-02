@@ -474,6 +474,12 @@ export class ProjectsService {
     await this.findProjectOrFail(orgId, projectId);
     await this.requireManagerOrEditor(projectId, userId);
 
+    const milestone = await this.prisma.projectMilestone.findFirst({
+      where: { id: milestoneId, project_id: projectId },
+      select: { id: true },
+    });
+    if (!milestone) throw new NotFoundException(`Milestone ${milestoneId} not found`);
+
     return this.prisma.projectMilestone.update({
       where: { id: milestoneId },
       data: {
@@ -488,6 +494,11 @@ export class ProjectsService {
   async deleteMilestone(orgId: string, projectId: string, userId: string, milestoneId: string) {
     await this.findProjectOrFail(orgId, projectId);
     await this.requireManagerOrEditor(projectId, userId);
+    const milestone = await this.prisma.projectMilestone.findFirst({
+      where: { id: milestoneId, project_id: projectId },
+      select: { id: true },
+    });
+    if (!milestone) throw new NotFoundException(`Milestone ${milestoneId} not found`);
     await this.prisma.projectMilestone.delete({ where: { id: milestoneId } });
     await this.progressService.recalculateProjectProgress(projectId);
     return { message: 'Milestone deleted' };
@@ -598,8 +609,12 @@ export class ProjectsService {
     return { message: 'Task removed from project' };
   }
 
-  async getDependencyWarnings(taskId: string) {
-    const deps = await this.prisma.projectTaskDependency.findMany({ where: { task_id: taskId } });
+  async getDependencyWarnings(orgId: string, projectId: string, userId: string, taskId: string) {
+    await this.findProjectOrFail(orgId, projectId);
+    await this.requireMember(projectId, userId);
+    const deps = await this.prisma.projectTaskDependency.findMany({
+      where: { task_id: taskId, project_id: projectId },
+    });
     if (!deps.length) return [];
 
     const depTaskIds = deps.map((d) => d.depends_on_task_id);
@@ -645,6 +660,11 @@ export class ProjectsService {
   async removeDependency(orgId: string, projectId: string, userId: string, depId: string) {
     await this.findProjectOrFail(orgId, projectId);
     await this.requireManagerOrEditor(projectId, userId);
+    const dep = await this.prisma.projectTaskDependency.findFirst({
+      where: { id: depId, project_id: projectId },
+      select: { id: true },
+    });
+    if (!dep) throw new NotFoundException(`Dependency ${depId} not found`);
     await this.prisma.projectTaskDependency.delete({ where: { id: depId } });
     await this.log(orgId, projectId, userId, 'dependency_removed', { dep_id: depId });
     return { message: 'Dependency removed' };
@@ -682,7 +702,15 @@ export class ProjectsService {
   }
 
   async deleteComment(orgId: string, projectId: string, userId: string, commentId: string) {
-    await this.requireMember(projectId, userId);
+    const member = await this.requireMember(projectId, userId);
+    const comment = await this.prisma.projectComment.findFirst({
+      where: { id: commentId, project_id: projectId, is_deleted: false },
+      select: { id: true, user_id: true },
+    });
+    if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
+    if (comment.user_id !== userId && member.role !== 'manager') {
+      throw new ForbiddenException("Cannot delete another user's comment");
+    }
     await this.prisma.projectComment.update({
       where: { id: commentId },
       data: { is_deleted: true, deleted_at: new Date() },
@@ -718,6 +746,11 @@ export class ProjectsService {
 
   async deleteDocument(orgId: string, projectId: string, userId: string, docId: string) {
     await this.requireManagerOrEditor(projectId, userId);
+    const doc = await this.prisma.projectDocument.findFirst({
+      where: { id: docId, project_id: projectId },
+      select: { id: true },
+    });
+    if (!doc) throw new NotFoundException(`Document ${docId} not found`);
     await this.prisma.projectDocument.delete({ where: { id: docId } });
     return { message: 'Document removed' };
   }

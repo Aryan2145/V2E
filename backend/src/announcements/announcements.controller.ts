@@ -77,8 +77,8 @@ export class AnnouncementsController {
   @Post(':id/publish')
   @RequirePermission('communication.announcements.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Publish an announcement' })
-  publish(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.publish(id, orgId);
+  publish(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.publish(id, orgId, req.user.id, !!req.user.is_admin);
   }
 
   @Post(':id/pin')
@@ -108,7 +108,7 @@ export class AnnouncementsController {
   @Delete(':id')
   @RequirePermission('communication.announcements.manage', PermissionAction.delete)
   @ApiOperation({ summary: 'Delete an announcement' })
-  remove(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.remove(id, orgId);
+  remove(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.remove(id, orgId, req.user.id, !!req.user.is_admin);
   }
 }

@@ -205,8 +205,8 @@ export class NotificationsService {
     return { ok: true };
   }
 
-  async unsubscribePush(endpoint: string) {
-    await this.prisma.pushSubscription.deleteMany({ where: { endpoint } });
+  async unsubscribePush(userId: string, endpoint: string) {
+    await this.prisma.pushSubscription.deleteMany({ where: { endpoint, user_id: userId } });
     return { ok: true };
   }
 

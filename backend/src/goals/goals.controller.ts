@@ -68,22 +68,22 @@ export class GoalsController {
   @Get(':parentId/next-default')
   @RequirePermission(GOALS, PermissionAction.read)
   @ApiOperation({ summary: 'Smart default due date for the next child under a parent' })
-  nextDefault(@Param('orgId') orgId: string, @Param('parentId') parentId: string) {
-    return this.service.getNextDefault(orgId, parentId);
+  nextDefault(@Param('orgId') orgId: string, @Param('parentId') parentId: string, @Request() req: any) {
+    return this.service.getNextDefault(orgId, parentId, principalFromUser(req.user));
   }
 
   @Get(':id')
   @RequirePermission(GOALS, PermissionAction.read)
   @ApiOperation({ summary: 'Goal detail (parent, children, measures, linked tasks)' })
-  getOne(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.getOne(orgId, id);
+  getOne(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.getOne(orgId, id, principalFromUser(req.user));
   }
 
   @Get(':id/check-ins')
   @RequirePermission(GOALS, PermissionAction.read)
   @ApiOperation({ summary: 'Full check-in history for a goal' })
-  listCheckIns(@Param('orgId') orgId: string, @Param('id') id: string) {
-    return this.service.listCheckIns(orgId, id);
+  listCheckIns(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.listCheckIns(orgId, id, principalFromUser(req.user));
   }
 
   @Post(':id/check-ins')
@@ -95,7 +95,7 @@ export class GoalsController {
     @Request() req: any,
     @Body() dto: CreateGoalCheckInDto,
   ) {
-    return this.service.createCheckIn(orgId, req.user.id, id, dto);
+    return this.service.createCheckIn(orgId, req.user.id, id, dto, principalFromUser(req.user));
   }
 
   @Post()
@@ -114,7 +114,7 @@ export class GoalsController {
     @Request() req: any,
     @Body() dto: UpdateGoalDto,
   ) {
-    return this.service.update(orgId, req.user.id, id, dto);
+    return this.service.update(orgId, req.user.id, id, dto, principalFromUser(req.user));
   }
 
   @Delete(':id')
@@ -126,6 +126,6 @@ export class GoalsController {
     @Request() req: any,
     @Body() dto: DeleteGoalDto,
   ) {
-    return this.service.remove(orgId, req.user.id, id, dto?.reason);
+    return this.service.remove(orgId, req.user.id, id, dto?.reason, principalFromUser(req.user));
   }
 }

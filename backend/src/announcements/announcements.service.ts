@@ -87,8 +87,11 @@ export class AnnouncementsService {
     });
   }
 
-  async publish(id: string, orgId: string) {
-    await this.findOneRaw(id, orgId);
+  async publish(id: string, orgId: string, userId: string, isAdmin: boolean) {
+    const ann = await this.findOneRaw(id, orgId);
+    if (ann.created_by_user_id !== userId && !isAdmin) {
+      throw new ForbiddenException('Not allowed to publish this announcement');
+    }
     return this.prisma.announcement.update({
       where: { id },
       data: { published_at: new Date() },
@@ -126,8 +129,11 @@ export class AnnouncementsService {
     return { total_employees: totalEmployees, read_count: reads.length, reads };
   }
 
-  async remove(id: string, orgId: string) {
-    await this.findOneRaw(id, orgId);
+  async remove(id: string, orgId: string, userId: string, isAdmin: boolean) {
+    const ann = await this.findOneRaw(id, orgId);
+    if (ann.created_by_user_id !== userId && !isAdmin) {
+      throw new ForbiddenException('Not allowed to delete this announcement');
+    }
     return this.prisma.announcement.delete({ where: { id } });
   }
 

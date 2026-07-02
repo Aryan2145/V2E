@@ -179,7 +179,10 @@ export class WorkflowTemplateService {
   async reorderSteps(orgId: string, templateId: string, userId: string, items: { id: string; order_index: number }[]) {
     await this.assertEditable(orgId, templateId, userId)
     for (const item of items) {
-      await this.prisma.workflowStep.update({ where: { id: item.id }, data: { order_index: item.order_index } })
+      await this.prisma.workflowStep.updateMany({
+        where: { id: item.id, workflow_template_id: templateId },
+        data: { order_index: item.order_index },
+      })
     }
     return this.prisma.workflowStep.findMany({ where: { workflow_template_id: templateId }, orderBy: { order_index: 'asc' } })
   }
@@ -219,11 +222,13 @@ export class WorkflowTemplateService {
 
   async updateTrigger(orgId: string, templateId: string, triggerId: string, userId: string, dto: Partial<CreateTriggerDto>) {
     await this.assertEditable(orgId, templateId, userId)
+    await this.prisma.workflowTrigger.findFirstOrThrow({ where: { id: triggerId, workflow_template_id: templateId } })
     return this.prisma.workflowTrigger.update({ where: { id: triggerId }, data: dto as never })
   }
 
   async deleteTrigger(orgId: string, templateId: string, triggerId: string, userId: string) {
     await this.assertEditable(orgId, templateId, userId)
+    await this.prisma.workflowTrigger.findFirstOrThrow({ where: { id: triggerId, workflow_template_id: templateId } })
     await this.prisma.workflowTrigger.delete({ where: { id: triggerId } })
   }
 
@@ -304,11 +309,32 @@ export class WorkflowTemplateService {
     })
   }
 
-  async cancelInstance(orgId: string, instanceId: string) {
+  async cancelInstance(orgId: string, templateId: string, userId: string, instanceId: string) {
+    await this.assertEditable(orgId, templateId, userId)
+    const instance = await this.prisma.workflowInstance.findFirst({
+      where: { id: instanceId, workflow_template_id: templateId, organization_id: orgId },
+      select: { id: true },
+    })
+    if (!instance) throw new NotFoundException('Workflow instance not found')
     return this.prisma.workflowInstance.update({
       where: { id: instanceId },
       data: { status: 'cancelled' },
     })
+  }
+
+  /**
+   * Manual-trigger gate: only the creator, an owner, or a user with an explicit
+   * access grant may spawn an instance — and the template must belong to the
+   * caller's org (fail closed; the engine itself is org-blind for cron use).
+   */
+  async assertCanTrigger(orgId: string, templateId: string, userId: string) {
+    const t = await this.prisma.workflowTemplate.findFirst({ where: { id: templateId, organization_id: orgId } })
+    if (!t) throw new NotFoundException('Workflow template not found')
+    const isOwner = (t.owner_user_ids as string[]).includes(userId)
+    const isCreator = t.created_by_user_id === userId
+    if (isOwner || isCreator) return
+    const access = await this.prisma.workflowAccess.findFirst({ where: { workflow_template_id: templateId, user_id: userId } })
+    if (!access) throw new ForbiddenException('No access to trigger this workflow')
   }
 
   // ── Guard ────────────────────────────────────────────────────────────────────

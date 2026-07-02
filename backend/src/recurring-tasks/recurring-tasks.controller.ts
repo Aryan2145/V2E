@@ -14,8 +14,11 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import { OrgScopeGuard } from '../common/guards/org-scope.guard';
+import { principalFromUser } from '../access-rights/permissions.service';
 import { RecurringTasksService } from './recurring-tasks.service';
 import { RecurringAttachmentsService } from './recurring-attachments.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
@@ -27,7 +30,7 @@ import { MAX_ATTACHMENT_BYTES, type UploadedFile as UploadedFileType } from '../
 
 @ApiTags('recurring-tasks')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard)
 @Controller('api/v1/org/:orgId/tasks/recurring')
 export class RecurringTasksController {
   constructor(
@@ -55,19 +58,22 @@ export class RecurringTasksController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a recurring task template' })
-  update(@Param('orgId') orgId: string, @Param('id') id: string, @Body() dto: UpdateRecurringDto) {
+  async update(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Body() dto: UpdateRecurringDto) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.service.updateTemplate(orgId, id, dto);
   }
 
   @Post(':id/pause')
   @ApiOperation({ summary: 'Pause a recurring task template' })
-  pause(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async pause(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.service.pauseTemplate(orgId, id);
   }
 
   @Post(':id/resume')
   @ApiOperation({ summary: 'Resume a paused recurring task template' })
-  async resume(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async resume(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     const template = await this.service.resumeTemplate(orgId, id);
     // Immediately spawn today's occurrence if the schedule fires today (org's effective clock)
     const now = await this.clock.now(orgId);
@@ -77,30 +83,35 @@ export class RecurringTasksController {
 
   @Post(':id/spawn-today')
   @ApiOperation({ summary: 'Manually trigger today\'s spawn for a recurring template' })
-  async spawnToday(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async spawnToday(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     const now = await this.clock.now(orgId);
     return this.scheduler.spawnForTemplate(orgId, id, true, now);
   }
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete or stop a recurring task template' })
-  remove(
+  async remove(
     @Param('orgId') orgId: string,
+    @Request() req: any,
     @Param('id') id: string,
     @Query('mode') mode?: 'stop' | 'delete-future' | 'delete-all',
   ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.delete);
     return this.service.deleteTemplate(orgId, id, mode ?? 'stop');
   }
 
   @Get(':id/instances')
   @ApiOperation({ summary: 'Get task instances spawned from a template' })
-  getInstances(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async getInstances(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
     return this.service.getInstances(orgId, id);
   }
 
   @Get(':id/stats')
   @ApiOperation({ summary: 'Get completion stats for a recurring template' })
-  getStats(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async getStats(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
     return this.service.getStats(orgId, id);
   }
 
@@ -110,39 +121,44 @@ export class RecurringTasksController {
   @ApiOperation({ summary: 'Upload a document attachment to a recurring template' })
   @ApiConsumes('multipart/form-data')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
-  uploadAttachment(
+  async uploadAttachment(
     @Param('orgId') orgId: string,
     @Request() req: any,
     @Param('id') id: string,
     @UploadedFile() file: UploadedFileType,
   ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.attachments.upload(orgId, req.user.id, id, file);
   }
 
   @Get(':id/attachments')
   @ApiOperation({ summary: 'List attachments on a recurring template' })
-  listAttachments(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async listAttachments(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
     return this.attachments.listForTemplate(orgId, id);
   }
 
   @Get(':id/attachments/:attachmentId/download')
   @ApiOperation({ summary: 'Get a short-lived signed download URL for a template attachment' })
-  downloadAttachment(
-    @Param('orgId') orgId: string,
-    @Param('id') id: string,
-    @Param('attachmentId') attachmentId: string,
-  ) {
-    return this.attachments.getDownloadUrl(orgId, id, attachmentId);
-  }
-
-  @Delete(':id/attachments/:attachmentId')
-  @ApiOperation({ summary: 'Remove a template attachment (uploader only)' })
-  removeAttachment(
+  async downloadAttachment(
     @Param('orgId') orgId: string,
     @Request() req: any,
     @Param('id') id: string,
     @Param('attachmentId') attachmentId: string,
   ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
+    return this.attachments.getDownloadUrl(orgId, id, attachmentId);
+  }
+
+  @Delete(':id/attachments/:attachmentId')
+  @ApiOperation({ summary: 'Remove a template attachment (uploader only)' })
+  async removeAttachment(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.attachments.remove(orgId, req.user.id, id, attachmentId);
   }
 
@@ -150,38 +166,45 @@ export class RecurringTasksController {
 
   @Get(':id/schedules')
   @ApiOperation({ summary: 'List schedule entries for a template' })
-  listSchedules(@Param('orgId') orgId: string, @Param('id') id: string) {
+  async listSchedules(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
     return this.service.listScheduleEntries(orgId, id);
   }
 
   @Post(':id/schedules')
   @ApiOperation({ summary: 'Add a schedule entry to a template' })
-  addSchedule(
+  async addSchedule(
     @Param('orgId') orgId: string,
+    @Request() req: any,
     @Param('id') id: string,
     @Body() dto: CreateScheduleEntryDto,
   ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.service.addScheduleEntry(orgId, id, dto);
   }
 
   @Patch(':id/schedules/:eid')
   @ApiOperation({ summary: 'Update a schedule entry' })
-  updateSchedule(
+  async updateSchedule(
     @Param('orgId') orgId: string,
+    @Request() req: any,
     @Param('id') id: string,
     @Param('eid') eid: string,
     @Body() dto: Partial<CreateScheduleEntryDto>,
   ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.service.updateScheduleEntry(orgId, id, eid, dto);
   }
 
   @Delete(':id/schedules/:eid')
   @ApiOperation({ summary: 'Delete a schedule entry' })
-  deleteSchedule(
+  async deleteSchedule(
     @Param('orgId') orgId: string,
+    @Request() req: any,
     @Param('id') id: string,
     @Param('eid') eid: string,
   ) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.edit);
     return this.service.deleteScheduleEntry(orgId, id, eid);
   }
 }

@@ -124,6 +124,7 @@ export class CompanyPoliciesController {
   }
 
   @Get(':id/assignments')
+  @RequirePermission('ecs.policy.manage', PermissionAction.read)
   @ApiOperation({ summary: 'Get assignments for a policy' })
   getAssignments(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.service.getAssignments(id, orgId);

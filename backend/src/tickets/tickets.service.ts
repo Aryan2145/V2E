@@ -1,5 +1,6 @@
 import { Injectable, ForbiddenException, NotFoundException, BadRequestException, Logger } from '@nestjs/common'
 import { Cron } from '@nestjs/schedule'
+import { PermissionAction } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
 import { NotificationsService } from '../notifications/notifications.service'
@@ -392,11 +393,26 @@ export class TicketsService {
     return this.prisma.ticketType.create({ data: { organization_id: orgId, ...dto } })
   }
 
+  private async assertInOrg(
+    model: 'ticketType' | 'ticketCategory' | 'ticketPriority' | 'ticketStatus' | 'ticketTemplate' | 'ticketResolverGroup',
+    orgId: string,
+    id: string,
+    label: string,
+  ) {
+    const row = await (this.prisma[model] as { findFirst: (args: unknown) => Promise<unknown> }).findFirst({
+      where: { id, organization_id: orgId },
+      select: { id: true },
+    })
+    if (!row) throw new NotFoundException(`${label} not found`)
+  }
+
   async updateType(orgId: string, typeId: string, dto: UpdateTicketTypeDto) {
+    await this.assertInOrg('ticketType', orgId, typeId, 'Ticket type')
     return this.prisma.ticketType.update({ where: { id: typeId }, data: dto })
   }
 
   async deleteType(orgId: string, typeId: string) {
+    await this.assertInOrg('ticketType', orgId, typeId, 'Ticket type')
     return this.prisma.ticketType.update({ where: { id: typeId }, data: { is_active: false } })
   }
 
@@ -412,10 +428,12 @@ export class TicketsService {
   }
 
   async updateCategory(orgId: string, categoryId: string, dto: UpdateTicketCategoryDto) {
+    await this.assertInOrg('ticketCategory', orgId, categoryId, 'Ticket category')
     return this.prisma.ticketCategory.update({ where: { id: categoryId }, data: dto as never })
   }
 
   async deleteCategory(orgId: string, categoryId: string) {
+    await this.assertInOrg('ticketCategory', orgId, categoryId, 'Ticket category')
     return this.prisma.ticketCategory.update({ where: { id: categoryId }, data: { is_active: false } })
   }
 
@@ -428,10 +446,12 @@ export class TicketsService {
   }
 
   async updatePriority(orgId: string, priorityId: string, dto: UpdateTicketPriorityDto) {
+    await this.assertInOrg('ticketPriority', orgId, priorityId, 'Ticket priority')
     return this.prisma.ticketPriority.update({ where: { id: priorityId }, data: dto })
   }
 
   async deletePriority(orgId: string, priorityId: string) {
+    await this.assertInOrg('ticketPriority', orgId, priorityId, 'Ticket priority')
     return this.prisma.ticketPriority.update({ where: { id: priorityId }, data: { is_active: false } })
   }
 
@@ -444,13 +464,17 @@ export class TicketsService {
   }
 
   async updateStatus(orgId: string, statusId: string, dto: UpdateTicketStatusDto) {
+    await this.assertInOrg('ticketStatus', orgId, statusId, 'Ticket status')
     return this.prisma.ticketStatus.update({ where: { id: statusId }, data: dto })
   }
 
   async reorderStatuses(orgId: string, dto: ReorderTicketStatusesDto) {
     await Promise.all(
       dto.items.map((item) =>
-        this.prisma.ticketStatus.update({ where: { id: item.id }, data: { order_index: item.order_index } }),
+        this.prisma.ticketStatus.updateMany({
+          where: { id: item.id, organization_id: orgId },
+          data: { order_index: item.order_index },
+        }),
       ),
     )
     return this.listStatuses(orgId)
@@ -507,6 +531,7 @@ export class TicketsService {
   }
 
   async updateTemplate(orgId: string, templateId: string, dto: UpdateTicketTemplateDto) {
+    await this.assertInOrg('ticketTemplate', orgId, templateId, 'Ticket template')
     const { access_rules, checklist_items, ...rest } = dto
     const data: Record<string, unknown> = { ...rest }
     if (checklist_items !== undefined) data.checklist_items = checklist_items
@@ -530,6 +555,7 @@ export class TicketsService {
   }
 
   async archiveTemplate(orgId: string, templateId: string) {
+    await this.assertInOrg('ticketTemplate', orgId, templateId, 'Ticket template')
     return this.prisma.ticketTemplate.update({ where: { id: templateId }, data: { is_active: false } })
   }
 
@@ -558,6 +584,7 @@ export class TicketsService {
   }
 
   async updateResolverGroup(orgId: string, groupId: string, dto: UpdateResolverGroupDto) {
+    await this.assertInOrg('ticketResolverGroup', orgId, groupId, 'Resolver group')
     const { member_user_ids, ...rest } = dto
     await this.prisma.$transaction(async (tx) => {
       await tx.ticketResolverGroup.update({ where: { id: groupId }, data: rest as never })
@@ -574,6 +601,7 @@ export class TicketsService {
   }
 
   async deleteResolverGroup(orgId: string, groupId: string) {
+    await this.assertInOrg('ticketResolverGroup', orgId, groupId, 'Resolver group')
     return this.prisma.ticketResolverGroup.update({ where: { id: groupId }, data: { is_active: false } })
   }
 
@@ -770,17 +798,67 @@ export class TicketsService {
     })
   }
 
-  async getTicket(orgId: string, ticketId: string) {
+  /**
+   * A ticket is a private record. Allow an actor only if they are directly on it
+   * (raiser, assignee, or escalation target) OR it falls within their effective
+   * scope for `action` over one of its core participants. Fails closed — knowing
+   * a ticket's id must never be enough to read or mutate it.
+   */
+  private async assertParticipantAction(
+    orgId: string,
+    principal: Principal,
+    ticket: {
+      raised_by_user_id: string
+      assigned_to_user_id: string | null
+      escalations: { escalate_to_user_id: string }[]
+    },
+    action: PermissionAction,
+  ): Promise<void> {
+    const onTicket =
+      ticket.raised_by_user_id === principal.userId ||
+      ticket.assigned_to_user_id === principal.userId ||
+      ticket.escalations.some((e) => e.escalate_to_user_id === principal.userId)
+    if (onTicket) return
+    await this.scope.assertCanActOn(orgId, principal, TicketsService.TICKETS_LEAF, action, [
+      ticket.raised_by_user_id,
+      ticket.assigned_to_user_id,
+      ...ticket.escalations.map((e) => e.escalate_to_user_id),
+    ])
+  }
+
+  /**
+   * Guard for a ticket's sub-resources (comments, logs, checklist). External
+   * callers pass their principal; internal callers pass none (already authorized
+   * upstream).
+   */
+  async assertCanViewTicket(orgId: string, principal: Principal | undefined, ticketId: string): Promise<void> {
+    if (!principal) return
+    const ticket = await this.prisma.ticket.findFirst({
+      where: { id: ticketId, organization_id: orgId, is_deleted: false },
+      select: {
+        raised_by_user_id: true,
+        assigned_to_user_id: true,
+        escalations: { select: { escalate_to_user_id: true } },
+      },
+    })
+    if (!ticket) throw new NotFoundException('Ticket not found')
+    await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.read)
+  }
+
+  async getTicket(orgId: string, ticketId: string, principal?: Principal) {
     const ticket = await this.prisma.ticket.findFirst({
       where: { id: ticketId, organization_id: orgId, is_deleted: false },
       include: { ...TICKET_INCLUDE, activity_logs: { orderBy: { created_at: 'asc' } } },
     })
     if (!ticket) throw new NotFoundException('Ticket not found')
+    // Authorization (external callers only — internal post-mutation reads pass no principal).
+    if (principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.read)
     return ticket
   }
 
-  async updateTicket(orgId: string, userId: string, ticketId: string, dto: UpdateTicketDto) {
-    await this.getTicket(orgId, ticketId)
+  async updateTicket(orgId: string, userId: string, ticketId: string, dto: UpdateTicketDto, principal?: Principal) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.edit)
     const updated = await this.prisma.ticket.update({
       where: { id: ticketId },
       data: dto,
@@ -790,7 +868,7 @@ export class TicketsService {
     return updated
   }
 
-  async assignTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: AssignTicketDto) {
+  async assignTicket(orgId: string, userId: string, isAdmin: boolean, ticketId: string, dto: AssignTicketDto, principal?: Principal) {
     const ticket = await this.getTicket(orgId, ticketId)
     const master = await this.prisma.ticketMaster.findUnique({ where: { organization_id: orgId } })
     const mode = master?.reassignment_mode ?? 'both'
@@ -798,6 +876,8 @@ export class TicketsService {
     const isAssignee = ticket.assigned_to_user_id === userId
     if (mode === 'assignee_only' && !isAssignee) throw new ForbiddenException('Only the assignee can reassign this ticket')
     if (mode === 'admin_manager_only' && !isAdmin) throw new ForbiddenException('Only admins can reassign this ticket')
+    // Under the open mode, being a participant or having edit scope over one is still required.
+    if (mode === 'both' && principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.edit)
 
     // Subject eligibility (fail loud): the new assignee must be allowed to be assigned a ticket.
     if (dto.assigned_to_user_id) {
@@ -880,8 +960,9 @@ export class TicketsService {
     return updated
   }
 
-  async closeTicket(orgId: string, userId: string, ticketId: string, dto: CloseTicketDto) {
+  async closeTicket(orgId: string, userId: string, ticketId: string, dto: CloseTicketDto, principal?: Principal) {
     const ticket = await this.getTicket(orgId, ticketId)
+    if (principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.edit)
     const closedStatus = await this.getStatusByType(orgId, dto.status_type)
     const updated = await this.prisma.ticket.update({
       where: { id: ticketId },
@@ -1117,8 +1198,9 @@ export class TicketsService {
     return updated
   }
 
-  async submitProof(orgId: string, userId: string, ticketId: string, proofUrl: string) {
-    await this.getTicket(orgId, ticketId)
+  async submitProof(orgId: string, userId: string, ticketId: string, proofUrl: string, principal?: Principal) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.edit)
     const updated = await this.prisma.ticket.update({
       where: { id: ticketId },
       data: { proof_url: proofUrl },
@@ -1128,13 +1210,22 @@ export class TicketsService {
     return updated
   }
 
-  async softDeleteTicket(orgId: string, userId: string, ticketId: string, reason: string) {
+  async softDeleteTicket(orgId: string, userId: string, ticketId: string, reason: string, principal?: Principal) {
     if (!reason?.trim()) throw new BadRequestException('Deletion reason is required')
     const ticket = await this.prisma.ticket.findFirst({
       where: { id: ticketId, organization_id: orgId, is_deleted: false },
       include: { ...TICKET_INCLUDE, checklist: true, escalations: true, activity_logs: true, comments: true },
     })
     if (!ticket) throw new NotFoundException('Ticket not found')
+    // Deletion is entitlement-gated (no participant shortcut): being on a ticket
+    // does not grant the right to destroy it.
+    if (principal) {
+      await this.scope.assertCanActOn(orgId, principal, TicketsService.TICKETS_LEAF, PermissionAction.delete, [
+        ticket.raised_by_user_id,
+        ticket.assigned_to_user_id,
+        ...ticket.escalations.map((e) => e.escalate_to_user_id),
+      ])
+    }
     await this.prisma.ticketArchive.create({
       data: {
         organization_id: orgId,
@@ -1165,7 +1256,8 @@ export class TicketsService {
 
   // ─── Comments ──────────────────────────────────────────────────────────────
 
-  async getComments(orgId: string, ticketId: string) {
+  async getComments(orgId: string, ticketId: string, principal?: Principal) {
+    await this.assertCanViewTicket(orgId, principal, ticketId)
     return this.prisma.ticketComment.findMany({
       where: { ticket_id: ticketId, organization_id: orgId, reply_to_comment_id: null, is_deleted: false },
       include: { replies: { where: { is_deleted: false }, orderBy: { created_at: 'asc' } } },
@@ -1173,8 +1265,10 @@ export class TicketsService {
     })
   }
 
-  async addComment(orgId: string, userId: string, ticketId: string, dto: AddTicketCommentDto) {
+  async addComment(orgId: string, userId: string, ticketId: string, dto: AddTicketCommentDto, principal?: Principal) {
     const ticket = await this.getTicket(orgId, ticketId)
+    // Commenting requires the same visibility as reading the thread.
+    if (principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.read)
     const comment = await this.prisma.ticketComment.create({
       data: {
         organization_id: orgId,
@@ -1210,8 +1304,12 @@ export class TicketsService {
     await this.logActivity(orgId, comment.ticket_id, userId, 'comment_deleted')
   }
 
-  async toggleChecklist(orgId: string, userId: string, ticketId: string, itemId: string) {
-    const item = await this.prisma.ticketChecklist.findUnique({ where: { id: itemId } })
+  async toggleChecklist(orgId: string, userId: string, ticketId: string, itemId: string, principal?: Principal) {
+    const ticket = await this.getTicket(orgId, ticketId)
+    if (principal) await this.assertParticipantAction(orgId, principal, ticket, PermissionAction.edit)
+    const item = await this.prisma.ticketChecklist.findFirst({
+      where: { id: itemId, ticket_id: ticketId, organization_id: orgId },
+    })
     if (!item) throw new NotFoundException('Checklist item not found')
     const updated = await this.prisma.ticketChecklist.update({
       where: { id: itemId },
@@ -1221,7 +1319,8 @@ export class TicketsService {
     return updated
   }
 
-  async getActivityLog(orgId: string, ticketId: string) {
+  async getActivityLog(orgId: string, ticketId: string, principal?: Principal) {
+    await this.assertCanViewTicket(orgId, principal, ticketId)
     return this.prisma.ticketActivityLog.findMany({
       where: { ticket_id: ticketId, organization_id: orgId },
       orderBy: { created_at: 'asc' },
@@ -1534,9 +1633,11 @@ export class TicketsService {
   }
 
   async markNotificationRead(orgId: string, userId: string, notificationId: string) {
-    return this.prisma.ticketNotification.update({
-      where: { id: notificationId },
+    const result = await this.prisma.ticketNotification.updateMany({
+      where: { id: notificationId, organization_id: orgId, user_id: userId },
       data: { is_read: true },
     })
+    if (!result.count) throw new NotFoundException('Notification not found')
+    return { success: true }
   }
 }

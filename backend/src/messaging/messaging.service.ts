@@ -170,7 +170,9 @@ export class MessagingService {
   }
 
   async editMessage(msgId: string, convId: string, userId: string, orgId: string, body: string) {
-    const msg = await this.prisma.message.findFirst({ where: { id: msgId, conversation_id: convId } });
+    const msg = await this.prisma.message.findFirst({
+      where: { id: msgId, conversation_id: convId, organization_id: orgId },
+    });
     if (!msg) throw new NotFoundException('Message not found');
     if (msg.sender_user_id !== userId) throw new ForbiddenException('Not allowed');
     return this.prisma.message.update({
@@ -181,7 +183,9 @@ export class MessagingService {
   }
 
   async deleteMessage(msgId: string, convId: string, userId: string, orgId: string) {
-    const msg = await this.prisma.message.findFirst({ where: { id: msgId, conversation_id: convId } });
+    const msg = await this.prisma.message.findFirst({
+      where: { id: msgId, conversation_id: convId, organization_id: orgId },
+    });
     if (!msg) throw new NotFoundException('Message not found');
     if (msg.sender_user_id !== userId) {
       const member = await this.prisma.organizationMember.findUnique({

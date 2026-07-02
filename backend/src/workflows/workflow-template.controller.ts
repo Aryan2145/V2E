@@ -4,6 +4,7 @@ import {
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard'
 import { RolesGuard } from '../common/guards/roles.guard'
 import { OrgScopeGuard } from '../common/guards/org-scope.guard'
+import { RequireAdmin } from '../common/decorators/require-admin.decorator'
 import { WorkflowTemplateService } from './workflow-template.service'
 import { WorkflowEngineService } from './workflow-engine.service'
 import { CreateTemplateDto } from './dto/create-template.dto'
@@ -30,6 +31,7 @@ export class WorkflowTemplateController {
   }
 
   @Patch('masters')
+  @RequireAdmin()
   updateMaster(@Param('orgId') orgId: string, @Body() dto: Partial<{ workflow_creation_roles: string[]; default_overdue_action: string }>) {
     return this.templateService.updateMaster(orgId, dto)
   }
@@ -54,8 +56,8 @@ export class WorkflowTemplateController {
   }
 
   @Patch('notifications/:id/read')
-  markNotificationRead(@Param('id') id: string) {
-    return this.engineService.markNotificationRead(id)
+  markNotificationRead(@Param('orgId') orgId: string, @Req() req: any, @Param('id') id: string) {
+    return this.engineService.markNotificationRead(orgId, req.user.id, id)
   }
 
   // ── Templates ────────────────────────────────────────────────────────────────
@@ -159,7 +161,8 @@ export class WorkflowTemplateController {
   // ── Instances ────────────────────────────────────────────────────────────────
 
   @Post(':id/instances/trigger')
-  triggerInstance(@Param('orgId') orgId: string, @Param('id') id: string, @Req() req: any, @Body() dto: TriggerInstanceDto) {
+  async triggerInstance(@Param('orgId') orgId: string, @Param('id') id: string, @Req() req: any, @Body() dto: TriggerInstanceDto) {
+    await this.templateService.assertCanTrigger(orgId, id, req.user.id)
     return this.engineService.createInstance(id, 'manual_trigger', { name: dto.name }, req.user.id)
   }
 
@@ -179,7 +182,7 @@ export class WorkflowTemplateController {
   }
 
   @Post(':id/instances/:iid/cancel')
-  cancelInstance(@Param('orgId') orgId: string, @Param('iid') iid: string) {
-    return this.templateService.cancelInstance(orgId, iid)
+  cancelInstance(@Param('orgId') orgId: string, @Param('id') id: string, @Req() req: any, @Param('iid') iid: string) {
+    return this.templateService.cancelInstance(orgId, id, req.user.id, iid)
   }
 }

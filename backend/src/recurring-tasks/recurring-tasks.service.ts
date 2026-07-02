@@ -1,5 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { PermissionAction } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { ScopeService } from '../access-rights/scope.service';
+import { Principal } from '../access-rights/permissions.service';
 import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
 import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
@@ -7,11 +10,47 @@ import { TERMINAL_TYPES } from '../tasks/status-phase';
 
 const ENTRY_INCLUDE = { orderBy: { order_index: 'asc' as const } };
 
+/** Recurring templates are task content — they share the task content leaf. */
+const TASK_LEAF = 'tasks.task.manage';
+
 @Injectable()
 export class RecurringTasksService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ScopeService,
+  ) {}
 
   // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  /**
+   * A recurring template is a private record (it spawns private tasks). Allow an
+   * actor only if they are directly on it (creator; assignees too, except for
+   * delete) OR it falls within their effective scope for `action` over one of its
+   * participants. External callers pass their principal; internal callers
+   * (scheduler, post-mutation reads) pass none. Fails closed.
+   */
+  async assertCanAccessTemplate(
+    orgId: string,
+    principal: Principal | undefined,
+    templateId: string,
+    action: PermissionAction,
+  ): Promise<void> {
+    if (!principal) return;
+    const t = await this.prisma.recurringTemplate.findFirst({
+      where: { id: templateId, organization_id: orgId },
+      select: { created_by_user_id: true, assignee_user_ids: true },
+    });
+    if (!t) throw new NotFoundException(`Recurring template ${templateId} not found`);
+    const assigneeIds = (Array.isArray(t.assignee_user_ids) ? t.assignee_user_ids : []) as string[];
+    const isCreator = t.created_by_user_id === principal.userId;
+    const isAssignee = assigneeIds.includes(principal.userId);
+    // Being assigned grants read/edit on the template, never the right to destroy it.
+    if (action === PermissionAction.delete ? isCreator : isCreator || isAssignee) return;
+    await this.scope.assertCanActOn(orgId, principal, TASK_LEAF, action, [
+      t.created_by_user_id,
+      ...assigneeIds,
+    ]);
+  }
 
   private async findTemplateOrFail(orgId: string, templateId: string) {
     const t = await this.prisma.recurringTemplate.findFirst({
@@ -68,6 +107,7 @@ export class RecurringTasksService {
         assignee_user_ids: dto.assignee_user_ids ?? [],
         cc_user_ids: dto.cc_user_ids ?? [],
         checklist_items: (dto.checklist_items ?? []) as never,
+        reminder_specs: (dto.reminders ?? []) as never,
         department_id: dto.department_id,
       },
     });

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { Cron, CronExpression } from '@nestjs/schedule'
 import { PrismaService } from '../prisma/prisma.service'
 import { HolidaysService } from '../holidays/holidays.service'
@@ -646,7 +646,11 @@ export class WorkflowEngineService {
     })
   }
 
-  async markNotificationRead(id: string): Promise<void> {
-    await this.prisma.workflowNotification.update({ where: { id }, data: { is_read: true } })
+  async markNotificationRead(orgId: string, userId: string, id: string): Promise<void> {
+    const result = await this.prisma.workflowNotification.updateMany({
+      where: { id, organization_id: orgId, user_id: userId },
+      data: { is_read: true },
+    })
+    if (!result.count) throw new NotFoundException('Notification not found')
   }
 }

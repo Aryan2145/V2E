@@ -11,6 +11,7 @@ import {
   GoalLevel,
   GoalPerspective,
   GoalStatus,
+  PermissionAction,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -187,8 +188,43 @@ export class GoalsService {
     });
   }
 
+  /**
+   * Read gate for a single goal — reuses the exact line-of-sight semantics of
+   * `list()` so a goal visible in the list is always openable and vice versa.
+   * External callers pass their principal; internal callers pass none (already
+   * authorized upstream). Fails closed with a non-leaky NotFound.
+   */
+  async assertCanViewGoal(orgId: string, principal: Principal | undefined, goalId: string): Promise<void> {
+    if (!principal) return;
+    const lineOfSight = await this.goalsLineOfSightWhere(orgId, principal);
+    const visible = await this.prisma.goal.findFirst({
+      where: { id: goalId, organization_id: orgId, is_deleted: false, AND: [lineOfSight] },
+      select: { id: true },
+    });
+    if (!visible) throw new NotFoundException('Goal not found');
+  }
+
+  /**
+   * Mutation gate: direct participants (owner / creator) act freely so a narrow
+   * scope entitlement never blocks them; everyone else must hold `action` scope
+   * over one of the goal's core participants.
+   */
+  private async assertParticipantAction(
+    orgId: string,
+    principal: Principal,
+    goal: { owner_user_id: string | null; created_by_user_id: string },
+    action: PermissionAction,
+  ): Promise<void> {
+    if (goal.owner_user_id === principal.userId || goal.created_by_user_id === principal.userId) return;
+    await this.scope.assertCanActOn(orgId, principal, GoalsService.GOALS_LEAF, action, [
+      goal.owner_user_id,
+      goal.created_by_user_id,
+    ]);
+  }
+
   // ─── Detail (line of sight up + down + measures + linked tasks) ────────────
-  async getOne(orgId: string, id: string) {
+  async getOne(orgId: string, id: string, principal?: Principal) {
+    await this.assertCanViewGoal(orgId, principal, id);
     const goal = await this.prisma.goal.findFirst({
       where: { id, organization_id: orgId, is_deleted: false },
       include: {
@@ -238,7 +274,8 @@ export class GoalsService {
   }
 
   // ─── Smart default date for the next sibling under a parent ────────────────
-  async getNextDefault(orgId: string, parentId: string) {
+  async getNextDefault(orgId: string, parentId: string, principal?: Principal) {
+    await this.assertCanViewGoal(orgId, principal, parentId);
     const parent = await this.findActiveOrFail(orgId, parentId);
     const childLevel: GoalLevel = parent.level === 'objective' ? 'annual' : 'quarterly';
     if (parent.level === 'quarterly') {
@@ -311,12 +348,13 @@ export class GoalsService {
   }
 
   // ─── Check-in (record actuals + confidence at a review event) ──────────────
-  async createCheckIn(orgId: string, userId: string, goalId: string, dto: CreateGoalCheckInDto) {
+  async createCheckIn(orgId: string, userId: string, goalId: string, dto: CreateGoalCheckInDto, principal?: Principal) {
     const goal = await this.prisma.goal.findFirst({
       where: { id: goalId, organization_id: orgId, is_deleted: false },
       include: { measures: true },
     });
     if (!goal) throw new NotFoundException('Goal not found');
+    if (principal) await this.assertParticipantAction(orgId, principal, goal, PermissionAction.edit);
 
     const checkInDate = this.parseDate(dto.check_in_date, 'check_in_date');
 
@@ -401,7 +439,8 @@ export class GoalsService {
     return checkIn;
   }
 
-  async listCheckIns(orgId: string, goalId: string) {
+  async listCheckIns(orgId: string, goalId: string, principal?: Principal) {
+    await this.assertCanViewGoal(orgId, principal, goalId);
     await this.findActiveOrFail(orgId, goalId);
     return this.prisma.goalCheckIn.findMany({
       where: { goal_id: goalId, organization_id: orgId },
@@ -414,8 +453,9 @@ export class GoalsService {
   }
 
   // ─── Update ────────────────────────────────────────────────────────────────
-  async update(orgId: string, userId: string, id: string, dto: UpdateGoalDto) {
+  async update(orgId: string, userId: string, id: string, dto: UpdateGoalDto, principal?: Principal) {
     const existing = await this.findActiveOrFail(orgId, id);
+    if (principal) await this.assertParticipantAction(orgId, principal, existing, PermissionAction.edit);
 
     const data: Prisma.GoalUpdateInput = {};
     if (dto.title !== undefined) data.title = dto.title.trim();
@@ -526,8 +566,16 @@ export class GoalsService {
   }
 
   // ─── Soft delete (blocked when children exist) ─────────────────────────────
-  async remove(orgId: string, userId: string, id: string, reason?: string) {
+  async remove(orgId: string, userId: string, id: string, reason?: string, principal?: Principal) {
     const existing = await this.findActiveOrFail(orgId, id);
+    // Deletion is entitlement-gated (no participant shortcut): owning a goal does
+    // not by itself grant the right to destroy it.
+    if (principal) {
+      await this.scope.assertCanActOn(orgId, principal, GoalsService.GOALS_LEAF, PermissionAction.delete, [
+        existing.owner_user_id,
+        existing.created_by_user_id,
+      ]);
+    }
 
     const childCount = await this.prisma.goal.count({
       where: { parent_goal_id: id, is_deleted: false },

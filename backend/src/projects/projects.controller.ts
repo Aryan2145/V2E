@@ -169,8 +169,13 @@ export class ProjectsController {
   }
 
   @Get(':id/tasks/:taskId/dependencies')
-  getDependencyWarnings(@Param('taskId') taskId: string) {
-    return this.service.getDependencyWarnings(taskId);
+  getDependencyWarnings(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Request() req: any,
+  ) {
+    return this.service.getDependencyWarnings(orgId, id, req.user.id, taskId);
   }
 
   // ─── Dependencies ────────────────────────────────────────────────────────────

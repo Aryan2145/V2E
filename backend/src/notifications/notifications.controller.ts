@@ -128,7 +128,7 @@ export class NotificationsController {
 
   @Delete('push/subscribe')
   @ApiOperation({ summary: 'Remove a web push subscription' })
-  unsubscribe(@Body() dto: UnsubscribePushDto) {
-    return this.service.unsubscribePush(dto.endpoint);
+  unsubscribe(@CurrentUser() user: AuthUser, @Body() dto: UnsubscribePushDto) {
+    return this.service.unsubscribePush(user.id, dto.endpoint);
   }
 }

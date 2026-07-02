@@ -25,10 +25,19 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleDisconnect(_client: Socket) {}
 
   @SubscribeMessage('join')
-  handleJoin(
+  async handleJoin(
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { convId: string; orgId: string },
   ) {
+    const userId = client.data.userId as string;
+    if (!userId) return { error: 'unauthenticated' };
+    // Only conversation members may subscribe to the room — otherwise any socket
+    // could receive every future broadcast for a conversation it can't read.
+    try {
+      await this.messagingService.getConversation(payload.convId, userId, payload.orgId);
+    } catch {
+      return { error: 'forbidden' };
+    }
     client.join(`conv:${payload.convId}`);
     return { joined: payload.convId };
   }
