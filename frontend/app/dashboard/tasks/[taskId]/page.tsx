@@ -32,6 +32,7 @@ import {
   FileText,
   X,
   History,
+  MoreVertical,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -204,6 +205,9 @@ export default function TaskDetailPage() {
   const [activityLogs, setActivityLogs] = useState<TaskActivityLog[]>([])
   const [loading, setLoading] = useState(true)
   const [showActivity, setShowActivity] = useState(false)
+  // Overflow (kebab) menu that holds the destructive Delete action.
+  const [showActionsMenu, setShowActionsMenu] = useState(false)
+  const actionsMenuRef = useRef<HTMLDivElement>(null)
   const [commentText, setCommentText] = useState('')
   const [commentFiles, setCommentFiles] = useState<File[]>([])
   const [sendingComment, setSendingComment] = useState(false)
@@ -263,6 +267,19 @@ export default function TaskDetailPage() {
   }, [orgId, taskId])
 
   useEffect(() => { loadTask() }, [loadTask])
+
+  // Close the kebab menu on outside click / Escape. The menu is absolutely anchored
+  // to its button (not a fixed portal), so it never drifts.
+  useEffect(() => {
+    if (!showActionsMenu) return
+    function onDoc(e: MouseEvent) {
+      if (actionsMenuRef.current && !actionsMenuRef.current.contains(e.target as Node)) setShowActionsMenu(false)
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setShowActionsMenu(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
+  }, [showActionsMenu])
 
   async function handleStatusChange(newStatusId: string) {
     if (!task) return
@@ -511,15 +528,6 @@ export default function TaskDetailPage() {
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {/* Activity Log — opens in a popup instead of a tab */}
-          <button
-            onClick={() => setShowActivity(true)}
-            aria-label="Activity log"
-            title="Activity log"
-            className="w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] hover:text-[#0F172A] transition-colors"
-          >
-            <History size={16} />
-          </button>
           {!isCompletedStatus && !currentUserIsCC ? (
             <button
               onClick={handleComplete}
@@ -555,15 +563,47 @@ export default function TaskDetailPage() {
               </span>
             )
           )}
-          {canDelete && !showDeleteConfirm && (
+          {/* Overflow menu — holds the Activity log and the (destructive) Delete
+              action, so neither gets a prominent primary button. */}
+          <div ref={actionsMenuRef} className="relative">
             <button
-              onClick={() => setShowDeleteConfirm(true)}
-              className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] transition-colors"
+              onClick={() => setShowActionsMenu((v) => !v)}
+              aria-label="More actions"
+              aria-haspopup="menu"
+              aria-expanded={showActionsMenu}
+              title="More"
+              className="w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] hover:text-[#0F172A] transition-colors"
             >
-              <Trash2 size={15} />
-              Delete
+              <MoreVertical size={16} />
             </button>
-          )}
+            {showActionsMenu && (
+              <div
+                role="menu"
+                className="absolute right-0 top-full mt-1 z-50 w-44 rounded-[10px] border border-[#E2E8F0] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { setShowActionsMenu(false); setShowActivity(true) }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-[#0F172A] hover:bg-[#F8FAFC] transition-colors"
+                >
+                  <History size={14} className="text-[#475569]" />
+                  Activity log
+                </button>
+                {canDelete && !showDeleteConfirm && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { setShowActionsMenu(false); setShowDeleteConfirm(true) }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm text-[#DC2626] hover:bg-[#FEF2F2] transition-colors"
+                  >
+                    <Trash2 size={14} />
+                    Delete task
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
