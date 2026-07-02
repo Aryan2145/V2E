@@ -125,6 +125,10 @@ export default function CreateTaskModal({
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([])
   const [attachErrors, setAttachErrors] = useState<string[]>([])
+  // Attachments are collapsed by default to save space — expand via the + button.
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false)
+  // Checklist is likewise collapsed by default — expand via the + button.
+  const [checklistOpen, setChecklistOpen] = useState(false)
   const [checklistGroups, setChecklistGroups] = useState<ChecklistGroup[]>([])
   const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
   const groupSeq = useRef(0)
@@ -297,6 +301,8 @@ export default function CreateTaskModal({
     setProofRequired(false)
     setAssignees([])
     setAttachmentFiles([])
+    setAttachmentsOpen(false)
+    setChecklistOpen(false)
     setChecklistGroups([])
     setError(null)
     setHolidayCheck(null)
@@ -687,46 +693,6 @@ export default function CreateTaskModal({
             />
           </div>
 
-          {/* Attachments — real document upload (stored after the task is created) */}
-          <div>
-            <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-hidden">
-              {/* Card header — label + count live inside the card */}
-              <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
-                <label className="text-sm font-medium text-[#374151]">Attachments</label>
-                <span className="text-xs font-normal text-[#475569]">Optional</span>
-                {attachmentFiles.length > 0 && (
-                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
-                    {attachmentFiles.length}
-                  </span>
-                )}
-              </div>
-              {/* Body — fixed dropzone button on top; errors + pending files
-                  share ONE scroll region below so the error box scrolls away
-                  with the list instead of staying pinned. */}
-              <div className="p-3">
-                <FileDropzone
-                  onFiles={(fs) => setAttachmentFiles((prev) => [...prev, ...fs])}
-                  onReject={setAttachErrors}
-                  disabled={submitting}
-                />
-                {(attachErrors.length > 0 || attachmentFiles.length > 0) && (
-                  <div className="max-h-[220px] overflow-y-auto mt-2 space-y-2">
-                    {attachErrors.length > 0 && (
-                      <AttachmentErrorBox errors={attachErrors} onDismiss={() => setAttachErrors([])} />
-                    )}
-                    {attachmentFiles.length > 0 && (
-                      <PendingFileList
-                        files={attachmentFiles}
-                        uploading={submitting && attachmentFiles.length > 0}
-                        onRemove={(idx) => setAttachmentFiles((prev) => prev.filter((_, i) => i !== idx))}
-                      />
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
           {/* Quadrant — hidden */}
           {/* <div>
             <label className="block text-sm font-medium text-[#374151] mb-2">Quadrant</label>
@@ -807,20 +773,99 @@ export default function CreateTaskModal({
             <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
           </div>
 
-          {/* Checklist — optional, and you can attach more than one. On a recurring
-              task these repeat on every spawned instance. */}
+          {/* Attachments — collapsed by default to save space; the + button in the
+              header expands the full dropzone. Applies to both one-time and recurring
+              (a recurring template's attachments repeat on every spawned instance). */}
           <div>
-            {/* Empty state: still a card — heading in the header, choices in the body.
-                overflow-visible so the template dropdown can open upward past the card. */}
-            {checklistGroups.length === 0 ? (
-              <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-visible">
-                {/* Card header — label lives inside the card */}
-                <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
-                  <label className="text-sm font-medium text-[#374151]">Checklist</label>
-                  <span className="text-xs font-normal text-[#475569]">Optional</span>
+            <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-hidden">
+              {/* Card header — click anywhere to toggle; + button on the right */}
+              <button
+                type="button"
+                onClick={() => setAttachmentsOpen((v) => !v)}
+                aria-expanded={attachmentsOpen}
+                className="w-full flex items-center gap-2 px-3 py-3 text-left hover:bg-[#F8FAFC] transition-colors"
+              >
+                <label className="text-sm font-medium text-[#374151] cursor-pointer">Attachments</label>
+                <span className="text-xs font-normal text-[#475569]">Optional</span>
+                {attachmentFiles.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {attachmentFiles.length}
+                  </span>
+                )}
+                <span
+                  className={[
+                    'ml-auto flex items-center justify-center w-6 h-6 rounded-[6px] text-[#2563EB] transition-transform',
+                    attachmentsOpen ? 'rotate-45' : '',
+                  ].join(' ')}
+                  aria-hidden
+                >
+                  <Plus size={18} />
+                </span>
+              </button>
+              {/* Body — fixed dropzone button on top; errors + pending files
+                  share ONE scroll region below so the error box scrolls away
+                  with the list instead of staying pinned. */}
+              {attachmentsOpen && (
+                <div className="px-3 pb-3 pt-0">
+                  <FileDropzone
+                    onFiles={(fs) => setAttachmentFiles((prev) => [...prev, ...fs])}
+                    onReject={setAttachErrors}
+                    disabled={submitting}
+                  />
+                  {(attachErrors.length > 0 || attachmentFiles.length > 0) && (
+                    <div className="max-h-[220px] overflow-y-auto mt-2 space-y-2">
+                      {attachErrors.length > 0 && (
+                        <AttachmentErrorBox errors={attachErrors} onDismiss={() => setAttachErrors([])} />
+                      )}
+                      {attachmentFiles.length > 0 && (
+                        <PendingFileList
+                          files={attachmentFiles}
+                          uploading={submitting && attachmentFiles.length > 0}
+                          onRemove={(idx) => setAttachmentFiles((prev) => prev.filter((_, i) => i !== idx))}
+                        />
+                      )}
+                    </div>
+                  )}
                 </div>
+              )}
+            </div>
+          </div>
+
+          {/* Checklist — collapsed by default to save space; the + button in the header
+              expands it. Optional, and you can attach more than one. On a recurring task
+              these repeat on every spawned instance. overflow-visible so the template
+              dropdown can open upward past the card. */}
+          <div>
+            <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-visible">
+              {/* Card header — click anywhere to toggle; + button on the right */}
+              <button
+                type="button"
+                onClick={() => setChecklistOpen((v) => !v)}
+                aria-expanded={checklistOpen}
+                className="w-full flex items-center gap-2 px-3 py-3 text-left rounded-t-[12px] hover:bg-[#F8FAFC] transition-colors"
+              >
+                <label className="text-sm font-medium text-[#374151] cursor-pointer">Checklist</label>
+                <span className="text-xs font-normal text-[#475569]">Optional</span>
+                {checklistGroups.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {checklistGroups.length}
+                  </span>
+                )}
+                <span
+                  className={[
+                    'ml-auto flex items-center justify-center w-6 h-6 rounded-[6px] text-[#2563EB] transition-transform',
+                    checklistOpen ? 'rotate-45' : '',
+                  ].join(' ')}
+                  aria-hidden
+                >
+                  <Plus size={18} />
+                </span>
+              </button>
+
+            {!checklistOpen ? null : checklistGroups.length === 0 ? (
+              <>
                 {/* Body — explain the choice, then the two ways to add one */}
-                <div className="p-4">
+                <div className="px-4 pb-4 pt-0">
                   <p className="text-xs text-[#475569] mb-3">
                     Apply a template, build your own, or combine both. You can add several checklists to one task.
                   </p>
@@ -844,17 +889,9 @@ export default function CreateTaskModal({
                     </button>
                   </div>
                 </div>
-              </div>
+              </>
             ) : (
-              <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-hidden">
-                {/* Card header — label + count live inside the card */}
-                <div className="flex items-center gap-2 px-3 pt-3 pb-1.5">
-                  <label className="text-sm font-medium text-[#374151]">Checklist</label>
-                  <span className="text-xs font-normal text-[#475569]">Optional</span>
-                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
-                    {checklistGroups.length}
-                  </span>
-                </div>
+              <>
                 {/* Scrollable body — multiple checklists live here and scroll internally
                     so the card never stretches the modal, no matter how many you add. */}
                 <div className="max-h-[300px] overflow-y-auto p-3 space-y-3">
@@ -949,8 +986,9 @@ export default function CreateTaskModal({
                     Add checklist
                   </button>
                 </div>
-              </div>
+              </>
             )}
+            </div>
           </div>
         </form>
 
