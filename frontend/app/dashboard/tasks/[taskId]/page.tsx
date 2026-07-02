@@ -864,18 +864,8 @@ export default function TaskDetailPage() {
                     ))}
                   </div>
                 )}
-                {/* Input row: pin • textarea • send */}
+                {/* Input row: textarea • attach • send */}
                 <div className="flex items-end gap-2 p-2">
-                  <button
-                    type="button"
-                    onClick={() => commentFileInputRef.current?.click()}
-                    disabled={sendingComment}
-                    className="shrink-0 w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#2563EB] disabled:text-[#CBD5E1] disabled:cursor-not-allowed transition-colors"
-                    title="Attach files"
-                    aria-label="Attach files"
-                  >
-                    <Paperclip size={18} />
-                  </button>
                   <input
                     ref={commentFileInputRef}
                     type="file"
@@ -889,7 +879,8 @@ export default function TaskDetailPage() {
                   />
                   <textarea
                     value={commentText}
-                    onChange={(e) => setCommentText(e.target.value)}
+                    onChange={(e) => setCommentText(e.target.value.slice(0, 1000))}
+                    maxLength={1000}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault()
@@ -900,13 +891,25 @@ export default function TaskDetailPage() {
                     rows={2}
                     className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none resize-none"
                   />
+                  {/* Attach files — sits right before Send */}
+                  <button
+                    type="button"
+                    onClick={() => commentFileInputRef.current?.click()}
+                    disabled={sendingComment}
+                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#2563EB] disabled:text-[#CBD5E1] disabled:cursor-not-allowed transition-colors"
+                    title="Attach files"
+                    aria-label="Attach files"
+                  >
+                    <Paperclip size={16} className="-rotate-45" />
+                  </button>
                   <button
                     onClick={handleSendComment}
                     disabled={sendingComment || (!commentText.trim() && commentFiles.length === 0)}
-                    className="px-4 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors flex items-center gap-2 shrink-0"
+                    title="Send"
+                    aria-label="Send"
+                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
                   >
-                    <Send size={14} />
-                    Send
+                    <Send size={15} />
                   </button>
                 </div>
               </div>

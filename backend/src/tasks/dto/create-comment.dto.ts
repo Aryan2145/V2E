@@ -1,7 +1,8 @@
-import { IsArray, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateCommentDto {
   @IsString()
+  @MaxLength(1000)
   body: string;
 
   @IsOptional()
