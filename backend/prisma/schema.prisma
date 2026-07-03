@@ -880,7 +880,7 @@ model TaskMaster {
   task_delete_roles           Json     @default("[\"org_admin\"]")
   default_reminder_days_before Int     @default(1)
   default_reminder_frequency  String   @default("once")
-  reopen_window_minutes       Int      @default(10)
+  reopen_window_minutes       Int      @default(5)
   escalation_levels           Int      @default(2)
   archive_view_roles          Json     @default("[\"org_admin\"]")
   // Legacy base-mode fields — retained for rollback/reference; no longer read by the
@@ -1180,8 +1180,10 @@ model TaskChecklist {
   title           String
   group_title     String? // section label when a task carries multiple checklists; null = single ungrouped list
   is_completed    Boolean  @default(false) // shared-mode tick only (any_can_complete / single)
-  completed_by_user_id String? // shared-mode: who last ticked it (attribution)
-  completed_at    DateTime? // shared-mode: when it was last ticked
+  cant_do         Boolean  @default(false) // shared-mode "can't do" — an item that genuinely can't be done
+  cant_do_reason  String?  @db.Text // required when cant_do; shown to everyone
+  completed_by_user_id String? // shared-mode: who last ticked/flagged it (attribution)
+  completed_at    DateTime? // shared-mode: when it was last ticked/flagged
   order_index     Int      @default(0)
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt

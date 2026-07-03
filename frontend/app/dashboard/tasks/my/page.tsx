@@ -55,12 +55,22 @@ export default function MyTasksPage() {
   const isFiltered = isTaskFiltered(filters)
 
   async function handleStatusChange(taskId: string, newStatusId: string) {
+    const task = tasks.find((t) => t.id === taskId)
+    if (!task) return
     // Optimistic — patch the row in place so the list doesn't flash the spinner.
     const prev = tasks
     const nextStatus = statuses.find((s) => s.id === newStatusId)
     setTasks((ts) => ts.map((t) => (t.id === taskId ? { ...t, status_id: newStatusId, status: nextStatus ?? t.status } : t)))
     try {
-      await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
+      // Mode-aware, like the Kanban / task page: on My Tasks I'm always an assignee, so
+      // all_must moves MY track, any_can moves the shared status. (Never updateTask — it
+      // requires edit rights and would 403 a plain assignee.) The control only offers open
+      // states, so this never hits a terminal transition.
+      const updated =
+        task.completion_mode === 'all_must_complete'
+          ? await tasksApi.setAssigneeStatus(orgId, taskId, newStatusId)
+          : await tasksApi.setSharedStatus(orgId, taskId, newStatusId)
+      setTasks((ts) => ts.map((t) => (t.id === taskId ? updated : t)))
     } catch {
       setTasks(prev) // revert on failure
     }
@@ -160,11 +170,14 @@ export default function MyTasksPage() {
 
       {viewMode === 'kanban' && (
         <KanbanView
+          orgId={orgId}
           tasks={filtered}
           statuses={statuses}
           priorities={priorities}
           categories={categories}
-          onStatusChange={handleStatusChange}
+          perspective="assignee"
+          currentUserId={user?.id}
+          onChanged={(u) => setTasks((ts) => ts.map((t) => (t.id === u.id ? u : t)))}
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />
       )}

@@ -114,7 +114,7 @@ function ConfigTab({ orgId }: { orgId: string }) {
             onChange={(e) => setConfig({ ...config, default_reminder_days_before: parseInt(e.target.value) || 0 })}
             className={inputCls} />
         </FormField>
-        <FormField label="Reopen Window (minutes)">
+        <FormField label="Undo window (minutes)">
           <input type="number" min={0} value={config.reopen_window_minutes}
             onChange={(e) => setConfig({ ...config, reopen_window_minutes: parseInt(e.target.value) || 0 })}
             className={inputCls} />

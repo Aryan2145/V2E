@@ -113,7 +113,10 @@ export interface TaskChecklistItem {
   group_title?: string | null
   /** Shared-mode tick only (any_can_complete / single). In all_must_complete, read the per-person `states`. */
   is_completed: boolean
-  /** Shared-mode attribution: who last ticked it. */
+  /** Shared-mode "can't do" — the item genuinely can't be done, with a reason. Fills the item so the task can close. */
+  cant_do?: boolean
+  cant_do_reason?: string | null
+  /** Shared-mode attribution: who last ticked/flagged it. */
   completed_by_user_id?: string | null
   completed_by?: { id: string; name: string; email?: string } | null
   order_index: number

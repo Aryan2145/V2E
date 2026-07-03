@@ -56,11 +56,6 @@ export default function AssignedByMePage() {
   const filtered = useMemo(() => applyTaskFilters(tasks, filters), [tasks, filters])
   const isFiltered = isTaskFiltered(filters)
 
-  async function handleStatusChange(taskId: string, newStatusId: string) {
-    await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
-    loadData()
-  }
-
   if (!orgId) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
@@ -163,11 +158,14 @@ export default function AssignedByMePage() {
 
       {viewMode === 'kanban' && (
         <KanbanView
+          orgId={orgId}
           tasks={filtered}
           statuses={statuses}
           priorities={priorities}
           categories={categories}
-          onStatusChange={handleStatusChange}
+          perspective="owner"
+          currentUserId={user?.id}
+          onChanged={() => loadData()}
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />
       )}
