@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
+import { refreshAccessToken, RefreshError } from './refresh';
 
 const BASE_URL = '';
 
@@ -24,90 +25,47 @@ apiClient.interceptors.request.use(
 );
 
 // ─── Response Interceptor — handle 401 / token refresh ─────────────────────
-let isRefreshing = false;
-let failedQueue: Array<{
-  resolve: (value: unknown) => void;
-  reject: (reason?: any) => void;
-}> = [];
-
-function processQueue(error: AxiosError | null, token: string | null = null) {
-  failedQueue.forEach(({ resolve, reject }) => {
-    if (error) {
-      reject(error);
-    } else {
-      resolve(token);
-    }
-  });
-  failedQueue = [];
-}
-
+// Refresh coordination (cross-tab single-flight, transient-vs-definitive) lives
+// in ./refresh. Here we just: on a 401, get a fresh token and retry once; only
+// tear down the session when the refresh is *definitively* rejected (401 / no
+// token) — a transient network blip must not log the user out.
 apiClient.interceptors.response.use(
   (response: AxiosResponse) => response,
   async (error: AxiosError) => {
     const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       // Auth endpoints return 401 for bad credentials — don't intercept them
       const url = originalRequest.url ?? '';
       if (
         url.includes('/auth/login') ||
         url.includes('/auth/admin-login') ||
-        url.includes('/auth/register')
+        url.includes('/auth/register') ||
+        url.includes('/auth/refresh')
       ) {
         return Promise.reject(error);
       }
 
-      if (isRefreshing) {
-        // Queue requests while a refresh is already in progress
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        }).then((token) => {
-          if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
-          }
-          return apiClient(originalRequest);
-        });
-      }
-
       originalRequest._retry = true;
-      isRefreshing = true;
 
-      const refreshToken = typeof window !== 'undefined'
-        ? localStorage.getItem('refresh_token')
-        : null;
-
-      if (!refreshToken) {
-        clearAuthAndRedirect();
-        return Promise.reject(error);
-      }
+      // The access token this request already failed with — so refresh() can tell
+      // whether another tab has meanwhile stored a newer one.
+      const triedToken = ((originalRequest.headers?.Authorization as string) ?? '')
+        .replace(/^Bearer\s+/i, '') || null;
 
       try {
-        const { data } = await axios.post(`${BASE_URL}/api/v1/auth/refresh`, {
-          refresh_token: refreshToken,
-        });
-
-        const newAccessToken: string = data.data?.access_token ?? data.access_token;
-
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('access_token', newAccessToken);
-          if (data.data?.refresh_token ?? data.refresh_token) {
-            localStorage.setItem('refresh_token', data.data?.refresh_token ?? data.refresh_token);
-          }
-        }
-
-        processQueue(null, newAccessToken);
-
+        const newAccessToken = await refreshAccessToken(triedToken);
         if (originalRequest.headers) {
           originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
         }
-
         return apiClient(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError as AxiosError, null);
-        clearAuthAndRedirect();
+        // Only redirect to login when the session is genuinely gone. On a
+        // transient failure, reject this one request but keep the user signed in.
+        if (refreshError instanceof RefreshError && refreshError.definitive) {
+          clearAuthAndRedirect();
+        }
         return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
       }
     }
 

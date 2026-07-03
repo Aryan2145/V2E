@@ -9,7 +9,8 @@ import React, {
   type ReactNode,
 } from 'react';
 import { useRouter } from 'next/navigation';
-import { login as apiLogin, logout as apiLogout, getMe, switchOrg as apiSwitchOrg, refreshToken } from '../api/auth';
+import { login as apiLogin, logout as apiLogout, getMe, switchOrg as apiSwitchOrg } from '../api/auth';
+import { refreshAccessToken } from '../api/refresh';
 import type { AuthUser, OrgChoice } from '../types';
 
 // Decode a JWT's `exp` claim (seconds → ms). Returns null if unreadable.
@@ -95,12 +96,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const delay = Math.max(5_000, exp - Date.now() - 60_000);
       timer = setTimeout(async () => {
         if (cancelled) return;
-        const rt = localStorage.getItem('refresh_token');
-        if (!rt) return;
         try {
-          const tokens = await refreshToken(rt);
-          if (tokens.access_token) localStorage.setItem('access_token', tokens.access_token);
-          if (tokens.refresh_token) localStorage.setItem('refresh_token', tokens.refresh_token);
+          // Shared single-flight refresh — coordinates with the axios interceptor
+          // and other tabs via a Web Lock, so this proactive refresh can't race
+          // them into an "already rotated" logout.
+          await refreshAccessToken(token);
         } catch {
           /* reactive interceptor will handle a later 401 if this was transient */
         } finally {

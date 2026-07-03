@@ -56,3 +56,18 @@ input[type='number'] {
 .react-flow__node {
   font-family: 'Inter', sans-serif;
 }
+
+/* Boot splash — indeterminate loading bar (a blue segment sweeping the track) */
+@keyframes boot-bar-slide {
+  0%   { left: -40%; width: 40%; }
+  50%  { left: 25%;  width: 55%; }
+  100% { left: 100%; width: 40%; }
+}
+.boot-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: #2563EB;
+  animation: boot-bar-slide 1.15s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}

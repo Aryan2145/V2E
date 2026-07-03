@@ -197,7 +197,14 @@ model User {
   password_hash   String
   is_super_admin  Boolean  @default(false)
   is_active       Boolean  @default(true)
-  refresh_token   String?
+  // Sliding-session refresh tokens are stored HASHED (sha256 hex), never raw —
+  // a DB leak must not hand out usable sessions. `refresh_token` is the current
+  // hash; `refresh_token_prev` is the immediately-previous hash, honoured only
+  // until `refresh_token_prev_exp` (a short grace window) so a racing/concurrent
+  // refresh from another tab isn't force-logged-out.
+  refresh_token          String?
+  refresh_token_prev     String?
+  refresh_token_prev_exp DateTime?
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 

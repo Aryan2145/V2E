@@ -10,6 +10,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import * as bcrypt from 'bcryptjs';
+import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { SwitchOrgDto } from './dto/switch-org.dto';
@@ -112,7 +113,20 @@ export class AuthService {
         secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
       });
       const user = await this.prisma.user.findUnique({ where: { id: payload.sub } });
-      if (!user || !user.is_active || user.refresh_token !== refreshToken) {
+
+      // Tokens are stored hashed. Accept the current hash, OR the immediately-
+      // previous hash while it's still inside its grace window — this lets a
+      // concurrent/racing refresh (multiple tabs waking together) succeed with a
+      // token that was rotated a moment ago, instead of being force-logged-out.
+      const incomingHash = this.hashToken(refreshToken);
+      const matchesCurrent = !!user?.refresh_token && user.refresh_token === incomingHash;
+      const matchesPrev =
+        !!user?.refresh_token_prev &&
+        user.refresh_token_prev === incomingHash &&
+        !!user.refresh_token_prev_exp &&
+        user.refresh_token_prev_exp.getTime() > Date.now();
+
+      if (!user || !user.is_active || (!matchesCurrent && !matchesPrev)) {
         throw new UnauthorizedException('Invalid refresh token');
       }
       const organizationId = payload.organizationId ?? null;
@@ -124,7 +138,10 @@ export class AuthService {
         });
         isAdmin = member?.is_admin ?? false;
       }
-      const tokens = await this.issueFullTokens(user.id, user.email, organizationId, user.is_super_admin);
+      // Rotate, demoting the just-used current hash into the grace slot.
+      const tokens = await this.issueFullTokens(user.id, user.email, organizationId, user.is_super_admin, {
+        demotePrevHash: user.refresh_token,
+      });
       return {
         ...tokens,
         user: await this.buildUserPayload(user, organizationId, isAdmin, user.is_super_admin),
@@ -148,7 +165,10 @@ export class AuthService {
   }
 
   async logout(userId: string) {
-    await this.prisma.user.update({ where: { id: userId }, data: { refresh_token: null } });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { refresh_token: null, refresh_token_prev: null, refresh_token_prev_exp: null },
+    });
     return { message: 'Logged out successfully' };
   }
 
@@ -231,11 +251,22 @@ export class AuthService {
     });
   }
 
+  /** sha256 hex — refresh tokens are high-entropy JWTs, so a fast hash is sufficient. */
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  // Grace window (ms) during which the immediately-previous refresh token still
+  // works after rotation — long enough to absorb a multi-tab wake-up race, short
+  // enough that a leaked old token isn't usable for meaningfully long.
+  private static readonly REFRESH_GRACE_MS = 60_000;
+
   private async issueFullTokens(
     userId: string,
     email: string,
     organizationId: string | null,
     isSuperAdmin: boolean,
+    opts?: { demotePrevHash?: string | null },
   ) {
     const payload: Record<string, any> = { sub: userId, email, isSuperAdmin };
     if (organizationId) payload.organizationId = organizationId;
@@ -250,7 +281,18 @@ export class AuthService {
       expiresIn: this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') as any,
     });
 
-    await this.prisma.user.update({ where: { id: userId }, data: { refresh_token } });
+    // Store only the hash. On a rotation (refresh) we keep the just-used hash in
+    // the grace slot; a fresh login clears the grace slot outright.
+    const data: Record<string, any> = { refresh_token: this.hashToken(refresh_token) };
+    if (opts?.demotePrevHash) {
+      data.refresh_token_prev = opts.demotePrevHash;
+      data.refresh_token_prev_exp = new Date(Date.now() + AuthService.REFRESH_GRACE_MS);
+    } else {
+      data.refresh_token_prev = null;
+      data.refresh_token_prev_exp = null;
+    }
+
+    await this.prisma.user.update({ where: { id: userId }, data });
 
     return { access_token, refresh_token };
   }

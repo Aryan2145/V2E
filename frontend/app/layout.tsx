@@ -6,6 +6,8 @@ import QueryProvider from '@/lib/providers/QueryProvider'
 import { ToastProvider } from '@/components/ui/Toast'
 import { NotificationsProvider } from '@/lib/notifications/NotificationsProvider'
 import NoScrollNumberInputs from '@/components/ui/NoScrollNumberInputs'
+import SplashGate from '@/components/ui/SplashGate'
+import NotificationsOptInPrompt from '@/components/notifications/NotificationsOptInPrompt'
 
 const inter = Inter({
   subsets: ['latin'],
@@ -26,7 +28,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AuthProvider>
             <NoScrollNumberInputs />
             <ToastProvider>
-              <NotificationsProvider>{children}</NotificationsProvider>
+              <NotificationsProvider>
+                <SplashGate>{children}</SplashGate>
+                <NotificationsOptInPrompt />
+              </NotificationsProvider>
             </ToastProvider>
           </AuthProvider>
         </QueryProvider>
