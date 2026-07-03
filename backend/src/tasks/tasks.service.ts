@@ -1995,12 +1995,17 @@ export class TasksService {
         });
       }
     } else if (task.completion_mode === CompletionMode.all_must_complete) {
-      // Checklist gate: this person can't finish until every item is ticked or
-      // marked "can't do". (The owner override above force-closes and skips this.)
-      await this.assertChecklistGateSatisfied(orgId, taskId, target);
-      // Proof gate: this person must have submitted at least one proof file.
-      if (proof && !proof.submitted_user_ids.includes(target)) {
-        throw new BadRequestException('Submit your proof of completion before finishing your part.');
+      // Combined close gate — report EVERY outstanding requirement at once (checklist +
+      // proof), so the person isn't told them one at a time. (The owner override above
+      // force-closes and skips this.)
+      {
+        const missing: string[] = [];
+        const cl = await this.checklistRemainingForUser(orgId, taskId, target);
+        if (cl > 0) missing.push(`tick ${cl} checklist item${cl > 1 ? 's' : ''} (or mark “can’t do” with a reason)`);
+        if (proof && !proof.submitted_user_ids.includes(target)) missing.push('attach your proof of completion');
+        if (missing.length) {
+          throw new BadRequestException(`Before finishing your part you still need to: ${this.joinRequirements(missing)}.`);
+        }
       }
       // Mark this person's part done — and clear any earlier can't-complete flag,
       // since finishing supersedes it.
@@ -2021,12 +2026,16 @@ export class TasksService {
       await this.settleAllMustComplete(orgId, taskId, target);
       return this.getTask(orgId, taskId);
     } else {
-      // any_can_complete — one person closes the whole task for everyone.
-      // The shared checklist must be fully filled first (ticked or "can't do").
-      await this.assertSharedChecklistResolved(orgId, taskId, 'completing');
-      // Any single proof anywhere on the task satisfies the gate (uploader irrelevant).
-      if (proof && !proof.task_has_any_proof) {
-        throw new BadRequestException('Proof of completion is required before marking this task as done.');
+      // any_can_complete — one person closes the whole task for everyone. Report EVERY
+      // outstanding requirement at once (shared checklist + proof).
+      {
+        const missing: string[] = [];
+        const cl = await this.sharedChecklistRemaining(orgId, taskId);
+        if (cl > 0) missing.push(`tick ${cl} checklist item${cl > 1 ? 's' : ''} (or mark “can’t do” with a reason)`);
+        if (proof && !proof.task_has_any_proof) missing.push('attach proof of completion');
+        if (missing.length) {
+          throw new BadRequestException(`Before completing this task you still need to: ${this.joinRequirements(missing)}.`);
+        }
       }
       if (completedStatus) {
         const now = new Date();
@@ -2570,36 +2579,43 @@ export class TasksService {
     await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
   }
 
-  /** all_must_complete gate: a person can't finish their part until every checklist
-   *  item is Done OR skipped-with-reason for them. No-op when there is no checklist. */
-  private async assertChecklistGateSatisfied(orgId: string, taskId: string, userId: string) {
+  /** Join requirement phrases into a natural list: "A", "A and B", "A, B, and C". */
+  private joinRequirements(parts: string[]): string {
+    if (parts.length <= 1) return parts[0] ?? '';
+    if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+    return `${parts.slice(0, -1).join(', ')}, and ${parts[parts.length - 1]}`;
+  }
+
+  /** all_must_complete: how many checklist items are still unresolved (not Done and not
+   *  skipped-with-reason) for one person. 0 when there is no checklist. */
+  private async checklistRemainingForUser(orgId: string, taskId: string, userId: string): Promise<number> {
     const items = await this.prisma.taskChecklist.findMany({
       where: { task_id: taskId, organization_id: orgId },
       select: { id: true },
     });
-    if (items.length === 0) return;
+    if (items.length === 0) return 0;
     const states = await this.prisma.taskChecklistItemState.findMany({
       where: { task_id: taskId, user_id: userId },
       select: { checklist_id: true },
     });
     const satisfied = new Set(states.map((s) => s.checklist_id));
-    const remaining = items.filter((i) => !satisfied.has(i.id)).length;
-    if (remaining > 0) {
-      throw new BadRequestException(
-        `Tick every checklist item — or mark it “can’t do” with a reason — before completing (${remaining} still open).`,
-      );
-    }
+    return items.filter((i) => !satisfied.has(i.id)).length;
+  }
+
+  /** any_can_complete: how many items of the ONE shared checklist are still unresolved. */
+  private async sharedChecklistRemaining(orgId: string, taskId: string): Promise<number> {
+    const items = await this.prisma.taskChecklist.findMany({
+      where: { task_id: taskId, organization_id: orgId },
+      select: { is_completed: true, cant_do: true },
+    });
+    if (items.length === 0) return 0;
+    return items.filter((i) => !i.is_completed && !i.cant_do).length;
   }
 
   /** any_can_complete: the ONE shared checklist must be fully filled (every item ticked
    *  or marked “can’t do”) before the task can be closed — as complete or incomplete. */
   private async assertSharedChecklistResolved(orgId: string, taskId: string, verb: string) {
-    const items = await this.prisma.taskChecklist.findMany({
-      where: { task_id: taskId, organization_id: orgId },
-      select: { is_completed: true, cant_do: true },
-    });
-    if (items.length === 0) return;
-    const remaining = items.filter((i) => !i.is_completed && !i.cant_do).length;
+    const remaining = await this.sharedChecklistRemaining(orgId, taskId);
     if (remaining > 0) {
       throw new BadRequestException(
         `Tick every checklist item — or mark it “can’t do” with a reason — before ${verb} (${remaining} still open).`,
