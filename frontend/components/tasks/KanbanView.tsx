@@ -59,6 +59,20 @@ export default function KanbanView({
     window.setTimeout(() => setToast((t) => (t === msg ? null : t)), 6000)
   }
 
+  // "Partially Completed" is a whole-task rollup — never a personal state — so it's hidden
+  // on My Tasks (assignee) where columns are the viewer's own progress. It stays on the
+  // owner board, where columns are the overall status — placed right AFTER Incomplete
+  // (Completed → Incomplete → Partially Completed) regardless of stored order.
+  const columns = (() => {
+    const visible = perspective === 'assignee' ? statuses.filter((s) => s.type !== 'partially_completed') : [...statuses]
+    const partial = visible.find((s) => s.type === 'partially_completed')
+    const rest = visible.filter((s) => s.type !== 'partially_completed')
+    const incIdx = rest.findIndex((s) => s.type === 'incomplete')
+    if (partial && incIdx >= 0) rest.splice(incIdx + 1, 0, partial) // insert just after Incomplete
+    else if (partial) rest.push(partial)
+    return rest
+  })()
+
   // Group cards by the viewer's column (personal progress on My Tasks; overall otherwise).
   const tasksByCol = statuses.reduce<Record<string, Task[]>>((acc, s) => { acc[s.id] = []; return acc }, {})
   for (const t of tasks) {
@@ -109,7 +123,7 @@ export default function KanbanView({
 
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 min-h-[60vh]">
-      {statuses.map((status) => {
+      {columns.map((status) => {
         const colTasks = tasksByCol[status.id] ?? []
         const isPartialCol = status.type === 'partially_completed'
         const isOver = dragOverCol === status.id && !isPartialCol

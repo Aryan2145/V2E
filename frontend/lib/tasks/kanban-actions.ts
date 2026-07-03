@@ -28,13 +28,21 @@ export function kanbanColumnId(
   statuses: TaskStatus[],
 ): string {
   const byType = (t: string) => statuses.find((s) => s.type === t)?.id
-  if (isTerminalType(task.status?.type)) return task.status_id
+  // Owner board or any_can → the overall/shared status (Partially Completed is a real
+  // outcome there).
   if (perspective === 'owner' || task.completion_mode !== 'all_must_complete') return task.status_id
+  // My Tasks (all_must) → MY personal progress, even for closed tasks. A single person is
+  // never "partially completed", so that column never applies here (it's hidden on this
+  // board) — a task that closed as Partial lands in my own outcome column instead.
   const me = task.assignees?.find((a) => a.user_id === currentUserId && !a.is_cc)
-  if (!me) return task.status_id
-  if (me.is_completed) return byType('completed') ?? task.status_id
-  if (me.cannot_complete) return byType('incomplete') ?? task.status_id
-  return me.status_id ?? byType('not_started') ?? task.status_id
+  if (me) {
+    if (me.is_completed) return byType('completed') ?? task.status_id
+    if (me.cannot_complete) return byType('incomplete') ?? task.status_id
+    return me.status_id ?? byType('not_started') ?? task.status_id
+  }
+  // Not a worker (e.g. CC): fold a whole-task Partial into a visible closed column.
+  if (task.status?.type === 'partially_completed') return byType('incomplete') ?? task.status_id
+  return task.status_id
 }
 
 export type DropOutcome =
