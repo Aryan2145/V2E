@@ -6,6 +6,7 @@ import { io, Socket } from 'socket.io-client'
 import { useAuth } from '@/lib/auth/context'
 import { useToast } from '@/components/ui/Toast'
 import { notificationsApi, type AppNotification } from '@/lib/api/notifications'
+import { refreshAccessToken } from '@/lib/api/refresh'
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
 
@@ -92,13 +93,35 @@ export function NotificationsProvider({ children }: { children: React.ReactNode 
   useEffect(() => {
     if (!userId) return
     const socket = io(`${SOCKET_URL}/notifications`, {
-      auth: { userId },
+      // Send the verified session token, read FRESH on every (re)connect so a
+      // reconnect after a token refresh uses the current token, not a stale one.
+      auth: (cb) => cb({ token: localStorage.getItem('access_token') || '' }),
       // Prefer websocket, but fall back to long-polling so a transient WS
       // failure (e.g. backend restarting in dev) degrades gracefully instead
       // of failing the connection outright.
       transports: ['websocket', 'polling'],
     })
     socketRef.current = socket
+
+    // If the server denies the handshake (expired/invalid token), try ONE token
+    // refresh and reconnect with the fresh token. If the refresh itself fails the
+    // session is genuinely gone — stop and let the normal logged-out handling
+    // (axios interceptor / auth context) take over. No infinite retry loop.
+    let triedRefresh = false
+    socket.on('connect', () => {
+      triedRefresh = false
+    })
+    socket.on('connect_error', async () => {
+      if (socket.active) return // transient failure — socket.io auto-reconnects itself
+      if (triedRefresh) return // already refreshed once this episode — don't loop
+      triedRefresh = true
+      try {
+        await refreshAccessToken(localStorage.getItem('access_token'))
+        socket.connect()
+      } catch {
+        /* refresh failed → truly logged out; leave the socket closed */
+      }
+    })
 
     socket.on('notification', (n: AppNotification) => {
       setLatest((prev) => [n, ...prev].slice(0, 10))

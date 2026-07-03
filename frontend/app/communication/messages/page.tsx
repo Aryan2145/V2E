@@ -10,6 +10,7 @@ import type { Conversation, Message } from '@/lib/types/communication'
 import type { EmployeeProfile } from '@/lib/types'
 import { MessageSquare, Plus, Send, X, Users, Search } from 'lucide-react'
 import { io, Socket } from 'socket.io-client'
+import { refreshAccessToken } from '@/lib/api/refresh'
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
 
@@ -46,16 +47,40 @@ export default function MessagesPage() {
     getEmployees(orgId).then(setEmployees)
   }, [orgId, showNewConv])
 
-  // Socket.io connection
+  // Socket.io connection. Keyed on orgId too: the acting org is now derived from
+  // the verified token (which changes on org switch), so the socket must reconnect
+  // with the new org's token when the user switches orgs.
   useEffect(() => {
     if (!user?.id) return
     const socket = io(`${SOCKET_URL}/chat`, {
-      auth: { userId: user.id },
+      // Send the verified session token, read FRESH on every (re)connect so a
+      // reconnect after a token refresh uses the current token, not a stale one.
+      auth: (cb) => cb({ token: localStorage.getItem('access_token') || '' }),
       // Prefer websocket, but fall back to long-polling so a transient WS
       // failure (e.g. backend restarting in dev) degrades gracefully.
       transports: ['websocket', 'polling'],
     })
     socketRef.current = socket
+
+    // If the server denies the handshake (expired/invalid token), try ONE token
+    // refresh and reconnect with the fresh token. If the refresh itself fails the
+    // session is genuinely gone — stop and let normal logged-out handling take
+    // over. No infinite retry loop.
+    let triedRefresh = false
+    socket.on('connect', () => {
+      triedRefresh = false
+    })
+    socket.on('connect_error', async () => {
+      if (socket.active) return // transient failure — socket.io auto-reconnects itself
+      if (triedRefresh) return // already refreshed once this episode — don't loop
+      triedRefresh = true
+      try {
+        await refreshAccessToken(localStorage.getItem('access_token'))
+        socket.connect()
+      } catch {
+        /* refresh failed → truly logged out; leave the socket closed */
+      }
+    })
 
     socket.on('newMessage', (msg: Message) => {
       setMessages(prev => {
@@ -98,12 +123,13 @@ export default function MessagesPage() {
     })
 
     return () => { socket.disconnect() }
-  }, [user?.id])
+  }, [user?.id, orgId])
 
   // Join room and load messages when active conversation changes
   useEffect(() => {
     if (!activeConvId || !orgId || !socketRef.current) return
-    socketRef.current.emit('join', { convId: activeConvId, orgId })
+    // orgId is no longer sent — the server derives the org from the verified token.
+    socketRef.current.emit('join', { convId: activeConvId })
     getMessages(orgId, activeConvId).then(msgs => {
       setMessages(msgs)
       markRead(orgId, activeConvId)
