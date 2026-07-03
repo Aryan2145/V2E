@@ -48,3 +48,5 @@ skills-lock.json
 # Dev-only docs
 CLAUDE.md
 DESIGN_RULES.md
+CODEBASE_MAP.md
+SECURITY_AUDIT.md
