@@ -39,6 +39,7 @@ export class UsersController {
   }
 
   @Post()
+  @UseGuards(OrgScopeGuard)
   @RequireAdmin()
   create(
     @Param('orgId') orgId: string,
@@ -55,6 +56,7 @@ export class UsersController {
   }
 
   @Patch(':id')
+  @UseGuards(OrgScopeGuard)
   @RequireAdmin()
   update(
     @Param('orgId') orgId: string,
@@ -65,6 +67,7 @@ export class UsersController {
   }
 
   @Delete(':id/deactivate')
+  @UseGuards(OrgScopeGuard)
   @RequireAdmin()
   deactivate(@Param('orgId') orgId: string, @Param('id') id: string) {
     return this.usersService.deactivate(id, orgId);
