@@ -228,22 +228,25 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
 
       {/* Meta cluster — chats (with unread) + attachments. Glanceable, no drill-in. */}
       <div className="shrink-0 flex items-center gap-3">
-        {/* Chats / comments */}
+        {/* Chats / comments — total count beside the icon; the unread badge sits on
+            the icon's corner (with a white ring) so it never overlaps the count. */}
         <div
-          className="relative flex items-center gap-1 text-xs text-[#64748B]"
+          className="flex items-center gap-2 text-xs text-[#64748B]"
           title={
             commentCount === 0
               ? 'No comments'
               : `${commentCount} comment${commentCount !== 1 ? 's' : ''}${unread > 0 ? ` · ${unread} unread` : ''}`
           }
         >
-          <MessageSquare size={14} className={unread > 0 ? 'text-[#2563EB]' : ''} />
+          <span className="relative inline-flex shrink-0">
+            <MessageSquare size={14} className={unread > 0 ? 'text-[#2563EB]' : ''} />
+            {unread > 0 && (
+              <span className="absolute -top-2 -right-1.5 inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full bg-[#2563EB] text-white text-[9px] font-bold leading-none ring-2 ring-white">
+                {unread > 9 ? '9+' : unread}
+              </span>
+            )}
+          </span>
           <span className={unread > 0 ? 'font-semibold text-[#2563EB]' : ''}>{commentCount}</span>
-          {unread > 0 && (
-            <span className="absolute -top-2 -right-2 inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full bg-[#2563EB] text-white text-[9px] font-bold leading-none">
-              {unread > 9 ? '9+' : unread}
-            </span>
-          )}
         </div>
 
         {/* Attachments — shows "None" when there are no files */}

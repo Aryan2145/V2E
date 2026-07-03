@@ -180,7 +180,8 @@ export interface TaskActivityLog {
   id: string
   task_id: string
   performed_by_user_id: string
-  performed_by_name: string
+  /** Enriched actor, resolved server-side (getActivityLog). Null if the user was removed. */
+  performed_by?: { id: string; name: string; email: string } | null
   action: string
   metadata?: Record<string, unknown>
   created_at: string

@@ -10,6 +10,29 @@ export interface StyledSelectOption {
   color?: string
 }
 
+/** Max height (px) of the open panel — capped further by the room actually available. */
+const PANEL_MAX = 260
+
+/**
+ * The clip rectangle (in viewport coords) that will crop the open panel: the nearest
+ * ancestor that scrolls or hides its overflow, intersected with the viewport. The panel
+ * is in-flow (absolute), so it renders inside — and is clipped by — this box, not the
+ * whole screen. We open toward whichever side has real room INSIDE it so a card sitting
+ * at the top of a scroll column drops DOWN instead of opening up into the clipped edge.
+ */
+function nearestClipRect(el: HTMLElement | null): { top: number; bottom: number } {
+  let node = el?.parentElement ?? null
+  while (node) {
+    const oy = window.getComputedStyle(node).overflowY
+    if (oy === 'auto' || oy === 'scroll' || oy === 'hidden') {
+      const r = node.getBoundingClientRect()
+      return { top: Math.max(0, r.top), bottom: Math.min(window.innerHeight, r.bottom) }
+    }
+    node = node.parentElement
+  }
+  return { top: 0, bottom: window.innerHeight }
+}
+
 interface Props {
   value: string
   onChange: (value: string) => void
@@ -42,21 +65,33 @@ export default function StyledSelect({
   disabled = false,
 }: Props) {
   const [open, setOpen] = useState(false)
-  // Open upward when the trigger sits low in the viewport (e.g. bottom of a modal),
-  // so the list never opens below the fold where it can't be reached.
+  // Open upward when the trigger sits low (e.g. bottom of a modal), so the list
+  // never opens where it can't be reached.
   const [dropUp, setDropUp] = useState(false)
+  // The open panel is in-flow (absolute), so a scrolling/overflow ancestor CLIPS it.
+  // Cap its height to the real room available on the chosen side so it is never
+  // sliced off behind the card edge — it always renders fully OVER the card.
+  const [panelMaxH, setPanelMaxH] = useState(PANEL_MAX)
   const wrapRef = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
-
-  const PANEL_MAX = 260
 
   const toggle = () => {
     if (!open) {
       const rect = btnRef.current?.getBoundingClientRect()
       if (rect) {
-        const spaceBelow = window.innerHeight - rect.bottom
-        const spaceAbove = rect.top
-        setDropUp(spaceBelow < PANEL_MAX && spaceAbove > spaceBelow)
+        // Measure room against the nearest CLIPPING ancestor (a scroll container
+        // like a card's independent-scroll column), not just the viewport. A card
+        // at the TOP of such a column has little room above — so we must drop DOWN
+        // even if the viewport has space above, otherwise the upward panel is clipped
+        // by the container's top edge and its options hide behind the card.
+        const clip = nearestClipRect(btnRef.current)
+        const spaceBelow = clip.bottom - rect.bottom
+        const spaceAbove = rect.top - clip.top
+        const up = spaceBelow < PANEL_MAX && spaceAbove > spaceBelow
+        setDropUp(up)
+        // Fit within the chosen side's un-clipped room (never exceed PANEL_MAX).
+        const room = Math.max(0, (up ? spaceAbove : spaceBelow) - 8)
+        setPanelMaxH(Math.min(PANEL_MAX, Math.max(120, room)))
       }
     }
     setOpen((o) => !o)
@@ -117,7 +152,10 @@ export default function StyledSelect({
       </button>
 
       {open && (
-        <div className={`absolute left-0 right-0 ${dropUp ? 'bottom-[calc(100%+6px)]' : 'top-[calc(100%+6px)]'} z-50 flex flex-col max-h-[260px] border border-[#E2E8F0] rounded-[10px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] overflow-hidden`}>
+        <div
+          style={{ maxHeight: panelMaxH }}
+          className={`absolute left-0 right-0 ${dropUp ? 'bottom-[calc(100%+6px)]' : 'top-[calc(100%+6px)]'} z-50 flex flex-col border border-[#E2E8F0] rounded-[10px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] overflow-hidden`}
+        >
           <div className="flex-1 overflow-y-auto overscroll-contain min-h-0 py-1">
             {options.length === 0 ? (
               <p className="px-3 py-6 text-center text-sm text-[#94A3B8]">No options.</p>

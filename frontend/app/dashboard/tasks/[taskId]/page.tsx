@@ -236,7 +236,7 @@ function ActivityItem({ log }: { log: TaskActivityLog }) {
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm text-[#1E293B]">
-          <span className="font-semibold">{log.performed_by_name}</span>{' '}
+          <span className="font-semibold">{log.performed_by?.name ?? 'Someone'}</span>{' '}
           <span className="text-[#475569]">{log.action.replace(/_/g, ' ')}</span>
         </p>
         {!!log.metadata?.reason && (
@@ -1668,8 +1668,10 @@ export default function TaskDetailPage() {
         document.body,
       )}
 
-      {/* Activity Log — popup opened from the top-right history icon */}
-      {showActivity && (
+      {/* Activity Log — popup opened from the top-right history icon. Portaled to
+          <body> (like the delete dialogs) so no overflow/containing-block ancestor
+          on the task page can clip it or cut it off from the top. */}
+      {showActivity && createPortal(
         <div
           className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
           onClick={(e) => { if (e.target === e.currentTarget) setShowActivity(false) }}
@@ -1705,7 +1707,8 @@ export default function TaskDetailPage() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
