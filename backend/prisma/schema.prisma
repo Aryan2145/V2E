@@ -801,6 +801,13 @@ enum CompletionMode {
   any_can_complete
 }
 
+// Who may view a proof-of-completion file. `private` = uploader + the assigner
+// (task creator) + org admins only; `everyone` = anyone who can view the task.
+enum ProofVisibility {
+  private
+  everyone
+}
+
 // How a TERMINAL task landed against its deadline. Null while the task is open
 // (open timing is derived live from is_overdue). Set once when the task closes and
 // never recomputed, so it never goes stale. `incomplete` = closed unsuccessfully
@@ -809,6 +816,7 @@ enum CompletionTiming {
   early
   on_time
   late
+  partial
   incomplete
 }
 
@@ -830,9 +838,15 @@ enum TaskActionType {
   reassigned
   status_changed
   completed
+  marked_incomplete
+  part_flagged_incomplete
+  part_flag_cleared
   reopened
   proof_attached
   checklist_updated
+  checklist_item_skipped // an assignee marked a checklist item "can't do" with a reason
+  checklist_item_overridden // the assigner marked an item done for everyone
+  checklist_item_challenged // the assigner reopened a person's part to re-do a checklist item
   escalated
   reminder_sent
   deleted
@@ -1055,8 +1069,8 @@ model Task {
   department_id        String?
   completion_mode      CompletionMode @default(any_can_complete)
   proof_required       Boolean        @default(false)
-  proof_url            String?
-  proof_submitted_at   DateTime?
+  // Allowed proof file extensions (lowercase, no dot). Empty = anything allowed.
+  proof_allowed_extensions String[]   @default([])
   is_deleted           Boolean        @default(false)
   deleted_by_user_id   String?
   deleted_at           DateTime?
@@ -1066,8 +1080,12 @@ model Task {
   deadline             DateTime?
   is_overdue           Boolean        @default(false) // persisted by the auto-overdue sweep (mirrors Ticket.sla_breached)
   overdue_at           DateTime?      // business time the task crossed its deadline
-  completed_at         DateTime?      // when the task reached a terminal `completed` status
+  completed_at         DateTime?      // when the task reached a terminal `completed` OR `incomplete` status
   completion_timing    CompletionTiming? // early/on_time/late vs deadline, set once at completion
+  // Why the task was closed unsuccessfully (terminal `incomplete`). Required when
+  // marking a task Incomplete; cleared on reopen. `completed_by_user_id` doubles as
+  // "who closed it" for both the completed and incomplete terminal transitions.
+  incomplete_reason    String?        @db.Text
   // Attribution for the shared-status ("any can complete") flow: who last moved the
   // shared status, and who actually closed the task. Powers "changed by X" / "Completed by X".
   status_actor_user_id String?
@@ -1127,6 +1145,13 @@ model TaskAssignee {
   status_id       String?
   is_completed    Boolean   @default(false)
   completed_at    DateTime?
+  // Per-person "I can't finish my part" flag (all_must_complete mode). The part stays
+  // OPEN but visibly flagged with a required reason; the task never auto-completes while
+  // any part is flagged, so the creator/admin decides whether to close the whole task
+  // Incomplete or reassign. Cleared when the person completes their part or on reopen.
+  cannot_complete        Boolean   @default(false)
+  cannot_complete_reason String?   @db.Text
+  cannot_complete_at     DateTime?
   is_cc           Boolean   @default(false)
   created_at      DateTime  @default(now())
 
@@ -1139,22 +1164,66 @@ model TaskAssignee {
   @@map("task_assignees")
 }
 
+// A checklist item is the shared DEFINITION (title/group/order). HOW it is "done"
+// depends on the task's completion mode, mirroring how the task itself tracks status:
+//   - any_can_complete / single assignee → ONE shared tick. `is_completed` +
+//     `completed_by_user_id`/`completed_at` carry it (first person to tick owns it;
+//     anyone may untick). Attribution is who last ticked it.
+//   - all_must_complete → PER-PERSON. `is_completed` is ignored; each assignee's
+//     own done/skip lives in `TaskChecklistItemState` (one row per person). The
+//     item gates that person's Complete: they can't finish their part until every
+//     item is done OR skipped-with-reason for them.
 model TaskChecklist {
   id              String   @id @default(uuid())
   organization_id String
   task_id         String
   title           String
   group_title     String? // section label when a task carries multiple checklists; null = single ungrouped list
-  is_completed    Boolean  @default(false)
+  is_completed    Boolean  @default(false) // shared-mode tick only (any_can_complete / single)
+  completed_by_user_id String? // shared-mode: who last ticked it (attribution)
+  completed_at    DateTime? // shared-mode: when it was last ticked
   order_index     Int      @default(0)
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  task   Task                     @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  states TaskChecklistItemState[]
 
   @@index([task_id])
   @@index([organization_id])
   @@map("task_checklists")
+}
+
+// One assignee's state for one checklist item (all_must_complete mode only). Absence
+// of a row = Not started for that person. `done` counts toward their gate; `skipped`
+// also satisfies the gate but REQUIRES a reason (a step that genuinely can't be done).
+// An assigner "mark done for everyone" writes a `done` row per assignee with
+// `is_override = true` and `marked_by_user_id` = the assigner.
+model TaskChecklistItemState {
+  id                String             @id @default(uuid())
+  organization_id   String
+  checklist_id      String // the shared item definition (TaskChecklist)
+  task_id           String // denormalized for scoping + cheap task-wide reads
+  user_id           String // the assignee this state belongs to
+  state             ChecklistItemState
+  reason            String?            @db.Text // required when state = skipped
+  is_override       Boolean            @default(false) // set by the assigner's "done for all"
+  marked_by_user_id String // who set it (== user_id normally; == assigner on override)
+  marked_at         DateTime           @default(now())
+  updated_at        DateTime           @updatedAt
+
+  checklist TaskChecklist @relation(fields: [checklist_id], references: [id], onDelete: Cascade)
+
+  @@unique([checklist_id, user_id])
+  @@index([task_id])
+  @@index([user_id])
+  @@index([organization_id])
+  @@map("task_checklist_item_states")
+}
+
+enum ChecklistItemState {
+  done
+  skipped
 }
 
 model TaskChecklistTemplate {
@@ -1318,7 +1387,10 @@ model TaskAttachment {
   mime_type           String
   size_bytes          Int
   storage_key         String // object key within the R2 bucket
-  uploaded_by_user_id String
+  uploaded_by_user_id String // also the proof OWNER when is_proof
+  // Proof-of-completion flag + who may see it. uploaded_by_user_id is the owner.
+  is_proof            Boolean          @default(false)
+  proof_visibility    ProofVisibility? // null for non-proof rows
   is_deleted          Boolean   @default(false)
   deleted_at          DateTime?
   created_at          DateTime  @default(now())
@@ -1327,6 +1399,7 @@ model TaskAttachment {
   comment TaskComment? @relation(fields: [comment_id], references: [id], onDelete: Cascade)
 
   @@index([task_id])
+  @@index([task_id, is_proof])
   @@index([comment_id])
   @@index([organization_id])
   @@map("task_attachments")

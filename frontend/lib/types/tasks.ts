@@ -53,11 +53,12 @@ export interface TaskPriority {
   is_active: boolean
 }
 
-// The fixed phase a status belongs to. `completed` and `incomplete` are both terminal
-// (they close the task); only `completed` counts as a successful completion.
-export type TaskStatusPhase = 'not_started' | 'in_progress' | 'completed' | 'incomplete'
+// The fixed phase a status belongs to. `completed`, `partially_completed` and `incomplete`
+// are all terminal (they close the task); only `completed` counts as a full success.
+// `partially_completed` = an "all must complete" task where some finished and some couldn't.
+export type TaskStatusPhase = 'not_started' | 'in_progress' | 'completed' | 'partially_completed' | 'incomplete'
 
-export const TERMINAL_STATUS_PHASES: TaskStatusPhase[] = ['completed', 'incomplete']
+export const TERMINAL_STATUS_PHASES: TaskStatusPhase[] = ['completed', 'partially_completed', 'incomplete']
 
 export interface TaskStatus {
   id: string
@@ -85,6 +86,23 @@ export interface TaskAssigneeUser {
   status?: TaskStatus | null
   /** Deadline passed and this person hasn't finished their part. */
   is_overdue?: boolean
+  /** all_must_complete: this person flagged their own part as can't-complete (with a reason). */
+  cannot_complete?: boolean
+  cannot_complete_reason?: string | null
+  cannot_complete_at?: string | null
+}
+
+/** One person's state for a checklist item (all_must_complete mode). */
+export interface TaskChecklistItemStateEntry {
+  user_id: string
+  user_name?: string | null
+  state: 'done' | 'skipped'
+  reason?: string | null
+  /** Set by the assigner's "mark done for everyone". */
+  is_override: boolean
+  marked_by_user_id: string
+  marked_by_name?: string | null
+  marked_at?: string
 }
 
 export interface TaskChecklistItem {
@@ -93,8 +111,22 @@ export interface TaskChecklistItem {
   title: string
   /** Section label when a task carries multiple checklists; null/undefined = single ungrouped list. */
   group_title?: string | null
+  /** Shared-mode tick only (any_can_complete / single). In all_must_complete, read the per-person `states`. */
   is_completed: boolean
+  /** Shared-mode attribution: who last ticked it. */
+  completed_by_user_id?: string | null
+  completed_by?: { id: string; name: string; email?: string } | null
   order_index: number
+  // ── Per-person fields (all_must_complete), attached by the API ──
+  /** Every assignee's state for this item (only those who have acted appear). */
+  states?: TaskChecklistItemStateEntry[]
+  /** How many assignees marked it done / skipped, and the roll-up denominator. */
+  done_count?: number
+  skipped_count?: number
+  assignee_count?: number
+  /** The current viewer's own state for this item, for quick rendering. */
+  my_state?: 'done' | 'skipped' | null
+  my_reason?: string | null
 }
 
 export interface Task {
@@ -111,8 +143,14 @@ export interface Task {
   department_id?: string
   completion_mode: CompletionMode
   proof_required: boolean
-  proof_url?: string
-  proof_submitted_at?: string
+  /** Allowed proof file extensions (lowercase, no dot). Empty/absent = anything allowed. */
+  proof_allowed_extensions?: string[]
+  /** Who must submit proof (non-CC assignees) vs who has — drives the "n/N submitted" scoreboard. */
+  proof_summary?: {
+    required_user_ids: string[]
+    submitted_user_ids: string[]
+    task_has_any_proof: boolean
+  } | null
   is_deleted: boolean
   deadline?: string
   recurring_template_id?: string
@@ -132,7 +170,9 @@ export interface Task {
   status_actor?: { id: string; name: string; email?: string } | null
   completed_by?: { id: string; name: string; email?: string } | null
   completed_at?: string | null
-  completion_timing?: 'early' | 'on_time' | 'late' | 'incomplete' | null
+  completion_timing?: 'early' | 'on_time' | 'late' | 'partial' | 'incomplete' | null
+  /** Reason the task was closed as Incomplete (terminal not-done). */
+  incomplete_reason?: string | null
   created_at: string
   updated_at: string
   category?: TaskCategory
@@ -163,6 +203,8 @@ export interface TaskComment {
   replies?: TaskComment[]
 }
 
+export type ProofVisibility = 'private' | 'everyone'
+
 /** A document attached to a task or a task comment, stored in object storage. */
 export interface TaskAttachment {
   id: string
@@ -173,6 +215,9 @@ export interface TaskAttachment {
   size_bytes: number
   uploaded_by_user_id?: string
   uploaded_by_name?: string | null
+  /** True when this file is a proof of completion; visibility gates who may see it. */
+  is_proof?: boolean
+  proof_visibility?: ProofVisibility | null
   created_at: string
 }
 
@@ -411,9 +456,9 @@ export interface TaskReportData {
 export type WorkScope = 'own' | 'team' | 'department' | 'org'
 
 /** Completion-timing taxonomy — the analytical spine of the Work dashboard. */
-export type Timing = 'early' | 'on_time' | 'late' | 'overdue' | 'incomplete' | 'pending'
+export type Timing = 'early' | 'on_time' | 'late' | 'overdue' | 'partial' | 'incomplete' | 'pending'
 
-export const TIMINGS: Timing[] = ['early', 'on_time', 'late', 'overdue', 'incomplete', 'pending']
+export const TIMINGS: Timing[] = ['early', 'on_time', 'late', 'overdue', 'partial', 'incomplete', 'pending']
 
 export type TimingCounts = Record<Timing, number>
 
@@ -423,21 +468,23 @@ export const TIMING_META: Record<Timing, { label: string; color: string }> = {
   on_time: { label: 'Completed On-Time', color: '#2563EB' }, // primary blue
   late: { label: 'Completed Late', color: '#D97706' },     // warning amber
   overdue: { label: 'Overdue', color: '#DC2626' },         // danger red
+  partial: { label: 'Partially Completed', color: '#EA580C' }, // orange — some did, some couldn't
   incomplete: { label: 'Incomplete', color: '#92400E' },   // dark amber/brown — closed-not-done
   pending: { label: 'Pending', color: '#94A3B8' },         // muted slate
 }
 
-export const emptyTiming = (): TimingCounts => ({ early: 0, on_time: 0, late: 0, overdue: 0, incomplete: 0, pending: 0 })
+export const emptyTiming = (): TimingCounts => ({ early: 0, on_time: 0, late: 0, overdue: 0, partial: 0, incomplete: 0, pending: 0 })
 
 /** Sum two timing-count records (used for subtree roll-ups on the client). */
 export function addTiming(a: TimingCounts, b: TimingCounts): TimingCounts {
-  return { early: a.early + b.early, on_time: a.on_time + b.on_time, late: a.late + b.late, overdue: a.overdue + b.overdue, incomplete: a.incomplete + b.incomplete, pending: a.pending + b.pending }
+  return { early: a.early + b.early, on_time: a.on_time + b.on_time, late: a.late + b.late, overdue: a.overdue + b.overdue, partial: a.partial + b.partial, incomplete: a.incomplete + b.incomplete, pending: a.pending + b.pending }
 }
 
 /** Which timing bucket a single task falls in (mirrors the server's classification). */
 export function taskTiming(t: Task): Timing {
   if (t.completion_timing) return t.completion_timing
   if (t.status?.type === 'completed') return 'on_time'
+  if (t.status?.type === 'partially_completed') return 'partial'
   if (t.status?.type === 'incomplete') return 'incomplete'
   return t.is_overdue ? 'overdue' : 'pending'
 }

@@ -6,6 +6,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { ProofVisibility } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -68,6 +69,30 @@ export function validateAttachmentFile(file: UploadedFile | undefined): void {
   }
 }
 
+/** Normalise a stored allowed-extensions list: lowercase, no leading dot, deduped. */
+export function normaliseExtensions(list: string[] | null | undefined): string[] {
+  return Array.from(
+    new Set((list ?? []).map((e) => e.replace(/^\./, '').trim().toLowerCase()).filter(Boolean)),
+  );
+}
+
+/**
+ * Proof validation: the global attachment rules PLUS the task's own allowed-types
+ * restriction (empty = anything the global allowlist permits).
+ */
+export function validateProofFile(file: UploadedFile | undefined, allowedExtensions: string[]): void {
+  validateAttachmentFile(file);
+  const allowed = normaliseExtensions(allowedExtensions);
+  if (allowed.length > 0) {
+    const ext = extensionOf((file as UploadedFile).originalname);
+    if (!allowed.includes(ext)) {
+      throw new BadRequestException(
+        `Proof must be one of: ${allowed.join(', ')}. ".${ext || 'unknown'}" is not accepted.`,
+      );
+    }
+  }
+}
+
 @Injectable()
 export class TaskAttachmentsService {
   private readonly logger = new Logger(TaskAttachmentsService.name);
@@ -106,29 +131,7 @@ export class TaskAttachmentsService {
     }
 
     const f = file as UploadedFile;
-    const key = `org/${orgId}/tasks/${taskId}/${randomUUID()}.${extensionOf(f.originalname)}`;
-    await this.r2.putObject(key, f.buffer, f.mimetype || 'application/octet-stream');
-
-    // The object is now in R2 but not yet tracked in the DB. If the row insert
-    // fails, delete the just-uploaded object so we never strand an orphan file.
-    let attachment;
-    try {
-      attachment = await this.prisma.taskAttachment.create({
-        data: {
-          organization_id: orgId,
-          task_id: taskId,
-          comment_id: commentId ?? null,
-          file_name: f.originalname,
-          mime_type: f.mimetype || 'application/octet-stream',
-          size_bytes: f.size,
-          storage_key: key,
-          uploaded_by_user_id: userId,
-        },
-      });
-    } catch (err) {
-      await this.r2.deleteObject(key); // best-effort; never throws
-      throw err;
-    }
+    const attachment = await this.storeFile(orgId, userId, taskId, f, { comment_id: commentId ?? null });
 
     // Everything below runs AFTER the attachment is committed — activity trail
     // and notifications are best-effort and must never fail the upload itself.
@@ -232,7 +235,213 @@ export class TaskAttachmentsService {
     return { message: 'Attachment removed' };
   }
 
+  // ─── proof of completion ───────────────────────────────────────────────────
+
+  /**
+   * Load the fields the proof flow needs, with the task's primary/CC assignees.
+   * Fails closed (404) if the task doesn't exist in this org.
+   */
+  private async loadTaskForProof(orgId: string, taskId: string) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, organization_id: orgId, is_deleted: false },
+      select: {
+        id: true,
+        title: true,
+        proof_required: true,
+        proof_allowed_extensions: true,
+        completion_mode: true,
+        created_by_user_id: true,
+        assignees: { select: { user_id: true, is_cc: true } },
+      },
+    });
+    if (!task) throw new NotFoundException(`Task ${taskId} not found`);
+    return task;
+  }
+
+  /**
+   * Submit a proof file for the current user's part. Only a non-CC primary assignee
+   * may submit; the file is validated against the task's allowed types. In
+   * `any_can_complete` mode the proof is always visible to everyone (one proof closes
+   * the task for all, so hiding it adds nothing); otherwise the uploader's choice stands.
+   */
+  async uploadProof(
+    orgId: string,
+    userId: string,
+    taskId: string,
+    file: UploadedFile | undefined,
+    visibility: ProofVisibility,
+  ) {
+    const task = await this.loadTaskForProof(orgId, taskId);
+    if (!task.proof_required) {
+      throw new BadRequestException('This task does not require proof of completion.');
+    }
+    const isPrimaryAssignee = task.assignees.some((a) => a.user_id === userId && !a.is_cc);
+    if (!isPrimaryAssignee) {
+      throw new ForbiddenException('Only assignees can submit proof of completion.');
+    }
+    validateProofFile(file, task.proof_allowed_extensions);
+
+    const effectiveVisibility: ProofVisibility =
+      task.completion_mode === 'any_can_complete' ? 'everyone' : visibility;
+
+    const attachment = await this.storeFile(orgId, userId, taskId, file as UploadedFile, {
+      is_proof: true,
+      proof_visibility: effectiveVisibility,
+    });
+
+    try {
+      await this.prisma.taskActivityLog.create({
+        data: {
+          organization_id: orgId,
+          task_id: taskId,
+          performed_by_user_id: userId,
+          action: 'proof_attached',
+          metadata: {
+            attachment_id: attachment.id,
+            file_name: (file as UploadedFile).originalname,
+            visibility: effectiveVisibility,
+          },
+        },
+      });
+    } catch (err) {
+      this.logger.warn(`Proof activity log failed for ${attachment.id}: ${(err as Error).message}`);
+    }
+
+    return this.enrich(attachment.id).catch(() => ({ ...attachment, uploaded_by_name: null }));
+  }
+
+  /**
+   * Promote a file the user already shared in a comment to be their proof. Comment
+   * files are already visible to everyone on the task, so proof visibility is `everyone`.
+   * Only the uploader (a non-CC assignee) may do this, and only when proof is required.
+   */
+  async markCommentAttachmentAsProof(orgId: string, userId: string, taskId: string, attachmentId: string) {
+    const task = await this.loadTaskForProof(orgId, taskId);
+    if (!task.proof_required) {
+      throw new BadRequestException('This task does not require proof of completion.');
+    }
+    const att = await this.prisma.taskAttachment.findFirst({
+      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false },
+    });
+    if (!att) throw new NotFoundException('Attachment not found');
+    if (!att.comment_id) {
+      throw new BadRequestException('Only a file shared in a comment can be marked as proof.');
+    }
+    if (att.uploaded_by_user_id !== userId) {
+      throw new ForbiddenException('You can only mark your own file as proof.');
+    }
+    if (!task.assignees.some((a) => a.user_id === userId && !a.is_cc)) {
+      throw new ForbiddenException('Only assignees can submit proof of completion.');
+    }
+    const allowed = normaliseExtensions(task.proof_allowed_extensions);
+    if (allowed.length > 0 && !allowed.includes(extensionOf(att.file_name))) {
+      throw new BadRequestException(`Proof must be one of: ${allowed.join(', ')}.`);
+    }
+
+    if (!att.is_proof) {
+      await this.prisma.taskAttachment.update({
+        where: { id: att.id },
+        data: { is_proof: true, proof_visibility: 'everyone' },
+      });
+      try {
+        await this.prisma.taskActivityLog.create({
+          data: {
+            organization_id: orgId,
+            task_id: taskId,
+            performed_by_user_id: userId,
+            action: 'proof_attached',
+            metadata: { attachment_id: att.id, file_name: att.file_name, from_comment: true },
+          },
+        });
+      } catch (err) {
+        this.logger.warn(`Proof (from comment) log failed for ${att.id}: ${(err as Error).message}`);
+      }
+    }
+    return this.enrich(att.id).catch(() => ({ ...att, uploaded_by_name: null }));
+  }
+
+  /**
+   * Proof files the viewer may see: `everyone` proofs always; `private` proofs only
+   * for their uploader, the assigner (task creator), or an admin.
+   */
+  async listProofs(orgId: string, taskId: string, viewer: { userId: string; isAdmin: boolean }) {
+    const task = await this.loadTaskForProof(orgId, taskId);
+    const isCreator = task.created_by_user_id === viewer.userId;
+    const rows = await this.prisma.taskAttachment.findMany({
+      where: { organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false },
+      orderBy: { created_at: 'desc' },
+    });
+    const visible = rows.filter((r) => this.canSeeProof(r, { ...viewer, isCreator }));
+    return this.attachUploaderNames(visible);
+  }
+
+  /** Signed download URL for a proof, gated by the same visibility rule. Fails closed. */
+  async getProofDownloadUrl(
+    orgId: string,
+    taskId: string,
+    attachmentId: string,
+    viewer: { userId: string; isAdmin: boolean },
+  ) {
+    const task = await this.loadTaskForProof(orgId, taskId);
+    const isCreator = task.created_by_user_id === viewer.userId;
+    const att = await this.prisma.taskAttachment.findFirst({
+      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false },
+    });
+    // 404 (not 403) when hidden — never leak that a private proof exists.
+    if (!att || !this.canSeeProof(att, { ...viewer, isCreator })) {
+      throw new NotFoundException('Attachment not found');
+    }
+    const url = await this.r2.getSignedDownloadUrl(att.storage_key, att.file_name);
+    return { url, file_name: att.file_name };
+  }
+
+  private canSeeProof(
+    att: { proof_visibility: ProofVisibility | null; uploaded_by_user_id: string },
+    viewer: { userId: string; isCreator: boolean; isAdmin: boolean },
+  ): boolean {
+    return (
+      att.proof_visibility === 'everyone' ||
+      att.uploaded_by_user_id === viewer.userId ||
+      viewer.isCreator ||
+      viewer.isAdmin
+    );
+  }
+
   // ─── helpers ──────────────────────────────────────────────────────────────
+
+  /**
+   * Put the file in R2 then record the row, deleting the object if the insert fails
+   * so we never strand an orphan. Shared by ordinary uploads and proof uploads.
+   */
+  private async storeFile(
+    orgId: string,
+    userId: string,
+    taskId: string,
+    f: UploadedFile,
+    extra: { comment_id?: string | null; is_proof?: boolean; proof_visibility?: ProofVisibility | null },
+  ) {
+    const key = `org/${orgId}/tasks/${taskId}/${randomUUID()}.${extensionOf(f.originalname)}`;
+    await this.r2.putObject(key, f.buffer, f.mimetype || 'application/octet-stream');
+    try {
+      return await this.prisma.taskAttachment.create({
+        data: {
+          organization_id: orgId,
+          task_id: taskId,
+          comment_id: extra.comment_id ?? null,
+          file_name: f.originalname,
+          mime_type: f.mimetype || 'application/octet-stream',
+          size_bytes: f.size,
+          storage_key: key,
+          uploaded_by_user_id: userId,
+          is_proof: extra.is_proof ?? false,
+          proof_visibility: extra.proof_visibility ?? null,
+        },
+      });
+    } catch (err) {
+      await this.r2.deleteObject(key); // best-effort; never throws
+      throw err;
+    }
+  }
 
   private async enrich(id: string) {
     const row = await this.prisma.taskAttachment.findUniqueOrThrow({ where: { id } });

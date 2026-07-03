@@ -20,6 +20,7 @@ import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
 // import QuadrantBadge from './QuadrantBadge'
 import AssigneeSelector from './AssigneeSelector'
+import ProofRequirementField from './ProofRequirementField'
 import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
 import LeaveWarningBadge from '@/components/leave/LeaveWarningBadge'
 import { leaveApi } from '@/lib/api/leave'
@@ -137,6 +138,7 @@ export default function CreateTaskModal({
   const remindersAvailable = mode === 'recurring' || !!deadlineDate
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
+  const [proofAllowedExtensions, setProofAllowedExtensions] = useState<string[]>([])
   const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([])
   const [attachErrors, setAttachErrors] = useState<string[]>([])
@@ -345,6 +347,7 @@ export default function CreateTaskModal({
     setCreatedRecurring(null)
     setCompletionMode('any_can_complete')
     setProofRequired(false)
+    setProofAllowedExtensions([])
     setAssignees([])
     setAttachmentFiles([])
     setAttachmentsOpen(false)
@@ -489,6 +492,7 @@ export default function CreateTaskModal({
         deadline: deadline || undefined,
         completion_mode: completionMode,
         proof_required: proofRequired,
+        proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
         assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
         cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
         checklist_items: buildChecklistItems(),
@@ -1066,27 +1070,13 @@ export default function CreateTaskModal({
             </div>
           </div>
 
-          {/* Proof required */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setProofRequired((v) => !v)}
-              className={[
-                'relative w-10 h-5 rounded-full transition-colors duration-200',
-                proofRequired ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]',
-              ].join(' ')}
-              role="switch"
-              aria-checked={proofRequired}
-            >
-              <span
-                className={[
-                  'absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200',
-                  proofRequired ? 'translate-x-5' : 'translate-x-0',
-                ].join(' ')}
-              />
-            </button>
-            <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
-          </div>
+          {/* Proof required + allowed file types */}
+          <ProofRequirementField
+            proofRequired={proofRequired}
+            onProofRequiredChange={setProofRequired}
+            allowedExtensions={proofAllowedExtensions}
+            onAllowedExtensionsChange={setProofAllowedExtensions}
+          />
 
           {/* Attachments — collapsed by default to save space; the + button in the
               header expands the full dropzone. Applies to both one-time and recurring

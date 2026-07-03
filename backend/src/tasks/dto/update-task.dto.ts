@@ -52,6 +52,12 @@ export class UpdateTaskDto {
   @IsBoolean()
   proof_required?: boolean;
 
+  // Restrict proof uploads to these file extensions (lowercase, no dot). Empty = any.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  proof_allowed_extensions?: string[];
+
   @IsOptional()
   @IsDateString()
   deadline?: string;

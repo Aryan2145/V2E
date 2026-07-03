@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  ChecklistItemState,
   CompletionMode,
   CompletionTiming,
   DataScope,
@@ -27,6 +28,7 @@ import { Principal } from '../access-rights/permissions.service';
 import { ChecklistAccessService } from '../task-masters/checklist-access.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
+import { normaliseExtensions } from './task-attachments.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
 import { TERMINAL_TYPES, isSuccessful, isTerminal } from './status-phase';
@@ -263,6 +265,8 @@ export class TasksService {
       notStarted: all.find((s) => s.type === 'not_started') ?? all.find((s) => s.is_default) ?? all[0] ?? null,
       inProgress: all.find((s) => s.type === 'in_progress') ?? null,
       completed: all.find((s) => s.type === 'completed') ?? null,
+      partiallyCompleted: all.find((s) => s.type === 'partially_completed') ?? null,
+      incomplete: all.find((s) => s.type === 'incomplete') ?? null,
       all,
     };
   }
@@ -305,6 +309,127 @@ export class TasksService {
     if (targetId && targetId !== task.status_id) {
       await this.prisma.task.update({ where: { id: taskId }, data: { status_id: targetId } });
     }
+  }
+
+  /** Find the org's "Partially Completed" terminal status, creating it if missing (self-heal). */
+  private async ensurePartialStatus(orgId: string) {
+    const existing = await this.prisma.taskStatus.findFirst({
+      where: { organization_id: orgId, type: 'partially_completed' },
+    });
+    if (existing) return existing;
+    return this.prisma.taskStatus.create({
+      data: {
+        organization_id: orgId,
+        label: 'Partially Completed',
+        type: 'partially_completed',
+        color: '#EA580C',
+        order_index: 3,
+        is_active: true,
+      },
+    });
+  }
+
+  /**
+   * Decide and apply the terminal outcome of an all_must_complete task after its parts
+   * change. While anyone is still working (hasn't completed AND hasn't flagged can't-
+   * complete) the task stays open and we just refresh the roll-up. Once EVERY worker has
+   * responded:
+   *   - all finished          → Completed
+   *   - a mix (some couldn't)  → Partially Completed
+   *   - nobody finished        → Incomplete
+   * Handles the status + completion stamps, notification, and workflow/project rollups.
+   * Returns the outcome so callers can shape their own per-part activity trail.
+   */
+  private async settleAllMustComplete(
+    orgId: string,
+    taskId: string,
+    actorId: string,
+  ): Promise<'open' | 'completed' | 'partial' | 'incomplete'> {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, organization_id: orgId },
+      include: { assignees: true, status: true },
+    });
+    if (!task || task.completion_mode !== CompletionMode.all_must_complete) return 'open';
+    if (isTerminal(task.status.type)) return 'open';
+
+    // Proof invariant: no extra proof check is needed here. Every `is_completed`
+    // worker already passed the per-person proof gate in completeTask at the moment
+    // they finished, and `cannot_complete` parts never require proof.
+    const workers = task.assignees.filter((a) => !a.is_cc);
+    const allResponded = workers.length > 0 && workers.every((a) => a.is_completed || a.cannot_complete);
+    if (!allResponded) {
+      await this.rollUpTaskOpenStatus(orgId, taskId);
+      return 'open';
+    }
+
+    const completedCount = workers.filter((a) => a.is_completed).length;
+    const cannotCount = workers.filter((a) => a.cannot_complete).length;
+    const outcome: 'completed' | 'partial' | 'incomplete' =
+      cannotCount === 0 ? 'completed' : completedCount === 0 ? 'incomplete' : 'partial';
+
+    const { completed, incomplete } = await this.getCanonicalStatuses(orgId);
+    const statusRow =
+      outcome === 'completed' ? completed : outcome === 'incomplete' ? incomplete : await this.ensurePartialStatus(orgId);
+    if (!statusRow) {
+      await this.rollUpTaskOpenStatus(orgId, taskId);
+      return 'open';
+    }
+
+    const config = await this.getOrgConfig(orgId);
+    const now = new Date();
+    const completionNow = await this.clock.now(orgId);
+    const timing =
+      outcome === 'completed'
+        ? this.completionTiming(completionNow, task.deadline)
+        : outcome === 'partial'
+          ? CompletionTiming.partial
+          : CompletionTiming.incomplete;
+    const summary = outcome === 'completed' ? null : `${completedCount} of ${workers.length} completed; ${cannotCount} couldn’t.`;
+
+    await this.prisma.task.update({
+      where: { id: taskId },
+      data: {
+        status_id: statusRow.id,
+        reopen_expires_at: new Date(now.getTime() + config.reopen_window_minutes * 60_000),
+        completed_at: completionNow,
+        completion_timing: timing,
+        completed_by_user_id: actorId,
+        ...(summary ? { incomplete_reason: summary } : {}),
+        is_overdue: false,
+        overdue_at: null,
+      },
+    });
+
+    if (outcome !== 'completed') {
+      await this.logActivity(orgId, taskId, actorId, 'marked_incomplete', { auto: true, outcome, reason: summary });
+    }
+
+    const actorName = await this.notifications.userName(actorId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: outcome === 'completed' ? 'task_completed' : 'task_incomplete',
+      recipients: [task.created_by_user_id, ...workers.map((a) => a.user_id)].filter((uid) => uid !== actorId),
+      title:
+        outcome === 'completed'
+          ? `${actorName} completed a task`
+          : outcome === 'partial'
+            ? 'A task was partially completed'
+            : 'A task was marked incomplete',
+      body: `“${task.title}”${summary ? `\n${summary}` : ''}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+
+    if (outcome === 'completed' && task.workflow_instance_step_id) {
+      await this.workflowEngine.handleStepCompleted(task.workflow_instance_step_id);
+    }
+    const projectTask = await this.prisma.projectTask.findFirst({ where: { task_id: taskId } });
+    if (projectTask) {
+      await this.projectProgressService.recalculateProjectProgress(projectTask.project_id);
+    }
+
+    return outcome;
   }
 
   /**
@@ -462,6 +587,7 @@ export class TasksService {
         department_id: dto.department_id,
         completion_mode: dto.completion_mode ?? 'any_can_complete',
         proof_required: dto.proof_required ?? false,
+        proof_allowed_extensions: normaliseExtensions(dto.proof_allowed_extensions),
         deadline: dto.deadline ? new Date(dto.deadline) : undefined,
         goal_id: dto.goal_id,
       },
@@ -1160,6 +1286,11 @@ export class TasksService {
     if (action === 'status' && payload.status_id) {
       const st = await this.prisma.taskStatus.findFirst({ where: { id: payload.status_id, organization_id: orgId } });
       if (!st) throw new BadRequestException('Status not found');
+      // "Partially Completed" is a system-derived outcome (all_must_complete: some finished,
+      // some couldn't) — it can never be hand-set, not even in bulk.
+      if (st.type === 'partially_completed') {
+        throw new BadRequestException('“Partially Completed” is set automatically and cannot be applied manually.');
+      }
       await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { status_id: payload.status_id } });
       // Keep completion stamps in sync with the new phase.
       if (st.type === 'completed') await this.stampCompletionTiming(ids, await this.clock.now(orgId), 'completed');
@@ -1409,6 +1540,20 @@ export class TasksService {
       for (const r of c.replies ?? []) allUserIds.add(r.user_id);
     }
 
+    // Per-person checklist states (all_must_complete). Fetched here so their actors
+    // are resolved to names in the same batch as everyone else.
+    const checklistIds = task.checklist.map((c: any) => c.id);
+    const checklistStates = checklistIds.length
+      ? await this.prisma.taskChecklistItemState.findMany({ where: { task_id: taskId } })
+      : [];
+    for (const s of checklistStates) {
+      allUserIds.add(s.user_id);
+      allUserIds.add(s.marked_by_user_id);
+    }
+    for (const c of task.checklist as any[]) {
+      if (c.completed_by_user_id) allUserIds.add(c.completed_by_user_id);
+    }
+
     const users = await this.prisma.user.findMany({
       where: { id: { in: Array.from(allUserIds) } },
       select: { id: true, name: true, email: true },
@@ -1435,12 +1580,51 @@ export class TasksService {
       return { ...a, user: userMap.get(a.user_id) ?? null, status: a.is_cc ? null : track ?? null, is_overdue };
     });
 
+    // Attach per-person states + aggregate counts to each checklist item. `assignee_count`
+    // is the roll-up denominator (the "n/N" badge); `my_state` is a convenience for the viewer.
+    const workerCount = task.assignees.filter((a: any) => !a.is_cc).length;
+    const statesByItem = new Map<string, any[]>();
+    for (const s of checklistStates) {
+      const list = statesByItem.get(s.checklist_id) ?? [];
+      list.push({
+        user_id: s.user_id,
+        user_name: userMap.get(s.user_id)?.name ?? null,
+        state: s.state,
+        reason: s.reason,
+        is_override: s.is_override,
+        marked_by_user_id: s.marked_by_user_id,
+        marked_by_name: userMap.get(s.marked_by_user_id)?.name ?? null,
+        marked_at: s.marked_at,
+      });
+      statesByItem.set(s.checklist_id, list);
+    }
+    const enrichedChecklist = (task.checklist as any[]).map((c) => {
+      const states = statesByItem.get(c.id) ?? [];
+      const mine = principal ? states.find((s) => s.user_id === principal.userId) : undefined;
+      return {
+        ...c,
+        completed_by: c.completed_by_user_id ? userMap.get(c.completed_by_user_id) ?? null : null,
+        states,
+        done_count: states.filter((s) => s.state === ChecklistItemState.done).length,
+        skipped_count: states.filter((s) => s.state === ChecklistItemState.skipped).length,
+        assignee_count: workerCount,
+        my_state: mine?.state ?? null,
+        my_reason: mine?.reason ?? null,
+      };
+    });
+
+    // Proof-of-completion scoreboard: who must submit (non-CC assignees) vs who has.
+    // Names only, no files — safe for everyone; the "n/N submitted" badge reads from it.
+    const proof_summary = task.proof_required ? await this.proofSummary(orgId, taskId) : null;
+
     return {
       ...task,
       created_by: userMap.get(task.created_by_user_id) ?? null,
       completed_by: nameOf(task.completed_by_user_id),
       status_actor: nameOf(task.status_actor_user_id),
+      proof_summary,
       assignees: enrichedAssignees,
+      checklist: enrichedChecklist,
       comments: (task.comments as any[]).map((c) => {
         const cu = userMap.get(c.user_id);
         return {
@@ -1485,6 +1669,14 @@ export class TasksService {
     trackField('completion_mode', old.completion_mode, dto.completion_mode);
     trackField('proof_required', old.proof_required, dto.proof_required);
     trackField('goal_id', old.goal_id, dto.goal_id);
+    if (dto.proof_allowed_extensions !== undefined) {
+      const next = normaliseExtensions(dto.proof_allowed_extensions);
+      const prev = normaliseExtensions((old as any).proof_allowed_extensions);
+      if (prev.join(',') !== next.join(',')) {
+        changedFields.push({ field: 'proof_allowed_extensions', from: prev, to: next });
+        updateData.proof_allowed_extensions = next;
+      }
+    }
 
     if (dto.deadline !== undefined) {
       const newDeadline = dto.deadline ? new Date(dto.deadline) : null;
@@ -1641,11 +1833,14 @@ export class TasksService {
    * completed status. Timing is per-task (each task has its own deadline), so we read the
    * deadlines, bucket in JS, and write each timing group in one updateMany.
    */
-  private async stampCompletionTiming(ids: string[], now: Date, kind: 'completed' | 'incomplete' = 'completed') {
+  private async stampCompletionTiming(ids: string[], now: Date, kind: 'completed' | 'incomplete' | 'partial' = 'completed') {
     if (!ids.length) return;
-    // Closed unsuccessfully → a single `incomplete` bucket (no deadline comparison).
-    if (kind === 'incomplete') {
-      await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { completed_at: now, completion_timing: CompletionTiming.incomplete } });
+    // Closed not-fully-successfully → a single flat bucket (no deadline comparison).
+    if (kind === 'incomplete' || kind === 'partial') {
+      await this.prisma.task.updateMany({
+        where: { id: { in: ids } },
+        data: { completed_at: now, completion_timing: kind === 'partial' ? CompletionTiming.partial : CompletionTiming.incomplete },
+      });
       return;
     }
     const tasks = await this.prisma.task.findMany({ where: { id: { in: ids } }, select: { id: true, deadline: true } });
@@ -1664,60 +1859,89 @@ export class TasksService {
     await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { completed_at: null, completion_timing: null } });
   }
 
-  async completeTask(orgId: string, userId: string, taskId: string, targetUserId?: string) {
+  async completeTask(orgId: string, userId: string, taskId: string, targetUserId?: string, closeWholeTask = false) {
     const task = await this.findTaskOrFail(orgId, taskId);
     const config = await this.getOrgConfig(orgId);
 
     // Who is being marked done. Self by default; a creator/editor may finish another
     // assignee's part (all_must_complete) on their behalf.
     const target = targetUserId ?? userId;
-    if (target !== userId && task.created_by_user_id !== userId) {
+    // The owner override (closeWholeTask, all_must) and acting on someone else's part
+    // both require creator / editor rights.
+    if ((closeWholeTask || target !== userId) && task.created_by_user_id !== userId) {
       await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
     }
 
-    // Proof check
-    if (task.proof_required && !task.proof_url) {
-      throw new BadRequestException('Proof of completion is required before marking this task as done');
-    }
+    // Proof of completion is enforced PER MODE below — any_can: any single proof on
+    // the task; all_must: the finishing person's OWN proof. The owner force-close
+    // (closeWholeTask) is a deliberate admin override and bypasses the proof gate.
+    const proof = task.proof_required ? await this.proofSummary(orgId, taskId) : null;
 
     const completedStatus = await this.prisma.taskStatus.findFirst({
       where: { organization_id: orgId, type: 'completed', is_active: true },
       orderBy: { order_index: 'asc' },
     });
 
-    if (task.completion_mode === CompletionMode.all_must_complete) {
-      // Mark this person's part done
+    // Owner override (all_must_complete): close the WHOLE task for everyone at once —
+    // marks every outstanding part done and clears any can't-complete flags. This
+    // intentionally bypasses the per-person proof gate (admin escape hatch).
+    if (task.completion_mode === CompletionMode.all_must_complete && closeWholeTask) {
       await this.prisma.taskAssignee.updateMany({
-        where: { task_id: taskId, user_id: target, is_cc: false },
-        data: { is_completed: true, completed_at: new Date() },
+        where: { task_id: taskId, is_cc: false },
+        data: {
+          is_completed: true,
+          completed_at: new Date(),
+          cannot_complete: false,
+          cannot_complete_reason: null,
+          cannot_complete_at: null,
+        },
       });
-
-      // Check if all assignees are done
-      const pending = await this.prisma.taskAssignee.count({
-        where: { task_id: taskId, is_cc: false, is_completed: false },
-      });
-
-      if (pending === 0 && completedStatus) {
+      if (completedStatus) {
         const now = new Date();
         const completionNow = await this.clock.now(orgId);
-        const reopenExpiresAt = new Date(now.getTime() + config.reopen_window_minutes * 60_000);
         await this.prisma.task.update({
           where: { id: taskId },
           data: {
             status_id: completedStatus.id,
-            reopen_expires_at: reopenExpiresAt,
+            reopen_expires_at: new Date(now.getTime() + config.reopen_window_minutes * 60_000),
             completed_at: completionNow,
             completion_timing: this.completionTiming(completionNow, task.deadline),
-            // The person who finished the LAST outstanding part closed the task.
-            completed_by_user_id: target,
+            completed_by_user_id: userId,
           },
         });
-      } else {
-        // Still outstanding parts — keep the shared roll-up honest (In Progress).
-        await this.rollUpTaskOpenStatus(orgId, taskId);
       }
+    } else if (task.completion_mode === CompletionMode.all_must_complete) {
+      // Checklist gate: this person can't finish until every item is ticked or
+      // marked "can't do". (The owner override above force-closes and skips this.)
+      await this.assertChecklistGateSatisfied(orgId, taskId, target);
+      // Proof gate: this person must have submitted at least one proof file.
+      if (proof && !proof.submitted_user_ids.includes(target)) {
+        throw new BadRequestException('Submit your proof of completion before finishing your part.');
+      }
+      // Mark this person's part done — and clear any earlier can't-complete flag,
+      // since finishing supersedes it.
+      await this.prisma.taskAssignee.updateMany({
+        where: { task_id: taskId, user_id: target, is_cc: false },
+        data: {
+          is_completed: true,
+          completed_at: new Date(),
+          cannot_complete: false,
+          cannot_complete_reason: null,
+          cannot_complete_at: null,
+        },
+      });
+      // Trail this person's part, then let settle decide the overall outcome
+      // (Completed / Partially Completed / Incomplete) once everyone has responded —
+      // it owns the closing notification, workflow + project rollups.
+      await this.logActivity(orgId, taskId, target, 'completed', { part: true });
+      await this.settleAllMustComplete(orgId, taskId, target);
+      return this.getTask(orgId, taskId);
     } else {
       // any_can_complete — one person closes the whole task for everyone.
+      // Any single proof anywhere on the task satisfies the gate (uploader irrelevant).
+      if (proof && !proof.task_has_any_proof) {
+        throw new BadRequestException('Proof of completion is required before marking this task as done.');
+      }
       if (completedStatus) {
         const now = new Date();
         const completionNow = await this.clock.now(orgId);
@@ -1808,17 +2032,25 @@ export class TasksService {
         // Clear the persisted overdue flag; the sweep re-flags if the deadline is still past.
         is_overdue: false,
         overdue_at: null,
-        // Leaving the completed phase: drop the completion stamps so timing reads as open again.
+        // Leaving a terminal phase: drop the completion stamps so timing reads as open again.
         completed_at: null,
         completion_timing: null,
         completed_by_user_id: null,
+        incomplete_reason: null,
       },
     });
 
-    // Reset all assignee completion flags and personal status tracks.
+    // Reset all assignee completion flags, per-person tracks, and any can't-complete flags.
     await this.prisma.taskAssignee.updateMany({
       where: { task_id: taskId },
-      data: { is_completed: false, completed_at: null, status_id: null },
+      data: {
+        is_completed: false,
+        completed_at: null,
+        status_id: null,
+        cannot_complete: false,
+        cannot_complete_reason: null,
+        cannot_complete_at: null,
+      },
     });
 
     // Re-derive the shared open status from the (now-cleared) tracks so it doesn't
@@ -1852,16 +2084,192 @@ export class TasksService {
     return this.getTask(orgId, taskId);
   }
 
-  // ─── Submit Proof ─────────────────────────────────────────────────────────────
+  // ─── Mark Incomplete ──────────────────────────────────────────────────────────
 
-  async submitProof(orgId: string, userId: string, taskId: string, proof_url: string) {
-    await this.findTaskOrFail(orgId, taskId);
+  /**
+   * Close a task as INCOMPLETE (terminal "not done") with a REQUIRED reason.
+   * Mirrors the Complete flow but never counts as a success:
+   *  - any_can_complete: any non-CC assignee (or the creator / an admin) may close it,
+   *    exactly as any one of them can Complete it.
+   *  - all_must_complete: only the creator / an admin closes the whole task — individual
+   *    assignees flag their own part instead (setAssigneeCannotComplete).
+   */
+  async markTaskIncomplete(orgId: string, userId: string, taskId: string, reason?: string) {
+    const task = await this.findTaskOrFail(orgId, taskId);
+    const trimmed = (reason ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('A reason is required to mark a task incomplete.');
+    }
+    if (isTerminal((task as any).status?.type)) {
+      throw new BadRequestException('This task is already closed. Reopen it first to change its outcome.');
+    }
+
+    const isCreator = task.created_by_user_id === userId;
+    const isAssignee = (task.assignees ?? []).some((a: any) => a.user_id === userId && !a.is_cc);
+    const isAdmin = await this.isOrgAdmin(orgId, userId);
+
+    if (task.completion_mode === CompletionMode.all_must_complete) {
+      if (!isCreator && !isAdmin) {
+        throw new ForbiddenException(
+          'In "all must complete" mode, only the task creator can mark the whole task incomplete. Flag your own part instead.',
+        );
+      }
+    } else if (!isCreator && !isAssignee && !isAdmin) {
+      throw new ForbiddenException('Only someone on this task can mark it incomplete.');
+    }
+
+    const { incomplete } = await this.getCanonicalStatuses(orgId);
+    if (!incomplete) {
+      throw new BadRequestException('No "Incomplete" status is configured for this organization.');
+    }
+
+    const config = await this.getOrgConfig(orgId);
+    const now = new Date();
+    const completionNow = await this.clock.now(orgId);
     await this.prisma.task.update({
       where: { id: taskId },
-      data: { proof_url, proof_submitted_at: new Date() },
+      data: {
+        status_id: incomplete.id,
+        completed_at: completionNow,
+        completion_timing: CompletionTiming.incomplete,
+        reopen_expires_at: new Date(now.getTime() + config.reopen_window_minutes * 60_000),
+        completed_by_user_id: userId,
+        incomplete_reason: trimmed,
+        // A closed task is never overdue.
+        is_overdue: false,
+        overdue_at: null,
+      },
     });
-    await this.logActivity(orgId, taskId, userId, 'proof_attached', { proof_url });
+
+    await this.logActivity(orgId, taskId, userId, 'marked_incomplete', { reason: trimmed });
+
+    const actorName = await this.notifications.userName(userId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_incomplete',
+      recipients: [
+        task.created_by_user_id,
+        ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
+      ].filter((uid) => uid !== userId),
+      title: `${actorName} marked a task incomplete`,
+      body: `“${task.title}”\n${trimmed}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+
+    // Keep project rollups honest (a closed-not-done task is no longer pending). We do
+    // NOT advance a workflow step on an incomplete task — that only follows completion.
+    const projectTask = await this.prisma.projectTask.findFirst({ where: { task_id: taskId } });
+    if (projectTask) {
+      await this.projectProgressService.recalculateProjectProgress(projectTask.project_id);
+    }
+
     return this.getTask(orgId, taskId);
+  }
+
+  /**
+   * all_must_complete: an assignee flags THEIR OWN part as can't-complete (required reason),
+   * or the creator/editor flags someone's part on their behalf. The part stays open but
+   * flagged; the task never auto-completes while any part is flagged, so the creator decides
+   * whether to close the whole task Incomplete or reassign.
+   */
+  async setAssigneeCannotComplete(orgId: string, actorId: string, taskId: string, targetUserId: string, reason?: string) {
+    const task = await this.findTaskOrFail(orgId, taskId);
+    const trimmed = (reason ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('A reason is required to flag your part as incomplete.');
+    }
+    if (task.completion_mode !== CompletionMode.all_must_complete) {
+      throw new BadRequestException('Flagging a single part only applies to "all must complete" tasks. Use Mark Incomplete instead.');
+    }
+    if (isTerminal((task as any).status?.type)) {
+      throw new BadRequestException('This task is already closed. Reopen it first.');
+    }
+
+    const target = targetUserId || actorId;
+    // Acting on someone else's part requires creator / editor rights.
+    if (target !== actorId && task.created_by_user_id !== actorId) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+    const part = (task.assignees ?? []).find((a: any) => a.user_id === target && !a.is_cc);
+    if (!part) {
+      throw new BadRequestException('That person is not a primary assignee on this task.');
+    }
+    if (part.is_completed) {
+      throw new BadRequestException('That part is already completed. Reopen the task to change it.');
+    }
+
+    await this.prisma.taskAssignee.updateMany({
+      where: { task_id: taskId, user_id: target, is_cc: false },
+      data: { cannot_complete: true, cannot_complete_reason: trimmed, cannot_complete_at: new Date() },
+    });
+
+    await this.logActivity(orgId, taskId, actorId, 'part_flagged_incomplete', { reason: trimmed, target_user_id: target });
+
+    // Tell the creator (and, when someone acted on their behalf, the assignee).
+    const actorName = await this.notifications.userName(actorId);
+    const targetName = await this.notifications.userName(target);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_part_flagged',
+      recipients: [task.created_by_user_id, target].filter((uid) => uid && uid !== actorId),
+      title: `${targetName}'s part can't be completed`,
+      body: `“${task.title}”\n${trimmed}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+
+    // If this flag means everyone has now responded, settle the overall outcome
+    // (Partially Completed if some finished, Incomplete if nobody did); otherwise it
+    // just refreshes the open roll-up and the task stays open.
+    await this.settleAllMustComplete(orgId, taskId, actorId);
+
+    return this.getTask(orgId, taskId);
+  }
+
+  /** Clear a previously-set can't-complete flag (the person, or the creator/editor). */
+  async clearAssigneeCannotComplete(orgId: string, actorId: string, taskId: string, targetUserId: string) {
+    const task = await this.findTaskOrFail(orgId, taskId);
+    const target = targetUserId || actorId;
+    if (target !== actorId && task.created_by_user_id !== actorId) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+    await this.prisma.taskAssignee.updateMany({
+      where: { task_id: taskId, user_id: target, is_cc: false },
+      data: { cannot_complete: false, cannot_complete_reason: null, cannot_complete_at: null },
+    });
+    await this.rollUpTaskOpenStatus(orgId, taskId);
+    await this.logActivity(orgId, taskId, actorId, 'part_flag_cleared', { target_user_id: target });
+    return this.getTask(orgId, taskId);
+  }
+
+  // ─── Proof of Completion ────────────────────────────────────────────────────────
+
+  /**
+   * Who must submit proof (non-CC assignees) and who has (distinct proof uploaders).
+   * Non-sensitive — it reports WHO submitted, not the files — so it's safe to surface
+   * to everyone on the task and drives both the completion gate and the "n/N submitted"
+   * scoreboard. Files themselves are visibility-filtered in TaskAttachmentsService.
+   */
+  async proofSummary(orgId: string, taskId: string) {
+    const [assignees, proofs] = await Promise.all([
+      this.prisma.taskAssignee.findMany({
+        where: { task_id: taskId, is_cc: false },
+        select: { user_id: true },
+      }),
+      this.prisma.taskAttachment.findMany({
+        where: { organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false },
+        select: { uploaded_by_user_id: true },
+      }),
+    ]);
+    const submitted_user_ids = Array.from(new Set(proofs.map((p) => p.uploaded_by_user_id)));
+    return {
+      required_user_ids: assignees.map((a) => a.user_id),
+      submitted_user_ids,
+      task_has_any_proof: proofs.length > 0,
+    };
   }
 
   // ─── Activity Logs ────────────────────────────────────────────────────────────
@@ -1890,7 +2298,17 @@ export class TasksService {
     await this.assertCanViewTask(orgId, principal, taskId);
     const attachmentSelect = {
       where: { is_deleted: false },
-      select: { id: true, file_name: true, mime_type: true, size_bytes: true, created_at: true },
+      // uploaded_by_user_id + is_proof let the UI show a "Mark as proof" action on the
+      // author's own comment files (and hide it once already promoted).
+      select: {
+        id: true,
+        file_name: true,
+        mime_type: true,
+        size_bytes: true,
+        created_at: true,
+        uploaded_by_user_id: true,
+        is_proof: true,
+      },
       orderBy: { created_at: 'asc' as const },
     };
     const comments = await this.prisma.taskComment.findMany({
@@ -1993,24 +2411,307 @@ export class TasksService {
     return { message: 'Comment deleted' };
   }
 
-  // ─── Checklist ────────────────────────────────────────────────────────────────
+  // ─── Checklist (per-person in all_must_complete; shared in any_can_complete) ─────
 
-  async toggleChecklistItem(orgId: string, userId: string, taskId: string, itemId: string) {
-    await this.findTaskOrFail(orgId, taskId);
+  /** Load a task + one of its checklist items, scoped to task + org (404 on miss). */
+  private async loadChecklistItemForWrite(orgId: string, taskId: string, itemId: string) {
+    const task = await this.findTaskOrFail(orgId, taskId);
     const item = await this.prisma.taskChecklist.findFirst({
       where: { id: itemId, task_id: taskId, organization_id: orgId },
     });
     if (!item) throw new NotFoundException(`Checklist item ${itemId} not found`);
+    return { task, item };
+  }
 
-    const updated = await this.prisma.taskChecklist.update({
-      where: { id: itemId },
-      data: { is_completed: !item.is_completed },
+  /** Frozen once the task is closed — the checklist becomes a record of what happened.
+   *  Only `challengeChecklistItem` (which reopens) may touch a terminal task. */
+  private assertTaskOpenForChecklist(task: any) {
+    if (isTerminal(task?.status?.type)) {
+      throw new BadRequestException('This task is closed. Reopen it before changing the checklist.');
+    }
+  }
+
+  /** May the actor tick the shared checklist (any_can_complete)? Working assignee,
+   *  creator, admin, or an editor — mirrors who may move the shared status. */
+  private async assertCanWorkTask(orgId: string, actorId: string, task: any) {
+    const isParticipant =
+      task.created_by_user_id === actorId ||
+      (task.assignees ?? []).some((a: any) => a.user_id === actorId && !a.is_cc);
+    if (isParticipant) return;
+    if (await this.isOrgAdmin(orgId, actorId)) return;
+    await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+  }
+
+  /** all_must_complete gate: a person can't finish their part until every checklist
+   *  item is Done OR skipped-with-reason for them. No-op when there is no checklist. */
+  private async assertChecklistGateSatisfied(orgId: string, taskId: string, userId: string) {
+    const items = await this.prisma.taskChecklist.findMany({
+      where: { task_id: taskId, organization_id: orgId },
+      select: { id: true },
     });
-    await this.logActivity(orgId, taskId, userId, 'checklist_updated', {
+    if (items.length === 0) return;
+    const states = await this.prisma.taskChecklistItemState.findMany({
+      where: { task_id: taskId, user_id: userId },
+      select: { checklist_id: true },
+    });
+    const satisfied = new Set(states.map((s) => s.checklist_id));
+    const remaining = items.filter((i) => !satisfied.has(i.id)).length;
+    if (remaining > 0) {
+      throw new BadRequestException(
+        `Tick every checklist item — or mark it “can’t do” with a reason — before completing (${remaining} still open).`,
+      );
+    }
+  }
+
+  /** Mark a checklist item done: the actor's own item (all_must) or the one shared
+   *  tick (any_can). */
+  async checkChecklistItem(orgId: string, actorId: string, taskId: string, itemId: string) {
+    const { task } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
+    this.assertTaskOpenForChecklist(task);
+
+    if (task.completion_mode === CompletionMode.all_must_complete) {
+      const part = (task.assignees ?? []).find((a: any) => a.user_id === actorId && !a.is_cc);
+      if (!part) {
+        throw new BadRequestException(
+          'Only a working assignee ticks their own checklist. As the assigner, use “mark done for everyone” instead.',
+        );
+      }
+      if (part.is_completed) {
+        throw new BadRequestException('Your part is already complete. Reopen your part to change its checklist.');
+      }
+      await this.prisma.taskChecklistItemState.upsert({
+        where: { checklist_id_user_id: { checklist_id: itemId, user_id: actorId } },
+        create: {
+          organization_id: orgId,
+          checklist_id: itemId,
+          task_id: taskId,
+          user_id: actorId,
+          state: ChecklistItemState.done,
+          marked_by_user_id: actorId,
+        },
+        update: { state: ChecklistItemState.done, reason: null, is_override: false, marked_by_user_id: actorId, marked_at: new Date() },
+      });
+    } else {
+      await this.assertCanWorkTask(orgId, actorId, task);
+      await this.prisma.taskChecklist.update({
+        where: { id: itemId },
+        data: { is_completed: true, completed_by_user_id: actorId, completed_at: new Date() },
+      });
+    }
+    await this.logActivity(orgId, taskId, actorId, 'checklist_updated', { item_id: itemId, state: 'done' });
+    return this.getTask(orgId, taskId);
+  }
+
+  /** Clear a checklist item back to Not started: the actor's own row (all_must) or the
+   *  shared tick (any_can). */
+  async uncheckChecklistItem(orgId: string, actorId: string, taskId: string, itemId: string) {
+    const { task } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
+    this.assertTaskOpenForChecklist(task);
+
+    if (task.completion_mode === CompletionMode.all_must_complete) {
+      const part = (task.assignees ?? []).find((a: any) => a.user_id === actorId && !a.is_cc);
+      if (!part) throw new BadRequestException('Only a working assignee can change their own checklist.');
+      if (part.is_completed) {
+        throw new BadRequestException('Your part is already complete. Reopen your part to change its checklist.');
+      }
+      await this.prisma.taskChecklistItemState.deleteMany({
+        where: { checklist_id: itemId, user_id: actorId, task_id: taskId },
+      });
+    } else {
+      await this.assertCanWorkTask(orgId, actorId, task);
+      await this.prisma.taskChecklist.update({
+        where: { id: itemId },
+        data: { is_completed: false, completed_by_user_id: null, completed_at: null },
+      });
+    }
+    await this.logActivity(orgId, taskId, actorId, 'checklist_updated', { item_id: itemId, state: 'not_started' });
+    return this.getTask(orgId, taskId);
+  }
+
+  /** all_must_complete: mark an item “can’t do” for the actor, with a REQUIRED reason.
+   *  It satisfies the gate (they can complete) but is shown, and audited, as a skip. */
+  async skipChecklistItem(orgId: string, actorId: string, taskId: string, itemId: string, reason?: string) {
+    const { task, item } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
+    const trimmed = (reason ?? '').trim();
+    if (!trimmed) throw new BadRequestException('A reason is required to mark a checklist item “can’t do”.');
+    if (task.completion_mode !== CompletionMode.all_must_complete) {
+      throw new BadRequestException('Marking an item “can’t do” applies to “all must complete” tasks.');
+    }
+    this.assertTaskOpenForChecklist(task);
+    const part = (task.assignees ?? []).find((a: any) => a.user_id === actorId && !a.is_cc);
+    if (!part) throw new BadRequestException('Only a working assignee can mark their own checklist item “can’t do”.');
+    if (part.is_completed) {
+      throw new BadRequestException('Your part is already complete. Reopen your part to change its checklist.');
+    }
+
+    await this.prisma.taskChecklistItemState.upsert({
+      where: { checklist_id_user_id: { checklist_id: itemId, user_id: actorId } },
+      create: {
+        organization_id: orgId,
+        checklist_id: itemId,
+        task_id: taskId,
+        user_id: actorId,
+        state: ChecklistItemState.skipped,
+        reason: trimmed,
+        marked_by_user_id: actorId,
+      },
+      update: { state: ChecklistItemState.skipped, reason: trimmed, is_override: false, marked_by_user_id: actorId, marked_at: new Date() },
+    });
+    await this.logActivity(orgId, taskId, actorId, 'checklist_item_skipped', { item_id: itemId, reason: trimmed });
+
+    // Keep the creator in the loop that a step was skipped (no sign-off needed).
+    const actorName = await this.notifications.userName(actorId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_checklist_skipped',
+      recipients: [task.created_by_user_id].filter((uid) => uid && uid !== actorId),
+      title: `${actorName} couldn’t complete a checklist item`,
+      body: `“${task.title}” — ${item.title}\n${trimmed}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+    return this.getTask(orgId, taskId);
+  }
+
+  /** all_must_complete: the assigner marks an item done for EVERYONE at once. Leaves
+   *  any genuine personal ticks untouched; fills the rest with an attributed override. */
+  async overrideChecklistItem(orgId: string, actorId: string, taskId: string, itemId: string) {
+    const { task } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
+    if (task.completion_mode !== CompletionMode.all_must_complete) {
+      throw new BadRequestException('“Mark done for everyone” applies to “all must complete” tasks.');
+    }
+    this.assertTaskOpenForChecklist(task);
+    if (task.created_by_user_id !== actorId) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+
+    const workers = (task.assignees ?? []).filter((a: any) => !a.is_cc);
+    const existing = await this.prisma.taskChecklistItemState.findMany({
+      where: { checklist_id: itemId, task_id: taskId },
+      select: { user_id: true, state: true },
+    });
+    const alreadyDone = new Set(existing.filter((s) => s.state === ChecklistItemState.done).map((s) => s.user_id));
+    for (const w of workers) {
+      if (alreadyDone.has(w.user_id)) continue; // don't clobber a genuine personal tick
+      await this.prisma.taskChecklistItemState.upsert({
+        where: { checklist_id_user_id: { checklist_id: itemId, user_id: w.user_id } },
+        create: {
+          organization_id: orgId,
+          checklist_id: itemId,
+          task_id: taskId,
+          user_id: w.user_id,
+          state: ChecklistItemState.done,
+          is_override: true,
+          marked_by_user_id: actorId,
+        },
+        update: { state: ChecklistItemState.done, reason: null, is_override: true, marked_by_user_id: actorId, marked_at: new Date() },
+      });
+    }
+    await this.logActivity(orgId, taskId, actorId, 'checklist_item_overridden', { item_id: itemId });
+
+    const actorName = await this.notifications.userName(actorId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_checklist_overridden',
+      recipients: workers.map((a: any) => a.user_id).filter((uid: string) => uid !== actorId),
+      title: `${actorName} marked a checklist item done for everyone`,
+      body: `“${task.title}”`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+    return this.getTask(orgId, taskId);
+  }
+
+  /** Undo an assigner override — removes only the override rows, leaving genuine
+   *  personal ticks/skips in place. */
+  async clearChecklistOverride(orgId: string, actorId: string, taskId: string, itemId: string) {
+    const { task } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
+    this.assertTaskOpenForChecklist(task);
+    if (task.created_by_user_id !== actorId) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+    await this.prisma.taskChecklistItemState.deleteMany({
+      where: { checklist_id: itemId, task_id: taskId, is_override: true },
+    });
+    await this.logActivity(orgId, taskId, actorId, 'checklist_updated', { item_id: itemId, state: 'override_cleared' });
+    return this.getTask(orgId, taskId);
+  }
+
+  /** all_must_complete: the assigner challenges one person's checklist item. This is the
+   *  ONLY path that may touch a closed task — it reopens JUST that person's part (never
+   *  disturbing co-assignees who legitimately finished) and bounces the item back to Not
+   *  started, keeping the prior reason in the audit trail. */
+  async challengeChecklistItem(orgId: string, actorId: string, taskId: string, itemId: string, targetUserId: string) {
+    const { task, item } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
+    if (task.completion_mode !== CompletionMode.all_must_complete) {
+      throw new BadRequestException('Challenging a checklist item applies to “all must complete” tasks.');
+    }
+    if (!targetUserId) throw new BadRequestException('Whose checklist item are you challenging?');
+    if (task.created_by_user_id !== actorId) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+    const part = (task.assignees ?? []).find((a: any) => a.user_id === targetUserId && !a.is_cc);
+    if (!part) throw new BadRequestException('That person is not a working assignee on this task.');
+
+    const prior = await this.prisma.taskChecklistItemState.findUnique({
+      where: { checklist_id_user_id: { checklist_id: itemId, user_id: targetUserId } },
+      select: { state: true, reason: true },
+    });
+
+    // 1. Reset that person's item to Not started.
+    await this.prisma.taskChecklistItemState.deleteMany({
+      where: { checklist_id: itemId, user_id: targetUserId, task_id: taskId },
+    });
+
+    // 2. Reopen ONLY that person's part.
+    const { notStarted, inProgress } = await this.getCanonicalStatuses(orgId);
+    const openStatusId = inProgress?.id ?? notStarted?.id ?? null;
+    await this.prisma.taskAssignee.updateMany({
+      where: { task_id: taskId, user_id: targetUserId, is_cc: false },
+      data: { is_completed: false, completed_at: null, status_id: openStatusId },
+    });
+
+    // 3. If the task had closed, bring it back to open — WITHOUT resetting the other
+    //    assignees (unlike reopenTask, which is a whole-task reset).
+    if (isTerminal((task as any).status?.type)) {
+      await this.prisma.task.update({
+        where: { id: taskId },
+        data: {
+          status_id: openStatusId ?? task.status_id,
+          completed_at: null,
+          completion_timing: null,
+          completed_by_user_id: null,
+          incomplete_reason: null,
+          reopen_expires_at: null,
+          reopened_at: new Date(),
+          is_overdue: false,
+          overdue_at: null,
+        },
+      });
+    }
+    await this.rollUpTaskOpenStatus(orgId, taskId);
+
+    await this.logActivity(orgId, taskId, actorId, 'checklist_item_challenged', {
       item_id: itemId,
-      is_completed: updated.is_completed,
+      target_user_id: targetUserId,
+      prior_state: prior?.state ?? null,
+      prior_reason: prior?.reason ?? null,
     });
-    return updated;
+
+    const actorName = await this.notifications.userName(actorId);
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_checklist_challenged',
+      recipients: [targetUserId].filter((uid) => uid !== actorId),
+      title: `${actorName} reopened your task`,
+      body: `“${task.title}” — please revisit: ${item.title}`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+    return this.getTask(orgId, taskId);
   }
 
   // ─── Assignees ────────────────────────────────────────────────────────────────

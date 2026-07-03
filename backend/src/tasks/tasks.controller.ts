@@ -26,6 +26,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
+import { SubmitProofDto } from './dto/submit-proof.dto';
 
 /** Map a raw `?scope=` query value to a DataScope, ignoring anything invalid. */
 function toDataScope(raw?: string): DataScope | undefined {
@@ -340,9 +341,14 @@ export class TasksController {
   // ─── Task Actions ─────────────────────────────────────────────────────────────
 
   @Post(':id/complete')
-  @ApiOperation({ summary: 'Mark task as complete' })
-  complete(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
-    return this.service.completeTask(orgId, req.user.id, id);
+  @ApiOperation({ summary: 'Mark task as complete (close_whole_task = owner override, all_must)' })
+  complete(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() body: { close_whole_task?: boolean },
+  ) {
+    return this.service.completeTask(orgId, req.user.id, id, undefined, !!body?.close_whole_task);
   }
 
   @Post(':id/assignees/:userId/complete')
@@ -378,21 +384,100 @@ export class TasksController {
     return this.service.setSharedStatus(orgId, req.user.id, id, body.status_id);
   }
 
+  @Post(':id/incomplete')
+  @ApiOperation({ summary: 'Close a task as incomplete/not-done (requires reason)' })
+  markIncomplete(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.service.markTaskIncomplete(orgId, req.user.id, id, body?.reason);
+  }
+
+  @Post(':id/assignees/:userId/cannot-complete')
+  @ApiOperation({ summary: "Flag an assignee's own part as can't-complete (all_must_complete, requires reason)" })
+  flagCannotComplete(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Body() body: { reason?: string },
+  ) {
+    const target = userId === 'me' ? req.user.id : userId;
+    return this.service.setAssigneeCannotComplete(orgId, req.user.id, id, target, body?.reason);
+  }
+
+  @Post(':id/assignees/:userId/can-complete')
+  @ApiOperation({ summary: "Clear an assignee's can't-complete flag" })
+  clearCannotComplete(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    const target = userId === 'me' ? req.user.id : userId;
+    return this.service.clearAssigneeCannotComplete(orgId, req.user.id, id, target);
+  }
+
   @Post(':id/reopen')
   @ApiOperation({ summary: 'Reopen a completed task (within window)' })
   reopen(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Body() body: { reason?: string }) {
     return this.service.reopenTask(orgId, req.user.id, id, body?.reason);
   }
 
+  // ─── Proof of completion (file uploads → Cloudflare R2) ──────────────────────
+
   @Post(':id/proof')
-  @ApiOperation({ summary: 'Submit proof of completion' })
-  submitProof(
+  @ApiOperation({ summary: 'Submit a proof-of-completion file' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  async uploadProof(
     @Param('orgId') orgId: string,
     @Request() req: any,
     @Param('id') id: string,
-    @Body() body: { proof_url: string },
+    @UploadedFile() file: UploadedFileType,
+    @Body() dto: SubmitProofDto,
   ) {
-    return this.service.submitProof(orgId, req.user.id, id, body.proof_url);
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.attachments.uploadProof(orgId, req.user.id, id, file, dto.visibility ?? 'private');
+  }
+
+  @Post(':id/proof/from-comment/:attachmentId')
+  @ApiOperation({ summary: 'Mark a file already shared in a comment as proof' })
+  async markCommentAsProof(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+  ) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.attachments.markCommentAttachmentAsProof(orgId, req.user.id, id, attachmentId);
+  }
+
+  @Get(':id/proofs')
+  @ApiOperation({ summary: 'List proof files the current viewer may see' })
+  async listProofs(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.attachments.listProofs(orgId, id, {
+      userId: req.user.id,
+      isAdmin: !!(req.user.is_admin || req.user.isSuperAdmin),
+    });
+  }
+
+  @Get(':id/proofs/:attachmentId/download')
+  @ApiOperation({ summary: 'Signed download URL for a proof file (visibility-gated)' })
+  async downloadProof(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @Param('attachmentId') attachmentId: string,
+    @Request() req: any,
+  ) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.attachments.getProofDownloadUrl(orgId, id, attachmentId, {
+      userId: req.user.id,
+      isAdmin: !!(req.user.is_admin || req.user.isSuperAdmin),
+    });
   }
 
   // ─── Activity Logs ────────────────────────────────────────────────────────────
@@ -499,16 +584,61 @@ export class TasksController {
   }
 
   // ─── Checklist ────────────────────────────────────────────────────────────────
+  // Object-level access is gated by assertCanViewTask (participation OR data scope);
+  // the service adds the per-action rules (own item vs assigner override/challenge).
 
-  @Patch(':id/checklist/:itemId')
-  @ApiOperation({ summary: 'Toggle checklist item completion' })
-  toggleChecklist(
+  @Post(':id/checklist/:itemId/check')
+  @ApiOperation({ summary: 'Mark a checklist item done (own item in all_must; shared tick otherwise)' })
+  async checkChecklistItem(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Param('itemId') itemId: string) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.service.checkChecklistItem(orgId, req.user.id, id, itemId);
+  }
+
+  @Post(':id/checklist/:itemId/uncheck')
+  @ApiOperation({ summary: 'Clear a checklist item back to Not started' })
+  async uncheckChecklistItem(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Param('itemId') itemId: string) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.service.uncheckChecklistItem(orgId, req.user.id, id, itemId);
+  }
+
+  @Post(':id/checklist/:itemId/skip')
+  @ApiOperation({ summary: 'Mark a checklist item "can\'t do" with a required reason (all_must)' })
+  async skipChecklistItem(
     @Param('orgId') orgId: string,
     @Request() req: any,
     @Param('id') id: string,
     @Param('itemId') itemId: string,
+    @Body() body: { reason?: string },
   ) {
-    return this.service.toggleChecklistItem(orgId, req.user.id, id, itemId);
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.service.skipChecklistItem(orgId, req.user.id, id, itemId, body?.reason);
+  }
+
+  @Post(':id/checklist/:itemId/override')
+  @ApiOperation({ summary: 'Assigner: mark a checklist item done for everyone (all_must)' })
+  async overrideChecklistItem(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Param('itemId') itemId: string) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.service.overrideChecklistItem(orgId, req.user.id, id, itemId);
+  }
+
+  @Post(':id/checklist/:itemId/clear-override')
+  @ApiOperation({ summary: 'Assigner: undo a "done for everyone" override' })
+  async clearChecklistOverride(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Param('itemId') itemId: string) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.service.clearChecklistOverride(orgId, req.user.id, id, itemId);
+  }
+
+  @Post(':id/checklist/:itemId/challenge')
+  @ApiOperation({ summary: "Assigner: challenge a person's checklist item — reopens just their part (all_must)" })
+  async challengeChecklistItem(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('itemId') itemId: string,
+    @Body() body: { user_id?: string },
+  ) {
+    await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
+    return this.service.challengeChecklistItem(orgId, req.user.id, id, itemId, body?.user_id ?? '');
   }
 
   // ─── Assignees ────────────────────────────────────────────────────────────────

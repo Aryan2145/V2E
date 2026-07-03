@@ -11,6 +11,8 @@ import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 // import QuadrantBadge from '@/components/tasks/QuadrantBadge'
 import AssigneeSelector from '@/components/tasks/AssigneeSelector'
 import EditTaskModal from '@/components/tasks/EditTaskModal'
+import TaskChecklistCard from '@/components/tasks/TaskChecklistCard'
+import ProofOfCompletionCard from '@/components/tasks/ProofOfCompletionCard'
 import StyledSelect from '@/components/ui/StyledSelect'
 import { AttachmentChips } from '@/components/ui/AttachmentList'
 import { formatBytes } from '@/lib/attachments'
@@ -20,7 +22,7 @@ import {
   RotateCcw,
   Trash2,
   Send,
-  Link as LinkIcon,
+  ShieldCheck,
   Paperclip,
   Calendar,
   User,
@@ -35,9 +37,15 @@ import {
   X,
   History,
   MoreVertical,
+  XCircle,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// Sentinel values for the Status dropdown's terminal "close" actions. They are never
+// real status ids — picking one opens the required-reason box instead of setting a status.
+const MARK_TASK = '__mark_task_incomplete__'
+const MARK_MY_PART = '__mark_my_part_incomplete__'
 
 function getInitials(name: string): string {
   if (!name) return ''
@@ -56,6 +64,38 @@ function avatarColor(name: string): string {
 
 function formatDate(str: string): string {
   return new Date(str).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * Inline hover chip: shows a dark tooltip listing `items` above the trigger text.
+ * Matches the software's tooltip convention (see components/projects/GanttBar) —
+ * #0F172A card, white text, soft shadow, pointer-events-none. Renders nothing on
+ * hover when the list is empty. Uses spans only (lives inside <p>, phrasing content).
+ */
+function HoverList({ trigger, heading, items, className = '' }: {
+  trigger: React.ReactNode
+  heading: string
+  items: string[]
+  className?: string
+}) {
+  const [show, setShow] = useState(false)
+  return (
+    <span
+      className={`relative inline-block ${className}`}
+      onMouseEnter={() => setShow(true)}
+      onMouseLeave={() => setShow(false)}
+    >
+      <span className="underline decoration-dotted decoration-current/40 underline-offset-2">{trigger}</span>
+      {show && items.length > 0 && (
+        <span className="absolute bottom-full left-0 mb-1.5 z-40 w-max max-w-[240px] rounded-[8px] bg-[#0F172A] px-3 py-2 text-left shadow-[0_8px_24px_rgba(0,0,0,0.2)] pointer-events-none">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#94A3B8] mb-1">{heading}</span>
+          {items.map((it, i) => (
+            <span key={i} className="block text-[11px] leading-snug text-white whitespace-pre-wrap">{it}</span>
+          ))}
+        </span>
+      )}
+    </span>
+  )
 }
 
 function formatCountdown(secs: number): string {
@@ -112,12 +152,21 @@ function CommentItem({
   taskId,
   currentUserId,
   onDeleted,
+  canSubmitProof = false,
+  proofAllowedExtensions = [],
+  onMarkProof,
+  markingProofId,
 }: {
   comment: TaskComment
   orgId: string
   taskId: string
   currentUserId: string
   onDeleted: () => void
+  /** Current user may promote their own comment files to proof (proof required, they're a non-CC assignee, task open). */
+  canSubmitProof?: boolean
+  proofAllowedExtensions?: string[]
+  onMarkProof?: (attachmentId: string) => void
+  markingProofId?: string | null
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -146,12 +195,12 @@ function CommentItem({
             : 'bg-[#E2E8F0]',
         ].join(' ')}
       >
-        {comment.user_name ? getInitials(comment.user_name) : <User size={14} className="text-[#94A3B8]" />}
+        {comment.user_name ? getInitials(comment.user_name) : <User size={14} className="text-[#64748B]" />}
       </div>
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-semibold text-[#0F172A]">{comment.user_name}</span>
-          <span className="text-xs text-[#94A3B8]">{formatDate(comment.created_at)}</span>
+          <span className="text-xs text-[#64748B]">{formatDate(comment.created_at)}</span>
         </div>
         <p className={`mt-1 text-sm text-[#1E293B] leading-relaxed whitespace-pre-wrap ${isLong && !expanded ? 'line-clamp-4' : ''}`}>
           {comment.body}
@@ -171,11 +220,32 @@ function CommentItem({
             onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
           />
         )}
+        {/* Promote my own comment files to proof (when the task asks for proof). */}
+        {canSubmitProof && onMarkProof && (comment.attachments ?? []).map((a) => {
+          const mine = (a.uploaded_by_user_id ?? comment.user_id) === currentUserId
+          const extOk = proofAllowedExtensions.length === 0 ||
+            proofAllowedExtensions.includes((a.file_name.split('.').pop() ?? '').toLowerCase())
+          if (!mine || a.is_proof || !extOk) return null
+          return (
+            <button
+              key={`mp-${a.id}`}
+              onClick={() => onMarkProof(a.id)}
+              disabled={markingProofId === a.id}
+              className="mt-1 mr-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] disabled:opacity-60 transition-colors"
+              title={`Use "${a.file_name}" as your proof of completion`}
+            >
+              <ShieldCheck size={12} /> Mark “{a.file_name}” as proof
+            </button>
+          )
+        })}
+        {canSubmitProof && (comment.attachments ?? []).some((a) => a.is_proof) && (
+          <p className="mt-1 text-[11px] text-[#16A34A] inline-flex items-center gap-1"><ShieldCheck size={12} /> Marked as proof</p>
+        )}
       </div>
       {comment.user_id === currentUserId && (
         <button
           onClick={() => setConfirmOpen(true)}
-          className="text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0"
+          className="text-[#64748B] hover:text-[#DC2626] transition-colors shrink-0"
           title="Delete comment"
         >
           <Trash2 size={13} />
@@ -242,7 +312,7 @@ function ActivityItem({ log }: { log: TaskActivityLog }) {
         {!!log.metadata?.reason && (
           <p className="text-xs text-[#475569] mt-0.5 italic">"{String(log.metadata.reason)}"</p>
         )}
-        <p className="text-xs text-[#94A3B8] mt-0.5">{formatDate(log.created_at)}</p>
+        <p className="text-xs text-[#64748B] mt-0.5">{formatDate(log.created_at)}</p>
       </div>
     </div>
   )
@@ -284,8 +354,8 @@ export default function TaskDetailPage() {
   const [commentError, setCommentError] = useState<string | null>(null)
   const commentFileInputRef = useRef<HTMLInputElement>(null)
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null)
-  const [proofUrl, setProofUrl] = useState('')
-  const [submittingProof, setSubmittingProof] = useState(false)
+  // Bumped to force the proof card to re-list files (e.g. after "mark as proof" on a comment).
+  const [proofReloadToken, setProofReloadToken] = useState(0)
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [selectedStatusId, setSelectedStatusId] = useState('')
   const [deleteReason, setDeleteReason] = useState('')
@@ -301,6 +371,13 @@ export default function TaskDetailPage() {
   const [showReopenModal, setShowReopenModal] = useState(false)
   const [reopenReason, setReopenReason] = useState('')
   const [showEditModal, setShowEditModal] = useState(false)
+  // Marking incomplete: which outcome we're capturing a reason for — the whole task
+  // ('task') or only my own part ('my_part', all_must_complete). Null = box closed.
+  const [incompleteTarget, setIncompleteTarget] = useState<null | 'task' | 'my_part'>(null)
+  const [incompleteReason, setIncompleteReason] = useState('')
+  // Owner override: closing the whole all_must task as Complete while some parts are
+  // still pending — shows a heads-up first.
+  const [confirmCompleteAll, setConfirmCompleteAll] = useState(false)
 
   useEffect(() => {
     if (!task?.reopen_expires_at) { setReopenSecondsLeft(0); return }
@@ -403,14 +480,20 @@ export default function TaskDetailPage() {
   }
 
   // Creator/admin marking a specific person's part done (all_must_complete).
+  // Surface a backend reason (e.g. the checklist gate) instead of silently doing nothing.
+  function showActionError(e: any) {
+    const msg = e?.response?.data?.message ?? e?.message ?? 'Something went wrong.'
+    if (typeof window !== 'undefined') window.alert(Array.isArray(msg) ? msg.join('\n') : msg)
+  }
+
   async function handleCompleteAssignee(userId: string) {
     setActionLoading(`complete-${userId}`)
     try {
       const updated = await tasksApi.completeAssignee(orgId, taskId, userId)
       setTask(updated)
       setSelectedStatusId(updated.status_id)
-    } catch {
-      // ignore
+    } catch (e) {
+      showActionError(e)
     } finally {
       setActionLoading(null)
     }
@@ -422,6 +505,22 @@ export default function TaskDetailPage() {
       const updated = await tasksApi.completeTask(orgId, taskId)
       setTask(updated)
       setSelectedStatusId(updated.status_id)
+      await loadTask()
+    } catch (e) {
+      showActionError(e)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // Owner override — force-complete the whole all_must task for everyone.
+  async function handleCompleteWholeTask() {
+    setActionLoading('complete')
+    try {
+      const updated = await tasksApi.completeTask(orgId, taskId, true)
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+      setConfirmCompleteAll(false)
       await loadTask()
     } catch {
       // ignore
@@ -446,6 +545,42 @@ export default function TaskDetailPage() {
     }
   }
 
+  // Close the whole task as Incomplete (reason required). Used by any assignee in
+  // any_can_complete mode, and by the creator/admin in all_must_complete mode.
+  async function handleMarkIncomplete() {
+    if (!incompleteReason.trim()) return
+    setActionLoading('incomplete')
+    try {
+      const updated = await tasksApi.markIncomplete(orgId, taskId, incompleteReason.trim())
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+      setIncompleteTarget(null)
+      setIncompleteReason('')
+      await loadTask()
+    } catch {
+      // ignore — surfaced by staying on the reason box
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // all_must_complete: flag only my own part as can't-complete (reason required).
+  async function handleFlagMyPart() {
+    if (!incompleteReason.trim()) return
+    setActionLoading('flag')
+    try {
+      const updated = await tasksApi.flagCannotComplete(orgId, taskId, incompleteReason.trim())
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+      setIncompleteTarget(null)
+      setIncompleteReason('')
+    } catch {
+      // ignore
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
   async function handleDelete() {
     setActionLoading('delete')
     try {
@@ -453,23 +588,6 @@ export default function TaskDetailPage() {
       router.push('/dashboard/tasks')
     } catch {
       setActionLoading(null)
-    }
-  }
-
-  async function handleToggleChecklist(itemId: string) {
-    if (!task?.checklist) return
-    const updated = await tasksApi.toggleChecklist(orgId, taskId, itemId).catch(() => null)
-    if (updated) {
-      setTask((prev) =>
-        prev
-          ? {
-              ...prev,
-              checklist: prev.checklist?.map((c) =>
-                c.id === itemId ? { ...c, is_completed: !c.is_completed } : c
-              ),
-            }
-          : prev
-      )
     }
   }
 
@@ -575,15 +693,18 @@ export default function TaskDetailPage() {
     }
   }
 
-  async function handleSubmitProof() {
-    if (!proofUrl.trim()) return
-    setSubmittingProof(true)
+  // Promote a file the current user shared in a comment to be their proof of completion.
+  async function handleMarkCommentAsProof(attachmentId: string) {
+    setActionLoading(`mark-proof-${attachmentId}`)
     try {
-      const updated = await tasksApi.submitProof(orgId, taskId, proofUrl.trim())
-      setTask(updated)
-      setProofUrl('')
+      await tasksApi.markCommentAttachmentAsProof(orgId, taskId, attachmentId)
+      await loadTask()
+      setProofReloadToken((t) => t + 1)
+      setComments(await tasksApi.getComments(orgId, taskId).catch(() => comments))
+    } catch {
+      // ignore
     } finally {
-      setSubmittingProof(false)
+      setActionLoading(null)
     }
   }
 
@@ -639,7 +760,6 @@ export default function TaskDetailPage() {
     }
   }
 
-  const isCompletedStatus = task?.status?.type === 'completed'
   // Mirror the backend rule (checkTaskPermission → 'task_delete_roles'): delete is
   // allowed only for platform admins, or when the org opens it to all members
   // ('employee' in task_delete_roles). Being the creator does NOT grant delete — so
@@ -689,11 +809,20 @@ export default function TaskDetailPage() {
   const isAssignee = !!myAssignee
   const completedCount = assignees.filter((a) => a.is_completed).length
   const totalAssignees = assignees.length
+  // Parts flagged "can't complete" that aren't done — these block the task from
+  // auto-completing (all_must_complete), so the owner must resolve or close it.
+  const blockedCount = assignees.filter((a) => a.cannot_complete && !a.is_completed).length
+  const pendingCount = totalAssignees - completedCount - blockedCount
   const notStartedId = openStatuses.find((s) => s.type === 'not_started')?.id ?? openStatuses[0]?.id ?? ''
   // The task's real overall status (roll-up), independent of the top control's local value.
   const isTaskTerminal = !!task.status && TERMINAL_STATUS_PHASES.includes(task.status.type)
+  const isIncompleteStatus = task.status?.type === 'incomplete'
+  const isPartiallyCompletedStatus = task.status?.type === 'partially_completed'
   const myTrackId = myAssignee?.status_id ?? notStartedId
   const canMoveSharedStatus = isAssignee || !!canEdit
+  // Names of assignees who haven't finished — used in the owner's heads-up before a
+  // force-complete/close of the whole task.
+  const pendingNames = assignees.filter((a) => !a.is_completed).map((a) => a.user?.name ?? a.user_name ?? 'Someone')
 
   return (
     // On lg+, fill the fixed-height <main> so the two detail columns can scroll
@@ -706,7 +835,7 @@ export default function TaskDetailPage() {
             onClick={() => router.back()}
             aria-label="Back"
             title="Back"
-            className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
+            className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
           >
             <ArrowLeft size={16} />
           </button>
@@ -717,16 +846,17 @@ export default function TaskDetailPage() {
               onClick={() => setShowEditModal(true)}
               aria-label="Edit task"
               title="Edit task"
-              className="mt-1.5 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
+              className="mt-1.5 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
             >
               <Pencil size={16} />
             </button>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {!isCompletedStatus && !currentUserIsCC ? (
+          {!isTaskTerminal && !currentUserIsCC ? (
             isAllMustComplete ? (
-              // Everyone must finish their own part — show a personal action + a live counter.
+              // Everyone must finish their own part — personal action(s) + a live counter.
+              // (Incomplete / Can't-complete now live inside the Status dropdown.)
               <div className="flex items-center gap-2.5">
                 {isAssignee && (
                   myAssignee?.is_completed ? (
@@ -745,6 +875,18 @@ export default function TaskDetailPage() {
                     </button>
                   )
                 )}
+                {/* Owner override — close the whole task for everyone (heads-up if pending). */}
+                {canEdit && (
+                  <button
+                    onClick={() => (pendingNames.length > 0 ? setConfirmCompleteAll(true) : handleCompleteWholeTask())}
+                    disabled={actionLoading === 'complete'}
+                    title="Complete the whole task for everyone"
+                    className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#16A34A] border border-[#BBF7D0] bg-white rounded-[8px] hover:bg-[#F0FDF4] disabled:opacity-60 transition-colors"
+                  >
+                    <CheckCircle2 size={15} />
+                    Complete task
+                  </button>
+                )}
                 {totalAssignees > 0 && (
                   <span className="text-xs font-semibold text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-full px-2.5 py-1 select-none">
                     {completedCount}/{totalAssignees} completed
@@ -752,7 +894,8 @@ export default function TaskDetailPage() {
                 )}
               </div>
             ) : (
-              // Any one assignee can close the whole task.
+              // Any one assignee can close the whole task via Complete. (Incomplete lives
+              // in the Status dropdown.)
               (isAssignee || canEdit) ? (
                 <button
                   onClick={handleComplete}
@@ -783,9 +926,14 @@ export default function TaskDetailPage() {
                 <RotateCcw size={15} />
                 {actionLoading === 'reopen' ? 'Reopening...' : `Reopen (${formatCountdown(reopenSecondsLeft)})`}
               </button>
+            ) : isIncompleteStatus ? (
+              <span className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] cursor-default select-none">
+                <XCircle size={15} className="text-[#D97706]" />
+                Incomplete
+              </span>
             ) : (
               <span className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#64748B] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[8px] cursor-default select-none">
-                <CheckCircle2 size={15} className="text-[#94A3B8]" />
+                <CheckCircle2 size={15} className="text-[#64748B]" />
                 Completed
               </span>
             )
@@ -864,7 +1012,7 @@ export default function TaskDetailPage() {
               onChange={(e) => setReopenReason(e.target.value)}
               placeholder="Reason for reopening (required)"
               rows={2}
-              className="mt-2 w-full border border-[#FDE68A] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none bg-white focus:border-[#D97706] resize-none"
+              className="mt-2 w-full border border-[#FDE68A] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none bg-white focus:border-[#D97706] resize-none"
             />
           </div>
           <div className="flex gap-2 shrink-0">
@@ -885,6 +1033,82 @@ export default function TaskDetailPage() {
         </div>
       )}
 
+      {/* Owner heads-up before force-completing the whole all_must task while some
+          parts are still pending. */}
+      {confirmCompleteAll && (
+        <div className="bg-[#F0FDF4] border border-[#BBF7D0] rounded-[12px] p-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-[#15803D]">Complete the whole task?</p>
+            <p className="text-xs text-[#166534] mt-0.5">
+              Heads up — {pendingNames.slice(0, 3).join(', ')}
+              {pendingNames.length > 3 ? ` +${pendingNames.length - 3} more` : ''}{' '}
+              {pendingNames.length === 1 ? "hasn't" : "haven't"} completed their part. As the task owner,
+              completing now closes it for everyone.
+            </p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={handleCompleteWholeTask}
+              disabled={actionLoading === 'complete'}
+              className="px-4 py-2 text-sm font-semibold text-white bg-[#16A34A] rounded-[8px] hover:bg-[#15803D] disabled:opacity-60 transition-colors"
+            >
+              {actionLoading === 'complete' ? 'Completing...' : 'Complete for everyone'}
+            </button>
+            <button
+              onClick={() => setConfirmCompleteAll(false)}
+              className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mark-incomplete reason box — required remark for closing the task (or my part)
+          as not-done. Shown for both any_can_complete (whole task) and all_must_complete
+          (my_part, or the creator closing the whole task). */}
+      {incompleteTarget && (
+        <div className="bg-[#FEF2F2] border border-[#FECACA] rounded-[12px] p-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-[#DC2626]">
+              {incompleteTarget === 'my_part' ? "Can't complete your part?" : 'Mark this task incomplete?'}
+            </p>
+            <p className="text-xs text-[#B91C1C] mt-0.5">
+              {incompleteTarget === 'my_part'
+                ? 'Your part will be flagged as not-done. A reason is required — the task creator will decide how to close the task.'
+                : isAllMustComplete && pendingNames.length > 0
+                  ? `Heads up — ${pendingNames.slice(0, 3).join(', ')}${pendingNames.length > 3 ? ` +${pendingNames.length - 3} more` : ''} ${pendingNames.length === 1 ? "hasn't" : "haven't"} finished. As the task owner, this closes it as not-done for everyone. A reason is required.`
+                  : 'The task will be closed as not-done. A reason is required.'}
+            </p>
+            <textarea
+              value={incompleteReason}
+              onChange={(e) => setIncompleteReason(e.target.value)}
+              placeholder="Reason (required)"
+              rows={2}
+              autoFocus
+              className="mt-2 w-full border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none bg-white focus:border-[#DC2626] resize-none"
+            />
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={incompleteTarget === 'my_part' ? handleFlagMyPart : handleMarkIncomplete}
+              disabled={!incompleteReason.trim() || actionLoading === 'incomplete' || actionLoading === 'flag'}
+              className="px-4 py-2 text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {actionLoading === 'incomplete' || actionLoading === 'flag'
+                ? 'Saving...'
+                : incompleteTarget === 'my_part' ? "Flag my part" : 'Confirm Incomplete'}
+            </button>
+            <button
+              onClick={() => { setIncompleteTarget(null); setIncompleteReason('') }}
+              className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F1F5F9] transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Delete confirmation */}
       {showDeleteConfirm && (
         <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[12px] p-4 flex flex-col sm:flex-row gap-3 items-start sm:items-center">
@@ -895,7 +1119,7 @@ export default function TaskDetailPage() {
               value={deleteReason}
               onChange={(e) => setDeleteReason(e.target.value)}
               placeholder="Reason for deletion (optional)"
-              className="mt-2 w-full border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none bg-white focus:border-[#DC2626]"
+              className="mt-2 w-full border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none bg-white focus:border-[#DC2626]"
             />
           </div>
           <div className="flex gap-2 shrink-0">
@@ -925,120 +1149,27 @@ export default function TaskDetailPage() {
         <div className="flex flex-col lg:flex-row gap-6 lg:flex-1 lg:min-h-0">
           {/* Left panel — 60%; scrolls on its own within the viewport on lg+ */}
           <div className="flex-1 min-w-0 space-y-6 lg:min-h-0 lg:overflow-y-auto lg:pr-3">
-            {/* Checklist */}
+            {/* Checklist — per-person in all_must_complete, shared otherwise */}
             {task.checklist && task.checklist.length > 0 && (
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-                <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4 flex items-center gap-2">
-                  <CheckSquare size={16} className="text-[#2563EB]" />
-                  Checklist
-                  <span className="text-sm font-normal text-[#475569]">
-                    ({task.checklist.filter((c) => c.is_completed).length}/{task.checklist.length})
-                  </span>
-                </h3>
-                {(() => {
-                  // A task may carry several checklists (each item tagged with a
-                  // group_title). Render them as sections, preserving order; when
-                  // nothing is grouped it collapses to one plain list.
-                  const order: string[] = []
-                  const byGroup = new Map<string, typeof task.checklist>()
-                  for (const item of task.checklist) {
-                    const key = item.group_title ?? ''
-                    if (!byGroup.has(key)) { byGroup.set(key, []); order.push(key) }
-                    byGroup.get(key)!.push(item)
-                  }
-                  const grouped = order.some((k) => k !== '')
-                  return (
-                    <div className="space-y-4">
-                      {order.map((key) => {
-                        const items = byGroup.get(key)!
-                        const done = items.filter((c) => c.is_completed).length
-                        return (
-                          <div key={key || '__ungrouped'} className="space-y-2">
-                            {grouped && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-[13px] font-semibold text-[#334155]">{key || 'Checklist'}</span>
-                                <span className="text-xs text-[#94A3B8]">({done}/{items.length})</span>
-                              </div>
-                            )}
-                            {items.map((item) => (
-                              <label
-                                key={item.id}
-                                className="flex items-center gap-3 cursor-pointer group"
-                              >
-                                <button
-                                  type="button"
-                                  onClick={() => handleToggleChecklist(item.id)}
-                                  className={[
-                                    'w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
-                                    item.is_completed
-                                      ? 'bg-[#16A34A] border-[#16A34A]'
-                                      : 'border-[#CBD5E1] hover:border-[#2563EB]',
-                                  ].join(' ')}
-                                  aria-checked={item.is_completed}
-                                  role="checkbox"
-                                >
-                                  {item.is_completed && (
-                                    <svg viewBox="0 0 10 8" className="w-2.5 h-2.5" fill="none">
-                                      <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                                    </svg>
-                                  )}
-                                </button>
-                                <span className={`text-sm ${item.is_completed ? 'line-through text-[#94A3B8]' : 'text-[#1E293B]'}`}>
-                                  {item.title}
-                                </span>
-                              </label>
-                            ))}
-                          </div>
-                        )
-                      })}
-                    </div>
-                  )
-                })()}
-              </div>
+              <TaskChecklistCard
+                task={task}
+                orgId={orgId}
+                taskId={taskId}
+                currentUserId={user?.id ?? ''}
+                canEdit={!!canEdit}
+                onChanged={(updated) => setTask(updated)}
+              />
             )}
 
-            {/* Proof section */}
+            {/* Proof of completion — file-based, mode-aware (see ProofOfCompletionCard) */}
             {task.proof_required && (
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-                <h3 className="text-[15px] font-semibold text-[#0F172A] mb-3 flex items-center gap-2">
-                  <LinkIcon size={15} className="text-[#2563EB]" />
-                  Proof of Completion
-                </h3>
-                {task.proof_url ? (
-                  <div className="flex items-center gap-3">
-                    <a
-                      href={task.proof_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm text-[#2563EB] hover:underline break-all"
-                    >
-                      {task.proof_url}
-                    </a>
-                    {task.proof_submitted_at && (
-                      <span className="text-xs text-[#94A3B8] shrink-0">
-                        Submitted {formatDate(task.proof_submitted_at)}
-                      </span>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      value={proofUrl}
-                      onChange={(e) => setProofUrl(e.target.value)}
-                      placeholder="https://..."
-                      className="flex-1 border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-                    />
-                    <button
-                      onClick={handleSubmitProof}
-                      disabled={submittingProof || !proofUrl.trim()}
-                      className="px-4 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
-                    >
-                      {submittingProof ? 'Submitting...' : 'Submit'}
-                    </button>
-                  </div>
-                )}
-              </div>
+              <ProofOfCompletionCard
+                task={task}
+                assignees={assignees}
+                reloadToken={proofReloadToken}
+                locked={isTaskTerminal}
+                onChanged={() => { loadTask(); setProofReloadToken((t) => t + 1) }}
+              />
             )}
 
             {/* Comments */}
@@ -1058,6 +1189,10 @@ export default function TaskDetailPage() {
                       taskId={taskId}
                       currentUserId={user?.id ?? ''}
                       onDeleted={() => setComments((prev) => prev.filter((x) => x.id !== c.id))}
+                      canSubmitProof={!!task.proof_required && isAssignee && !isTaskTerminal}
+                      proofAllowedExtensions={task.proof_allowed_extensions ?? []}
+                      onMarkProof={handleMarkCommentAsProof}
+                      markingProofId={actionLoading?.startsWith('mark-proof-') ? actionLoading.replace('mark-proof-', '') : null}
                     />
                   ))
                 )}
@@ -1076,7 +1211,7 @@ export default function TaskDetailPage() {
                       >
                         <FileText size={12} className="shrink-0" />
                         <span className="truncate">{f.name}</span>
-                        <span className="text-[#94A3B8] shrink-0">{formatBytes(f.size)}</span>
+                        <span className="text-[#64748B] shrink-0">{formatBytes(f.size)}</span>
                         <button
                           type="button"
                           onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== i))}
@@ -1117,7 +1252,7 @@ export default function TaskDetailPage() {
                     }}
                     placeholder="Add a comment... (Enter to send, Shift+Enter for new line)"
                     rows={1}
-                    className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none resize-none max-h-[120px] overflow-y-auto"
+                    className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none resize-none max-h-[120px] overflow-y-auto"
                   />
                   {/* Attach files — sits right before Send */}
                   <button
@@ -1135,7 +1270,7 @@ export default function TaskDetailPage() {
                     disabled={sendingComment || (!commentText.trim() && commentFiles.length === 0)}
                     title="Send"
                     aria-label="Send"
-                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#64748B] disabled:cursor-not-allowed transition-colors"
                   >
                     <Send size={15} />
                   </button>
@@ -1168,24 +1303,121 @@ export default function TaskDetailPage() {
                     >
                       {task.status.label}
                     </span>
-                    {task.completed_by && (
-                      <p className="mt-2 text-[12px] text-[#475569]">Completed by <span className="font-semibold text-[#0F172A]">{task.completed_by.name}</span></p>
+
+                    {isIncompleteStatus ? (
+                      // Incomplete is one deliberate call by the owner — single attribution is correct.
+                      <>
+                        {task.completed_by && (
+                          <p className="mt-2 text-[12px] text-[#475569]">
+                            Marked incomplete by <span className="font-semibold text-[#0F172A]">{task.completed_by.name}</span>
+                            {task.completed_at && <span className="text-[#64748B]"> · {formatDate(task.completed_at)}</span>}
+                          </p>
+                        )}
+                        {task.incomplete_reason && (
+                          <p className="mt-2 text-[12px] text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2 whitespace-pre-wrap">
+                            <span className="font-semibold">Reason:</span> {task.incomplete_reason}
+                          </p>
+                        )}
+                      </>
+                    ) : isPartiallyCompletedStatus ? (
+                      // Partially completed — show BOTH who finished and who couldn't (+ their reasons).
+                      (() => {
+                        const done = assignees.filter((a) => a.is_completed)
+                        const couldnt = assignees.filter((a) => a.cannot_complete)
+                        return (
+                          <>
+                            <p className="mt-2 text-[12px] text-[#475569]">
+                              <span className="font-semibold text-[#0F172A]">{done.length} of {assignees.length}</span> completed
+                              {task.completed_at && <span className="text-[#64748B]"> · {formatDate(task.completed_at)}</span>}
+                            </p>
+                            <ul className="mt-2 space-y-1.5">
+                              {done.map((a) => (
+                                <li key={a.id} className="flex items-start gap-1.5 text-[12px]">
+                                  <CheckCircle2 size={13} className="text-[#16A34A] shrink-0 mt-[1px]" />
+                                  <span className="font-medium text-[#0F172A] min-w-0">{a.user?.name ?? a.user_name ?? 'Unknown'}</span>
+                                </li>
+                              ))}
+                              {couldnt.map((a) => (
+                                <li key={a.id} className="flex items-start gap-1.5 text-[12px]">
+                                  <XCircle size={13} className="text-[#EA580C] shrink-0 mt-[1px]" />
+                                  <span className="min-w-0">
+                                    <span className="font-medium text-[#0F172A]">{a.user?.name ?? a.user_name ?? 'Unknown'}</span>
+                                    {a.cannot_complete_reason && <span className="text-[#B45309]"> — {a.cannot_complete_reason}</span>}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
+                        )
+                      })()
+                    ) : isAllMustComplete ? (
+                      // Collective completion — EVERY part counts, not just whoever finished last.
+                      (() => {
+                        const doneParts = [...assignees]
+                          .filter((a) => a.is_completed)
+                          .sort((a, b) => new Date(a.completed_at ?? 0).getTime() - new Date(b.completed_at ?? 0).getTime())
+                        return (
+                          <>
+                            <p className="mt-2 text-[12px] text-[#475569]">
+                              Completed by{' '}
+                              <span className="font-semibold text-[#0F172A]">
+                                all {doneParts.length} assignee{doneParts.length !== 1 ? 's' : ''}
+                              </span>
+                            </p>
+                            <ul className="mt-2 space-y-1.5">
+                              {doneParts.map((a) => {
+                                const nm = a.user?.name ?? a.user_name ?? 'Unknown'
+                                return (
+                                  <li key={a.id} className="flex items-start gap-1.5 text-[12px]">
+                                    <CheckCircle2 size={13} className="text-[#16A34A] shrink-0 mt-[1px]" />
+                                    <span className="min-w-0">
+                                      <span className="font-medium text-[#0F172A]">{nm}</span>
+                                      {a.completed_at && <span className="text-[#64748B]"> · {formatDate(a.completed_at)}</span>}
+                                    </span>
+                                  </li>
+                                )
+                              })}
+                            </ul>
+                          </>
+                        )
+                      })()
+                    ) : (
+                      // any_can_complete — one person closes it for everyone; single name is right.
+                      task.completed_by && (
+                        <p className="mt-2 text-[12px] text-[#475569]">
+                          Completed by <span className="font-semibold text-[#0F172A]">{task.completed_by.name}</span>
+                          {task.completed_at && <span className="text-[#64748B]"> · {formatDate(task.completed_at)}</span>}
+                        </p>
+                      )
                     )}
-                    <p className="mt-1 text-[11px] text-[#94A3B8]">Reopen the task to change its status.</p>
+
+                    <p className="mt-1 text-[11px] text-[#64748B]">Reopen the task to change its status.</p>
                   </div>
                 ) : isAllMustComplete ? (
-                  isAssignee ? (
-                    // My own status track — moves only my part.
+                  <>
+                  {isAssignee ? (
+                    // My own status track — moves only my part. The terminal "Can't complete"
+                    // (my part) and, for the owner, "Mark whole task incomplete" live at the
+                    // bottom of the same dropdown, below a divider.
                     <>
                       <StyledSelect
                         value={myTrackId}
-                        onChange={(v) => handleMyTrackChange(v)}
-                        options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                        onChange={(v) => {
+                          if (v === MARK_MY_PART) { setIncompleteReason(''); setIncompleteTarget('my_part') }
+                          else if (v === MARK_TASK) { setIncompleteReason(''); setIncompleteTarget('task') }
+                          else handleMyTrackChange(v)
+                        }}
+                        options={[
+                          ...openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+                          ...(myAssignee?.is_completed ? [] : [{ value: MARK_MY_PART, label: "Can't complete (my part)", variant: 'danger' as const, divider: true, action: true }]),
+                          ...(canEdit ? [{ value: MARK_TASK, label: 'Mark whole task incomplete', variant: 'danger' as const, divider: !myAssignee?.is_completed ? false : true, action: true }] : []),
+                        ]}
                       />
-                      <p className="mt-2 text-[11px] text-[#94A3B8]">This is <span className="font-semibold text-[#64748B]">your</span> status. Everyone&apos;s progress is shown in Assignees below.</p>
+                      <p className="mt-2 text-[11px] text-[#64748B]">This is <span className="font-semibold text-[#64748B]">your</span> status. Everyone&apos;s progress is shown in Assignees below.</p>
                     </>
                   ) : (
-                    // Creator/admin without a personal part — read-only overall roll-up.
+                    // Creator/admin without a personal part — read-only overall roll-up, plus
+                    // the owner's "Mark task incomplete" action (kept inside the Status card).
                     <>
                       {task.status && (
                         <span
@@ -1195,17 +1427,77 @@ export default function TaskDetailPage() {
                           {task.status.label}
                         </span>
                       )}
-                      <p className="mt-2 text-[11px] text-[#94A3B8]">Overall progress. Set each person&apos;s status in Assignees below.</p>
+                      <p className="mt-2 text-[12px] text-[#475569]">
+                        <HoverList
+                          heading="Completed"
+                          className="font-semibold text-[#0F172A]"
+                          trigger={<>{completedCount} of {totalAssignees}</>}
+                          items={completedCount > 0
+                            ? assignees.filter((a) => a.is_completed).map((a) => a.user?.name ?? a.user_name ?? 'Unknown')
+                            : ['No parts completed yet']}
+                        /> parts done
+                        {blockedCount > 0 && (
+                          <> · <span className="text-[#DC2626]">{blockedCount} incomplete</span></>
+                        )}
+                        {pendingCount > 0 && (
+                          <> · <HoverList
+                            heading="Pending"
+                            className="text-[#64748B]"
+                            trigger={<>{pendingCount} pending</>}
+                            items={assignees.filter((a) => !a.is_completed && !a.cannot_complete).map((a) => a.user?.name ?? a.user_name ?? 'Unknown')}
+                          /></>
+                        )}
+                      </p>
+                      {blockedCount > 0 && canEdit && (
+                        <p className="mt-1 text-[11px] text-[#DC2626]">A part was closed incomplete — reassign it, or close the whole task incomplete.</p>
+                      )}
+                      <p className="mt-1 text-[11px] text-[#64748B]">Set each person&apos;s status in Assignees below.</p>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          onClick={() => { setIncompleteReason(''); setIncompleteTarget('task') }}
+                          className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#DC2626] hover:text-[#B91C1C] transition-colors"
+                        >
+                          <XCircle size={13} />
+                          Mark task incomplete
+                        </button>
+                      )}
                     </>
-                  )
+                  )}
+
+                  {/* Why the task is stalled — one quiet, shared note (everyone sees it here,
+                      so no one has to hunt in Assignees or hover). Subordinate to the status
+                      pill: a left accent, not a filled alert box. Read-only — the person's
+                      choice to close their part is final. */}
+                  {blockedCount > 0 && (
+                    <div className="mt-3 border-l-2 border-[#FECACA] pl-2.5 space-y-1.5">
+                      {assignees.filter((a) => a.cannot_complete && !a.is_completed).map((a) => (
+                        <p key={a.id} className="text-[11px] leading-snug">
+                          <span className="font-semibold text-[#DC2626]">{a.user?.name ?? a.user_name ?? 'Unknown'}</span>
+                          <span className="text-[#B91C1C]"> marked it incomplete</span>
+                          {a.cannot_complete_reason && (
+                            <span className="block italic text-[#B91C1C] whitespace-pre-wrap">“{a.cannot_complete_reason}”</span>
+                          )}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                  </>
                 ) : (
-                  // Shared status (any_can_complete) — anyone on the task can move it.
+                  // Shared status (any_can_complete) — anyone on the task can move it; the
+                  // "Incomplete" close sits at the bottom of the same dropdown.
                   <>
                     {canMoveSharedStatus ? (
                       <StyledSelect
                         value={selectedStatusId}
-                        onChange={(v) => handleSharedStatusChange(v)}
-                        options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                        onChange={(v) => {
+                          if (v === MARK_TASK) { setIncompleteReason(''); setIncompleteTarget('task') }
+                          else handleSharedStatusChange(v)
+                        }}
+                        options={[
+                          ...openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+                          { value: MARK_TASK, label: 'Incomplete', variant: 'danger' as const, divider: true, action: true },
+                        ]}
                       />
                     ) : (
                       task.status && (
@@ -1218,7 +1510,12 @@ export default function TaskDetailPage() {
                       )
                     )}
                     {task.status_actor && (
-                      <p className="mt-2 text-[11px] text-[#94A3B8]">Changed by <span className="font-semibold text-[#64748B]">{task.status_actor.name}</span></p>
+                      <p className="mt-2 text-[11px] text-[#64748B]">
+                        Changed by <span className="font-semibold text-[#334155]">{task.status_actor.name}</span>
+                        {task.status && (
+                          <> to <span className="font-semibold text-[#334155]">{task.status.label}</span></>
+                        )}
+                      </p>
                     )}
                   </>
                 )}
@@ -1311,7 +1608,7 @@ export default function TaskDetailPage() {
               </div>
               <div className="p-4">
                 {allAttachments.length === 0 ? (
-                  <p className="text-sm text-[#94A3B8]">No attachments</p>
+                  <p className="text-sm text-[#64748B]">No attachments</p>
                 ) : (
                   <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1">
                     {allAttachments.map((a) => (
@@ -1346,7 +1643,7 @@ export default function TaskDetailPage() {
                             type="button"
                             onClick={() => setAttachmentToDelete(a)}
                             title="Remove"
-                            className="text-[#94A3B8] hover:text-[#DC2626] shrink-0 transition-colors"
+                            className="text-[#64748B] hover:text-[#DC2626] shrink-0 transition-colors"
                           >
                             <Trash2 size={14} />
                           </button>
@@ -1442,8 +1739,9 @@ export default function TaskDetailPage() {
                       const name = a.user?.name ?? a.user_name ?? 'Unknown'
                       const email = a.user?.email ?? a.user_email ?? ''
                       const overdue = !!a.is_overdue
-                      // Creator/admin can drive any person's track — but only in per-person mode.
-                      const editable = !!canEdit && isAllMustComplete && !a.is_completed
+                      // Creator/admin can drive any person's track — but only in per-person mode,
+                      // and not once the person has closed their part as incomplete (final).
+                      const editable = !!canEdit && isAllMustComplete && !a.is_completed && !a.cannot_complete
                       const trackColor = a.status?.color ?? '#64748B'
                       const trackLabel = a.status?.label ?? 'Not Started'
                       return (
@@ -1462,10 +1760,19 @@ export default function TaskDetailPage() {
                                   Overdue
                                 </span>
                               )}
+                              {/* Only the narrow, glanceable chips sit beside the name so it
+                                  keeps full width. The editable select + Done drop to their
+                                  own row below. */}
                               {isAllMustComplete && (
                                 a.is_completed ? (
                                   <span className="flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2 py-0.5">
                                     <CheckCircle2 size={12} /> Completed
+                                  </span>
+                                ) : a.cannot_complete ? (
+                                  // Person closed their part as incomplete (with a reason, shown in
+                                  // the Status card). A compact chip — no next-line wrap, no Undo.
+                                  <span className="flex items-center gap-1 text-[11px] font-semibold text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-full px-2 py-0.5">
+                                    <XCircle size={12} /> Incomplete
                                   </span>
                                 ) : !editable ? (
                                   <span
@@ -1478,23 +1785,24 @@ export default function TaskDetailPage() {
                               )}
                             </div>
                           </div>
+
                           {/* Inline controls for the creator/admin to move or finish this person's part. */}
                           {editable && (
-                            <div className="flex items-center gap-2 pl-11">
+                            <div className="flex items-center gap-2">
                               <StyledSelect
+                                size="sm"
                                 value={a.status_id ?? notStartedId}
                                 onChange={(v) => handleAssigneeRowStatus(a.user_id, v)}
                                 options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
                                 wrapperClassName="flex-1 min-w-0"
-                                triggerClassName="py-1.5 text-[13px]"
                               />
                               <button
                                 onClick={() => handleCompleteAssignee(a.user_id)}
                                 disabled={actionLoading === `complete-${a.user_id}`}
                                 title={`Mark ${name}'s part complete`}
-                                className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-semibold text-[#16A34A] border border-[#BBF7D0] bg-[#F0FDF4] rounded-[8px] hover:bg-[#DCFCE7] disabled:opacity-60 transition-colors"
+                                className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2.5 py-1 hover:bg-[#DCFCE7] disabled:opacity-60 transition-colors"
                               >
-                                <CheckCircle2 size={13} /> Done
+                                <CheckCircle2 size={12} /> Done
                               </button>
                             </div>
                           )}
@@ -1507,7 +1815,7 @@ export default function TaskDetailPage() {
                         {ccUsers.map((a) => {
                           const name = a.user?.name ?? a.user_name ?? 'Unknown'
                           return (
-                            <div key={a.id} className="flex items-center gap-3 opacity-70">
+                            <div key={a.id} className="flex items-center gap-3">
                               <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
                                 {getInitials(name)}
                               </div>
@@ -1606,21 +1914,28 @@ export default function TaskDetailPage() {
               </div>
             </div>
 
-            {task.proof_required && (
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
-                <div className={`flex items-center gap-2 px-4 py-2.5 border-b ${task.proof_url ? 'bg-[#F0FDF4] border-[#BBF7D0]' : 'bg-[#FEF2F2] border-[#FECACA]'}`}>
-                  <span className={`w-2 h-2 rounded-full ${task.proof_url ? 'bg-[#16A34A]' : 'bg-[#DC2626]'}`} />
-                  <p className={`text-[11px] font-bold uppercase tracking-widest ${task.proof_url ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>
-                    Proof Required
-                  </p>
+            {task.proof_required && (() => {
+              const ps = task.proof_summary
+              const required = ps?.required_user_ids?.length ?? 0
+              const submitted = ps?.submitted_user_ids?.length ?? 0
+              const done = isAllMustComplete ? (required > 0 && submitted >= required) : !!ps?.task_has_any_proof
+              const label = isAllMustComplete
+                ? (done ? 'All submitted' : `${submitted}/${required} submitted`)
+                : (done ? 'Submitted' : 'Pending submission')
+              return (
+                <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+                  <div className={`flex items-center gap-2 px-4 py-2.5 border-b ${done ? 'bg-[#F0FDF4] border-[#BBF7D0]' : 'bg-[#FEF2F2] border-[#FECACA]'}`}>
+                    <span className={`w-2 h-2 rounded-full ${done ? 'bg-[#16A34A]' : 'bg-[#DC2626]'}`} />
+                    <p className={`text-[11px] font-bold uppercase tracking-widest ${done ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>
+                      Proof Required
+                    </p>
+                  </div>
+                  <div className="p-4">
+                    <p className={`text-sm font-medium ${done ? 'text-[#16A34A]' : 'text-[#D97706]'}`}>{label}</p>
+                  </div>
                 </div>
-                <div className="p-4">
-                  <p className={`text-sm font-medium ${task.proof_url ? 'text-[#16A34A]' : 'text-[#D97706]'}`}>
-                    {task.proof_url ? 'Submitted' : 'Pending submission'}
-                  </p>
-                </div>
-              </div>
-            )}
+              )
+            })()}
           </div>
         </div>
       )}
@@ -1687,7 +2002,7 @@ export default function TaskDetailPage() {
               <button
                 onClick={() => setShowActivity(false)}
                 aria-label="Close"
-                className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+                className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
               >
                 <X size={18} />
               </button>
@@ -1695,7 +2010,7 @@ export default function TaskDetailPage() {
             <div className="overflow-y-auto flex-1 px-6 py-4">
               {activityLogs.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12">
-                  <User size={24} className="text-[#94A3B8] mb-3" />
+                  <User size={24} className="text-[#64748B] mb-3" />
                   <p className="text-sm text-[#475569]">No activity recorded yet.</p>
                 </div>
               ) : (

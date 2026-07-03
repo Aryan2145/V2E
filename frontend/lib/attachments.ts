@@ -29,6 +29,51 @@ export const ALLOWED_EXTENSIONS = [
 /** The `accept` attribute value for a file input, from the allowed extensions. */
 export const ACCEPT_ATTR = ALLOWED_EXTENSIONS.map((e) => `.${e}`).join(',')
 
+/**
+ * Broad file-type groups for the proof "allowed types" picker. Each group maps to a
+ * set of extensions; the stored `proof_allowed_extensions` is the union of the checked
+ * groups (empty = anything allowed).
+ */
+export const FILE_TYPE_GROUPS: { key: string; label: string; extensions: string[] }[] = [
+  { key: 'images', label: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'] },
+  { key: 'pdf', label: 'PDF', extensions: ['pdf'] },
+  { key: 'documents', label: 'Documents', extensions: ['doc', 'docx', 'txt', 'ppt', 'pptx'] },
+  { key: 'spreadsheets', label: 'Spreadsheets', extensions: ['xls', 'xlsx', 'csv'] },
+  { key: 'video', label: 'Video', extensions: ['mp4', 'webm', 'mov'] },
+  { key: 'audio', label: 'Audio', extensions: ['mp3'] },
+  { key: 'archives', label: 'Archives', extensions: ['zip'] },
+]
+
+/** An `accept` string from a list of bare extensions (falls back to all allowed). */
+export function acceptFromExtensions(exts?: string[] | null): string {
+  if (!exts || exts.length === 0) return ACCEPT_ATTR
+  return exts.map((e) => `.${e.replace(/^\./, '')}`).join(',')
+}
+
+/** Which groups are fully "on" for a given allowed-extensions set (empty = all on). */
+export function groupsFromExtensions(exts?: string[] | null): Set<string> {
+  const on = new Set<string>()
+  if (!exts || exts.length === 0) {
+    FILE_TYPE_GROUPS.forEach((g) => on.add(g.key)) // empty = everything allowed
+    return on
+  }
+  const set = new Set(exts.map((e) => e.replace(/^\./, '').toLowerCase()))
+  for (const g of FILE_TYPE_GROUPS) {
+    if (g.extensions.some((e) => set.has(e))) on.add(g.key)
+  }
+  return on
+}
+
+/** Union of extensions for the checked groups. All groups on → [] (= anything allowed). */
+export function extensionsFromGroups(groupKeys: Set<string>): string[] {
+  if (groupKeys.size === FILE_TYPE_GROUPS.length) return []
+  const out: string[] = []
+  for (const g of FILE_TYPE_GROUPS) {
+    if (groupKeys.has(g.key)) out.push(...g.extensions)
+  }
+  return out
+}
+
 export function extensionOf(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot >= 0 ? name.slice(dot + 1).toLowerCase() : ''

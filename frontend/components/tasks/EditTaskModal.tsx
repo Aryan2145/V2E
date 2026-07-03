@@ -12,6 +12,7 @@ import { holidaysApi } from '@/lib/api/holidays'
 import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
+import ProofRequirementField from './ProofRequirementField'
 import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
 import LeaveWarningBadge from '@/components/leave/LeaveWarningBadge'
 import { leaveApi } from '@/lib/api/leave'
@@ -56,6 +57,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   const openStatuses = statuses.filter((s) => !TERMINAL_STATUS_PHASES.includes(s.type))
   const [completionMode, setCompletionMode] = useState<CompletionMode>(task.completion_mode ?? 'any_can_complete')
   const [proofRequired, setProofRequired] = useState(task.proof_required ?? false)
+  const [proofAllowedExtensions, setProofAllowedExtensions] = useState<string[]>(task.proof_allowed_extensions ?? [])
   const [deadlineDate, setDeadlineDate] = useState(() => task.deadline ? toLocalDateStr(task.deadline) : '')
   const [deadlineTime, setDeadlineTime] = useState(() => task.deadline ? toLocalTimeStr(task.deadline) : '')
   const todayStr = new Date().toISOString().split('T')[0]
@@ -133,6 +135,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
         deadline: deadline || undefined,
         completion_mode: completionMode,
         proof_required: proofRequired,
+        proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
       })
       onSaved(updated)
     } catch {
@@ -301,19 +304,13 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
             </div>
           </div>
 
-          {/* Proof required */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setProofRequired((v) => !v)}
-              className={['relative w-10 h-5 rounded-full transition-colors duration-200', proofRequired ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]'].join(' ')}
-              role="switch"
-              aria-checked={proofRequired}
-            >
-              <span className={['absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform duration-200', proofRequired ? 'translate-x-5' : 'translate-x-0'].join(' ')} />
-            </button>
-            <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
-          </div>
+          {/* Proof required + allowed file types */}
+          <ProofRequirementField
+            proofRequired={proofRequired}
+            onProofRequiredChange={setProofRequired}
+            allowedExtensions={proofAllowedExtensions}
+            onAllowedExtensionsChange={setProofAllowedExtensions}
+          />
         </form>
 
         {/* Footer — no Cancel button; the header X / Escape / backdrop close the modal */}

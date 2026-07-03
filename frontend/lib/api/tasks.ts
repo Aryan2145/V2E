@@ -29,6 +29,7 @@ import type {
   EmployeeReport,
   BulkAction,
   ReminderSpec,
+  ProofVisibility,
 } from '@/lib/types/tasks'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/tasks`
@@ -254,6 +255,7 @@ export const tasksApi = {
     deadline?: string
     completion_mode?: string
     proof_required?: boolean
+    proof_allowed_extensions?: string[]
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
     checklist_items?: { title: string; order_index: number; group_title?: string }[]
@@ -280,8 +282,8 @@ export const tasksApi = {
     await apiClient.delete(`${base(orgId)}/${taskId}`, { data: { reason } })
   },
 
-  completeTask: async (orgId: string, taskId: string): Promise<Task> => {
-    const res = await apiClient.post(`${base(orgId)}/${taskId}/complete`)
+  completeTask: async (orgId: string, taskId: string, closeWholeTask = false): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/complete`, { close_whole_task: closeWholeTask })
     return unwrap<Task>(res)
   },
 
@@ -308,9 +310,59 @@ export const tasksApi = {
     return unwrap<Task>(res)
   },
 
-  submitProof: async (orgId: string, taskId: string, proof_url: string): Promise<Task> => {
-    const res = await apiClient.post(`${base(orgId)}/${taskId}/proof`, { proof_url })
+  // Close the whole task as Incomplete/not-done (reason required).
+  markIncomplete: async (orgId: string, taskId: string, reason: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/incomplete`, { reason })
     return unwrap<Task>(res)
+  },
+
+  // all_must_complete: an assignee closes their own part as incomplete (reason required).
+  // This is a deliberate, final choice by that person — there is no un-flag.
+  flagCannotComplete: async (orgId: string, taskId: string, reason: string, userId?: string): Promise<Task> => {
+    const target = userId ?? 'me'
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/assignees/${target}/cannot-complete`, { reason })
+    return unwrap<Task>(res)
+  },
+
+  // ── Proof of completion (file uploads → R2, visibility-gated) ──────────────
+
+  /** Upload a proof file for the current user's part. visibility ignored in any_can mode. */
+  uploadProof: async (
+    orgId: string,
+    taskId: string,
+    file: File,
+    visibility: ProofVisibility = 'private',
+    onProgress?: (pct: number) => void,
+  ): Promise<TaskAttachment> => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('visibility', visibility)
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/proof`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100))
+      },
+    })
+    return unwrap<TaskAttachment>(res)
+  },
+
+  /** Promote a file already shared in a comment to be the current user's proof. */
+  markCommentAttachmentAsProof: async (orgId: string, taskId: string, attachmentId: string): Promise<TaskAttachment> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/proof/from-comment/${attachmentId}`, {})
+    return unwrap<TaskAttachment>(res)
+  },
+
+  /** Proof files the current viewer is allowed to see. */
+  listProofs: async (orgId: string, taskId: string): Promise<TaskAttachment[]> => {
+    const res = await apiClient.get(`${base(orgId)}/${taskId}/proofs`)
+    return unwrap<TaskAttachment[]>(res)
+  },
+
+  /** Resolve a short-lived signed URL for a proof then trigger the browser download. */
+  downloadProof: async (orgId: string, taskId: string, attachmentId: string): Promise<void> => {
+    const res = await apiClient.get(`${base(orgId)}/${taskId}/proofs/${attachmentId}/download`)
+    const { url } = unwrap<{ url: string; file_name: string }>(res)
+    if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener')
   },
 
   getLogs: async (orgId: string, taskId: string): Promise<TaskActivityLog[]> => {
@@ -389,9 +441,39 @@ export const tasksApi = {
     await apiClient.delete(`${base(orgId)}/${taskId}/attachments/${attachmentId}`)
   },
 
-  toggleChecklist: async (orgId: string, taskId: string, itemId: string): Promise<TaskChecklistItem> => {
-    const res = await apiClient.patch(`${base(orgId)}/${taskId}/checklist/${itemId}`)
-    return unwrap<TaskChecklistItem>(res)
+  // ── Checklist (per-person in all_must_complete; shared otherwise). Each returns the
+  //    refreshed task so per-person states + aggregate counts stay in sync. ──
+  checkChecklistItem: async (orgId: string, taskId: string, itemId: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/check`)
+    return unwrap<Task>(res)
+  },
+
+  uncheckChecklistItem: async (orgId: string, taskId: string, itemId: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/uncheck`)
+    return unwrap<Task>(res)
+  },
+
+  // all_must_complete: mark an item "can't do" with a required reason.
+  skipChecklistItem: async (orgId: string, taskId: string, itemId: string, reason: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/skip`, { reason })
+    return unwrap<Task>(res)
+  },
+
+  // Assigner: mark an item done for everyone / undo that override.
+  overrideChecklistItem: async (orgId: string, taskId: string, itemId: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/override`)
+    return unwrap<Task>(res)
+  },
+
+  clearChecklistOverride: async (orgId: string, taskId: string, itemId: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/clear-override`)
+    return unwrap<Task>(res)
+  },
+
+  // Assigner: challenge one person's item — reopens just their part and resets the item.
+  challengeChecklistItem: async (orgId: string, taskId: string, itemId: string, userId: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/checklist/${itemId}/challenge`, { user_id: userId })
+    return unwrap<Task>(res)
   },
 
   addAssignee: async (orgId: string, taskId: string, user_id: string, is_cc: boolean): Promise<void> => {
