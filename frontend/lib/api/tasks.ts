@@ -293,6 +293,12 @@ export const tasksApi = {
     return unwrap<Task>(res)
   },
 
+  /** all_must_complete: creator/editor reopens one person's finished part for rework. */
+  reopenAssigneePart: async (orgId: string, taskId: string, userId: string, reason?: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/assignees/${userId}/reopen`, { reason })
+    return unwrap<Task>(res)
+  },
+
   /** Set a per-person status track (all_must_complete). Omit user_id to set your own. */
   setAssigneeStatus: async (orgId: string, taskId: string, status_id: string, user_id?: string): Promise<Task> => {
     const res = await apiClient.patch(`${base(orgId)}/${taskId}/assignee-status`, { status_id, user_id })

@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { ShieldCheck, CheckCircle2, Clock, Download, Lock, Users } from 'lucide-react'
+import { ShieldCheck, CheckCircle2, Clock, Download, Lock, Users, Trash2 } from 'lucide-react'
 import FileDropzone, { AttachmentErrorBox } from '@/components/ui/FileDropzone'
+import Modal from '@/components/ui/Modal'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { extensionOf, fileKindLabel, formatBytes } from '@/lib/attachments'
@@ -23,11 +24,13 @@ interface Props {
 }
 
 /**
- * File-based proof of completion. In all_must_complete it's a per-person scoreboard
- * ("n/N submitted") — the assigner/admin and each uploader see the files; other
- * assignees see only who has submitted (files stay private unless shared). In
- * any_can_complete a single proof satisfies the task. Visibility filtering is done
- * server-side (listProofs), so `proofs` here already excludes what the viewer can't see.
+ * File-based proof of completion.
+ * - Assigner (creator/admin): a per-person scoreboard — who has submitted, who's pending,
+ *   with every file (they can see all).
+ * - Assignee: just uploads their own proof and sees a flat list of the files they can see
+ *   (their own + any a teammate chose to share). No per-person pending/submitted list.
+ * On upload (all_must) a popup asks, PER FILE, whether it's visible to only the assigner or
+ * everyone. In any_can mode one proof satisfies the task and is always shared.
  */
 export default function ProofOfCompletionCard({ task, assignees, reloadToken, locked, onChanged }: Props) {
   const { user } = useAuth()
@@ -35,12 +38,19 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
   const [proofs, setProofs] = useState<TaskAttachment[]>([])
   const [errors, setErrors] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
-  const [visibility, setVisibility] = useState<ProofVisibility>('private')
+  // Files picked but awaiting a per-file visibility decision (all_must). queue[0] is current.
+  const [queue, setQueue] = useState<File[]>([])
+  const [choice, setChoice] = useState<ProofVisibility>('private')
 
   const isAllMust = task.completion_mode === 'all_must_complete'
+  const isAssigner = task.created_by_user_id === user?.id || !!user?.is_admin
   const primary = assignees.filter((a) => !a.is_cc)
-  const iAmAssignee = primary.some((a) => a.user_id === user?.id)
+  const myAssignee = primary.find((a) => a.user_id === user?.id)
+  const iAmAssignee = !!myAssignee
   const allowed = task.proof_allowed_extensions ?? []
+  // A proof I uploaded can be removed until it's locked in: task closed, or (all_must) I've
+  // already completed my own part with it. The backend enforces this too.
+  const canManageMine = !locked && !(isAllMust && !!myAssignee?.is_completed)
 
   const load = useCallback(() => {
     if (!orgId) return
@@ -61,7 +71,9 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
     proofsByUser.set(uid, list)
   }
 
-  async function handleFiles(files: File[]) {
+  // Picked some files → validate types, then either open the per-file visibility popup
+  // (all_must) or upload straight away as shared (any_can).
+  function handleFiles(files: File[]) {
     setErrors([])
     if (allowed.length > 0) {
       const bad = files.filter((f) => !allowed.includes(extensionOf(f.name)))
@@ -70,11 +82,18 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
         return
       }
     }
+    if (isAllMust) {
+      setChoice('private')
+      setQueue(files)
+    } else {
+      void uploadAll(files, 'everyone')
+    }
+  }
+
+  async function uploadAll(files: File[], visibility: ProofVisibility) {
     setUploading(true)
     try {
-      for (const f of files) {
-        await tasksApi.uploadProof(orgId, task.id, f, isAllMust ? visibility : 'everyone')
-      }
+      for (const f of files) await tasksApi.uploadProof(orgId, task.id, f, visibility)
       load()
       onChanged()
     } catch (e: any) {
@@ -84,9 +103,40 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
     }
   }
 
+  // Confirm visibility for the current queued file, upload it, then advance the queue.
+  async function confirmCurrent() {
+    const file = queue[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      await tasksApi.uploadProof(orgId, task.id, file, choice)
+      const rest = queue.slice(1)
+      setQueue(rest)
+      setChoice('private')
+      if (rest.length === 0) { load(); onChanged() }
+    } catch (e: any) {
+      setErrors([e?.response?.data?.message ?? 'Upload failed. Please try again.'])
+      setQueue([])
+    } finally {
+      setUploading(false)
+    }
+  }
+
   const download = (a: TaskAttachment) => tasksApi.downloadProof(orgId, task.id, a.id).catch(() => {})
 
-  function FileRow({ a }: { a: TaskAttachment }) {
+  async function handleDeleteProof(a: TaskAttachment) {
+    setErrors([])
+    try {
+      await tasksApi.deleteAttachment(orgId, task.id, a.id)
+      load()
+      onChanged()
+    } catch (e: any) {
+      setErrors([e?.response?.data?.message ?? 'Could not remove the file.'])
+    }
+  }
+
+  function FileRow({ a, showUploader }: { a: TaskAttachment; showUploader?: boolean }) {
+    const mine = a.uploaded_by_user_id === user?.id
     return (
       <div className="flex items-center gap-2 text-[12px]">
         <span className="shrink-0 inline-flex items-center justify-center w-8 h-5 rounded bg-[#EFF6FF] text-[#2563EB] text-[9px] font-bold">
@@ -95,6 +145,7 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
         <button onClick={() => download(a)} className="min-w-0 truncate text-[#2563EB] hover:underline text-left" title={a.file_name}>
           {a.file_name}
         </button>
+        {showUploader && a.uploaded_by_name && <span className="shrink-0 text-[#64748B]">· {a.uploaded_by_name}</span>}
         <span className="shrink-0 text-[#94A3B8]">{formatBytes(a.size_bytes)}</span>
         <span className="shrink-0 text-[#94A3B8]">· {formatWhen(a.created_at)}</span>
         {a.proof_visibility === 'everyone' && (
@@ -105,30 +156,19 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
         <button onClick={() => download(a)} className="ml-auto shrink-0 text-[#64748B] hover:text-[#2563EB]" title="Download">
           <Download size={13} />
         </button>
+        {mine && canManageMine && !a.comment_id && (
+          <button onClick={() => handleDeleteProof(a)} className="shrink-0 text-[#64748B] hover:text-[#DC2626]" title="Remove this proof">
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
     )
   }
 
   const uploader = iAmAssignee && !locked && (
     <div className="mt-3">
-      {isAllMust && (
-        <div className="mb-2">
-          <p className="text-[11px] font-medium text-[#64748B] mb-1">Who can see this proof?</p>
-          <div className="flex gap-3">
-            {([
-              { v: 'private' as ProofVisibility, label: 'Only the assigner' },
-              { v: 'everyone' as ProofVisibility, label: 'Everyone on the task' },
-            ]).map((o) => (
-              <label key={o.v} className="flex items-center gap-1.5 text-[12px] text-[#334155] cursor-pointer">
-                <input type="radio" name="proof-visibility" className="accent-[#2563EB]" checked={visibility === o.v} onChange={() => setVisibility(o.v)} />
-                {o.label}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
       <FileDropzone onFiles={handleFiles} onReject={setErrors} disabled={uploading} compact />
-      {uploading && <p className="mt-1 text-[11px] text-[#64748B]">Uploading…</p>}
+      {uploading && queue.length === 0 && <p className="mt-1 text-[11px] text-[#64748B]">Uploading…</p>}
       {errors.length > 0 && <div className="mt-2"><AttachmentErrorBox errors={errors} onDismiss={() => setErrors([])} /></div>}
     </div>
   )
@@ -157,8 +197,12 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
         <p className="text-[11px] text-[#64748B] mb-2">Accepted: {allowed.join(', ')}</p>
       )}
 
-      {isAllMust ? (
-        <div className="space-y-2.5">
+      {/* Uploader sits up top for an assignee ("upload here"), then the files below. */}
+      {uploader}
+
+      {isAllMust && isAssigner ? (
+        // Assigner oversight — per-person scoreboard with everyone's files.
+        <div className="space-y-2.5 mt-3">
           {primary.map((a) => {
             const name = a.user?.name ?? a.user_name ?? 'Unknown'
             const submitted = submittedIds.has(a.user_id)
@@ -185,16 +229,65 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
           })}
         </div>
       ) : (
-        <div className="space-y-1.5">
+        // Assignee (or any_can) — a flat list of the files this viewer can see.
+        <div className="space-y-1.5 mt-3">
           {proofs.length > 0 ? (
-            proofs.map((p) => <FileRow key={p.id} a={p} />)
+            proofs.map((p) => <FileRow key={p.id} a={p} showUploader />)
           ) : (
-            <p className="text-[13px] text-[#64748B]">No proof submitted yet. One proof file from anyone on the task is enough.</p>
+            <p className="text-[13px] text-[#64748B]">
+              {isAllMust ? 'No proof yet. Upload yours above.' : 'No proof submitted yet. One proof file from anyone on the task is enough.'}
+            </p>
           )}
         </div>
       )}
 
-      {uploader}
+      {/* Per-file visibility popup (all_must) — asked once per file as it's uploaded. */}
+      <Modal
+        isOpen={queue.length > 0}
+        onClose={() => { if (!uploading) setQueue([]) }}
+        title="Who can see this proof?"
+        size="sm"
+        closeOnEscape={!uploading}
+      >
+        {queue[0] && (
+          <div>
+            <p className="text-[13px] text-[#475569] mb-3 break-all">
+              <span className="font-semibold text-[#0F172A]">{queue[0].name}</span>
+            </p>
+            <div className="space-y-2">
+              {([
+                { v: 'private' as ProofVisibility, label: 'Only the assigner', hint: 'Your teammates won’t see this file.' },
+                { v: 'everyone' as ProofVisibility, label: 'Everyone on the task', hint: 'All assignees can view and download it.' },
+              ]).map((o) => (
+                <label key={o.v} className={`flex items-start gap-2.5 rounded-[10px] border p-2.5 cursor-pointer transition-colors ${choice === o.v ? 'border-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] hover:bg-[#F8FAFC]'}`}>
+                  <input type="radio" name="proof-visibility" className="accent-[#2563EB] mt-0.5" checked={choice === o.v} onChange={() => setChoice(o.v)} />
+                  <span>
+                    <span className="block text-sm font-medium text-[#0F172A]">{o.label}</span>
+                    <span className="block text-[11px] text-[#64748B]">{o.hint}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+            {queue.length > 1 && <p className="mt-2 text-[11px] text-[#64748B]">{queue.length - 1} more file{queue.length - 1 !== 1 ? 's' : ''} after this.</p>}
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { if (!uploading) setQueue([]) }}
+                disabled={uploading}
+                className="text-sm font-medium text-[#475569] hover:text-[#0F172A] px-3 py-2 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmCurrent}
+                disabled={uploading}
+                className="text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] px-4 py-2 hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors"
+              >
+                {uploading ? 'Uploading…' : 'Upload'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

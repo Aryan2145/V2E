@@ -362,6 +362,18 @@ export class TasksController {
     return this.service.completeTask(orgId, req.user.id, id, userId);
   }
 
+  @Post(':id/assignees/:userId/reopen')
+  @ApiOperation({ summary: "Reopen one assignee's finished part for rework (creator/editor, all_must_complete)" })
+  reopenAssigneePart(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+    @Body() body: { reason?: string },
+  ) {
+    return this.service.reopenAssigneePart(orgId, req.user.id, id, userId, body?.reason);
+  }
+
   @Patch(':id/assignee-status')
   @ApiOperation({ summary: 'Set a per-person status track (all_must_complete)' })
   setAssigneeStatus(

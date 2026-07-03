@@ -6,10 +6,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { ProofVisibility } from '@prisma/client';
+import { Prisma, ProofVisibility } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { isTerminal } from './status-phase';
 
 /** 25 MB cap, matching the product decision for document attachments. */
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
@@ -47,6 +48,16 @@ export interface UploadedFile {
   size: number;
   buffer: Buffer;
 }
+
+/**
+ * A file counts as "live" only if it isn't tied to a soft-deleted comment — deleting a
+ * comment takes its files with it. Task-level files (comment_id null) always qualify.
+ * Applied defensively so an orphan (e.g. a comment deleted before the delete-cascade
+ * existed) can never surface in a list, download, or the proof gate.
+ */
+const LIVE_PARENT_COMMENT: Prisma.TaskAttachmentWhereInput = {
+  OR: [{ comment_id: null }, { comment: { is_deleted: false } }],
+};
 
 /** Lowercase file extension (no dot), or '' when none. */
 export function extensionOf(name: string): string {
@@ -201,7 +212,7 @@ export class TaskAttachmentsService {
   async listAllForTask(orgId: string, taskId: string) {
     await this.assertTask(orgId, taskId);
     const rows = await this.prisma.taskAttachment.findMany({
-      where: { organization_id: orgId, task_id: taskId, is_deleted: false },
+      where: { organization_id: orgId, task_id: taskId, is_deleted: false, ...LIVE_PARENT_COMMENT },
       orderBy: { created_at: 'desc' },
     });
     return this.attachUploaderNames(rows);
@@ -210,7 +221,7 @@ export class TaskAttachmentsService {
   /** A short-lived signed URL that streams the file with its original name. */
   async getDownloadUrl(orgId: string, taskId: string, attachmentId: string) {
     const att = await this.prisma.taskAttachment.findFirst({
-      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false },
+      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false, ...LIVE_PARENT_COMMENT },
     });
     if (!att) throw new NotFoundException('Attachment not found');
     const url = await this.r2.getSignedDownloadUrl(att.storage_key, att.file_name);
@@ -225,6 +236,26 @@ export class TaskAttachmentsService {
     if (!att) throw new NotFoundException('Attachment not found');
     if (att.uploaded_by_user_id !== userId) {
       throw new ForbiddenException('You can only remove attachments you uploaded.');
+    }
+
+    // A proof file can be freely removed/replaced UNTIL it's locked in as evidence:
+    // once the task is closed, or (all_must) once the uploader has completed their own
+    // part with it, it's frozen — reopen first to change it.
+    if (att.is_proof) {
+      const task = await this.prisma.task.findFirst({
+        where: { id: taskId, organization_id: orgId },
+        select: {
+          completion_mode: true,
+          status: { select: { type: true } },
+          assignees: { where: { user_id: userId, is_cc: false }, select: { is_completed: true } },
+        },
+      });
+      if (task && isTerminal(task.status?.type)) {
+        throw new BadRequestException('Proof can’t be removed after the task is closed. Reopen it first.');
+      }
+      if (task?.completion_mode === 'all_must_complete' && task.assignees[0]?.is_completed) {
+        throw new BadRequestException('You’ve completed your part with this proof — ask the assigner to reopen your part to change it.');
+      }
     }
 
     await this.prisma.taskAttachment.update({
@@ -368,7 +399,7 @@ export class TaskAttachmentsService {
     const task = await this.loadTaskForProof(orgId, taskId);
     const isCreator = task.created_by_user_id === viewer.userId;
     const rows = await this.prisma.taskAttachment.findMany({
-      where: { organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false },
+      where: { organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false, ...LIVE_PARENT_COMMENT },
       orderBy: { created_at: 'desc' },
     });
     const visible = rows.filter((r) => this.canSeeProof(r, { ...viewer, isCreator }));
@@ -385,7 +416,7 @@ export class TaskAttachmentsService {
     const task = await this.loadTaskForProof(orgId, taskId);
     const isCreator = task.created_by_user_id === viewer.userId;
     const att = await this.prisma.taskAttachment.findFirst({
-      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false },
+      where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_proof: true, is_deleted: false, ...LIVE_PARENT_COMMENT },
     });
     // 404 (not 403) when hidden — never leak that a private proof exists.
     if (!att || !this.canSeeProof(att, { ...viewer, isCreator })) {

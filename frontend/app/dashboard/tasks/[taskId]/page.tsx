@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
+import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskComment, TaskAttachment, TaskActivityLog, TaskCategory, TaskPriority, TaskStatus, TaskMasterConfig } from '@/lib/types/tasks'
@@ -322,6 +323,7 @@ function ActivityItem({ log }: { log: TaskActivityLog }) {
 
 export default function TaskDetailPage() {
   const { user } = useAuth()
+  const { addToast } = useToast()
   const params = useParams()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
@@ -375,6 +377,9 @@ export default function TaskDetailPage() {
   // ('task') or only my own part ('my_part', all_must_complete). Null = box closed.
   const [incompleteTarget, setIncompleteTarget] = useState<null | 'task' | 'my_part'>(null)
   const [incompleteReason, setIncompleteReason] = useState('')
+  // Reopening ONE assignee's finished part (all_must_complete): whose, + an optional note.
+  const [reopenPartTarget, setReopenPartTarget] = useState<string | null>(null)
+  const [reopenPartReason, setReopenPartReason] = useState('')
   // Owner override: closing the whole all_must task as Complete while some parts are
   // still pending — shows a heads-up first.
   const [confirmCompleteAll, setConfirmCompleteAll] = useState(false)
@@ -479,11 +484,11 @@ export default function TaskDetailPage() {
     }
   }
 
-  // Creator/admin marking a specific person's part done (all_must_complete).
-  // Surface a backend reason (e.g. the checklist gate) instead of silently doing nothing.
+  // Surface a backend reason (e.g. the proof / checklist gate) via the app's own toast —
+  // never a native browser dialog.
   function showActionError(e: any) {
     const msg = e?.response?.data?.message ?? e?.message ?? 'Something went wrong.'
-    if (typeof window !== 'undefined') window.alert(Array.isArray(msg) ? msg.join('\n') : msg)
+    addToast(Array.isArray(msg) ? msg.join('\n') : msg, 'warning')
   }
 
   async function handleCompleteAssignee(userId: string) {
@@ -492,6 +497,22 @@ export default function TaskDetailPage() {
       const updated = await tasksApi.completeAssignee(orgId, taskId, userId)
       setTask(updated)
       setSelectedStatusId(updated.status_id)
+    } catch (e) {
+      showActionError(e)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  // Assigner reopens ONE person's finished part for rework (all_must_complete). Others untouched.
+  async function handleReopenAssigneePart(userId: string) {
+    setActionLoading(`reopen-part-${userId}`)
+    try {
+      const updated = await tasksApi.reopenAssigneePart(orgId, taskId, userId, reopenPartReason.trim() || undefined)
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+      setReopenPartTarget(null)
+      setReopenPartReason('')
     } catch (e) {
       showActionError(e)
     } finally {
@@ -522,8 +543,9 @@ export default function TaskDetailPage() {
       setSelectedStatusId(updated.status_id)
       setConfirmCompleteAll(false)
       await loadTask()
-    } catch {
-      // ignore
+    } catch (e) {
+      setConfirmCompleteAll(false)
+      showActionError(e)
     } finally {
       setActionLoading(null)
     }
@@ -852,7 +874,9 @@ export default function TaskDetailPage() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-start gap-2 shrink-0">
+          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex items-center gap-2">
           {!isTaskTerminal && !currentUserIsCC ? (
             isAllMustComplete ? (
               // Everyone must finish their own part — personal action(s) + a live counter.
@@ -887,11 +911,6 @@ export default function TaskDetailPage() {
                     Complete task
                   </button>
                 )}
-                {totalAssignees > 0 && (
-                  <span className="text-xs font-semibold text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-full px-2.5 py-1 select-none">
-                    {completedCount}/{totalAssignees} completed
-                  </span>
-                )}
               </div>
             ) : (
               // Any one assignee can close the whole task via Complete. (Incomplete lives
@@ -908,7 +927,20 @@ export default function TaskDetailPage() {
               ) : null
             )
           ) : !currentUserIsCC && (
-            isCreator ? (
+            reopenSecondsLeft > 0 ? (
+              // Undo window open — a frictionless, reason-free revert for any participant,
+              // so an accidental Complete/Incomplete can be taken back. Locks when it ends.
+              <button
+                onClick={() => handleReopen()}
+                disabled={actionLoading === 'reopen'}
+                title="Undo — revert this task to open (no reason needed while the window is open)"
+                className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
+              >
+                <RotateCcw size={15} />
+                {actionLoading === 'reopen' ? 'Undoing…' : `Undo (${formatCountdown(reopenSecondsLeft)})`}
+              </button>
+            ) : isCreator ? (
+              // After the window it's locked — only the creator can reopen, with a reason.
               <button
                 onClick={() => setShowReopenModal(true)}
                 disabled={actionLoading === 'reopen'}
@@ -917,27 +949,29 @@ export default function TaskDetailPage() {
                 <RotateCcw size={15} />
                 Reopen
               </button>
-            ) : reopenSecondsLeft > 0 ? (
-              <button
-                onClick={() => handleReopen()}
-                disabled={actionLoading === 'reopen'}
-                className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
-              >
-                <RotateCcw size={15} />
-                {actionLoading === 'reopen' ? 'Reopening...' : `Reopen (${formatCountdown(reopenSecondsLeft)})`}
-              </button>
-            ) : isIncompleteStatus ? (
-              <span className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] cursor-default select-none">
-                <XCircle size={15} className="text-[#D97706]" />
-                Incomplete
-              </span>
             ) : (
-              <span className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#64748B] bg-[#F1F5F9] border border-[#E2E8F0] rounded-[8px] cursor-default select-none">
-                <CheckCircle2 size={15} className="text-[#64748B]" />
-                Completed
+              // Locked outcome (read-only) for everyone else.
+              <span
+                className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold rounded-[8px] cursor-default select-none"
+                style={{
+                  backgroundColor: (task.status?.color ?? '#64748B') + '1A',
+                  color: task.status?.color ?? '#64748B',
+                  border: `1px solid ${(task.status?.color ?? '#64748B')}44`,
+                }}
+              >
+                {task.status?.type === 'completed' ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                {task.status?.label ?? (isIncompleteStatus ? 'Incomplete' : 'Completed')}
               </span>
             )
           )}
+          </div>
+          {/* Per-person completion counter — plain text, right-aligned directly under the button. */}
+          {!isTaskTerminal && !currentUserIsCC && isAllMustComplete && totalAssignees > 0 && (
+            <span className="text-xs font-semibold text-[#475569] select-none">
+              {completedCount}/{totalAssignees} completed
+            </span>
+          )}
+          </div>
           {/* Overflow menu — holds the Activity log and the (destructive) Delete
               action, so neither gets a prominent primary button. */}
           <div ref={actionsMenuRef} className="relative">
@@ -1188,7 +1222,18 @@ export default function TaskDetailPage() {
                       orgId={orgId}
                       taskId={taskId}
                       currentUserId={user?.id ?? ''}
-                      onDeleted={() => setComments((prev) => prev.filter((x) => x.id !== c.id))}
+                      onDeleted={async () => {
+                        setComments((prev) => prev.filter((x) => x.id !== c.id))
+                        // A deleted comment takes its files with it — refresh the attachments
+                        // list, and (if a file was a proof) the proof card + scoreboard, so
+                        // nothing stale keeps counting.
+                        await refreshAllAttachments()
+                        if (task.proof_required) {
+                          const fresh = await tasksApi.getTask(orgId, taskId).catch(() => null)
+                          if (fresh) setTask(fresh)
+                          setProofReloadToken((t) => t + 1)
+                        }
+                      }}
                       canSubmitProof={!!task.proof_required && isAssignee && !isTaskTerminal}
                       proofAllowedExtensions={task.proof_allowed_extensions ?? []}
                       onMarkProof={handleMarkCommentAsProof}
@@ -1391,7 +1436,11 @@ export default function TaskDetailPage() {
                       )
                     )}
 
-                    <p className="mt-1 text-[11px] text-[#64748B]">Reopen the task to change its status.</p>
+                    <p className="mt-1 text-[11px] text-[#64748B]">
+                      {reopenSecondsLeft > 0
+                        ? `You can undo this for the next ${formatCountdown(reopenSecondsLeft)}. After that it locks.`
+                        : 'Reopen the task to change its status.'}
+                    </p>
                   </div>
                 ) : isAllMustComplete ? (
                   <>
@@ -1765,15 +1814,39 @@ export default function TaskDetailPage() {
                                   own row below. */}
                               {isAllMustComplete && (
                                 a.is_completed ? (
-                                  <span className="flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2 py-0.5">
-                                    <CheckCircle2 size={12} /> Completed
-                                  </span>
+                                  // Chip + a Reopen link stacked beneath it (right-aligned) so the
+                                  // cluster stays narrow and never clips the name.
+                                  <div className="flex flex-col items-end gap-1">
+                                    <span className="flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2 py-0.5">
+                                      <CheckCircle2 size={12} /> Completed
+                                    </span>
+                                    {canEdit && reopenPartTarget !== a.user_id && (
+                                      <button
+                                        onClick={() => { setReopenPartReason(''); setReopenPartTarget(a.user_id) }}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+                                        title={`Reopen ${name}'s part for rework`}
+                                      >
+                                        <RotateCcw size={11} /> Reopen
+                                      </button>
+                                    )}
+                                  </div>
                                 ) : a.cannot_complete ? (
-                                  // Person closed their part as incomplete (with a reason, shown in
-                                  // the Status card). A compact chip — no next-line wrap, no Undo.
-                                  <span className="flex items-center gap-1 text-[11px] font-semibold text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-full px-2 py-0.5">
-                                    <XCircle size={12} /> Incomplete
-                                  </span>
+                                  // Person closed their part as incomplete. Chip + a Challenge link
+                                  // stacked beneath (assigner disputes it and sends the work back).
+                                  <div className="flex flex-col items-end gap-1">
+                                    <span className="flex items-center gap-1 text-[11px] font-semibold text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-full px-2 py-0.5">
+                                      <XCircle size={12} /> Incomplete
+                                    </span>
+                                    {canEdit && reopenPartTarget !== a.user_id && (
+                                      <button
+                                        onClick={() => { setReopenPartReason(''); setReopenPartTarget(a.user_id) }}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+                                        title={`Reopen ${name}'s part`}
+                                      >
+                                        <RotateCcw size={11} /> Reopen
+                                      </button>
+                                    )}
+                                  </div>
                                 ) : !editable ? (
                                   <span
                                     className="text-[11px] font-semibold rounded-full px-2 py-0.5"
@@ -1806,6 +1879,36 @@ export default function TaskDetailPage() {
                               </button>
                             </div>
                           )}
+
+                          {/* Reopen / challenge reason box — optional feedback for the person. */}
+                          {reopenPartTarget === a.user_id && (
+                            <div className="rounded-[10px] border border-[#BFDBFE] bg-[#EFF6FF] p-2.5">
+                              <p className="text-[11px] font-semibold text-[#1D4ED8] mb-1.5">Reopen {name}&apos;s part — add a note (optional)</p>
+                              <textarea
+                                value={reopenPartReason}
+                                onChange={(e) => setReopenPartReason(e.target.value.slice(0, 500))}
+                                rows={2}
+                                autoFocus
+                                placeholder="What would you like them to do?"
+                                className="w-full rounded-[8px] border border-[#CBD5E1] bg-white px-2.5 py-1.5 text-[13px] text-[#0F172A] placeholder:text-[#94A3B8] focus:border-[#2563EB] focus:outline-none resize-none"
+                              />
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  onClick={() => handleReopenAssigneePart(a.user_id)}
+                                  disabled={actionLoading === `reopen-part-${a.user_id}`}
+                                  className="inline-flex items-center gap-1 text-[12px] font-semibold text-white bg-[#2563EB] rounded-[8px] px-3 py-1.5 hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors"
+                                >
+                                  <RotateCcw size={12} /> {actionLoading === `reopen-part-${a.user_id}` ? 'Reopening…' : 'Reopen part'}
+                                </button>
+                                <button
+                                  onClick={() => setReopenPartTarget(null)}
+                                  className="text-[12px] font-medium text-[#475569] hover:text-[#0F172A] transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )
                     })}
@@ -1814,6 +1917,7 @@ export default function TaskDetailPage() {
                         <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide pt-1">CC</p>
                         {ccUsers.map((a) => {
                           const name = a.user?.name ?? a.user_name ?? 'Unknown'
+                          const email = a.user?.email ?? a.user_email ?? ''
                           return (
                             <div key={a.id} className="flex items-center gap-3">
                               <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
@@ -1821,6 +1925,7 @@ export default function TaskDetailPage() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
+                                {email && <p className="text-xs text-[#475569] truncate">{email}</p>}
                               </div>
                               <span className="text-[10px] font-semibold bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A] rounded px-1.5 py-0.5">CC</span>
                             </div>

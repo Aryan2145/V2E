@@ -2,8 +2,9 @@
 
 import React, { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users } from 'lucide-react'
+import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users, X } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
+import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
 import { TERMINAL_STATUS_PHASES, type Task, type TaskChecklistItem, type TaskChecklistItemStateEntry } from '@/lib/types/tasks'
 
@@ -24,6 +25,7 @@ function initials(name?: string | null): string {
 }
 
 export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, canEdit, onChanged }: Props) {
+  const { addToast } = useToast()
   const items = task.checklist ?? []
   const isAllMust = task.completion_mode === 'all_must_complete'
   const isTerminal = !!task.status && TERMINAL_STATUS_PHASES.includes(task.status.type)
@@ -46,9 +48,10 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
       const updated = await fn()
       onChanged(updated)
     } catch (e: any) {
-      // Surface the backend's plain-English reason (e.g. the gate message).
+      // Surface the backend's plain-English reason (e.g. the gate message) via the
+      // app's own toast — never a native browser dialog.
       const msg = e?.response?.data?.message ?? e?.message ?? 'Something went wrong.'
-      if (typeof window !== 'undefined') window.alert(Array.isArray(msg) ? msg.join('\n') : msg)
+      addToast(Array.isArray(msg) ? msg.join('\n') : msg, 'warning')
     } finally {
       setBusy(null)
     }
@@ -70,7 +73,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
   const workerCount = (task.assignees ?? []).filter((a) => !a.is_cc).length
   const resolvedCount = items.filter((it) => {
     if (isAllMust) return (it.done_count ?? 0) + (it.skipped_count ?? 0) >= (it.assignee_count ?? workerCount) && (it.assignee_count ?? workerCount) > 0
-    return it.is_completed
+    return it.is_completed || !!it.cant_do
   }).length
 
   // Group items by section, preserving order (mirrors the old inline renderer).
@@ -217,12 +220,14 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
   // ─────────────────────────────────────────────────────────────────────────
   function renderSharedItem(item: TaskChecklistItem) {
     const done = item.is_completed
+    const cantDo = !!item.cant_do
     const key = `shared:${item.id}`
+    const canAct = !isTerminal && (iAmWorker || canEdit)
     return (
-      <div key={item.id} className="flex items-center gap-3">
+      <div key={item.id} className="flex items-start gap-3">
         <button
           type="button"
-          disabled={isTerminal || busy === key}
+          disabled={!canAct || busy === key}
           onClick={() =>
             run(key, () =>
               done
@@ -230,19 +235,52 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
                 : tasksApi.checkChecklistItem(orgId, taskId, item.id),
             )
           }
+          title={cantDo ? 'Marked can’t-do — click to tick as done' : done ? 'Done — click to untick' : 'Tick when done'}
           className={[
-            'w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
-            done ? 'bg-[#16A34A] border-[#16A34A]' : 'border-[#CBD5E1] hover:border-[#2563EB]',
-            isTerminal ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+            'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
+            done ? 'bg-[#16A34A] border-[#16A34A]' : cantDo ? 'bg-[#D97706] border-[#D97706]' : 'border-[#CBD5E1] hover:border-[#2563EB]',
+            !canAct ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
           ].join(' ')}
           role="checkbox"
           aria-checked={done}
         >
           {done && <Check size={11} className="text-white" strokeWidth={3} />}
+          {cantDo && <Ban size={10} className="text-white" strokeWidth={2.5} />}
         </button>
-        <span className={`text-sm ${done ? 'line-through text-[#64748B]' : 'text-[#1E293B]'}`}>{item.title}</span>
-        {done && item.completed_by?.name && (
-          <span className="text-[12px] text-[#64748B]">· {item.completed_by.name}</span>
+
+        <div className="flex-1 min-w-0">
+          <span className={`text-sm ${done ? 'line-through text-[#64748B]' : cantDo ? 'line-through text-[#B45309]' : 'text-[#1E293B]'}`}>
+            {item.title}
+          </span>
+          {done && item.completed_by?.name && (
+            <span className="text-[12px] text-[#64748B]"> · {item.completed_by.name}</span>
+          )}
+          {cantDo && item.cant_do_reason && (
+            <p className="text-[12px] text-[#B45309] mt-0.5">Can’t do — {item.cant_do_reason}</p>
+          )}
+        </div>
+
+        {/* Right-aligned "can't do" / clear */}
+        {canAct && (
+          cantDo ? (
+            <button
+              type="button"
+              onClick={() => run(key, () => tasksApi.uncheckChecklistItem(orgId, taskId, item.id))}
+              className="shrink-0 mt-0.5 text-[12px] font-medium text-[#475569] hover:underline"
+            >
+              Clear can’t-do
+            </button>
+          ) : !done ? (
+            <button
+              type="button"
+              onClick={() => { setSkipItem(item); setSkipReason('') }}
+              title="Can’t do this"
+              aria-label="Can’t do this"
+              className="shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center rounded-[6px] text-[#B45309] hover:bg-[#FEF3C7] transition-colors"
+            >
+              <X size={14} strokeWidth={2.5} />
+            </button>
+          ) : null
         )}
       </div>
     )
@@ -254,8 +292,13 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
     const skippedCount = item.skipped_count ?? 0
     const total = item.assignee_count ?? workerCount
     const allResolved = doneCount + skippedCount >= total && total > 0
-    const my = item.my_state ?? null
     const states = item.states ?? []
+    // Derive MY state from the per-person states (keyed by user id) rather than the
+    // server's `my_state` — that field is only populated on a principal-aware read, so a
+    // post-save refresh would otherwise drop my own tick even though it was saved.
+    const mine = states.find((s) => s.user_id === currentUserId)
+    const my = mine?.state ?? item.my_state ?? null
+    const myReason = mine?.reason ?? item.my_reason ?? null
     const overridden = states.some((s) => s.is_override)
     const rowBusy = busy?.startsWith(`amust:${item.id}`)
 
@@ -321,8 +364,8 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
             </div>
 
             {/* My own skip reason, always visible inline */}
-            {my === 'skipped' && item.my_reason && (
-              <p className="text-[12px] text-[#B45309] mt-0.5">Can’t do — {item.my_reason}</p>
+            {my === 'skipped' && myReason && (
+              <p className="text-[12px] text-[#B45309] mt-0.5">Can’t do — {myReason}</p>
             )}
           </div>
 
@@ -332,9 +375,11 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
               <button
                 type="button"
                 onClick={() => { setSkipItem(item); setSkipReason('') }}
-                className="shrink-0 mt-0.5 text-[12px] font-medium text-[#B45309] hover:underline"
+                title="Can’t do this"
+                aria-label="Can’t do this"
+                className="shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center rounded-[6px] text-[#B45309] hover:bg-[#FEF3C7] transition-colors"
               >
-                Can’t do this
+                <X size={14} strokeWidth={2.5} />
               </button>
             ) : (
               <button
