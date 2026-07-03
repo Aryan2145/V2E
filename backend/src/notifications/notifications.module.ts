@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
+import { WsAuthModule } from '../auth/ws-auth.module';
 import { NotificationsService } from './notifications.service';
 import { NotificationsGateway } from './notifications.gateway';
 import { NotificationsController } from './notifications.controller';
@@ -11,7 +12,7 @@ import { PushService } from './push.service';
  */
 @Global()
 @Module({
-  imports: [PrismaModule],
+  imports: [PrismaModule, WsAuthModule],
   controllers: [NotificationsController],
   providers: [NotificationsService, NotificationsGateway, PushService],
   exports: [NotificationsService],

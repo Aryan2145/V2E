@@ -3,6 +3,7 @@ import {
   MessageBody,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -10,16 +11,43 @@ import {
 import { Server, Socket } from 'socket.io';
 import { MessagingService } from './messaging.service';
 import { SendMessageDto } from './dto/send-message.dto';
+import { WsAuthService } from '../auth/ws-auth.service';
 
+/**
+ * Chat channel. Both the acting user id AND the org come from the VERIFIED
+ * handshake JWT (see WsAuthService) and are read off `client.data`, never from
+ * the message payload. Previously the gateway trusted a client-supplied userId
+ * in the handshake and a client-supplied orgId in every message, so anyone could
+ * impersonate any user and read/send/edit/delete their chat across orgs
+ * (SECURITY_AUDIT C5). Unauthenticated handshakes are refused before connect.
+ */
 @WebSocketGateway({ cors: { origin: '*' }, namespace: '/chat' })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+{
   @WebSocketServer() server: Server;
 
-  constructor(private readonly messagingService: MessagingService) {}
+  constructor(
+    private readonly messagingService: MessagingService,
+    private readonly wsAuth: WsAuthService,
+  ) {}
+
+  afterInit(server: Server) {
+    // Authenticate at the handshake, before connect. Trusted userId + org are
+    // derived from the verified token and stashed on socket.data for every handler.
+    server.use(async (socket: Socket, next: (err?: Error) => void) => {
+      const principal = await this.wsAuth.authenticate(socket);
+      if (!principal) return next(new Error('unauthorized'));
+      socket.data.userId = principal.userId;
+      socket.data.organizationId = principal.organizationId;
+      next();
+    });
+  }
 
   handleConnection(client: Socket) {
-    const userId = client.handshake.auth?.userId as string;
-    if (userId) client.data.userId = userId;
+    // Belt-and-suspenders: the handshake middleware already refused anyone without
+    // a verified userId.
+    if (!client.data.userId) client.disconnect(true);
   }
 
   handleDisconnect(_client: Socket) {}
@@ -27,14 +55,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('join')
   async handleJoin(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { convId: string; orgId: string },
+    @MessageBody() payload: { convId: string },
   ) {
     const userId = client.data.userId as string;
-    if (!userId) return { error: 'unauthenticated' };
+    const orgId = client.data.organizationId as string;
+    if (!userId || !orgId) return { error: 'unauthenticated' };
     // Only conversation members may subscribe to the room — otherwise any socket
     // could receive every future broadcast for a conversation it can't read.
     try {
-      await this.messagingService.getConversation(payload.convId, userId, payload.orgId);
+      await this.messagingService.getConversation(payload.convId, userId, orgId);
     } catch {
       return { error: 'forbidden' };
     }
@@ -53,14 +82,15 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('sendMessage')
   async handleSendMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { convId: string; orgId: string; dto: SendMessageDto },
+    @MessageBody() payload: { convId: string; dto: SendMessageDto },
   ) {
     const userId = client.data.userId as string;
-    if (!userId) return;
+    const orgId = client.data.organizationId as string;
+    if (!userId || !orgId) return;
     const message = await this.messagingService.sendMessage(
       payload.convId,
       userId,
-      payload.orgId,
+      orgId,
       payload.dto,
     );
     this.server.to(`conv:${payload.convId}`).emit('newMessage', message);
@@ -72,6 +102,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() payload: { convId: string; userName: string; isTyping: boolean },
   ) {
+    if (!client.data.userId) return;
     client.to(`conv:${payload.convId}`).emit('typing', {
       userId: client.data.userId,
       userName: payload.userName,
@@ -82,15 +113,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('editMessage')
   async handleEditMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { convId: string; orgId: string; msgId: string; body: string },
+    @MessageBody() payload: { convId: string; msgId: string; body: string },
   ) {
     const userId = client.data.userId as string;
-    if (!userId) return;
+    const orgId = client.data.organizationId as string;
+    if (!userId || !orgId) return;
     const message = await this.messagingService.editMessage(
       payload.msgId,
       payload.convId,
       userId,
-      payload.orgId,
+      orgId,
       payload.body,
     );
     this.server.to(`conv:${payload.convId}`).emit('messageEdited', message);
@@ -100,15 +132,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @SubscribeMessage('deleteMessage')
   async handleDeleteMessage(
     @ConnectedSocket() client: Socket,
-    @MessageBody() payload: { convId: string; orgId: string; msgId: string },
+    @MessageBody() payload: { convId: string; msgId: string },
   ) {
     const userId = client.data.userId as string;
-    if (!userId) return;
+    const orgId = client.data.organizationId as string;
+    if (!userId || !orgId) return;
     await this.messagingService.deleteMessage(
       payload.msgId,
       payload.convId,
       userId,
-      payload.orgId,
+      orgId,
     );
     this.server.to(`conv:${payload.convId}`).emit('messageDeleted', { msgId: payload.msgId });
   }

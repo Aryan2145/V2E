@@ -114,6 +114,32 @@ getOne(@Param('orgId') orgId, @Param('id') id, @Request() req) {
     hole) plus the appropriate `@RequirePermission`/`@RequireAdmin`, THEN the
     row-level service gate above. All three layers, every time.
 
+## WebSocket / gateway authorization
+
+`@UseGuards` on a controller does **nothing** for a `@WebSocketGateway`. Sockets
+have no `JwtAuthGuard`, no `OrgScopeGuard`, and no request pipeline — you must
+authenticate and authorize them yourself, or you get an unauthenticated,
+cross-tenant firehose (this was SECURITY_AUDIT C4/C5).
+
+1. **Authenticate the handshake, before connect.** Register a namespace
+   middleware in `afterInit` (`server.use(...)`) that verifies the access-token
+   JWT via **`WsAuthService.authenticate(socket)`** and refuses the connection
+   (`next(new Error('unauthorized'))`) on any failure. Do NOT authenticate only in
+   `handleConnection` — a client can emit before it resolves.
+2. **Identity comes ONLY from the verified token.** Derive `userId` and
+   `organizationId` from the token and stash them on `socket.data`. **Never** read
+   a userId or orgId from `handshake.auth`, a message payload, or any other
+   client-supplied field — that is the socket equivalent of trusting a body-supplied
+   `organization_id`.
+3. **Authorize every message.** Each `@SubscribeMessage` handler must read
+   `socket.data.userId` / `socket.data.organizationId` and run the SAME row-level
+   gate an HTTP route would (membership / `assertCanActOn`) before it reads or
+   broadcasts. A room subscribe (`join`) is a read — gate it by membership so a
+   socket can't receive a conversation's future broadcasts it couldn't read over HTTP.
+4. **Import `WsAuthModule`** in any module that declares a gateway; reuse
+   `WsAuthService`, never hand-roll token parsing. Canonical references:
+   `notifications.gateway.ts`, `messaging/chat.gateway.ts`.
+
 ## Self-check before shipping any endpoint
 
 - [ ] Could another org member read/mutate a row they're not on by supplying its id?
