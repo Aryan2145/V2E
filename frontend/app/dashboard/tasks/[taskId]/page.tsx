@@ -365,14 +365,54 @@ export default function TaskDetailPage() {
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
   }, [showActionsMenu])
 
-  async function handleStatusChange(newStatusId: string) {
+  // Shared status (any_can_complete) — one status for everyone; any assignee can move it.
+  async function handleSharedStatusChange(newStatusId: string) {
     if (!task) return
     setSelectedStatusId(newStatusId)
     try {
-      const updated = await tasksApi.updateTask(orgId, taskId, { status_id: newStatusId })
+      const updated = await tasksApi.setSharedStatus(orgId, taskId, newStatusId)
       setTask(updated)
+      setSelectedStatusId(updated.status_id)
     } catch {
       setSelectedStatusId(task.status_id)
+    }
+  }
+
+  // My own status track (all_must_complete) — moves only my part.
+  async function handleMyTrackChange(newStatusId: string) {
+    if (!task) return
+    try {
+      const updated = await tasksApi.setAssigneeStatus(orgId, taskId, newStatusId)
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+    } catch {
+      // ignore — the select reverts to the task's value on next render
+    }
+  }
+
+  // Creator/admin moving a specific person's track (all_must_complete).
+  async function handleAssigneeRowStatus(userId: string, newStatusId: string) {
+    if (!task) return
+    try {
+      const updated = await tasksApi.setAssigneeStatus(orgId, taskId, newStatusId, userId)
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+    } catch {
+      // ignore
+    }
+  }
+
+  // Creator/admin marking a specific person's part done (all_must_complete).
+  async function handleCompleteAssignee(userId: string) {
+    setActionLoading(`complete-${userId}`)
+    try {
+      const updated = await tasksApi.completeAssignee(orgId, taskId, userId)
+      setTask(updated)
+      setSelectedStatusId(updated.status_id)
+    } catch {
+      // ignore
+    } finally {
+      setActionLoading(null)
     }
   }
 
@@ -634,16 +674,26 @@ export default function TaskDetailPage() {
 
   const category = categories.find((c) => c.id === task.category_id) ?? task.category
   const priority = priorities.find((p) => p.id === task.priority_id) ?? task.priority
-  const status = statuses.find((s) => s.id === selectedStatusId) ?? task.status
   // The Status control only moves a task between OPEN states; terminal states
   // (Complete / Incomplete) are reached via the actions and shown read-only here.
-  const isTerminalStatus = !!status && TERMINAL_STATUS_PHASES.includes(status.type)
   const openStatuses = statuses.filter((s) => !TERMINAL_STATUS_PHASES.includes(s.type))
   const assignees = task.assignees?.filter((a) => !a.is_cc) ?? []
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
   const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
   const isCreator = task.created_by_user_id === user?.id
   const canEdit = isCreator || user?.is_admin
+
+  // Completion model drives how status + completion behave (see the two modes below).
+  const isAllMustComplete = task.completion_mode === 'all_must_complete'
+  const myAssignee = assignees.find((a) => a.user_id === user?.id)
+  const isAssignee = !!myAssignee
+  const completedCount = assignees.filter((a) => a.is_completed).length
+  const totalAssignees = assignees.length
+  const notStartedId = openStatuses.find((s) => s.type === 'not_started')?.id ?? openStatuses[0]?.id ?? ''
+  // The task's real overall status (roll-up), independent of the top control's local value.
+  const isTaskTerminal = !!task.status && TERMINAL_STATUS_PHASES.includes(task.status.type)
+  const myTrackId = myAssignee?.status_id ?? notStartedId
+  const canMoveSharedStatus = isAssignee || !!canEdit
 
   return (
     // On lg+, fill the fixed-height <main> so the two detail columns can scroll
@@ -675,14 +725,45 @@ export default function TaskDetailPage() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!isCompletedStatus && !currentUserIsCC ? (
-            <button
-              onClick={handleComplete}
-              disabled={actionLoading === 'complete'}
-              className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-white bg-[#16A34A] rounded-[8px] hover:bg-[#15803D] disabled:opacity-60 transition-colors"
-            >
-              <CheckCircle2 size={15} />
-              {actionLoading === 'complete' ? 'Completing...' : 'Complete'}
-            </button>
+            isAllMustComplete ? (
+              // Everyone must finish their own part — show a personal action + a live counter.
+              <div className="flex items-center gap-2.5">
+                {isAssignee && (
+                  myAssignee?.is_completed ? (
+                    <span className="flex items-center gap-2 px-3.5 py-[8px] text-sm font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-[8px] select-none">
+                      <CheckCircle2 size={15} />
+                      You&apos;re done
+                    </span>
+                  ) : (
+                    <button
+                      onClick={handleComplete}
+                      disabled={actionLoading === 'complete'}
+                      className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-white bg-[#16A34A] rounded-[8px] hover:bg-[#15803D] disabled:opacity-60 transition-colors"
+                    >
+                      <CheckCircle2 size={15} />
+                      {actionLoading === 'complete' ? 'Completing...' : 'Complete my part'}
+                    </button>
+                  )
+                )}
+                {totalAssignees > 0 && (
+                  <span className="text-xs font-semibold text-[#475569] bg-[#F1F5F9] border border-[#E2E8F0] rounded-full px-2.5 py-1 select-none">
+                    {completedCount}/{totalAssignees} completed
+                  </span>
+                )}
+              </div>
+            ) : (
+              // Any one assignee can close the whole task.
+              (isAssignee || canEdit) ? (
+                <button
+                  onClick={handleComplete}
+                  disabled={actionLoading === 'complete'}
+                  className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-white bg-[#16A34A] rounded-[8px] hover:bg-[#15803D] disabled:opacity-60 transition-colors"
+                >
+                  <CheckCircle2 size={15} />
+                  {actionLoading === 'complete' ? 'Completing...' : 'Complete'}
+                </button>
+              ) : null
+            )
           ) : !currentUserIsCC && (
             isCreator ? (
               <button
@@ -1078,22 +1159,68 @@ export default function TaskDetailPage() {
                 <p className="text-[11px] font-bold text-[#2563EB] uppercase tracking-widest">Status</p>
               </div>
               <div className="p-4">
-                {isTerminalStatus && status ? (
+                {isTaskTerminal && task.status ? (
+                  // Task is closed overall — read-only, with who completed it.
                   <div>
                     <span
                       className="inline-flex items-center rounded-[999px] px-3 py-1 text-sm font-medium"
-                      style={{ backgroundColor: status.color + '22', color: status.color, border: `1px solid ${status.color}44` }}
+                      style={{ backgroundColor: task.status.color + '22', color: task.status.color, border: `1px solid ${task.status.color}44` }}
                     >
-                      {status.label}
+                      {task.status.label}
                     </span>
-                    <p className="mt-2 text-[11px] text-[#94A3B8]">Reopen the task to change its status.</p>
+                    {task.completed_by && (
+                      <p className="mt-2 text-[12px] text-[#475569]">Completed by <span className="font-semibold text-[#0F172A]">{task.completed_by.name}</span></p>
+                    )}
+                    <p className="mt-1 text-[11px] text-[#94A3B8]">Reopen the task to change its status.</p>
                   </div>
+                ) : isAllMustComplete ? (
+                  isAssignee ? (
+                    // My own status track — moves only my part.
+                    <>
+                      <StyledSelect
+                        value={myTrackId}
+                        onChange={(v) => handleMyTrackChange(v)}
+                        options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                      />
+                      <p className="mt-2 text-[11px] text-[#94A3B8]">This is <span className="font-semibold text-[#64748B]">your</span> status. Everyone&apos;s progress is shown in Assignees below.</p>
+                    </>
+                  ) : (
+                    // Creator/admin without a personal part — read-only overall roll-up.
+                    <>
+                      {task.status && (
+                        <span
+                          className="inline-flex items-center rounded-[999px] px-3 py-1 text-sm font-medium"
+                          style={{ backgroundColor: task.status.color + '22', color: task.status.color, border: `1px solid ${task.status.color}44` }}
+                        >
+                          {task.status.label}
+                        </span>
+                      )}
+                      <p className="mt-2 text-[11px] text-[#94A3B8]">Overall progress. Set each person&apos;s status in Assignees below.</p>
+                    </>
+                  )
                 ) : (
-                  <StyledSelect
-                    value={selectedStatusId}
-                    onChange={(v) => handleStatusChange(v)}
-                    options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
-                  />
+                  // Shared status (any_can_complete) — anyone on the task can move it.
+                  <>
+                    {canMoveSharedStatus ? (
+                      <StyledSelect
+                        value={selectedStatusId}
+                        onChange={(v) => handleSharedStatusChange(v)}
+                        options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                      />
+                    ) : (
+                      task.status && (
+                        <span
+                          className="inline-flex items-center rounded-[999px] px-3 py-1 text-sm font-medium"
+                          style={{ backgroundColor: task.status.color + '22', color: task.status.color, border: `1px solid ${task.status.color}44` }}
+                        >
+                          {task.status.label}
+                        </span>
+                      )
+                    )}
+                    {task.status_actor && (
+                      <p className="mt-2 text-[11px] text-[#94A3B8]">Changed by <span className="font-semibold text-[#64748B]">{task.status_actor.name}</span></p>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1314,19 +1441,62 @@ export default function TaskDetailPage() {
                     {assignees.map((a) => {
                       const name = a.user?.name ?? a.user_name ?? 'Unknown'
                       const email = a.user?.email ?? a.user_email ?? ''
+                      const overdue = !!a.is_overdue
+                      // Creator/admin can drive any person's track — but only in per-person mode.
+                      const editable = !!canEdit && isAllMustComplete && !a.is_completed
+                      const trackColor = a.status?.color ?? '#64748B'
+                      const trackLabel = a.status?.label ?? 'Not Started'
                       return (
-                        <div key={a.id} className="flex items-center gap-3">
-                          <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
-                            {getInitials(name)}
+                        <div key={a.id} className="space-y-2">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-8 h-8 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                              {getInitials(name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
+                              <p className="text-xs text-[#475569] truncate">{email}</p>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {overdue && (
+                                <span className="text-[10px] font-bold uppercase tracking-wide bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA] rounded px-1.5 py-0.5">
+                                  Overdue
+                                </span>
+                              )}
+                              {isAllMustComplete && (
+                                a.is_completed ? (
+                                  <span className="flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2 py-0.5">
+                                    <CheckCircle2 size={12} /> Completed
+                                  </span>
+                                ) : !editable ? (
+                                  <span
+                                    className="text-[11px] font-semibold rounded-full px-2 py-0.5"
+                                    style={{ backgroundColor: trackColor + '1A', color: trackColor, border: `1px solid ${trackColor}40` }}
+                                  >
+                                    {trackLabel}
+                                  </span>
+                                ) : null
+                              )}
+                            </div>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-[#0F172A] truncate">{name}</p>
-                            <p className="text-xs text-[#475569] truncate">{email}</p>
-                          </div>
-                          {a.is_completed ? (
-                            <CheckCircle2 size={14} className="text-[#16A34A] shrink-0" />
-                          ) : (
-                            <div className="w-3.5 h-3.5 rounded-full border-2 border-[#CBD5E1] shrink-0" />
+                          {/* Inline controls for the creator/admin to move or finish this person's part. */}
+                          {editable && (
+                            <div className="flex items-center gap-2 pl-11">
+                              <StyledSelect
+                                value={a.status_id ?? notStartedId}
+                                onChange={(v) => handleAssigneeRowStatus(a.user_id, v)}
+                                options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
+                                wrapperClassName="flex-1 min-w-0"
+                                triggerClassName="py-1.5 text-[13px]"
+                              />
+                              <button
+                                onClick={() => handleCompleteAssignee(a.user_id)}
+                                disabled={actionLoading === `complete-${a.user_id}`}
+                                title={`Mark ${name}'s part complete`}
+                                className="shrink-0 flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-semibold text-[#16A34A] border border-[#BBF7D0] bg-[#F0FDF4] rounded-[8px] hover:bg-[#DCFCE7] disabled:opacity-60 transition-colors"
+                              >
+                                <CheckCircle2 size={13} /> Done
+                              </button>
+                            </div>
                           )}
                         </div>
                       )

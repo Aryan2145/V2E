@@ -1028,7 +1028,8 @@ model TaskStatus {
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
-  tasks Task[]
+  tasks           Task[]
+  assignee_tracks TaskAssignee[]
 
   @@map("task_statuses")
 }
@@ -1060,6 +1061,10 @@ model Task {
   overdue_at           DateTime?      // business time the task crossed its deadline
   completed_at         DateTime?      // when the task reached a terminal `completed` status
   completion_timing    CompletionTiming? // early/on_time/late vs deadline, set once at completion
+  // Attribution for the shared-status ("any can complete") flow: who last moved the
+  // shared status, and who actually closed the task. Powers "changed by X" / "Completed by X".
+  status_actor_user_id String?
+  completed_by_user_id String?
   recurring_template_id     String?
   workflow_instance_step_id String?
   goal_id              String?        // links a task to a QUARTERLY goal (initiative)
@@ -1109,12 +1114,17 @@ model TaskAssignee {
   organization_id String
   task_id         String
   user_id         String
+  // Per-person status track, used only in `all_must_complete` mode: each assignee
+  // drives their own open-state status. Null → treat as the org's not_started status.
+  // In `any_can_complete` mode this stays null; the task carries one shared status.
+  status_id       String?
   is_completed    Boolean   @default(false)
   completed_at    DateTime?
   is_cc           Boolean   @default(false)
   created_at      DateTime  @default(now())
 
-  task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  task   Task        @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  status TaskStatus? @relation(fields: [status_id], references: [id])
 
   @@unique([task_id, user_id])
   @@index([user_id])

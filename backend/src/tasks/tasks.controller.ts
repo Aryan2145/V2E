@@ -345,6 +345,39 @@ export class TasksController {
     return this.service.completeTask(orgId, req.user.id, id);
   }
 
+  @Post(':id/assignees/:userId/complete')
+  @ApiOperation({ summary: "Mark a specific assignee's part complete (creator/editor, all_must_complete)" })
+  completeAssignee(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Param('userId') userId: string,
+  ) {
+    return this.service.completeTask(orgId, req.user.id, id, userId);
+  }
+
+  @Patch(':id/assignee-status')
+  @ApiOperation({ summary: 'Set a per-person status track (all_must_complete)' })
+  setAssigneeStatus(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() body: { user_id?: string; status_id: string },
+  ) {
+    return this.service.setAssigneeStatus(orgId, req.user.id, id, body.user_id ?? req.user.id, body.status_id);
+  }
+
+  @Patch(':id/shared-status')
+  @ApiOperation({ summary: 'Move the single shared status (any_can_complete)' })
+  setSharedStatus(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Param('id') id: string,
+    @Body() body: { status_id: string },
+  ) {
+    return this.service.setSharedStatus(orgId, req.user.id, id, body.status_id);
+  }
+
   @Post(':id/reopen')
   @ApiOperation({ summary: 'Reopen a completed task (within window)' })
   reopen(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Body() body: { reason?: string }) {

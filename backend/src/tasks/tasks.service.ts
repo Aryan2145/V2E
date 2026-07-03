@@ -253,6 +253,168 @@ export class TasksService {
     return fallback.id;
   }
 
+  /** The three canonical open/terminal statuses an org keys its roll-up off. */
+  private async getCanonicalStatuses(orgId: string) {
+    const all = await this.prisma.taskStatus.findMany({
+      where: { organization_id: orgId, is_active: true },
+      orderBy: { order_index: 'asc' },
+    });
+    return {
+      notStarted: all.find((s) => s.type === 'not_started') ?? all.find((s) => s.is_default) ?? all[0] ?? null,
+      inProgress: all.find((s) => s.type === 'in_progress') ?? null,
+      completed: all.find((s) => s.type === 'completed') ?? null,
+      all,
+    };
+  }
+
+  private async isOrgAdmin(orgId: string, userId: string): Promise<boolean> {
+    const member = await this.prisma.organizationMember.findUnique({
+      where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
+      select: { is_admin: true },
+    });
+    return !!member?.is_admin;
+  }
+
+  /**
+   * Recompute a task's single shared status from its per-person tracks. Only meaningful
+   * for `all_must_complete` (per-person) tasks, and never touches a terminal status —
+   * the completed transition is owned by completeTask / reopenTask. Rolls the open
+   * status up to In Progress the moment anyone starts (or has finished their part),
+   * otherwise leaves it at Not Started.
+   */
+  private async rollUpTaskOpenStatus(orgId: string, taskId: string) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, organization_id: orgId },
+      include: { status: true, assignees: true },
+    });
+    if (!task || task.completion_mode !== CompletionMode.all_must_complete) return;
+    if (isTerminal(task.status.type)) return;
+
+    const workers = task.assignees.filter((a) => !a.is_cc);
+    const trackIds = [...new Set(workers.map((a) => a.status_id).filter((id): id is string => !!id))];
+    const trackStatuses = trackIds.length
+      ? await this.prisma.taskStatus.findMany({ where: { id: { in: trackIds } }, select: { id: true, type: true } })
+      : [];
+    const typeById = new Map(trackStatuses.map((s) => [s.id, s.type]));
+
+    const anyStarted = workers.some(
+      (a) => a.is_completed || (a.status_id != null && typeById.get(a.status_id) === 'in_progress'),
+    );
+    const { notStarted, inProgress } = await this.getCanonicalStatuses(orgId);
+    const targetId = anyStarted ? inProgress?.id ?? notStarted?.id : notStarted?.id;
+    if (targetId && targetId !== task.status_id) {
+      await this.prisma.task.update({ where: { id: taskId }, data: { status_id: targetId } });
+    }
+  }
+
+  /**
+   * Set one assignee's personal status track (all_must_complete mode). Actor may set
+   * their OWN track; the creator / an editor may set anyone's. Open states only —
+   * finishing a part goes through completeTask.
+   */
+  async setAssigneeStatus(orgId: string, actorId: string, taskId: string, targetUserId: string, statusId: string) {
+    const task = await this.findTaskOrFail(orgId, taskId);
+    if (task.completion_mode !== CompletionMode.all_must_complete) {
+      throw new BadRequestException('Per-person status only applies to "all must complete" tasks.');
+    }
+
+    const isSelf = actorId === targetUserId;
+    if (!isSelf && task.created_by_user_id !== actorId) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+
+    const target = (task.assignees ?? []).find((a: any) => a.user_id === targetUserId && !a.is_cc);
+    if (!target) throw new BadRequestException('That person is not a working assignee on this task.');
+
+    const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId } });
+    if (!st) throw new BadRequestException(`Status ${statusId} not found`);
+    if (isTerminal(st.type)) {
+      throw new BadRequestException('To finish a part, use Complete — the status control only moves between open states.');
+    }
+
+    const wasCompleted = target.is_completed;
+    await this.prisma.taskAssignee.update({
+      where: { id: target.id },
+      // Moving a finished part back to an open state re-opens that person's part.
+      data: { status_id: statusId, ...(wasCompleted ? { is_completed: false, completed_at: null } : {}) },
+    });
+
+    await this.rollUpTaskOpenStatus(orgId, taskId);
+
+    const targetName = await this.notifications.userName(targetUserId);
+    await this.logActivity(orgId, taskId, actorId, 'status_changed', {
+      changes: [{ field: 'assignee_status', assignee: targetUserId, to: st.label }],
+    });
+    await this.notifications.emit({
+      orgId,
+      module: 'tasks',
+      event_type: 'task_status_changed',
+      recipients: [
+        task.created_by_user_id,
+        ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
+      ].filter((uid) => uid !== actorId),
+      title: `${targetName}’s status is now ${st.label}`,
+      body: `“${task.title}”`,
+      link: `/dashboard/tasks/${taskId}`,
+      entity: { type: 'task', id: taskId },
+    });
+
+    return this.getTask(orgId, taskId);
+  }
+
+  /**
+   * Move the single shared status (any_can_complete mode). Any working assignee — not
+   * just the creator — may move it; the change applies to everyone and records who did it.
+   */
+  async setSharedStatus(orgId: string, actorId: string, taskId: string, statusId: string) {
+    const task = await this.findTaskOrFail(orgId, taskId);
+    if (task.completion_mode !== CompletionMode.any_can_complete) {
+      throw new BadRequestException('Shared status only applies to "any can complete" tasks.');
+    }
+
+    const isParticipant =
+      task.created_by_user_id === actorId ||
+      (task.assignees ?? []).some((a: any) => a.user_id === actorId && !a.is_cc);
+    if (!isParticipant && !(await this.isOrgAdmin(orgId, actorId))) {
+      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    }
+
+    if (isTerminal((task as any).status?.type)) {
+      throw new BadRequestException('Reopen the task to change its status.');
+    }
+    const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId } });
+    if (!st) throw new BadRequestException(`Status ${statusId} not found`);
+    if (isTerminal(st.type)) {
+      throw new BadRequestException('To close a task, use the Complete action — the status control only moves between open states.');
+    }
+
+    if (statusId !== task.status_id) {
+      await this.prisma.task.update({
+        where: { id: taskId },
+        data: { status_id: statusId, status_actor_user_id: actorId },
+      });
+      const actorName = await this.notifications.userName(actorId);
+      await this.logActivity(orgId, taskId, actorId, 'status_changed', {
+        changes: [{ field: 'status_id', from: task.status_id, to: statusId }],
+      });
+      await this.notifications.emit({
+        orgId,
+        module: 'tasks',
+        event_type: 'task_status_changed',
+        recipients: [
+          task.created_by_user_id,
+          ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
+        ].filter((uid) => uid !== actorId),
+        title: `${actorName} moved a task to ${st.label}`,
+        body: `“${task.title}”`,
+        link: `/dashboard/tasks/${taskId}`,
+        entity: { type: 'task', id: taskId },
+      });
+    }
+
+    return this.getTask(orgId, taskId);
+  }
+
   // ─── Create Task ──────────────────────────────────────────────────────────────
 
   async createTask(orgId: string, userId: string, dto: CreateTaskDto) {
@@ -1239,6 +1401,8 @@ export class TasksService {
 
     const allUserIds = new Set<string>();
     allUserIds.add(task.created_by_user_id);
+    if (task.completed_by_user_id) allUserIds.add(task.completed_by_user_id);
+    if (task.status_actor_user_id) allUserIds.add(task.status_actor_user_id);
     for (const a of task.assignees) allUserIds.add(a.user_id);
     for (const c of task.comments as any[]) {
       allUserIds.add(c.user_id);
@@ -1251,10 +1415,32 @@ export class TasksService {
     });
     const userMap = new Map(users.map((u) => [u.id, u]));
 
+    // Per-person status track + overdue for the assignee scoreboard.
+    const { notStarted } = await this.getCanonicalStatuses(orgId);
+    const trackIds = [...new Set(task.assignees.map((a) => a.status_id).filter((id): id is string => !!id))];
+    const trackStatuses = trackIds.length
+      ? await this.prisma.taskStatus.findMany({ where: { id: { in: trackIds } } })
+      : [];
+    const statusById = new Map<string, any>(trackStatuses.map((s) => [s.id, s]));
+    const now = await this.clock.now(orgId);
+    const taskIsTerminal = isTerminal((task as any).status?.type);
+    const nameOf = (id: string | null) => (id ? userMap.get(id) ?? null : null);
+
+    const enrichedAssignees = task.assignees.map((a) => {
+      const track = a.status_id ? statusById.get(a.status_id) ?? notStarted : notStarted;
+      // Per-person overdue: the deadline has passed and this person is not yet finished.
+      // "Finished" is their own completion (all_must_complete) or the whole task being closed.
+      const done = task.completion_mode === CompletionMode.all_must_complete ? a.is_completed : taskIsTerminal;
+      const is_overdue = !a.is_cc && !!task.deadline && task.deadline < now && !done;
+      return { ...a, user: userMap.get(a.user_id) ?? null, status: a.is_cc ? null : track ?? null, is_overdue };
+    });
+
     return {
       ...task,
       created_by: userMap.get(task.created_by_user_id) ?? null,
-      assignees: task.assignees.map((a) => ({ ...a, user: userMap.get(a.user_id) ?? null })),
+      completed_by: nameOf(task.completed_by_user_id),
+      status_actor: nameOf(task.status_actor_user_id),
+      assignees: enrichedAssignees,
       comments: (task.comments as any[]).map((c) => {
         const cu = userMap.get(c.user_id);
         return {
@@ -1341,6 +1527,30 @@ export class TasksService {
       include: TASK_INCLUDE,
     });
 
+    // Switching completion model reconciles the two status shapes so neither goes stale.
+    if (dto.completion_mode !== undefined && dto.completion_mode !== old.completion_mode) {
+      if (dto.completion_mode === CompletionMode.all_must_complete) {
+        // any → all: seed everyone's personal track from the current shared open status,
+        // so the scoreboard starts coherent instead of blank.
+        const seedId = isTerminal((updated as any).status?.type) ? null : updated.status_id;
+        await this.prisma.taskAssignee.updateMany({
+          where: { task_id: taskId, is_cc: false },
+          data: { status_id: seedId },
+        });
+        await this.rollUpTaskOpenStatus(orgId, taskId);
+      } else {
+        // all → any: collapse to one shared status; personal tracks no longer apply.
+        await this.prisma.taskAssignee.updateMany({
+          where: { task_id: taskId },
+          data: { status_id: null },
+        });
+        await this.prisma.task.update({
+          where: { id: taskId },
+          data: { status_actor_user_id: userId },
+        });
+      }
+    }
+
     if (changedFields.length > 0) {
       const action: TaskActionType = changedFields.some((f) => f.field === 'status_id') ? 'status_changed' : 'edited';
       await this.logActivity(orgId, taskId, userId, action, { changes: changedFields });
@@ -1365,7 +1575,9 @@ export class TasksService {
       });
     }
 
-    return updated;
+    // Return the fully-enriched task (per-person status + overdue + attribution) so
+    // callers that swap it straight into view state don't lose the scoreboard data.
+    return this.getTask(orgId, taskId);
   }
 
   // ─── Delete Task ──────────────────────────────────────────────────────────────
@@ -1452,9 +1664,16 @@ export class TasksService {
     await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { completed_at: null, completion_timing: null } });
   }
 
-  async completeTask(orgId: string, userId: string, taskId: string) {
+  async completeTask(orgId: string, userId: string, taskId: string, targetUserId?: string) {
     const task = await this.findTaskOrFail(orgId, taskId);
     const config = await this.getOrgConfig(orgId);
+
+    // Who is being marked done. Self by default; a creator/editor may finish another
+    // assignee's part (all_must_complete) on their behalf.
+    const target = targetUserId ?? userId;
+    if (target !== userId && task.created_by_user_id !== userId) {
+      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
+    }
 
     // Proof check
     if (task.proof_required && !task.proof_url) {
@@ -1467,9 +1686,9 @@ export class TasksService {
     });
 
     if (task.completion_mode === CompletionMode.all_must_complete) {
-      // Mark this assignee done
+      // Mark this person's part done
       await this.prisma.taskAssignee.updateMany({
-        where: { task_id: taskId, user_id: userId, is_cc: false },
+        where: { task_id: taskId, user_id: target, is_cc: false },
         data: { is_completed: true, completed_at: new Date() },
       });
 
@@ -1489,11 +1708,16 @@ export class TasksService {
             reopen_expires_at: reopenExpiresAt,
             completed_at: completionNow,
             completion_timing: this.completionTiming(completionNow, task.deadline),
+            // The person who finished the LAST outstanding part closed the task.
+            completed_by_user_id: target,
           },
         });
+      } else {
+        // Still outstanding parts — keep the shared roll-up honest (In Progress).
+        await this.rollUpTaskOpenStatus(orgId, taskId);
       }
     } else {
-      // any_can_complete
+      // any_can_complete — one person closes the whole task for everyone.
       if (completedStatus) {
         const now = new Date();
         const completionNow = await this.clock.now(orgId);
@@ -1505,6 +1729,7 @@ export class TasksService {
             reopen_expires_at: reopenExpiresAt,
             completed_at: completionNow,
             completion_timing: this.completionTiming(completionNow, task.deadline),
+            completed_by_user_id: userId,
           },
         });
       }
@@ -1586,14 +1811,19 @@ export class TasksService {
         // Leaving the completed phase: drop the completion stamps so timing reads as open again.
         completed_at: null,
         completion_timing: null,
+        completed_by_user_id: null,
       },
     });
 
-    // Reset all assignee completion flags
+    // Reset all assignee completion flags and personal status tracks.
     await this.prisma.taskAssignee.updateMany({
       where: { task_id: taskId },
-      data: { is_completed: false, completed_at: null },
+      data: { is_completed: false, completed_at: null, status_id: null },
     });
+
+    // Re-derive the shared open status from the (now-cleared) tracks so it doesn't
+    // linger on a stale In Progress after a per-person task is reopened.
+    await this.rollUpTaskOpenStatus(orgId, taskId);
 
     await this.logActivity(orgId, taskId, userId, 'reopened', reason ? { reason } : undefined);
 

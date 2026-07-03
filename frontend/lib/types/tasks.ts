@@ -80,6 +80,11 @@ export interface TaskAssigneeUser {
   is_completed: boolean
   completed_at?: string
   is_cc: boolean
+  /** Personal status track (all_must_complete mode); null in shared-status tasks. */
+  status_id?: string | null
+  status?: TaskStatus | null
+  /** Deadline passed and this person hasn't finished their part. */
+  is_overdue?: boolean
 }
 
 export interface TaskChecklistItem {
@@ -121,6 +126,11 @@ export interface Task {
   }
   reopen_expires_at?: string
   is_overdue?: boolean
+  /** Attribution for the shared-status flow (any_can_complete). */
+  status_actor_user_id?: string | null
+  completed_by_user_id?: string | null
+  status_actor?: { id: string; name: string; email?: string } | null
+  completed_by?: { id: string; name: string; email?: string } | null
   completed_at?: string | null
   completion_timing?: 'early' | 'on_time' | 'late' | 'incomplete' | null
   created_at: string

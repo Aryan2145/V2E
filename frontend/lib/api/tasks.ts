@@ -285,6 +285,24 @@ export const tasksApi = {
     return unwrap<Task>(res)
   },
 
+  /** Mark a specific assignee's part done (creator/editor, all_must_complete). */
+  completeAssignee: async (orgId: string, taskId: string, userId: string): Promise<Task> => {
+    const res = await apiClient.post(`${base(orgId)}/${taskId}/assignees/${userId}/complete`)
+    return unwrap<Task>(res)
+  },
+
+  /** Set a per-person status track (all_must_complete). Omit user_id to set your own. */
+  setAssigneeStatus: async (orgId: string, taskId: string, status_id: string, user_id?: string): Promise<Task> => {
+    const res = await apiClient.patch(`${base(orgId)}/${taskId}/assignee-status`, { status_id, user_id })
+    return unwrap<Task>(res)
+  },
+
+  /** Move the single shared status (any_can_complete). */
+  setSharedStatus: async (orgId: string, taskId: string, status_id: string): Promise<Task> => {
+    const res = await apiClient.patch(`${base(orgId)}/${taskId}/shared-status`, { status_id })
+    return unwrap<Task>(res)
+  },
+
   reopenTask: async (orgId: string, taskId: string, reason?: string): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}/${taskId}/reopen`, { reason })
     return unwrap<Task>(res)
