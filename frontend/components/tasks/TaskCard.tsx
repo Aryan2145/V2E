@@ -47,7 +47,8 @@ const PHASE_ORDER: Record<TaskStatus['type'], number> = {
   not_started: 0,
   in_progress: 1,
   completed: 2,
-  incomplete: 3,
+  partially_completed: 3,
+  incomplete: 4,
 }
 
 // ─── Status change control ──────────────────────────────────────────────────────

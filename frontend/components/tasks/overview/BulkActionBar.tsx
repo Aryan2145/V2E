@@ -46,7 +46,10 @@ export default function BulkActionBar({
             placeholder="Set status…"
             options={[
               { value: '', label: 'Set status…' },
-              ...statuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+              // "Partially Completed" is system-derived only (never hand-set); keep it out of bulk.
+              ...statuses
+                .filter((s) => s.type !== 'partially_completed')
+                .map((s) => ({ value: s.id, label: s.label, color: s.color })),
             ]}
           />
 

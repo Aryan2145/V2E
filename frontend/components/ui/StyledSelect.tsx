@@ -8,6 +8,12 @@ export interface StyledSelectOption {
   label: string
   /** Optional color dot shown to the left of the label (e.g. priority/status color). */
   color?: string
+  /** Render a thin divider ABOVE this option — separates "close the task" actions from statuses. */
+  divider?: boolean
+  /** Danger styling (red) — for destructive/close actions like "Incomplete". */
+  variant?: 'danger'
+  /** An action option triggers onChange but is never shown as the selected value. */
+  action?: boolean
 }
 
 /** Max height (px) of the open panel — capped further by the room actually available. */
@@ -42,6 +48,8 @@ interface Props {
   wrapperClassName?: string
   /** Extra classes merged onto the trigger button — for size/theme overrides (e.g. compact filters, dark bars). */
   triggerClassName?: string
+  /** 'sm' shrinks the trigger to a compact, chip-scale control (inline rows); 'md' is the default form size. */
+  size?: 'sm' | 'md'
   disabled?: boolean
 }
 
@@ -62,6 +70,7 @@ export default function StyledSelect({
   placeholder = 'Select…',
   wrapperClassName = 'w-full',
   triggerClassName = '',
+  size = 'md',
   disabled = false,
 }: Props) {
   const [open, setOpen] = useState(false)
@@ -120,8 +129,12 @@ export default function StyledSelect({
     setOpen(false)
   }
 
+  const sizeCls =
+    size === 'sm'
+      ? 'gap-2 rounded-full px-2.5 py-1 text-[13px]'
+      : 'gap-2.5 rounded-[8px] px-3 py-2.5 text-[15px]'
   const triggerCls =
-    'w-full flex items-center gap-2.5 border border-[#CBD5E1] rounded-[8px] px-3 py-2.5 text-[15px] text-left bg-[#F8FAFC] hover:bg-white hover:border-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed'
+    `w-full flex items-center border border-[#CBD5E1] text-left bg-[#F8FAFC] hover:bg-white hover:border-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors disabled:bg-[#F1F5F9] disabled:text-[#94A3B8] disabled:cursor-not-allowed ${sizeCls}`
 
   return (
     <div ref={wrapRef} className={`relative ${wrapperClassName}`}>
@@ -146,7 +159,7 @@ export default function StyledSelect({
           <span className="flex-1 text-[#94A3B8]">{placeholder}</span>
         )}
         <ChevronDown
-          size={16}
+          size={size === 'sm' ? 14 : 16}
           className={`shrink-0 text-[#94A3B8] transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
@@ -161,31 +174,34 @@ export default function StyledSelect({
               <p className="px-3 py-6 text-center text-sm text-[#94A3B8]">No options.</p>
             ) : (
               options.map((o) => {
-                const isSel = o.value === value
+                const isSel = !o.action && o.value === value
+                const danger = o.variant === 'danger'
                 return (
-                  <button
-                    key={o.value}
-                    type="button"
-                    onClick={() => pick(o.value)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                      isSel ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
-                    }`}
-                  >
-                    {o.color && (
-                      <span
-                        className="w-2.5 h-2.5 rounded-full shrink-0"
-                        style={{ backgroundColor: o.color }}
-                      />
-                    )}
-                    <span
-                      className={`flex-1 min-w-0 truncate text-sm font-medium ${
-                        isSel ? 'text-[#2563EB]' : 'text-[#0F172A]'
+                  <div key={o.value}>
+                    {o.divider && <div className="my-1 border-t border-[#E2E8F0]" />}
+                    <button
+                      type="button"
+                      onClick={() => pick(o.value)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                        danger ? 'hover:bg-[#FEF2F2]' : isSel ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
                       }`}
                     >
-                      {o.label}
-                    </span>
-                    {isSel && <Check size={15} className="text-[#2563EB] shrink-0" />}
-                  </button>
+                      {o.color && (
+                        <span
+                          className="w-2.5 h-2.5 rounded-full shrink-0"
+                          style={{ backgroundColor: o.color }}
+                        />
+                      )}
+                      <span
+                        className={`flex-1 min-w-0 truncate text-sm font-medium ${
+                          danger ? 'text-[#DC2626]' : isSel ? 'text-[#2563EB]' : 'text-[#0F172A]'
+                        }`}
+                      >
+                        {o.label}
+                      </span>
+                      {isSel && <Check size={15} className="text-[#2563EB] shrink-0" />}
+                    </button>
+                  </div>
                 )
               })
             )}

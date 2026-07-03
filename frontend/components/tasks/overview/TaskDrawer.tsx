@@ -13,7 +13,7 @@ import { useAuth } from '@/lib/auth/context'
 import FileDropzone from '@/components/ui/FileDropzone'
 import { AttachmentList, AttachmentChips, PendingFileList } from '@/components/ui/AttachmentList'
 
-const TERMINAL = new Set(['completed', 'incomplete'])
+const TERMINAL = new Set(['completed', 'partially_completed', 'incomplete'])
 
 function Chip({ label, color }: { label: string; color: string }) {
   return (

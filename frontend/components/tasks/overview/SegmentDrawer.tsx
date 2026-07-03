@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
-import { TIMING_META, taskTiming, type Task, type WorkQuery } from '@/lib/types/tasks'
+import { TIMING_META, taskTiming, TERMINAL_STATUS_PHASES, type Task, type WorkQuery } from '@/lib/types/tasks'
 
 function fmt(d?: string) {
   if (!d) return '—'
@@ -13,7 +13,7 @@ function fmt(d?: string) {
 }
 
 function dueLabel(t: Task): string | null {
-  if (!t.deadline || t.status?.type === 'completed') return null
+  if (!t.deadline || TERMINAL_STATUS_PHASES.includes(t.status?.type as any)) return null
   const days = Math.round((new Date(t.deadline).getTime() - Date.now()) / 86_400_000)
   return days >= 0 ? `${days}d left` : `${Math.abs(days)}d over`
 }

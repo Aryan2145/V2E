@@ -15,8 +15,8 @@ interface Props {
 }
 
 function isOverdue(deadline?: string, statusType?: string): boolean {
-  // A closed task (completed OR incomplete) is never overdue.
-  if (!deadline || statusType === 'completed' || statusType === 'incomplete') return false
+  // A closed task (completed / partially completed / incomplete) is never overdue.
+  if (!deadline || statusType === 'completed' || statusType === 'partially_completed' || statusType === 'incomplete') return false
   return new Date(deadline) < new Date()
 }
 
