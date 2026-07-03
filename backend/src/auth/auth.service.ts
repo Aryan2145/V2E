@@ -33,13 +33,11 @@ export class AuthService {
       data: { name: dto.name, email: dto.email, password_hash },
     });
 
-    if (dto.organization_id) {
-      await this.prisma.organizationMember.create({
-        data: { organization_id: dto.organization_id, user_id: user.id, is_admin: dto.is_admin ?? false },
-      });
-    }
-
-    return this.issueFullTokens(user.id, user.email, dto.organization_id ?? null, false);
+    // Registration only ever mints a personal account. Attaching a user to an
+    // organization — and any admin grant — is a privileged action that must go
+    // through an authenticated, org-scoped route (POST /org/:orgId/users), never
+    // a public body field. See SECURITY_AUDIT.md C1.
+    return this.issueFullTokens(user.id, user.email, null, false);
   }
 
   async login(dto: LoginDto) {

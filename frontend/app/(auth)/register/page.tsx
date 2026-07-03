@@ -36,9 +36,10 @@ function RegisterForm() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
 
-  // Support pre-filling email from invite link ?email=...&orgId=...
+  // Support pre-filling email from an invite link ?email=... Joining an org is
+  // done by an admin (they add you by email), never by self-attach here — so we
+  // deliberately do not read or send any orgId from the URL.
   const inviteEmail = searchParams.get('email') ?? ''
-  const orgId = searchParams.get('orgId') ?? undefined
 
   const {
     register,
@@ -56,7 +57,6 @@ function RegisterForm() {
         name: data.name,
         email: data.email,
         password: data.password,
-        organization_id: orgId,
       })
       // Auto-login after registration
       await login(data.email, data.password)
@@ -78,14 +78,14 @@ function RegisterForm() {
           </div>
           <h1 className="text-[22px] font-bold text-[#0F172A]">Create your account</h1>
           <p className="text-sm text-[#475569] mt-1">
-            {orgId ? 'You\'ve been invited to join V2E.' : 'Set up your V2E account.'}
+            Set up your V2E account.
           </p>
         </div>
 
-        {/* Invite-only notice */}
+        {/* Access notice */}
         <div className="mb-5 bg-[#FEF9C3] border border-[#FDE68A] rounded-[8px] px-4 py-3">
           <p className="text-xs font-medium text-[#92400E]">
-            This page is for invited users only. If you haven&apos;t received an invite, contact your organization admin.
+            Creating an account doesn&apos;t join an organization on its own. Once your account exists, your organization admin adds you to it.
           </p>
         </div>
 

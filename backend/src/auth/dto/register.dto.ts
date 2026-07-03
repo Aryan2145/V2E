@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength, IsBoolean, IsOptional } from 'class-validator';
+import { IsEmail, IsString, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterDto {
@@ -14,14 +14,4 @@ export class RegisterDto {
   @IsString()
   @MinLength(6)
   password: string;
-
-  @ApiProperty({ required: false, description: 'Grant platform-admin rights in the organization' })
-  @IsOptional()
-  @IsBoolean()
-  is_admin?: boolean;
-
-  @ApiProperty({ required: false })
-  @IsOptional()
-  @IsString()
-  organization_id?: string;
 }
