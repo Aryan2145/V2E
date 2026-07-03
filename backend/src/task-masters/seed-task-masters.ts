@@ -27,7 +27,9 @@ const DEFAULT_STATUSES = [
   { label: 'Not Started', type: 'not_started', color: '#6B7280', order_index: 0, is_default: true },
   { label: 'In Progress', type: 'in_progress', color: '#2563EB', order_index: 1 },
   { label: 'Completed', type: 'completed', color: '#16A34A', order_index: 2 },
-  { label: 'Incomplete', type: 'incomplete', color: '#DC2626', order_index: 3 },
+  // Terminal "some did, some couldn't" outcome for all_must_complete tasks (auto-set).
+  { label: 'Partially Completed', type: 'partially_completed', color: '#EA580C', order_index: 3 },
+  { label: 'Incomplete', type: 'incomplete', color: '#DC2626', order_index: 4 },
 ];
 
 export async function seedTaskMasters(

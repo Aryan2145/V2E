@@ -1,0 +1,421 @@
+'use client'
+
+import React, { useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users } from 'lucide-react'
+import Modal from '@/components/ui/Modal'
+import { tasksApi } from '@/lib/api/tasks'
+import { TERMINAL_STATUS_PHASES, type Task, type TaskChecklistItem, type TaskChecklistItemStateEntry } from '@/lib/types/tasks'
+
+interface Props {
+  task: Task
+  orgId: string
+  taskId: string
+  currentUserId: string
+  /** Assigner/admin — may override for everyone and challenge a person's item. */
+  canEdit: boolean
+  onChanged: (task: Task) => void
+}
+
+function initials(name?: string | null): string {
+  if (!name) return '?'
+  const parts = name.trim().split(/\s+/)
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?'
+}
+
+export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, canEdit, onChanged }: Props) {
+  const items = task.checklist ?? []
+  const isAllMust = task.completion_mode === 'all_must_complete'
+  const isTerminal = !!task.status && TERMINAL_STATUS_PHASES.includes(task.status.type)
+  const iAmWorker = (task.assignees ?? []).some((a) => a.user_id === currentUserId && !a.is_cc)
+
+  // Hover card revealing who has marked an item. Portaled + fixed so it can't be
+  // clipped by the card's inner scroll or the page column's overflow.
+  const [hover, setHover] = useState<{ item: TaskChecklistItem; rect: DOMRect } | null>(null)
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [skipItem, setSkipItem] = useState<TaskChecklistItem | null>(null)
+  const [skipReason, setSkipReason] = useState('')
+  const [challenge, setChallenge] = useState<{ item: TaskChecklistItem; userId: string; userName: string } | null>(null)
+
+  if (items.length === 0) return null
+
+  async function run(key: string, fn: () => Promise<Task>) {
+    setBusy(key)
+    try {
+      const updated = await fn()
+      onChanged(updated)
+    } catch (e: any) {
+      // Surface the backend's plain-English reason (e.g. the gate message).
+      const msg = e?.response?.data?.message ?? e?.message ?? 'Something went wrong.'
+      if (typeof window !== 'undefined') window.alert(Array.isArray(msg) ? msg.join('\n') : msg)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  function openHover(item: TaskChecklistItem, el: HTMLElement) {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
+    setHover({ item, rect: el.getBoundingClientRect() })
+  }
+  function scheduleCloseHover() {
+    if (closeTimer.current) clearTimeout(closeTimer.current)
+    closeTimer.current = setTimeout(() => setHover(null), 120)
+  }
+  function cancelCloseHover() {
+    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
+  }
+
+  // ── Aggregate helpers (all_must) ──
+  const workerCount = (task.assignees ?? []).filter((a) => !a.is_cc).length
+  const resolvedCount = items.filter((it) => {
+    if (isAllMust) return (it.done_count ?? 0) + (it.skipped_count ?? 0) >= (it.assignee_count ?? workerCount) && (it.assignee_count ?? workerCount) > 0
+    return it.is_completed
+  }).length
+
+  // Group items by section, preserving order (mirrors the old inline renderer).
+  const order: string[] = []
+  const byGroup = new Map<string, TaskChecklistItem[]>()
+  for (const item of items) {
+    const key = item.group_title ?? ''
+    if (!byGroup.has(key)) { byGroup.set(key, []); order.push(key) }
+    byGroup.get(key)!.push(item)
+  }
+  const grouped = order.some((k) => k !== '')
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6 overflow-visible">
+      <div className="flex items-center gap-2 mb-1">
+        <CheckSquare size={16} className="text-[#2563EB]" />
+        <h3 className="text-[15px] font-semibold text-[#0F172A]">Checklist</h3>
+        <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+          {resolvedCount}/{items.length}
+        </span>
+      </div>
+      {isAllMust && (
+        <p className="text-[13px] text-[#475569] mb-4 flex items-center gap-1.5">
+          <Users size={13} className="text-[#64748B]" />
+          Everyone must complete — each person ticks their own. Counts show how many of {workerCount} are done.
+        </p>
+      )}
+
+      <div className="space-y-4 max-h-[420px] overflow-y-auto pr-1">
+        {order.map((key) => {
+          const groupItems = byGroup.get(key)!
+          return (
+            <div key={key || '__ungrouped'} className="space-y-2">
+              {grouped && (
+                <div className="text-[13px] font-semibold text-[#334155]">{key || 'Checklist'}</div>
+              )}
+              {groupItems.map((item) =>
+                isAllMust
+                  ? renderAllMustItem(item)
+                  : renderSharedItem(item),
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Skip (can't do) reason dialog */}
+      <Modal isOpen={!!skipItem} onClose={() => setSkipItem(null)} title="Can’t do this item" size="sm" closeOnEscape={false}>
+        <p className="text-[14px] text-[#475569] mb-3">
+          Tell everyone why this step can’t be done. It counts toward finishing your part, and stays visible with your reason.
+        </p>
+        <textarea
+          value={skipReason}
+          onChange={(e) => setSkipReason(e.target.value)}
+          rows={3}
+          autoFocus
+          placeholder="Reason (required)"
+          className="w-full rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none focus:ring-0 px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8]"
+        />
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={() =>
+              skipItem &&
+              run(`skip:${skipItem.id}`, () =>
+                tasksApi.skipChecklistItem(orgId, taskId, skipItem.id, skipReason.trim()),
+              ).then(() => { setSkipItem(null); setSkipReason('') })
+            }
+            disabled={!skipReason.trim() || busy === `skip:${skipItem?.id}`}
+            className="px-5 py-2.5 rounded-[8px] font-semibold text-white bg-[#D97706] hover:bg-[#B45309] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"
+          >
+            {busy === `skip:${skipItem?.id}` ? 'Saving…' : 'Mark can’t do'}
+          </button>
+        </div>
+      </Modal>
+
+      {/* Challenge confirm — reopens the person's part */}
+      <Modal isOpen={!!challenge} onClose={() => setChallenge(null)} title="Reopen this item?" size="sm">
+        <p className="text-[14px] text-[#1E293B]">
+          This reopens the task for <span className="font-semibold">{challenge?.userName}</span> so they can address
+          {' '}<span className="font-semibold">“{challenge?.item.title}”</span>. Their other finished items stay as they are.
+        </p>
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={() =>
+              challenge &&
+              run(`challenge:${challenge.item.id}:${challenge.userId}`, () =>
+                tasksApi.challengeChecklistItem(orgId, taskId, challenge.item.id, challenge.userId),
+              ).then(() => setChallenge(null))
+            }
+            disabled={!!challenge && busy === `challenge:${challenge.item.id}:${challenge.userId}`}
+            className="px-5 py-2.5 rounded-[8px] font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"
+          >
+            Reopen &amp; challenge
+          </button>
+        </div>
+      </Modal>
+
+      {/* Who-marked hover card — portaled + fixed so no scroll parent can clip it */}
+      {hover && typeof document !== 'undefined' && createPortal(
+        (() => {
+          const { rect, item } = hover
+          const width = 264
+          const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+          const openUp = rect.bottom > window.innerHeight * 0.6
+          const style: React.CSSProperties = openUp
+            ? { position: 'fixed', left, bottom: window.innerHeight - rect.top + 6, width }
+            : { position: 'fixed', left, top: rect.bottom + 6, width }
+          const workers = (task.assignees ?? []).filter((a) => !a.is_cc)
+          const states = item.states ?? []
+          return (
+            <div
+              style={style}
+              onMouseEnter={cancelCloseHover}
+              onMouseLeave={scheduleCloseHover}
+              className="z-[70] rounded-[8px] border border-[#E2E8F0] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] overflow-hidden"
+            >
+              <div className="px-3 py-2 border-b border-[#F1F5F9] text-[12px] font-semibold text-[#334155] truncate">{item.title}</div>
+              <div className="max-h-[240px] overflow-y-auto divide-y divide-[#F1F5F9]">
+                {workers.length === 0 && <div className="px-3 py-2 text-[12px] text-[#94A3B8]">No assignees yet</div>}
+                {workers.map((a) => {
+                  const st = states.find((s) => s.user_id === a.user_id)
+                  return (
+                    <PersonRow
+                      key={a.user_id}
+                      name={a.user?.name ?? a.user_name ?? a.user_id}
+                      state={st}
+                      canChallenge={canEdit && !!st}
+                      onChallenge={() => {
+                        setHover(null)
+                        setChallenge({ item, userId: a.user_id, userName: a.user?.name ?? a.user_name ?? 'this person' })
+                      }}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          )
+        })(),
+        document.body,
+      )}
+    </div>
+  )
+
+  // ─────────────────────────────────────────────────────────────────────────
+  function renderSharedItem(item: TaskChecklistItem) {
+    const done = item.is_completed
+    const key = `shared:${item.id}`
+    return (
+      <div key={item.id} className="flex items-center gap-3">
+        <button
+          type="button"
+          disabled={isTerminal || busy === key}
+          onClick={() =>
+            run(key, () =>
+              done
+                ? tasksApi.uncheckChecklistItem(orgId, taskId, item.id)
+                : tasksApi.checkChecklistItem(orgId, taskId, item.id),
+            )
+          }
+          className={[
+            'w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
+            done ? 'bg-[#16A34A] border-[#16A34A]' : 'border-[#CBD5E1] hover:border-[#2563EB]',
+            isTerminal ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+          ].join(' ')}
+          role="checkbox"
+          aria-checked={done}
+        >
+          {done && <Check size={11} className="text-white" strokeWidth={3} />}
+        </button>
+        <span className={`text-sm ${done ? 'line-through text-[#64748B]' : 'text-[#1E293B]'}`}>{item.title}</span>
+        {done && item.completed_by?.name && (
+          <span className="text-[12px] text-[#64748B]">· {item.completed_by.name}</span>
+        )}
+      </div>
+    )
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  function renderAllMustItem(item: TaskChecklistItem) {
+    const doneCount = item.done_count ?? 0
+    const skippedCount = item.skipped_count ?? 0
+    const total = item.assignee_count ?? workerCount
+    const allResolved = doneCount + skippedCount >= total && total > 0
+    const my = item.my_state ?? null
+    const states = item.states ?? []
+    const overridden = states.some((s) => s.is_override)
+    const rowBusy = busy?.startsWith(`amust:${item.id}`)
+
+    return (
+      <div key={item.id} className="rounded-[8px] border border-transparent hover:border-[#E2E8F0] hover:bg-[#F8FAFC] transition-colors">
+        <div className="flex items-start gap-3 px-2 py-1.5">
+          {/* Personal checkbox / state — only working assignees act here */}
+          {iAmWorker ? (
+            <button
+              type="button"
+              disabled={isTerminal || !!rowBusy}
+              onClick={() =>
+                run(`amust:${item.id}:self`, () =>
+                  my === 'done'
+                    ? tasksApi.uncheckChecklistItem(orgId, taskId, item.id)
+                    : tasksApi.checkChecklistItem(orgId, taskId, item.id),
+                )
+              }
+              title={my === 'done' ? 'Done — click to untick' : my === 'skipped' ? 'You marked this can’t-do' : 'Tick when you’ve done it'}
+              className={[
+                'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
+                my === 'done'
+                  ? 'bg-[#16A34A] border-[#16A34A]'
+                  : my === 'skipped'
+                    ? 'bg-[#D97706] border-[#D97706]'
+                    : 'border-[#CBD5E1] hover:border-[#2563EB]',
+                isTerminal ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+              ].join(' ')}
+              role="checkbox"
+              aria-checked={my === 'done'}
+            >
+              {my === 'done' && <Check size={11} className="text-white" strokeWidth={3} />}
+              {my === 'skipped' && <Ban size={10} className="text-white" strokeWidth={2.5} />}
+            </button>
+          ) : (
+            <span className="mt-0.5 w-4 h-4 rounded border-2 border-dashed border-[#CBD5E1] shrink-0" title="You’re not a working assignee on this task" />
+          )}
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-sm ${my === 'done' ? 'text-[#475569]' : my === 'skipped' ? 'line-through text-[#B45309]' : 'text-[#1E293B]'}`}>
+                {item.title}
+              </span>
+
+              {/* Aggregate badge — hover (or focus) to reveal who has marked it */}
+              <button
+                type="button"
+                onMouseEnter={(e) => openHover(item, e.currentTarget)}
+                onMouseLeave={scheduleCloseHover}
+                onFocus={(e) => openHover(item, e.currentTarget)}
+                onBlur={scheduleCloseHover}
+                className={[
+                  'inline-flex items-center gap-1 h-[20px] px-2 rounded-full text-[11px] font-semibold cursor-default transition-colors',
+                  allResolved ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]' : 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]',
+                ].join(' ')}
+                aria-label="Who has marked this item"
+              >
+                <Check size={11} strokeWidth={3} />
+                {doneCount}/{total}
+                {skippedCount > 0 && <span className="text-[#B45309]">· {skippedCount} can’t-do</span>}
+                {overridden && <ShieldCheck size={11} className="text-[#2563EB]" />}
+              </button>
+            </div>
+
+            {/* My own skip reason, always visible inline */}
+            {my === 'skipped' && item.my_reason && (
+              <p className="text-[12px] text-[#B45309] mt-0.5">Can’t do — {item.my_reason}</p>
+            )}
+          </div>
+
+          {/* Personal "can't do" / clear — pinned to the right end of the line */}
+          {iAmWorker && !isTerminal && (
+            my !== 'skipped' ? (
+              <button
+                type="button"
+                onClick={() => { setSkipItem(item); setSkipReason('') }}
+                className="shrink-0 mt-0.5 text-[12px] font-medium text-[#B45309] hover:underline"
+              >
+                Can’t do this
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => run(`amust:${item.id}:self`, () => tasksApi.uncheckChecklistItem(orgId, taskId, item.id))}
+                className="shrink-0 mt-0.5 text-[12px] font-medium text-[#475569] hover:underline"
+              >
+                Clear can’t-do
+              </button>
+            )
+          )}
+
+          {/* Assigner override control */}
+          {canEdit && !isTerminal && (
+            overridden ? (
+              <button
+                type="button"
+                disabled={!!rowBusy}
+                onClick={() => run(`amust:${item.id}:clearoverride`, () => tasksApi.clearChecklistOverride(orgId, taskId, item.id))}
+                className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-[#475569] hover:text-[#0F172A] px-2 py-1 rounded-[6px] hover:bg-[#F1F5F9]"
+                title="Undo done-for-everyone"
+              >
+                <RotateCcw size={12} /> Undo override
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={!!rowBusy}
+                onClick={() => run(`amust:${item.id}:override`, () => tasksApi.overrideChecklistItem(orgId, taskId, item.id))}
+                className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-[#2563EB] hover:text-[#1D4ED8] px-2 py-1 rounded-[6px] hover:bg-[#EFF6FF]"
+                title="Mark done for everyone"
+              >
+                <ShieldCheck size={12} /> Done for all
+              </button>
+            )
+          )}
+        </div>
+      </div>
+    )
+  }
+}
+
+function PersonRow({
+  name,
+  state,
+  canChallenge,
+  onChallenge,
+}: {
+  name: string
+  state?: TaskChecklistItemStateEntry
+  canChallenge: boolean
+  onChallenge: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2">
+      <span className="w-6 h-6 rounded-full bg-[#E0E7FF] text-[#3730A3] text-[10px] font-semibold flex items-center justify-center shrink-0">
+        {initials(name)}
+      </span>
+      <span className="text-[13px] text-[#1E293B] flex-1 min-w-0 truncate">{name}</span>
+      {state?.state === 'done' ? (
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#16A34A]">
+          {state.is_override ? <ShieldCheck size={12} /> : <Check size={12} strokeWidth={3} />}
+          {state.is_override ? `Done for all${state.marked_by_name ? ` · ${state.marked_by_name}` : ''}` : 'Done'}
+        </span>
+      ) : state?.state === 'skipped' ? (
+        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#B45309]" title={state.reason ?? undefined}>
+          <Ban size={12} /> Can’t do{state.reason ? ` · ${state.reason}` : ''}
+        </span>
+      ) : (
+        <span className="text-[11px] font-medium text-[#94A3B8]">Pending</span>
+      )}
+      {canChallenge && (
+        <button
+          type="button"
+          onClick={onChallenge}
+          className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-[#2563EB] hover:text-[#1D4ED8] px-1.5 py-0.5 rounded-[6px] hover:bg-[#EFF6FF] shrink-0"
+          title="Reopen this person’s item"
+        >
+          <RotateCcw size={11} /> Challenge
+        </button>
+      )}
+    </div>
+  )
+}

@@ -437,7 +437,7 @@ function StatusesTab({ orgId }: { orgId: string }) {
   // Reorder among In Progress, then renumber every status into canonical phase order
   // (not_started → in_progress… → completed → incomplete) so order_index never collides.
   async function applyOrder(newInProgress: TaskStatus[]) {
-    const ordered = [single('not_started'), ...newInProgress, single('completed'), single('incomplete')].filter(Boolean) as TaskStatus[]
+    const ordered = [single('not_started'), ...newInProgress, single('completed'), single('partially_completed'), single('incomplete')].filter(Boolean) as TaskStatus[]
     const updates = ordered.map((s, i) => ({ id: s.id, order_index: i }))
     setSavingOrder(true)
     setItems((prev) => prev.map((s) => { const u = updates.find((x) => x.id === s.id); return u ? { ...s, order_index: u.order_index } : s }))
@@ -480,6 +480,7 @@ function StatusesTab({ orgId }: { orgId: string }) {
 
   const notStarted = single('not_started')
   const completed = single('completed')
+  const partiallyCompleted = single('partially_completed')
   const incomplete = single('incomplete')
 
   // One flow row. `role` is the fixed phase shown muted on the left; In Progress stages show
@@ -533,6 +534,7 @@ function StatusesTab({ orgId }: { orgId: string }) {
       )}
 
       {completed && lineFor(completed, 'Completed', false, -1)}
+      {partiallyCompleted && lineFor(partiallyCompleted, 'Partial', false, -1)}
       {incomplete && lineFor(incomplete, 'Incomplete', false, -1)}
     </div>
   )

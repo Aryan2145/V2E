@@ -10,10 +10,10 @@ export class TasksAnalyticsService {
     private readonly clock: ClockService,
   ) {}
 
-  public static readonly TIMINGS = ['early', 'on_time', 'late', 'overdue', 'incomplete', 'pending'] as const;
+  public static readonly TIMINGS = ['early', 'on_time', 'late', 'overdue', 'partial', 'incomplete', 'pending'] as const;
 
   public emptyTiming(): Record<(typeof TasksAnalyticsService.TIMINGS)[number], number> {
-    return { early: 0, on_time: 0, late: 0, overdue: 0, incomplete: 0, pending: 0 };
+    return { early: 0, on_time: 0, late: 0, overdue: 0, partial: 0, incomplete: 0, pending: 0 };
   }
 
   public emptyKpis() {
@@ -30,6 +30,7 @@ export class TasksAnalyticsService {
       case 'early': return { completion_timing: 'early' };
       case 'on_time': return { completion_timing: 'on_time' };
       case 'late': return { completion_timing: 'late' };
+      case 'partial': return { completion_timing: 'partial' };
       case 'incomplete': return { completion_timing: 'incomplete' };
       case 'overdue': return { completion_timing: null, is_overdue: true };
       case 'pending': return { completion_timing: null, is_overdue: false };
@@ -37,7 +38,7 @@ export class TasksAnalyticsService {
   }
 
   public timingOf(ct: string | null, isOverdue: boolean): (typeof TasksAnalyticsService.TIMINGS)[number] {
-    if (ct === 'early' || ct === 'on_time' || ct === 'late' || ct === 'incomplete') return ct;
+    if (ct === 'early' || ct === 'on_time' || ct === 'late' || ct === 'partial' || ct === 'incomplete') return ct;
     return isOverdue ? 'overdue' : 'pending';
   }
 
@@ -57,9 +58,9 @@ export class TasksAnalyticsService {
       case 'not_started': return { status: { type: 'not_started' } };
       case 'ongoing': return { status: { type: 'ongoing' } };
       case 'completed': return { status: { type: 'completed' } };
-      case 'overdue': return { status: { type: { not: 'completed' } }, is_overdue: true };
-      case 'due_today': return { status: { type: { not: 'completed' } }, deadline: { gte: startOfToday, lte: endOfToday } };
-      case 'due_week': return { status: { type: { not: 'completed' } }, deadline: { gte: startOfWeek, lte: endOfWeek } };
+      case 'overdue': return { status: { type: { notIn: TERMINAL_TYPES } }, is_overdue: true };
+      case 'due_today': return { status: { type: { notIn: TERMINAL_TYPES } }, deadline: { gte: startOfToday, lte: endOfToday } };
+      case 'due_week': return { status: { type: { notIn: TERMINAL_TYPES } }, deadline: { gte: startOfWeek, lte: endOfWeek } };
       case 'recurring': return { recurring_template_id: { not: null } };
       default: return {};
     }

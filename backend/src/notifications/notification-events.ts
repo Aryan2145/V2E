@@ -9,6 +9,11 @@ export const NOTIF_EVENTS = {
     'task_status_changed', // status moved (e.g. In Progress → Done) outside the Complete action
     'task_attachment_added', // a file attached directly to the task (not via a comment)
     'task_completed',
+    'task_incomplete', // task closed as not-done (terminal Incomplete) with a reason
+    'task_part_flagged', // an assignee flagged their own part as can't-complete (all_must_complete)
+    'task_checklist_skipped', // an assignee marked a checklist item "can't do" (with a reason)
+    'task_checklist_overridden', // the assigner marked a checklist item done for everyone
+    'task_checklist_challenged', // the assigner reopened a person's part to re-do a checklist item
     'task_reopened',
     'task_comment',
     'task_reminder',
