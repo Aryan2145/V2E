@@ -41,6 +41,10 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
   // Files picked but awaiting a per-file visibility decision (all_must). queue[0] is current.
   const [queue, setQueue] = useState<File[]>([])
   const [choice, setChoice] = useState<ProofVisibility>('private')
+  // Proof pending deletion — proof is evidence, so removing it is confirmed first
+  // (mirrors the plain-attachment delete guard).
+  const [proofToDelete, setProofToDelete] = useState<TaskAttachment | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const isAllMust = task.completion_mode === 'all_must_complete'
   const isAssigner = task.created_by_user_id === user?.id || !!user?.is_admin
@@ -126,12 +130,17 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
 
   async function handleDeleteProof(a: TaskAttachment) {
     setErrors([])
+    setDeleting(true)
     try {
       await tasksApi.deleteAttachment(orgId, task.id, a.id)
+      setProofToDelete(null)
       load()
       onChanged()
     } catch (e: any) {
       setErrors([e?.response?.data?.message ?? 'Could not remove the file.'])
+      setProofToDelete(null)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -157,7 +166,7 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
           <Download size={13} />
         </button>
         {mine && canManageMine && !a.comment_id && (
-          <button onClick={() => handleDeleteProof(a)} className="shrink-0 text-[#64748B] hover:text-[#DC2626]" title="Remove this proof">
+          <button onClick={() => setProofToDelete(a)} className="shrink-0 text-[#64748B] hover:text-[#DC2626]" title="Remove this proof">
             <Trash2 size={13} />
           </button>
         )}
@@ -269,20 +278,43 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
               ))}
             </div>
             {queue.length > 1 && <p className="mt-2 text-[11px] text-[#64748B]">{queue.length - 1} more file{queue.length - 1 !== 1 ? 's' : ''} after this.</p>}
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                onClick={() => { if (!uploading) setQueue([]) }}
-                disabled={uploading}
-                className="text-sm font-medium text-[#475569] hover:text-[#0F172A] px-3 py-2 disabled:opacity-60"
-              >
-                Cancel
-              </button>
+            {/* No footer Cancel — the header X / backdrop dismiss this (both discard the
+                queue), so a duplicate Cancel would break the cancel-vs-X rule. */}
+            <div className="mt-4 flex items-center justify-end">
               <button
                 onClick={confirmCurrent}
                 disabled={uploading}
                 className="text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] px-4 py-2 hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors"
               >
                 {uploading ? 'Uploading…' : 'Upload'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Confirm before removing a proof file — it's evidence, so guard it like the
+          plain-attachment delete does. */}
+      <Modal
+        isOpen={!!proofToDelete}
+        onClose={() => { if (!deleting) setProofToDelete(null) }}
+        title="Remove this proof?"
+        size="sm"
+        closeOnEscape={!deleting}
+      >
+        {proofToDelete && (
+          <div>
+            <p className="text-[14px] text-[#475569]">
+              <span className="font-semibold text-[#0F172A] break-all">{proofToDelete.file_name}</span> will be permanently
+              removed and will no longer count toward the proof requirement. This can’t be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end">
+              <button
+                onClick={() => handleDeleteProof(proofToDelete)}
+                disabled={deleting}
+                className="text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] px-4 py-2 hover:bg-[#B91C1C] disabled:opacity-60 transition-colors"
+              >
+                {deleting ? 'Removing…' : 'Remove proof'}
               </button>
             </div>
           </div>

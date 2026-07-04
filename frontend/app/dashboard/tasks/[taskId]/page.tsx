@@ -1222,8 +1222,13 @@ export default function TaskDetailPage() {
 
             {/* Comments */}
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
-              <h3 className="text-[15px] font-semibold text-[#0F172A] mb-4">
-                Comments ({comments.length})
+              <h3 className="flex items-center gap-2 text-[15px] font-semibold text-[#0F172A] mb-4">
+                Comments
+                {comments.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {comments.length}
+                  </span>
+                )}
               </h3>
               <div className="space-y-4 mb-6">
                 {comments.length === 0 ? (
@@ -1674,18 +1679,20 @@ export default function TaskDetailPage() {
                   <span className="w-2 h-2 rounded-full bg-[#0EA5E9]" />
                   <p className="text-[11px] font-bold text-[#0EA5E9] uppercase tracking-widest">Attachments</p>
                   {allAttachments.length > 0 && (
-                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#0EA5E9] text-white text-[10px] font-semibold">
+                    <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1.5 rounded-full bg-[#2563EB] text-white text-[10px] font-semibold">
                       {allAttachments.length}
                     </span>
                   )}
                 </div>
-                {/* Only the assigner / admin may add files here. */}
+                {/* Only the assigner / admin may add files here — solid blue + button. */}
                 {canEdit && (
                   <button
                     type="button"
                     onClick={() => attachInputRef.current?.click()}
                     disabled={uploadingAttachment}
-                    className="flex items-center gap-1 text-xs font-semibold text-[#0EA5E9] hover:text-[#0284C7] disabled:opacity-60 transition-colors"
+                    aria-label="Add attachment"
+                    title="Add attachment"
+                    className="flex items-center gap-1 text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[6px] pl-1.5 pr-2 py-1 disabled:opacity-60 transition-colors"
                   >
                     <Plus size={14} />
                     Add

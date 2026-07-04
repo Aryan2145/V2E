@@ -165,7 +165,7 @@ export default function AssignedByMePage() {
           categories={categories}
           perspective="owner"
           currentUserId={user?.id}
-          onChanged={() => loadData()}
+          onChanged={(u) => setTasks((ts) => ts.map((t) => (t.id === u.id ? u : t)))}
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />
       )}

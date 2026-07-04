@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Lock, CheckCircle2, XCircle, RotateCcw } from 'lucide-react'
+import { Lock, CheckCircle2, XCircle, RotateCcw, Hand } from 'lucide-react'
+import { useToast } from '@/components/ui/Toast'
 import type { Task, TaskStatus, TaskPriority, TaskCategory } from '@/lib/types/tasks'
 import {
   kanbanColumnId,
@@ -46,17 +47,17 @@ type PendingReason = { task: Task; target: TaskStatus; mode: 'flag' | 'incomplet
 export default function KanbanView({
   orgId, tasks, statuses, priorities, categories, perspective, currentUserId, onChanged, onTaskClick,
 }: Props) {
+  const { addToast } = useToast()
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dragOverCol, setDragOverCol] = useState<string | null>(null)
   const [updating, setUpdating] = useState<string | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
   const [pending, setPending] = useState<PendingReason | null>(null)
   const [reason, setReason] = useState('')
   const [savingReason, setSavingReason] = useState(false)
 
+  // Use the app's shared amber toast for blocked/failed drops (not a bespoke one).
   function flash(msg: string) {
-    setToast(msg)
-    window.setTimeout(() => setToast((t) => (t === msg ? null : t)), 6000)
+    addToast(msg, 'warning')
   }
 
   // "Partially Completed" is a whole-task rollup — never a personal state — so it's hidden
@@ -122,7 +123,14 @@ export default function KanbanView({
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 min-h-[60vh]">
+    <div>
+      {/* Touch devices can't HTML5-drag — tell them to open the card instead, shown
+          only on coarse pointers so it's not noise on desktop. */}
+      <div className="[@media(pointer:fine)]:hidden mb-3 flex items-center gap-2 text-[12px] text-[#B45309] bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2">
+        <Hand size={13} className="shrink-0" />
+        Drag isn’t available on touch — tap a card to open it and change its status there.
+      </div>
+      <div className="flex gap-4 overflow-x-auto pb-4 min-h-[60vh]">
       {columns.map((status) => {
         const colTasks = tasksByCol[status.id] ?? []
         const isPartialCol = status.type === 'partially_completed'
@@ -268,14 +276,7 @@ export default function KanbanView({
         </div>,
         document.body,
       )}
-
-      {/* Transient toast for blocked / failed drops */}
-      {toast && createPortal(
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[80] max-w-sm px-4 py-2.5 rounded-[10px] bg-[#0F172A] text-white text-sm font-medium shadow-[0_8px_24px_rgba(0,0,0,0.2)]">
-          {toast}
-        </div>,
-        document.body,
-      )}
+      </div>
     </div>
   )
 }

@@ -1,8 +1,7 @@
 'use client'
 
-import React, { useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users, X } from 'lucide-react'
+import React, { useState } from 'react'
+import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users, X, ChevronDown } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
@@ -33,10 +32,9 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
   const isFutureTask = task ? new Date(task.created_at) > getNow() : false
   const iAmWorker = (task.assignees ?? []).some((a) => a.user_id === currentUserId && !a.is_cc)
 
-  // Hover card revealing who has marked an item. Portaled + fixed so it can't be
-  // clipped by the card's inner scroll or the page column's overflow.
-  const [hover, setHover] = useState<{ item: TaskChecklistItem; rect: DOMRect } | null>(null)
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // "Who has marked this" panel expands IN FLOW right under the item (never a
+  // JS-positioned fixed portal — those drift on the page column's overflow-scroll).
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [skipItem, setSkipItem] = useState<TaskChecklistItem | null>(null)
   const [skipReason, setSkipReason] = useState('')
@@ -59,16 +57,12 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
     }
   }
 
-  function openHover(item: TaskChecklistItem, el: HTMLElement) {
-    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
-    setHover({ item, rect: el.getBoundingClientRect() })
-  }
-  function scheduleCloseHover() {
-    if (closeTimer.current) clearTimeout(closeTimer.current)
-    closeTimer.current = setTimeout(() => setHover(null), 120)
-  }
-  function cancelCloseHover() {
-    if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null }
+  // Why a checkbox is disabled — an accurate tooltip instead of a misleading
+  // "tick when done" on a control that can't be clicked.
+  function disabledReason(): string | null {
+    if (isTerminal) return 'This task is closed — reopen it to change the checklist.'
+    if (isFutureTask) return 'This task hasn’t started yet.'
+    return null
   }
 
   // ── Aggregate helpers (all_must) ──
@@ -173,51 +167,37 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
         </div>
       </Modal>
 
-      {/* Who-marked hover card — portaled + fixed so no scroll parent can clip it */}
-      {hover && typeof document !== 'undefined' && createPortal(
-        (() => {
-          const { rect, item } = hover
-          const width = 264
-          const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-          const openUp = rect.bottom > window.innerHeight * 0.6
-          const style: React.CSSProperties = openUp
-            ? { position: 'fixed', left, bottom: window.innerHeight - rect.top + 6, width }
-            : { position: 'fixed', left, top: rect.bottom + 6, width }
-          const workers = (task.assignees ?? []).filter((a) => !a.is_cc)
-          const states = item.states ?? []
-          return (
-            <div
-              style={style}
-              onMouseEnter={cancelCloseHover}
-              onMouseLeave={scheduleCloseHover}
-              className="z-[70] rounded-[8px] border border-[#E2E8F0] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] overflow-hidden"
-            >
-              <div className="px-3 py-2 border-b border-[#F1F5F9] text-[12px] font-semibold text-[#334155] truncate">{item.title}</div>
-              <div className="max-h-[240px] overflow-y-auto divide-y divide-[#F1F5F9]">
-                {workers.length === 0 && <div className="px-3 py-2 text-[12px] text-[#94A3B8]">No assignees yet</div>}
-                {workers.map((a) => {
-                  const st = states.find((s) => s.user_id === a.user_id)
-                  return (
-                    <PersonRow
-                      key={a.user_id}
-                      name={a.user?.name ?? a.user_name ?? a.user_id}
-                      state={st}
-                      canChallenge={canEdit && !!st && !isFutureTask}
-                      onChallenge={() => {
-                        setHover(null)
-                        setChallenge({ item, userId: a.user_id, userName: a.user?.name ?? a.user_name ?? 'this person' })
-                      }}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })(),
-        document.body,
-      )}
     </div>
   )
+
+  /** In-flow "who has marked this" panel — rendered inside the item's own container so
+   *  it scrolls with the card and can never drift off its anchor. */
+  function renderWhoPanel(item: TaskChecklistItem) {
+    const workers = (task.assignees ?? []).filter((a) => !a.is_cc)
+    const states = item.states ?? []
+    return (
+      <div className="mt-1.5 ml-7 mr-2 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC] overflow-hidden">
+        <div className="max-h-[240px] overflow-y-auto divide-y divide-[#F1F5F9]">
+          {workers.length === 0 && <div className="px-3 py-2 text-[12px] text-[#94A3B8]">No assignees yet</div>}
+          {workers.map((a) => {
+            const st = states.find((s) => s.user_id === a.user_id)
+            return (
+              <PersonRow
+                key={a.user_id}
+                name={a.user?.name ?? a.user_name ?? a.user_id}
+                state={st}
+                canChallenge={canEdit && !!st && !isFutureTask}
+                onChallenge={() => {
+                  setExpandedId(null)
+                  setChallenge({ item, userId: a.user_id, userName: a.user?.name ?? a.user_name ?? 'this person' })
+                }}
+              />
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   function renderSharedItem(item: TaskChecklistItem) {
@@ -237,7 +217,11 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
                 : tasksApi.checkChecklistItem(orgId, taskId, item.id),
             )
           }
-          title={cantDo ? 'Marked can’t-do — click to tick as done' : done ? 'Done — click to untick' : 'Tick when done'}
+          title={
+            !canAct
+              ? (disabledReason() ?? 'Only an assignee can tick this item.')
+              : cantDo ? 'Marked can’t-do — click to tick as done' : done ? 'Done — click to untick' : 'Tick when done'
+          }
           className={[
             'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
             done ? 'bg-[#16A34A] border-[#16A34A]' : cantDo ? 'bg-[#D97706] border-[#D97706]' : 'border-[#CBD5E1] hover:border-[#2563EB]',
@@ -319,7 +303,11 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
                     : tasksApi.checkChecklistItem(orgId, taskId, item.id),
                 )
               }
-              title={my === 'done' ? 'Done — click to untick' : my === 'skipped' ? 'You marked this can’t-do' : 'Tick when you’ve done it'}
+              title={
+                (isTerminal || isFutureTask)
+                  ? (disabledReason() ?? '')
+                  : my === 'done' ? 'Done — click to untick' : my === 'skipped' ? 'You marked this can’t-do' : 'Tick when you’ve done it'
+              }
               className={[
                 'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
                 my === 'done'
@@ -345,23 +333,22 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
                 {item.title}
               </span>
 
-              {/* Aggregate badge — hover (or focus) to reveal who has marked it */}
+              {/* Aggregate badge — click to expand an in-flow list of who has marked it */}
               <button
                 type="button"
-                onMouseEnter={(e) => openHover(item, e.currentTarget)}
-                onMouseLeave={scheduleCloseHover}
-                onFocus={(e) => openHover(item, e.currentTarget)}
-                onBlur={scheduleCloseHover}
+                onClick={() => setExpandedId((cur) => (cur === item.id ? null : item.id))}
                 className={[
-                  'inline-flex items-center gap-1 h-[20px] px-2 rounded-full text-[11px] font-semibold cursor-default transition-colors',
+                  'inline-flex items-center gap-1 h-[20px] px-2 rounded-full text-[11px] font-semibold cursor-pointer transition-colors',
                   allResolved ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]' : 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]',
                 ].join(' ')}
                 aria-label="Who has marked this item"
+                aria-expanded={expandedId === item.id}
               >
                 <Check size={11} strokeWidth={3} />
                 {doneCount}/{total}
                 {skippedCount > 0 && <span className="text-[#B45309]">· {skippedCount} can’t-do</span>}
                 {overridden && <ShieldCheck size={11} className="text-[#2563EB]" />}
+                <ChevronDown size={11} className={expandedId === item.id ? 'rotate-180 transition-transform' : 'transition-transform'} />
               </button>
             </div>
 
@@ -419,6 +406,9 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
             )
           )}
         </div>
+
+        {/* In-flow "who marked this" list — part of the item, so it never drifts */}
+        {expandedId === item.id && renderWhoPanel(item)}
       </div>
     )
   }

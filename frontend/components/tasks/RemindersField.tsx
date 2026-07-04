@@ -40,7 +40,7 @@ export function reminderLabel(r: ReminderRow): string {
     const d = r.offsetDays === 0 ? 'On the day' : `${r.offsetDays} day${r.offsetDays !== 1 ? 's' : ''} before`
     return `${d} · ${r.time || '09:00'}${who}`
   }
-  const date = r.date ? new Date(`${r.date}T00:00`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : 'no date'
+  const date = r.date ? new Date(`${r.date}T00:00`).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' }) : 'no date'
   return `On ${date} · ${r.time || '09:00'}${who}`
 }
 
@@ -219,7 +219,7 @@ export default function RemindersField({ reminders, onChange, mode, deadlineDate
                 if (r.kind === 'relative' && mode === 'one_time' && deadlineDate) {
                   const d = new Date(`${deadlineDate}T00:00`)
                   d.setDate(d.getDate() - r.offsetDays)
-                  hint = d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })
+                  hint = d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' })
                 }
                 return (
                   <div key={r.key} className="relative rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] p-3 space-y-2.5">
