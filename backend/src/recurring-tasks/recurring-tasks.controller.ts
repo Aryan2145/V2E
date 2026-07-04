@@ -109,10 +109,12 @@ export class RecurringTasksController {
   }
 
   @Get(':id/stats')
-  @ApiOperation({ summary: 'Get completion stats for a recurring template' })
+  @ApiOperation({ summary: 'Get completion + timing performance stats for a recurring template' })
   async getStats(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
     await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
-    return this.service.getStats(orgId, id);
+    // Trend window follows the org's effective clock (simulated for test orgs).
+    const now = await this.clock.now(orgId);
+    return this.service.getStats(orgId, id, now);
   }
 
   // ─── Attachments (carried into every spawned instance) ───────────────────────

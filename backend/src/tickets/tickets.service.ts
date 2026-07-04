@@ -9,6 +9,7 @@ import { SubjectEligibilityService } from '../access-rights/subject-eligibility.
 import { ScopeService } from '../access-rights/scope.service'
 import { AccessVisibilityService } from '../access-rights/access-visibility.service'
 import { Principal } from '../access-rights/permissions.service'
+import { assertActiveOrgMembers } from '../common/org-members'
 import type { RaiseTicketDto } from './dto/raise-ticket.dto'
 import type { UpdateTicketDto } from './dto/update-ticket.dto'
 import type { AssignTicketDto } from './dto/assign-ticket.dto'
@@ -628,6 +629,7 @@ export class TicketsService {
 
   async raiseTicket(orgId: string, userId: string, dto: RaiseTicketDto) {
     await this.ensureDefaults(orgId)
+    await assertActiveOrgMembers(this.prisma, orgId, dto.escalation_user_ids, 'escalation contacts')
     const master = await this.prisma.ticketMaster.findUnique({ where: { organization_id: orgId } })!
 
     const [ticketType, category, priority, template] = await Promise.all([

@@ -11,6 +11,7 @@ import type {
   TaskChecklistItem,
   RecurringTemplate,
   RecurringScheduleEntry,
+  RecurringStats,
   TaskArchiveItem,
   ChecklistTemplate,
   ChecklistTemplateInput,
@@ -262,6 +263,7 @@ export const tasksApi = {
     checklist_template_id?: string
     checklist_template_ids?: string[]
     reminders?: ReminderSpec[]
+    escalation_user_ids?: string[]
     goal_id?: string
   }): Promise<Task> => {
     const res = await apiClient.post(`${base(orgId)}`, dto)
@@ -510,6 +512,9 @@ export const tasksApi = {
     schedule_entries: Omit<RecurringScheduleEntry, 'id' | 'organization_id' | 'recurring_template_id' | 'occurrence_count' | 'is_active' | 'created_at' | 'updated_at'>[]
     completion_mode?: string
     proof_required?: boolean
+    proof_allowed_extensions?: string[]
+    escalation_user_ids?: string[]
+    linked_goal_id?: string
     assignee_user_ids?: string[]
     cc_user_ids?: string[]
     checklist_items?: { title: string; order_index: number; group_title?: string }[]
@@ -561,8 +566,13 @@ export const tasksApi = {
     schedule_entries: Partial<RecurringScheduleEntry>[]
     completion_mode: string
     proof_required: boolean
+    proof_allowed_extensions: string[]
+    escalation_user_ids: string[]
+    linked_goal_id: string
     assignee_user_ids: string[]
     cc_user_ids: string[]
+    checklist_items: { title: string; order_index: number; group_title?: string }[]
+    reminders: ReminderSpec[]
     department_id: string
   }>): Promise<RecurringTemplate> => {
     const res = await apiClient.patch(`${base(orgId)}/recurring/${id}`, dto)
@@ -593,9 +603,9 @@ export const tasksApi = {
     return unwrap<Task[]>(res)
   },
 
-  getRecurringStats: async (orgId: string, id: string): Promise<{ total: number; completed: number; pending: number }> => {
+  getRecurringStats: async (orgId: string, id: string): Promise<RecurringStats> => {
     const res = await apiClient.get(`${base(orgId)}/recurring/${id}/stats`)
-    return unwrap<{ total: number; completed: number; pending: number }>(res)
+    return unwrap<RecurringStats>(res)
   },
 
   listScheduleEntries: async (orgId: string, templateId: string): Promise<RecurringScheduleEntry[]> => {

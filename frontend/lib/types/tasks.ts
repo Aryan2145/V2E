@@ -276,11 +276,53 @@ export interface RecurringTemplate {
   is_active: boolean
   completion_mode: string
   proof_required: boolean
+  /** Allowed proof file extensions (empty = any type) — copied to every instance. */
+  proof_allowed_extensions?: string[]
+  /** Ordered escalation contacts; level = position + 1 on every spawned instance. */
+  escalation_user_ids?: string[]
+  /** Quarterly goal every spawned instance is linked to (initiative). */
+  linked_goal_id?: string | null
   assignee_user_ids: string[]
   cc_user_ids: string[]
+  /** Flattened checklist definition copied into every spawned instance. */
+  checklist_items?: { title: string; order_index: number; group_title?: string | null }[]
+  /** Reminder specs re-resolved against each spawned instance's deadline. */
+  reminder_specs?: ReminderSpec[]
   department_id?: string
   created_at: string
   schedule_entries?: RecurringScheduleEntry[]
+}
+
+/** One instance's timing verdict in the recurring performance report. */
+export type RecurringInstanceTiming = 'early' | 'on_time' | 'late' | 'partial' | 'incomplete' | 'overdue' | 'pending'
+
+// Timing-aware performance report for a recurring template (GET …/recurring/:id/stats).
+export interface RecurringStats {
+  template_id: string
+  completion_mode: string
+  total_instances: number
+  completed: number
+  pending: number
+  missed: number
+  overdue_open: number
+  completion_ratio_percent: number
+  /** Of the instances that have closed, % finished early or on time. */
+  on_time_rate_percent: number
+  current_streak: number
+  best_streak: number
+  timing: {
+    early: number
+    on_time: number
+    late: number
+    partial: number
+    incomplete: number
+    overdue: number
+    pending: number
+  }
+  /** Last 10 instances, oldest first — drives the outcome strip. */
+  recent: { task_id: string; date: string; timing: RecurringInstanceTiming }[]
+  by_assignee: { user_id: string; name: string; assigned: number; done: number; late: number; missed: number }[]
+  trend_monthly: { month: string; total: number; on_time: number; late: number; missed: number; open: number }[]
 }
 
 export interface TaskArchiveItem {

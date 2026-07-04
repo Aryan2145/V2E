@@ -7,6 +7,8 @@ import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
 import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
 import { TERMINAL_TYPES } from '../tasks/status-phase';
+import { normaliseExtensions } from '../tasks/task-attachments.service';
+import { assertActiveOrgMembers } from '../common/org-members';
 
 const ENTRY_INCLUDE = { orderBy: { order_index: 'asc' as const } };
 
@@ -61,6 +63,19 @@ export class RecurringTasksService {
     return t;
   }
 
+  /**
+   * A linked goal must be a real goal in THIS org — otherwise a pasted foreign id
+   * becomes a cross-org reference on every spawned instance. Empty/undefined skips.
+   */
+  private async assertGoalInOrg(orgId: string, goalId: string | undefined | null): Promise<void> {
+    if (!goalId) return;
+    const goal = await this.prisma.goal.findFirst({
+      where: { id: goalId, organization_id: orgId },
+      select: { id: true },
+    });
+    if (!goal) throw new BadRequestException('Linked goal not found in this organization');
+  }
+
   private entryData(orgId: string, templateId: string, dto: CreateScheduleEntryDto, index = 0) {
     return {
       organization_id: orgId,
@@ -92,6 +107,14 @@ export class RecurringTasksService {
   // ─── Create ──────────────────────────────────────────────────────────────────
 
   async createTemplate(orgId: string, userId: string, dto: CreateRecurringDto) {
+    await this.assertGoalInOrg(orgId, dto.linked_goal_id);
+    await assertActiveOrgMembers(this.prisma, orgId, dto.escalation_user_ids, 'escalation contacts');
+    await assertActiveOrgMembers(
+      this.prisma,
+      orgId,
+      [...(dto.assignee_user_ids ?? []), ...(dto.cc_user_ids ?? [])],
+      'assignees or CC recipients',
+    );
     const template = await this.prisma.recurringTemplate.create({
       data: {
         organization_id: orgId,
@@ -104,6 +127,9 @@ export class RecurringTasksService {
         has_multiple_schedules: dto.schedule_entries.length > 1,
         completion_mode: dto.completion_mode ?? 'any_can_complete',
         proof_required: dto.proof_required ?? false,
+        proof_allowed_extensions: normaliseExtensions(dto.proof_allowed_extensions),
+        escalation_user_ids: dto.escalation_user_ids ?? [],
+        linked_goal_id: dto.linked_goal_id || null,
         assignee_user_ids: dto.assignee_user_ids ?? [],
         cc_user_ids: dto.cc_user_ids ?? [],
         checklist_items: (dto.checklist_items ?? []) as never,
@@ -126,6 +152,14 @@ export class RecurringTasksService {
 
   async updateTemplate(orgId: string, templateId: string, dto: UpdateRecurringDto) {
     await this.findTemplateOrFail(orgId, templateId);
+    await this.assertGoalInOrg(orgId, dto.linked_goal_id);
+    await assertActiveOrgMembers(this.prisma, orgId, dto.escalation_user_ids, 'escalation contacts');
+    await assertActiveOrgMembers(
+      this.prisma,
+      orgId,
+      [...(dto.assignee_user_ids ?? []), ...(dto.cc_user_ids ?? [])],
+      'assignees or CC recipients',
+    );
 
     if (dto.schedule_entries !== undefined) {
       if (dto.schedule_entries.length === 0) {
@@ -153,8 +187,15 @@ export class RecurringTasksService {
         ...(dto.priority_id !== undefined && { priority_id: dto.priority_id }),
         ...(dto.completion_mode !== undefined && { completion_mode: dto.completion_mode }),
         ...(dto.proof_required !== undefined && { proof_required: dto.proof_required }),
+        ...(dto.proof_allowed_extensions !== undefined && {
+          proof_allowed_extensions: normaliseExtensions(dto.proof_allowed_extensions),
+        }),
+        ...(dto.escalation_user_ids !== undefined && { escalation_user_ids: dto.escalation_user_ids }),
+        ...(dto.linked_goal_id !== undefined && { linked_goal_id: dto.linked_goal_id || null }),
         ...(dto.assignee_user_ids !== undefined && { assignee_user_ids: dto.assignee_user_ids }),
         ...(dto.cc_user_ids !== undefined && { cc_user_ids: dto.cc_user_ids }),
+        ...(dto.checklist_items !== undefined && { checklist_items: dto.checklist_items as never }),
+        ...(dto.reminders !== undefined && { reminder_specs: dto.reminders as never }),
         ...(dto.department_id !== undefined && { department_id: dto.department_id }),
         has_multiple_schedules: entryCount > 1,
       },
@@ -337,25 +378,168 @@ export class RecurringTasksService {
     }));
   }
 
-  // ─── Stats ───────────────────────────────────────────────────────────────────
+  // ─── Stats / performance ─────────────────────────────────────────────────────
 
-  async getStats(orgId: string, templateId: string) {
-    await this.findTemplateOrFail(orgId, templateId);
-    const completedStatuses = await this.prisma.taskStatus.findMany({
-      where: { organization_id: orgId, type: 'completed' },
-      select: { id: true },
+  /**
+   * Timing verdict for one spawned instance. Mirrors the Work Overview taxonomy:
+   * closed tasks use their persisted `completion_timing` (falling back to the
+   * terminal phase), open tasks are `overdue` or `pending`.
+   */
+  private instanceTiming(task: {
+    completion_timing: string | null;
+    is_overdue: boolean;
+    status: { type: string } | null;
+  }): 'early' | 'on_time' | 'late' | 'partial' | 'incomplete' | 'overdue' | 'pending' {
+    if (task.completion_timing) return task.completion_timing as never;
+    const phase = task.status?.type;
+    if (phase === 'completed') return 'on_time';
+    if (phase === 'partially_completed') return 'partial';
+    if (phase === 'incomplete') return 'incomplete';
+    return task.is_overdue ? 'overdue' : 'pending';
+  }
+
+  async getStats(orgId: string, templateId: string, now: Date = new Date()) {
+    const template = await this.findTemplateOrFail(orgId, templateId);
+
+    const tasks = await this.prisma.task.findMany({
+      where: { organization_id: orgId, recurring_template_id: templateId, is_deleted: false },
+      select: {
+        id: true,
+        created_at: true,
+        deadline: true,
+        completion_timing: true,
+        completed_by_user_id: true,
+        is_overdue: true,
+        completion_mode: true,
+        status: { select: { type: true } },
+        assignees: {
+          where: { is_cc: false },
+          select: {
+            user_id: true,
+            is_completed: true,
+            completed_at: true,
+            cannot_complete: true,
+          },
+        },
+      },
+      orderBy: { created_at: 'asc' },
     });
-    const completedStatusIds = completedStatuses.map((s) => s.id);
-    const [total, completed] = await Promise.all([
-      this.prisma.task.count({ where: { organization_id: orgId, recurring_template_id: templateId, is_deleted: false } }),
-      this.prisma.task.count({ where: { organization_id: orgId, recurring_template_id: templateId, is_deleted: false, status_id: { in: completedStatusIds } } }),
-    ]);
+
+    const timings = tasks.map((t) => ({ task: t, timing: this.instanceTiming(t) }));
+    const count = (k: string) => timings.filter((t) => t.timing === k).length;
+
+    const total = tasks.length;
+    const completed = count('early') + count('on_time') + count('late');
+    const missed = count('partial') + count('incomplete');
+    const open = count('overdue') + count('pending');
+    const closed = completed + missed;
+    const onTimeDone = count('early') + count('on_time');
+
+    // Streaks over CLOSED instances, newest last (tasks are created_at asc):
+    // an early/on-time completion extends the streak; late/partial/incomplete breaks it.
+    let currentStreak = 0;
+    let bestStreak = 0;
+    let run = 0;
+    for (const { timing } of timings) {
+      if (timing === 'overdue' || timing === 'pending') continue; // still open — no verdict yet
+      if (timing === 'early' || timing === 'on_time') {
+        run += 1;
+        if (run > bestStreak) bestStreak = run;
+      } else {
+        run = 0;
+      }
+    }
+    currentStreak = run;
+
+    // Last 10 instances (open ones included so "still running" shows in the strip).
+    const recent = timings.slice(-10).map(({ task, timing }) => ({
+      task_id: task.id,
+      date: (task.deadline ?? task.created_at).toISOString(),
+      timing,
+    }));
+
+    // Per-person record. all_must instances judge each person's own part;
+    // any_can instances credit whoever actually closed the task.
+    const byUser = new Map<string, { assigned: number; done: number; late: number; missed: number }>();
+    const bump = (uid: string, key: 'assigned' | 'done' | 'late' | 'missed') => {
+      const row = byUser.get(uid) ?? { assigned: 0, done: 0, late: 0, missed: 0 };
+      row[key] += 1;
+      byUser.set(uid, row);
+    };
+    for (const { task, timing } of timings) {
+      const closedTask = timing !== 'overdue' && timing !== 'pending';
+      for (const a of task.assignees) {
+        bump(a.user_id, 'assigned');
+        if (task.completion_mode === 'all_must_complete') {
+          if (a.is_completed) {
+            bump(a.user_id, 'done');
+            if (a.completed_at && task.deadline && a.completed_at > task.deadline) bump(a.user_id, 'late');
+          } else if (a.cannot_complete || closedTask) {
+            bump(a.user_id, 'missed');
+          }
+        } else if (closedTask) {
+          // any_can: the person who closed it owns the outcome; a missed instance
+          // has no single owner, so nobody is charged for it.
+          if ((timing === 'early' || timing === 'on_time' || timing === 'late') && task.completed_by_user_id === a.user_id) {
+            bump(a.user_id, 'done');
+            if (timing === 'late') bump(a.user_id, 'late');
+          }
+        }
+      }
+    }
+    const userIds = Array.from(byUser.keys());
+    const users = userIds.length
+      ? await this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } })
+      : [];
+    const nameMap = new Map(users.map((u) => [u.id, u.name]));
+    const byAssignee = userIds
+      .map((uid) => ({ user_id: uid, name: nameMap.get(uid) ?? 'Unknown', ...byUser.get(uid)! }))
+      .sort((a, b) => b.assigned - a.assigned);
+
+    // Monthly trend — last 6 calendar months including the current one.
+    const months: { key: string; total: number; on_time: number; late: number; missed: number; open: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, total: 0, on_time: 0, late: 0, missed: 0, open: 0 });
+    }
+    const monthMap = new Map(months.map((m) => [m.key, m]));
+    for (const { task, timing } of timings) {
+      const d = task.created_at;
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const bucket = monthMap.get(key);
+      if (!bucket) continue; // older than the window
+      bucket.total += 1;
+      if (timing === 'early' || timing === 'on_time') bucket.on_time += 1;
+      else if (timing === 'late') bucket.late += 1;
+      else if (timing === 'partial' || timing === 'incomplete') bucket.missed += 1;
+      else bucket.open += 1;
+    }
+
     return {
       template_id: templateId,
+      completion_mode: template.completion_mode,
       total_instances: total,
       completed,
-      pending: total - completed,
+      pending: open,
+      missed,
+      overdue_open: count('overdue'),
       completion_ratio_percent: total > 0 ? Math.round((completed / total) * 100) : 0,
+      // Of the instances that have CLOSED, how many finished early/on time.
+      on_time_rate_percent: closed > 0 ? Math.round((onTimeDone / closed) * 100) : 0,
+      current_streak: currentStreak,
+      best_streak: bestStreak,
+      timing: {
+        early: count('early'),
+        on_time: count('on_time'),
+        late: count('late'),
+        partial: count('partial'),
+        incomplete: count('incomplete'),
+        overdue: count('overdue'),
+        pending: count('pending'),
+      },
+      recent,
+      by_assignee: byAssignee,
+      trend_monthly: months.map(({ key, ...rest }) => ({ month: key, ...rest })),
     };
   }
 }

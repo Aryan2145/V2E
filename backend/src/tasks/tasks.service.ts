@@ -29,6 +29,7 @@ import { ChecklistAccessService } from '../task-masters/checklist-access.service
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { normaliseExtensions } from './task-attachments.service';
+import { assertActiveOrgMembers } from '../common/org-members';
 import { R2Service } from '../storage/r2.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
@@ -624,10 +625,32 @@ export class TasksService {
     return this.getTask(orgId, taskId);
   }
 
+  /**
+   * A linked goal must be a real goal in THIS org — otherwise a pasted foreign id
+   * becomes a stored cross-tenant reference. Empty/undefined skips.
+   */
+  private async assertGoalInOrg(orgId: string, goalId: string | null | undefined): Promise<void> {
+    if (!goalId) return;
+    const goal = await this.prisma.goal.findFirst({
+      where: { id: goalId, organization_id: orgId },
+      select: { id: true },
+    });
+    if (!goal) throw new BadRequestException('Linked goal not found in this organization');
+  }
+
   // ─── Create Task ──────────────────────────────────────────────────────────────
 
   async createTask(orgId: string, userId: string, dto: CreateTaskDto) {
     await this.checkTaskPermission(orgId, userId, 'task_creation_roles');
+    await this.assertGoalInOrg(orgId, dto.goal_id);
+    await assertActiveOrgMembers(this.prisma, orgId, dto.escalation_user_ids, 'escalation contacts');
+    // Subject eligibility (below) checks policy, not membership — gate that here.
+    await assertActiveOrgMembers(
+      this.prisma,
+      orgId,
+      [...(dto.assignee_user_ids ?? []), ...(dto.cc_user_ids ?? [])],
+      'assignees or CC recipients',
+    );
     const config = await this.getOrgConfig(orgId);
 
     // Subject eligibility (fail loud, before any writes): every assignee must be
@@ -1732,6 +1755,7 @@ export class TasksService {
     if (old.created_by_user_id !== userId) {
       await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
     }
+    await this.assertGoalInOrg(orgId, dto.goal_id);
     const changedFields: Array<{ field: string; from: unknown; to: unknown }> = [];
 
     const updateData: any = {};
@@ -2914,7 +2938,9 @@ export class TasksService {
     if (task.created_by_user_id !== userId) {
       await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
     }
-    // A real assignee (not a CC) must be eligible to be assigned a task. Fail loud.
+    // Anyone put on a task — assignee or CC — must be an active member of this org.
+    await assertActiveOrgMembers(this.prisma, orgId, [dto.user_id], 'assignees or CC recipients');
+    // A real assignee (not a CC) must additionally be eligible to be assigned a task. Fail loud.
     if (!dto.is_cc) {
       await this.subjects.assertEligible(orgId, TasksService.TASK_SUBJECT, dto.user_id);
     }

@@ -7,6 +7,7 @@ import {
   MaxLength,
   ValidateNested,
   ArrayMinSize,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { IsNumber } from 'class-validator';
@@ -14,7 +15,7 @@ import { CompletionMode, TaskQuadrant } from '@prisma/client';
 import { CreateScheduleEntryDto } from './create-schedule-entry.dto';
 import { ReminderSpecDto } from '../../common/reminders/reminder-spec.dto';
 
-class RecurringChecklistItemDto {
+export class RecurringChecklistItemDto {
   @IsString()
   title: string;
 
@@ -61,6 +62,24 @@ export class CreateRecurringDto {
   @IsOptional()
   @IsBoolean()
   proof_required?: boolean;
+
+  // Allowed proof file extensions (empty = any type); copied to every spawned instance.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  proof_allowed_extensions?: string[];
+
+  // Ordered escalation contacts — level = position + 1 on each spawned instance.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(10)
+  escalation_user_ids?: string[];
+
+  // Links every spawned instance to a quarterly goal (initiative).
+  @IsOptional()
+  @IsString()
+  linked_goal_id?: string;
 
   @IsOptional()
   @IsArray()

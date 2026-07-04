@@ -6,19 +6,23 @@ import {
   IsString,
   MaxLength,
   ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CompletionMode, TaskQuadrant } from '@prisma/client';
 import { CreateScheduleEntryDto } from './create-schedule-entry.dto';
+import { RecurringChecklistItemDto } from './create-recurring.dto';
+import { ReminderSpecDto } from '../../common/reminders/reminder-spec.dto';
 
 export class UpdateRecurringDto {
   @IsOptional()
   @IsString()
-  @MaxLength(200)
+  @MaxLength(50)
   title?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   description?: string;
 
   @IsOptional()
@@ -47,6 +51,24 @@ export class UpdateRecurringDto {
   @IsBoolean()
   proof_required?: boolean;
 
+  // Allowed proof file extensions (empty = any type); applies to future instances.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  proof_allowed_extensions?: string[];
+
+  // Ordered escalation contacts — level = position + 1 on each spawned instance.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @ArrayMaxSize(10)
+  escalation_user_ids?: string[];
+
+  // Links every future instance to a quarterly goal. Empty string clears the link.
+  @IsOptional()
+  @IsString()
+  linked_goal_id?: string;
+
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -56,6 +78,20 @@ export class UpdateRecurringDto {
   @IsArray()
   @IsString({ each: true })
   cc_user_ids?: string[];
+
+  // Full replacement of the template's checklist definition (future instances only).
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RecurringChecklistItemDto)
+  checklist_items?: RecurringChecklistItemDto[];
+
+  // Full replacement of the template's reminder specs (future instances only).
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ReminderSpecDto)
+  reminders?: ReminderSpecDto[];
 
   @IsOptional()
   @IsString()

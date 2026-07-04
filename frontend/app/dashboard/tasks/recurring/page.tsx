@@ -10,18 +10,15 @@ import type {
   RecurringScheduleEntry,
   TaskCategory,
   TaskPriority,
-  CompletionMode,
-  YearlyDate,
+  TaskStatus,
 } from '@/lib/types/tasks'
-import type { SelectedAssignee, EligibleAssigneesResponse } from '@/lib/types/tasks'
-import AssigneeSelector from '@/components/tasks/AssigneeSelector'
+import type { EligibleAssigneesResponse } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from '@/components/tasks/AssigneeAvatars'
-import ScheduleEntryList from '@/components/tasks/ScheduleEntryList'
 import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
+import CreateTaskModal from '@/components/tasks/CreateTaskModal'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
-import StyledSelect from '@/components/ui/StyledSelect'
 import {
-  RotateCcw, Play, Pause, Calendar, Users, Plus, X, Trash2, Edit2, Info, Zap,
+  RotateCcw, Play, Pause, Calendar, Users, Plus, Trash2, Edit2, Zap,
 } from 'lucide-react'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -65,288 +62,91 @@ function formatDate(str: string): string {
   return new Date(str).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function defaultEntry(): ScheduleEntryDraft {
-  return {
-    schedule_type: 'daily',
-    every: 1,
-    days: [],
-    month_days: [],
-    yearly_dates: [],
-    time: '09:00',
-    start_date: new Date().toISOString().slice(0, 10),
-    end_condition: 'never',
-    end_date: '',
-    end_after: 10,
-  }
+// ─── Delete flow ──────────────────────────────────────────────────────────────
+
+type DeleteMode = 'stop' | 'delete-future' | 'delete-all'
+
+const DELETE_COPY: Record<DeleteMode, { title: string; body: string; confirm: string; danger: boolean }> = {
+  stop: {
+    title: 'Stop this recurring task?',
+    body: 'No new tasks will be created from it. Every task it already created stays untouched. You can Resume it any time.',
+    confirm: 'Stop',
+    danger: false,
+  },
+  'delete-future': {
+    title: 'Stop and remove open tasks?',
+    body: 'No new tasks will be created, and its still-open tasks are removed. Tasks that were already completed or closed are kept.',
+    confirm: 'Stop & remove open tasks',
+    danger: true,
+  },
+  'delete-all': {
+    title: 'Delete everything?',
+    body: 'The recurring task AND every task it ever created — including completed ones — will be deleted. This cannot be undone.',
+    confirm: 'Delete everything',
+    danger: true,
+  },
 }
 
-function entryToScheduleEntryDraft(e: RecurringScheduleEntry): ScheduleEntryDraft {
-  return {
-    schedule_type: e.schedule_type,
-    every: e.every,
-    days: (e.days as number[]) ?? [],
-    month_days: (e.month_days as number[]) ?? [],
-    yearly_dates: (e.yearly_dates as YearlyDate[]) ?? [],
-    time: e.time,
-    start_date: new Date(e.start_date).toISOString().slice(0, 10),
-    end_condition: e.end_condition,
-    end_date: e.end_date ? new Date(e.end_date).toISOString().slice(0, 10) : '',
-    end_after: e.end_after ?? 10,
-  }
-}
-
-// ─── Create modal ─────────────────────────────────────────────────────────────
-
-interface CreateRecurringModalProps {
-  orgId: string
-  categories: TaskCategory[]
-  priorities: TaskPriority[]
-  onClose: () => void
-  onCreated: (t: RecurringTemplate) => void
-}
-
-function CreateRecurringModal({ orgId, categories, priorities, onClose, onCreated }: CreateRecurringModalProps) {
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [priorityId, setPriorityId] = useState('')
-  const [categoryId, setCategoryId] = useState('')
-  const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
-  const [proofRequired, setProofRequired] = useState(false)
-  const [assignees, setAssignees] = useState<SelectedAssignee[]>([])
-  const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntryDraft[]>([defaultEntry()])
-
-  const primaryAssigneeCount = assignees.filter((a) => !a.is_cc).length
-
-  useEffect(() => {
-    if (primaryAssigneeCount <= 1) setCompletionMode('any_can_complete')
-  }, [primaryAssigneeCount])
-
-  const [submitting, setSubmitting] = useState(false)
+function DeleteConfirmDialog({
+  template,
+  mode,
+  onCancel,
+  onConfirm,
+}: {
+  template: RecurringTemplate
+  mode: DeleteMode
+  onCancel: () => void
+  onConfirm: () => Promise<void>
+}) {
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Portal target only exists on the client — guard against SSR mismatch.
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
-
-  useEffect(() => {
-    function handle(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', handle)
-    return () => document.removeEventListener('keydown', handle)
-  }, [onClose])
-
-  useEffect(() => {
-    document.body.style.overflow = 'hidden'
-    return () => { document.body.style.overflow = '' }
-  }, [])
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!title.trim()) { setError('Title is required.'); return }
-
-    for (const entry of scheduleEntries) {
-      if (entry.schedule_type === 'weekly' && entry.days.length === 0) {
-        setError('Select at least one day of the week for each weekly schedule.'); return
-      }
-      if (entry.schedule_type === 'monthly' && entry.month_days.length === 0) {
-        setError('Select at least one day of the month for each monthly schedule.'); return
-      }
-      if (entry.end_condition === 'on_date' && !entry.end_date) {
-        setError('End date is required for schedule entries with "On date" end condition.'); return
-      }
-    }
-
-    setSubmitting(true)
-    setError(null)
-    try {
-      const result = await tasksApi.createRecurring(orgId, {
-        title: title.trim(),
-        description: description.trim() || undefined,
-        category_id: categoryId || undefined,
-        priority_id: priorityId || undefined,
-        schedule_entries: scheduleEntries.map((e, idx) => ({
-          schedule_type: e.schedule_type,
-          every: e.every,
-          days: e.days,
-          month_days: e.month_days,
-          yearly_dates: e.yearly_dates,
-          time: e.time,
-          start_date: e.start_date,
-          end_condition: e.end_condition,
-          end_date: e.end_condition === 'on_date' ? e.end_date : undefined,
-          end_after: e.end_condition === 'after_n' ? e.end_after : undefined,
-          order_index: idx,
-        })),
-        completion_mode: completionMode,
-        proof_required: proofRequired,
-        assignee_user_ids: assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
-        cc_user_ids: assignees.filter((a) => a.is_cc).map((a) => a.user_id),
-      })
-      onCreated(result)
-    } catch {
-      setError('Failed to create recurring template. Please try again.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (!mounted) return null
-
+  const copy = DELETE_COPY[mode]
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/40"
+      onClick={(e) => { if (e.target === e.currentTarget && !busy) onCancel() }}
       role="dialog"
       aria-modal="true"
     >
-      <div className="relative w-full max-w-2xl bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[92vh] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0] shrink-0">
-          <div>
-            <h2 className="text-[22px] font-semibold text-[#0F172A]">Create Recurring Task</h2>
-            <p className="text-sm text-[#475569] mt-0.5">Set a schedule and a task will be created automatically.</p>
+      <div className="w-full max-w-sm bg-white rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] p-5">
+        <h3 className="text-[16px] font-semibold text-[#0F172A]">{copy.title}</h3>
+        <p className="text-sm text-[#475569] mt-1.5">
+          <span className="font-medium text-[#0F172A]">“{template.title}”</span> — {copy.body}
+        </p>
+        {error && (
+          <div className="mt-3 bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#DC2626]">
+            {error}
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-6">
-          {error && (
-            <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3 text-sm text-[#DC2626]">
-              {error}
-            </div>
-          )}
-
-          {/* ── Task Details ──────────────────────────────────────────────── */}
-          <div className="space-y-4">
-            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Task Details</p>
-
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">
-                Title <span className="text-[#DC2626]">*</span>
-              </label>
-              <input
-                type="text"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="e.g. Weekly team standup report"
-                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
-              />
-            </div>
-
-            {/* Assignees */}
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Assignees</label>
-              <AssigneeSelector orgId={orgId} value={assignees} onChange={setAssignees} />
-            </div>
-
-            {/* Completion mode — only when multiple non-CC assignees */}
-            {primaryAssigneeCount > 1 && (
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-2">Completion Mode</label>
-                <div className="flex gap-4">
-                  {(['any_can_complete', 'all_must_complete'] as CompletionMode[]).map((mode) => (
-                    <label key={mode} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="radio"
-                        name="completionMode"
-                        value={mode}
-                        checked={completionMode === mode}
-                        onChange={() => setCompletionMode(mode)}
-                        className="accent-[#2563EB]"
-                      />
-                      <span className="text-sm text-[#1E293B]">
-                        {mode === 'any_can_complete' ? 'Any assignee can complete' : 'All must complete'}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-[#374151] mb-1.5">Description</label>
-              <textarea
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Add a description..."
-                rows={2}
-                className="w-full border border-[#CBD5E1] rounded-[8px] px-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white resize-none"
-              />
-            </div>
-
-            {/* Priority + Category */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">Priority</label>
-                <StyledSelect
-                  value={priorityId}
-                  onChange={(v) => setPriorityId(v)}
-                  placeholder="No priority"
-                  options={[
-                    { value: '', label: 'No priority' },
-                    ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color })),
-                  ]}
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-[#374151] mb-1.5">Category</label>
-                <StyledSelect
-                  value={categoryId}
-                  onChange={(v) => setCategoryId(v)}
-                  placeholder="No category"
-                  options={[
-                    { value: '', label: 'No category' },
-                    ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color })),
-                  ]}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* ── Schedule Entries ──────────────────────────────────────────── */}
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Schedule</p>
-            <ScheduleEntryList entries={scheduleEntries} onChange={setScheduleEntries} />
-          </div>
-
-          {/* ── Completion settings ────────────────────────────────────────── */}
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Completion</p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setProofRequired((v) => !v)}
-                className={['relative w-10 h-5 rounded-full transition-colors', proofRequired ? 'bg-[#2563EB]' : 'bg-[#CBD5E1]'].join(' ')}
-                role="switch"
-                aria-checked={proofRequired}
-              >
-                <span className={['absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform', proofRequired ? 'translate-x-5' : ''].join(' ')} />
-              </button>
-              <span className="text-sm text-[#1E293B] font-medium">Proof of completion required</span>
-            </div>
-          </div>
-        </form>
-
-        {/* Footer */}
-        <div className="shrink-0 flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
+        )}
+        <div className="flex justify-end gap-2 mt-4">
           <button
             type="button"
-            onClick={onClose}
-            className="px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors"
+            onClick={onCancel}
+            disabled={busy}
+            className="px-4 py-2 text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] disabled:opacity-60 transition-colors"
           >
             Cancel
           </button>
           <button
             type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            onClick={async () => {
+              setBusy(true)
+              setError(null)
+              try {
+                await onConfirm()
+              } catch {
+                setError('Could not do this — you may not have permission to delete this recurring task.')
+              } finally {
+                setBusy(false)
+              }
+            }}
+            disabled={busy}
+            className={[
+              'px-4 py-2 text-sm font-semibold text-white rounded-[8px] disabled:opacity-60 transition-colors',
+              copy.danger ? 'bg-[#DC2626] hover:bg-[#B91C1C]' : 'bg-[#2563EB] hover:bg-[#1D4ED8]',
+            ].join(' ')}
           >
-            {submitting ? 'Creating...' : 'Create Recurring Task'}
+            {busy ? 'Working…' : copy.confirm}
           </button>
         </div>
       </div>
@@ -371,7 +171,7 @@ function RecurringCard({
   onEdit: () => void
   onPause: () => Promise<void>
   onResume: () => Promise<void>
-  onDelete: () => void
+  onDelete: (mode: DeleteMode) => void
   onSpawnToday: () => Promise<{ spawned: number }>
   onClick: () => void
   userMap: Map<string, { name: string; department?: string; role?: string }>
@@ -485,12 +285,27 @@ function RecurringCard({
               <Trash2 size={13} />
             </button>
             {showDeleteMenu && (
-              <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] p-1.5 min-w-[180px]">
+              <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] p-1.5 min-w-[220px]">
                 <button
-                  onClick={() => { setShowDeleteMenu(false); onDelete() }}
-                  className="w-full text-left px-3 py-2 text-sm text-[#DC2626] hover:bg-[#FEE2E2] rounded-[6px]"
+                  onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('stop') }}
+                  className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#F1F5F9]"
                 >
-                  Stop (keep instances)
+                  <span className="block text-sm font-medium text-[#0F172A]">Stop (keep all tasks)</span>
+                  <span className="block text-[11px] text-[#475569]">No new tasks; existing ones stay</span>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('delete-future') }}
+                  className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#FEE2E2]"
+                >
+                  <span className="block text-sm font-medium text-[#DC2626]">Stop & remove open tasks</span>
+                  <span className="block text-[11px] text-[#475569]">Completed ones are kept</span>
+                </button>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('delete-all') }}
+                  className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#FEE2E2]"
+                >
+                  <span className="block text-sm font-medium text-[#DC2626]">Delete everything</span>
+                  <span className="block text-[11px] text-[#475569]">Removes it and every task it created</span>
                 </button>
               </div>
             )}
@@ -559,10 +374,12 @@ export default function RecurringPage() {
   const [templates, setTemplates] = useState<RecurringTemplate[]>([])
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
+  const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [userMap, setUserMap] = useState<Map<string, { name: string; department?: string; role?: string }>>(new Map())
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ template: RecurringTemplate; mode: DeleteMode } | null>(null)
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -571,9 +388,10 @@ export default function RecurringPage() {
       tasksApi.getRecurringTemplates(orgId).catch(() => [] as RecurringTemplate[]),
       tasksApi.getCategories(orgId).catch(() => [] as TaskCategory[]),
       tasksApi.getPriorities(orgId).catch(() => [] as TaskPriority[]),
+      tasksApi.getStatuses(orgId).catch(() => [] as TaskStatus[]),
       tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 } as EligibleAssigneesResponse)),
-    ]).then(([t, c, p, eligible]) => {
-      setTemplates(t); setCategories(c); setPriorities(p)
+    ]).then(([t, c, p, s, eligible]) => {
+      setTemplates(t); setCategories(c); setPriorities(p); setStatuses(s)
       const map = new Map<string, { name: string; department?: string; role?: string }>()
       eligible.departments.forEach((dept) =>
         dept.users.forEach((u) => map.set(u.user_id, { name: u.name, department: u.department_name, role: u.role_title })),
@@ -594,9 +412,18 @@ export default function RecurringPage() {
     setTemplates((prev) => prev.map((t) => t.id === id ? { ...t, is_active: true } : t))
   }
 
-  async function handleDelete(id: string) {
-    await tasksApi.deleteRecurring(orgId, id, 'stop')
-    setTemplates((prev) => prev.filter((t) => t.id !== id))
+  async function handleDeleteConfirmed() {
+    if (!deleteTarget) return
+    const { template, mode } = deleteTarget
+    await tasksApi.deleteRecurring(orgId, template.id, mode)
+    if (mode === 'delete-all') {
+      // The template row itself is gone.
+      setTemplates((prev) => prev.filter((t) => t.id !== template.id))
+    } else {
+      // stop / delete-future keep the template around, just deactivated.
+      setTemplates((prev) => prev.map((t) => (t.id === template.id ? { ...t, is_active: false } : t)))
+    }
+    setDeleteTarget(null)
   }
 
   if (!orgId) {
@@ -665,7 +492,7 @@ export default function RecurringPage() {
               onEdit={() => setEditingTemplate(t)}
               onPause={() => handlePause(t.id)}
               onResume={() => handleResume(t.id)}
-              onDelete={() => handleDelete(t.id)}
+              onDelete={(mode) => setDeleteTarget({ template: t, mode })}
               onSpawnToday={() => tasksApi.spawnTodayRecurring(orgId, t.id).then((r) => { loadData(); return r })}
               userMap={userMap}
             />
@@ -673,18 +500,19 @@ export default function RecurringPage() {
         </div>
       )}
 
-      {showCreate && (
-        <CreateRecurringModal
-          orgId={orgId}
-          categories={categories}
-          priorities={priorities}
-          onClose={() => setShowCreate(false)}
-          onCreated={(t) => {
-            setTemplates((prev) => [t, ...prev])
-            setShowCreate(false)
-          }}
-        />
-      )}
+      {/* Same full-featured Create Task modal as everywhere else, locked to
+          Recurring — checklists, reminders, attachments, proof and escalation
+          all included (the old stripped-down recurring form is gone). */}
+      <CreateTaskModal
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={() => { setShowCreate(false); loadData() }}
+        categories={categories}
+        priorities={priorities}
+        statuses={statuses}
+        initialMode="recurring"
+        lockMode
+      />
 
       {editingTemplate && (
         <EditRecurringModal
@@ -697,6 +525,15 @@ export default function RecurringPage() {
             setTemplates((prev) => prev.map((t) => t.id === updated.id ? updated : t))
             setEditingTemplate(null)
           }}
+        />
+      )}
+
+      {deleteTarget && (
+        <DeleteConfirmDialog
+          template={deleteTarget.template}
+          mode={deleteTarget.mode}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={handleDeleteConfirmed}
         />
       )}
     </div>

@@ -1419,6 +1419,11 @@ model RecurringTemplate {
   is_active              Boolean  @default(true)
   completion_mode        CompletionMode @default(any_can_complete)
   proof_required         Boolean  @default(false)
+  // Allowed proof file extensions (empty = any type) — copied to every spawned instance.
+  proof_allowed_extensions String[] @default([])
+  // Ordered escalation contacts ([userId]) — materialized as TaskEscalation rows
+  // (level = position + 1) on every spawned instance so the escalation engine fires.
+  escalation_user_ids    Json     @default("[]")
   assignee_user_ids      Json     @default("[]")
   cc_user_ids            Json     @default("[]")
   // Flattened checklist definition ([{ title, group_title?, order_index }]) copied

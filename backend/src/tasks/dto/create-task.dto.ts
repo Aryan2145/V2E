@@ -8,6 +8,7 @@ import {
   IsString,
   MaxLength,
   ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CompletionMode, TaskQuadrant, TaskType } from '@prisma/client';
@@ -109,6 +110,7 @@ export class CreateTaskDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(10)
   escalation_user_ids?: string[];
 
   // Creator-set reminders. Undefined = legacy single default reminder;

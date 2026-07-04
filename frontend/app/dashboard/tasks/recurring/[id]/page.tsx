@@ -4,17 +4,20 @@ import React, { useEffect, useState, useMemo, useCallback } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
+import { goalsApi } from '@/lib/api/goals'
 import type {
-  RecurringTemplate, RecurringScheduleEntry, Task,
+  RecurringTemplate, RecurringScheduleEntry, Task, TaskAttachment,
   TaskCategory, TaskPriority, TaskStatus, EligibleAssigneeUser,
+  RecurringStats, RecurringInstanceTiming, ReminderSpec,
 } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
 import StyledSelect from '@/components/ui/StyledSelect'
+import { FILE_TYPE_GROUPS, groupsFromExtensions } from '@/lib/attachments'
 import {
   ArrowLeft, RotateCcw, Play, Pause, Edit2, Zap,
   CheckCircle2, Clock, ListChecks, BarChart2, Filter, Users,
-  Calendar, Shield, CheckSquare,
+  Calendar, Shield, CheckSquare, Flame, Target, TrendingUp, Bell, Paperclip, Download,
 } from 'lucide-react'
 
 // ─── Schedule helpers (mirrors recurring/page.tsx) ────────────────────────────
@@ -60,18 +63,176 @@ function avatarColor(str: string): string {
   return avatarColors[h % avatarColors.length]
 }
 
+// ─── Timing taxonomy (mirrors the Work Overview colors) ───────────────────────
+
+const TIMING_META: Record<RecurringInstanceTiming, { label: string; color: string; bg: string }> = {
+  early: { label: 'Early', color: '#0891B2', bg: '#E0F2FE' },
+  on_time: { label: 'On time', color: '#16A34A', bg: '#DCFCE7' },
+  late: { label: 'Late', color: '#D97706', bg: '#FEF9C3' },
+  partial: { label: 'Partly done', color: '#9333EA', bg: '#F3E8FF' },
+  incomplete: { label: 'Not done', color: '#DC2626', bg: '#FEE2E2' },
+  overdue: { label: 'Overdue (open)', color: '#DC2626', bg: '#FEE2E2' },
+  pending: { label: 'Open', color: '#94A3B8', bg: '#F1F5F9' },
+}
+
+function reminderSpecLabel(s: ReminderSpec): string {
+  const extras = (s.recipients ?? []).filter((r) => r !== 'assignee')
+  const who = extras.length ? ` → +${extras.join(' + ')}` : ''
+  if (s.kind === 'relative') {
+    const d = (s.offset_days ?? 0) === 0 ? 'On the day' : `${s.offset_days} day${s.offset_days !== 1 ? 's' : ''} before`
+    return `${d} · ${s.time ?? '09:00'}${who}`
+  }
+  const at = s.remind_at ? new Date(s.remind_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' }) : '?'
+  return `On ${at}${who}`
+}
+
 // ─── Stat card ────────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, icon, color }: { label: string; value: number | string; icon: React.ReactNode; color: string }) {
+function StatCard({ label, value, icon, color, hint }: { label: string; value: number | string; icon: React.ReactNode; color: string; hint?: string }) {
   return (
     <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 flex items-start gap-3">
       <div className="w-9 h-9 rounded-[8px] flex items-center justify-center shrink-0" style={{ backgroundColor: color + '18', color }}>
         {icon}
       </div>
-      <div>
+      <div className="min-w-0">
         <p className="text-2xl font-bold text-[#0F172A] leading-tight tabular-nums">{value}</p>
         <p className="text-sm text-[#475569] mt-0.5">{label}</p>
+        {hint && <p className="text-[11px] text-[#94A3B8] mt-0.5">{hint}</p>}
       </div>
+    </div>
+  )
+}
+
+// ─── Performance card ─────────────────────────────────────────────────────────
+
+function PerformanceCard({ stats, onOpenInstance }: { stats: RecurringStats; onOpenInstance: (taskId: string) => void }) {
+  const closed = stats.completed + stats.missed
+  const trendMax = Math.max(1, ...stats.trend_monthly.map((m) => m.total))
+  const shownTimings: RecurringInstanceTiming[] = ['early', 'on_time', 'late', 'partial', 'incomplete', 'overdue', 'pending']
+
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 space-y-5">
+      <div className="flex items-center gap-2">
+        <TrendingUp size={16} className="text-[#2563EB]" />
+        <h3 className="text-[16px] font-semibold text-[#0F172A]">Performance</h3>
+      </div>
+
+      {closed === 0 ? (
+        <p className="text-sm text-[#475569]">
+          No finished instances yet — the track record builds up as scheduled tasks get completed (or missed).
+        </p>
+      ) : (
+        <>
+          {/* Outcome strip — the last 10 instances at a glance */}
+          <div>
+            <p className="text-xs font-semibold text-[#64748B] uppercase tracking-wide mb-2">Last {stats.recent.length} outcomes</p>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {stats.recent.map((r) => {
+                const meta = TIMING_META[r.timing]
+                return (
+                  <button
+                    key={r.task_id}
+                    type="button"
+                    onClick={() => onOpenInstance(r.task_id)}
+                    title={`${formatDate(r.date)} — ${meta.label}`}
+                    className="w-7 h-7 rounded-[6px] border transition-transform hover:scale-110"
+                    style={{ backgroundColor: meta.bg, borderColor: meta.color }}
+                    aria-label={`${formatDate(r.date)} — ${meta.label}`}
+                  />
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap mt-2">
+              {shownTimings
+                .filter((t) => stats.timing[t === 'overdue' ? 'overdue' : t] > 0 || stats.recent.some((r) => r.timing === t))
+                .map((t) => (
+                  <span key={t} className="inline-flex items-center gap-1.5 text-[11px] text-[#475569]">
+                    <span className="w-2.5 h-2.5 rounded-[3px] border" style={{ backgroundColor: TIMING_META[t].bg, borderColor: TIMING_META[t].color }} />
+                    {TIMING_META[t].label}
+                  </span>
+                ))}
+            </div>
+          </div>
+
+          {/* Monthly trend — stacked bars, last 6 months */}
+          <div>
+            <p className="text-xs font-semibold text-[#64748B] uppercase tracking-wide mb-2">Monthly trend</p>
+            <div className="flex items-end gap-2 h-28">
+              {stats.trend_monthly.map((m) => {
+                const [y, mo] = m.month.split('-').map(Number)
+                const label = MONTHS_SHORT[(mo ?? 1) - 1]
+                const seg = (n: number) => `${(n / trendMax) * 100}%`
+                return (
+                  <div key={m.month} className="flex-1 flex flex-col items-center gap-1 h-full">
+                    <div
+                      className="w-full max-w-[44px] flex-1 flex flex-col-reverse rounded-[4px] overflow-hidden bg-[#F8FAFC] border border-[#F1F5F9]"
+                      title={`${label} ${y}: ${m.total} task${m.total !== 1 ? 's' : ''} — ${m.on_time} on time, ${m.late} late, ${m.missed} missed, ${m.open} open`}
+                    >
+                      <div style={{ height: seg(m.on_time), backgroundColor: '#16A34A' }} />
+                      <div style={{ height: seg(m.late), backgroundColor: '#D97706' }} />
+                      <div style={{ height: seg(m.missed), backgroundColor: '#DC2626' }} />
+                      <div style={{ height: seg(m.open), backgroundColor: '#CBD5E1' }} />
+                    </div>
+                    <span className="text-[10px] text-[#64748B]">{label}</span>
+                    <span className="text-[10px] font-semibold text-[#0F172A] tabular-nums -mt-1">{m.total > 0 ? m.total : ''}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex items-center gap-3 flex-wrap mt-2">
+              {([['On time', '#16A34A'], ['Late', '#D97706'], ['Missed', '#DC2626'], ['Still open', '#CBD5E1']] as const).map(([l, c]) => (
+                <span key={l} className="inline-flex items-center gap-1.5 text-[11px] text-[#475569]">
+                  <span className="w-2.5 h-2.5 rounded-[3px]" style={{ backgroundColor: c }} />
+                  {l}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* Per-person record */}
+          {stats.by_assignee.length > 0 && (
+            <div>
+              <p className="text-xs font-semibold text-[#64748B] uppercase tracking-wide mb-2">By person</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] font-semibold text-[#64748B] uppercase tracking-wide border-b border-[#E2E8F0]">
+                      <th className="py-1.5 pr-2">Person</th>
+                      <th className="py-1.5 px-2 text-right">Assigned</th>
+                      <th className="py-1.5 px-2 text-right">Done</th>
+                      <th className="py-1.5 px-2 text-right">Late</th>
+                      <th className="py-1.5 pl-2 text-right">Missed</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.by_assignee.map((a) => (
+                      <tr key={a.user_id} className="border-b border-[#F1F5F9] last:border-0">
+                        <td className="py-2 pr-2">
+                          <span className="inline-flex items-center gap-2 min-w-0">
+                            <span className={`w-6 h-6 rounded-full ${avatarColor(a.name)} flex items-center justify-center text-white text-[9px] font-bold shrink-0`}>
+                              {getInitials(a.name)}
+                            </span>
+                            <span className="text-[#0F172A] truncate">{a.name}</span>
+                          </span>
+                        </td>
+                        <td className="py-2 px-2 text-right tabular-nums text-[#475569]">{a.assigned}</td>
+                        <td className="py-2 px-2 text-right tabular-nums font-medium text-[#16A34A]">{a.done}</td>
+                        <td className={`py-2 px-2 text-right tabular-nums font-medium ${a.late > 0 ? 'text-[#D97706]' : 'text-[#94A3B8]'}`}>{a.late}</td>
+                        <td className={`py-2 pl-2 text-right tabular-nums font-medium ${a.missed > 0 ? 'text-[#DC2626]' : 'text-[#94A3B8]'}`}>{a.missed}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {stats.completion_mode === 'any_can_complete' && (
+                <p className="text-[11px] text-[#94A3B8] mt-1.5">
+                  “Done” credits whoever actually completed each day's task (anyone-can-complete mode).
+                </p>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
@@ -87,7 +248,9 @@ export default function RecurringDetailPage() {
 
   const [template, setTemplate] = useState<RecurringTemplate | null>(null)
   const [instances, setInstances] = useState<Task[]>([])
-  const [stats, setStats] = useState<{ total: number; completed: number; pending: number } | null>(null)
+  const [stats, setStats] = useState<RecurringStats | null>(null)
+  const [attachments, setAttachments] = useState<TaskAttachment[]>([])
+  const [goalTitle, setGoalTitle] = useState<string | null>(null)
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
@@ -108,15 +271,17 @@ export default function RecurringDetailPage() {
       tasksApi.getRecurringTemplates(orgId).catch(() => [] as RecurringTemplate[]),
       tasksApi.getRecurringInstances(orgId, templateId).catch(() => [] as Task[]),
       tasksApi.getRecurringStats(orgId, templateId).catch(() => null),
+      tasksApi.listRecurringAttachments(orgId, templateId).catch(() => [] as TaskAttachment[]),
       tasksApi.getCategories(orgId).catch(() => []),
       tasksApi.getPriorities(orgId).catch(() => []),
       tasksApi.getStatuses(orgId).catch(() => []),
       tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 })),
-    ]).then(([templates, inst, s, cats, prios, statuses, eligible]) => {
+    ]).then(([templates, inst, s, atts, cats, prios, statuses, eligible]) => {
       const found = (templates as RecurringTemplate[]).find((t) => t.id === templateId) ?? null
       setTemplate(found)
       setInstances(inst as Task[])
-      setStats(s as { total: number; completed: number; pending: number } | null)
+      setStats(s as RecurringStats | null)
+      setAttachments(atts as TaskAttachment[])
       setCategories(cats)
       setPriorities(prios)
       setStatuses(statuses)
@@ -129,6 +294,18 @@ export default function RecurringDetailPage() {
   }, [orgId, templateId])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Resolve the linked goal's title (if any) for the Settings card.
+  useEffect(() => {
+    const gid = template?.linked_goal_id
+    if (!gid || !orgId) { setGoalTitle(null); return }
+    let cancelled = false
+    goalsApi.get(orgId, gid)
+      .then((g) => { if (!cancelled) setGoalTitle(g?.title ?? 'Goal unavailable') })
+      // Deleted goal or no read access — show a fallback, not an eternal spinner.
+      .catch(() => { if (!cancelled) setGoalTitle('Goal unavailable') })
+    return () => { cancelled = true }
+  }, [template?.linked_goal_id, orgId])
 
   const filtered = useMemo(() => instances.filter((t) => {
     if (filterStatus !== 'all' && t.status_id !== filterStatus) return false
@@ -191,8 +368,14 @@ export default function RecurringDetailPage() {
     )
   }
 
-  const completionPct = stats && stats.total > 0 ? Math.round((stats.completed / stats.total) * 100) : 0
   const entries = template.schedule_entries ?? []
+  const proofGroups = groupsFromExtensions(template.proof_allowed_extensions ?? [])
+  const proofTypesLabel = proofGroups.size === FILE_TYPE_GROUPS.length
+    ? 'Any file type'
+    : FILE_TYPE_GROUPS.filter((g) => proofGroups.has(g.key)).map((g) => g.label).join(', ')
+  const escalationIds = template.escalation_user_ids ?? []
+  const checklistItems = template.checklist_items ?? []
+  const reminderSpecs = template.reminder_specs ?? []
 
   return (
     <div className="space-y-6">
@@ -258,19 +441,41 @@ export default function RecurringDetailPage() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — timing-aware headline numbers */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Total Instances" value={stats?.total ?? 0} icon={<ListChecks size={18} />} color="#2563EB" />
-        <StatCard label="Completed" value={stats?.completed ?? 0} icon={<CheckCircle2 size={18} />} color="#16A34A" />
-        <StatCard label="Pending" value={stats?.pending ?? 0} icon={<Clock size={18} />} color="#D97706" />
-        <StatCard label="Completion %" value={`${completionPct}%`} icon={<BarChart2 size={18} />} color="#0891B2" />
+        <StatCard label="Total Instances" value={stats?.total_instances ?? 0} icon={<ListChecks size={18} />} color="#2563EB" />
+        <StatCard
+          label="Completed"
+          value={stats?.completed ?? 0}
+          icon={<CheckCircle2 size={18} />}
+          color="#16A34A"
+          hint={stats && stats.missed > 0 ? `${stats.missed} missed` : undefined}
+        />
+        <StatCard
+          label="On-time rate"
+          value={`${stats?.on_time_rate_percent ?? 0}%`}
+          icon={<Clock size={18} />}
+          color="#0891B2"
+          hint="of finished instances"
+        />
+        <StatCard
+          label="Current streak"
+          value={stats?.current_streak ?? 0}
+          icon={<Flame size={18} />}
+          color="#D97706"
+          hint={stats ? `best: ${stats.best_streak} on time in a row` : undefined}
+        />
       </div>
 
       {/* Body */}
       <div className="flex flex-col lg:flex-row gap-6 items-start">
 
-        {/* ── Main: Instances list ───────────────────────────────────────── */}
+        {/* ── Main: Performance + instances list ─────────────────────────── */}
         <div className="flex-1 min-w-0 space-y-4">
+          {stats && stats.total_instances > 0 && (
+            <PerformanceCard stats={stats} onOpenInstance={(id) => router.push(`/dashboard/tasks/${id}`)} />
+          )}
+
           {/* Toolbar */}
           <div className="flex items-center gap-2 flex-wrap justify-between">
             <div className="flex items-center gap-2 flex-wrap">
@@ -388,7 +593,7 @@ export default function RecurringDetailPage() {
               <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-3 flex items-center gap-1.5">
                 <Users size={12} /> Assignees
               </p>
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-64 overflow-y-auto">
                 {template.assignee_user_ids.map((uid) => {
                   const name = userMap.get(uid) ?? uid.slice(0, 8)
                   return (
@@ -421,9 +626,35 @@ export default function RecurringDetailPage() {
                 <Shield size={14} className="text-[#94A3B8] mt-0.5 shrink-0" />
                 <div>
                   <p className="text-[#475569] text-xs mb-0.5">Proof Required</p>
-                  <p className="text-[#0F172A] font-medium">{template.proof_required ? 'Yes' : 'No'}</p>
+                  <p className="text-[#0F172A] font-medium">
+                    {template.proof_required ? `Yes · ${proofTypesLabel}` : 'No'}
+                  </p>
                 </div>
               </div>
+              {escalationIds.length > 0 && (
+                <div className="flex items-start gap-2">
+                  <TrendingUp size={14} className="text-[#94A3B8] mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[#475569] text-xs mb-0.5">Escalation (when overdue)</p>
+                    <div className="space-y-0.5">
+                      {escalationIds.map((uid, i) => (
+                        <p key={uid} className="text-[#0F172A] font-medium">
+                          <span className="text-[#94A3B8] font-normal">L{i + 1}</span> {userMap.get(uid) ?? uid.slice(0, 8)}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {template.linked_goal_id && (
+                <div className="flex items-start gap-2">
+                  <Target size={14} className="text-[#94A3B8] mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[#475569] text-xs mb-0.5">Linked Goal</p>
+                    <p className="text-[#0F172A] font-medium break-words">{goalTitle ?? 'Loading…'}</p>
+                  </div>
+                </div>
+              )}
               {template.category_id && categories.find((c) => c.id === template.category_id) && (
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: categories.find((c) => c.id === template.category_id)?.color }} />
@@ -439,6 +670,75 @@ export default function RecurringDetailPage() {
             </div>
           </div>
 
+          {/* Checklist carried onto every instance */}
+          {checklistItems.length > 0 && (
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
+              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <CheckSquare size={12} /> Checklist
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold normal-case">
+                  {checklistItems.length}
+                </span>
+              </p>
+              <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                {[...checklistItems].sort((a, b) => a.order_index - b.order_index).map((item, i, arr) => {
+                  const showHeading = !!item.group_title && (i === 0 || arr[i - 1].group_title !== item.group_title)
+                  return (
+                    <React.Fragment key={i}>
+                      {showHeading && (
+                        <p className={`text-[11px] font-semibold text-[#64748B] ${i > 0 ? 'pt-2' : ''}`}>{item.group_title}</p>
+                      )}
+                      <div className="flex items-start gap-2">
+                        <div className="w-3.5 h-3.5 mt-0.5 rounded border border-[#CBD5E1] shrink-0" />
+                        <span className="text-sm text-[#0F172A]">{item.title}</span>
+                      </div>
+                    </React.Fragment>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Reminders applied to every instance */}
+          {reminderSpecs.length > 0 && (
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
+              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Bell size={12} /> Reminders
+              </p>
+              <div className="space-y-1.5">
+                {reminderSpecs.map((s, i) => (
+                  <p key={i} className="text-sm text-[#0F172A]">{reminderSpecLabel(s)}</p>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Attachments copied onto every instance */}
+          {attachments.length > 0 && (
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5">
+              <p className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Paperclip size={12} /> Attachments
+                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold normal-case">
+                  {attachments.length}
+                </span>
+              </p>
+              <div className="space-y-1.5 max-h-56 overflow-y-auto">
+                {attachments.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => tasksApi.downloadRecurringAttachment(orgId, templateId, a.id)}
+                    className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
+                    title="Download"
+                  >
+                    <Download size={13} className="text-[#94A3B8] shrink-0" />
+                    <span className="text-sm text-[#2563EB] truncate">{a.file_name}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-[#94A3B8] mt-2">Copied onto every new instance.</p>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -449,7 +749,7 @@ export default function RecurringDetailPage() {
           categories={categories}
           priorities={priorities}
           onClose={() => setShowEditModal(false)}
-          onUpdated={(updated) => { setTemplate(updated); setShowEditModal(false) }}
+          onUpdated={() => { setShowEditModal(false); loadData() }}
         />
       )}
     </div>

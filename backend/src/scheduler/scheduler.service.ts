@@ -9,6 +9,7 @@ import { LeaveService } from '../leave/leave.service';
 import { R2Service } from '../storage/r2.service';
 import { extensionOf } from '../tasks/task-attachments.service';
 import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
+import { filterActiveOrgMembers } from '../common/org-members';
 import { resolveRemindAt, expandReminderRows, type ReminderSpec } from '../common/reminders/reminder-spec';
 import { isTerminal, TERMINAL_TYPES } from '../tasks/status-phase';
 
@@ -254,6 +255,17 @@ export class SchedulerService {
         return false;
       }
 
+      // The goal link is re-verified per spawn — a goal deleted after the template
+      // was created must not abort every future spawn on a dangling reference.
+      let goalId: string | undefined;
+      if (template.linked_goal_id) {
+        const goal = await this.prisma.goal.findFirst({
+          where: { id: template.linked_goal_id, organization_id: template.organization_id },
+          select: { id: true },
+        });
+        goalId = goal?.id;
+      }
+
       const task = await this.prisma.task.create({
         data: {
           organization_id: template.organization_id,
@@ -268,6 +280,10 @@ export class SchedulerService {
           department_id: template.department_id ?? undefined,
           completion_mode: template.completion_mode,
           proof_required: template.proof_required,
+          proof_allowed_extensions: Array.isArray(template.proof_allowed_extensions)
+            ? template.proof_allowed_extensions
+            : [],
+          goal_id: goalId,
           deadline: adjustedDeadline,
           recurring_template_id: template.id,
           created_at: now, // align instance date with the (possibly simulated) clock
@@ -287,6 +303,29 @@ export class SchedulerService {
         await this.prisma.taskAssignee.createMany({
           data: ccIds.map((uid) => ({ organization_id: template.organization_id, task_id: task.id, user_id: uid, is_cc: true })),
           skipDuplicates: true,
+        });
+      }
+
+      // Materialize the template's escalation contacts so the escalation engine
+      // fires when this instance goes overdue (level = list position + 1).
+      // Membership is re-verified per spawn — a contact who left the org is
+      // skipped rather than getting rows the engine would escalate into a void.
+      const escalationIds = Array.isArray(template.escalation_user_ids)
+        ? await filterActiveOrgMembers(
+            this.prisma,
+            template.organization_id,
+            template.escalation_user_ids as string[],
+          )
+        : [];
+      if (escalationIds.length > 0) {
+        await this.prisma.taskEscalation.createMany({
+          data: escalationIds.map((uid, idx) => ({
+            organization_id: template.organization_id,
+            task_id: task.id,
+            level: idx + 1,
+            escalate_to_user_id: uid,
+            is_active: true,
+          })),
         });
       }
 

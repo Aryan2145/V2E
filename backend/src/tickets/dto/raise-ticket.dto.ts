@@ -4,6 +4,7 @@ import {
   IsOptional,
   IsString,
   ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator'
 import { Type } from 'class-transformer'
 
@@ -52,5 +53,6 @@ export class RaiseTicketDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  @ArrayMaxSize(10)
   escalation_user_ids?: string[]
 }
