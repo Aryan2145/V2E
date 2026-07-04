@@ -79,6 +79,12 @@ export class CreateTaskDto {
   @IsDateString()
   deadline?: string;
 
+  // The user saw the "deadline falls on a holiday / non-working day" warning and
+  // explicitly chose to keep the date — the system never forces the holiday rule.
+  @IsOptional()
+  @IsBoolean()
+  holiday_override?: boolean;
+
   @IsOptional()
   @IsArray()
   @IsString({ each: true })

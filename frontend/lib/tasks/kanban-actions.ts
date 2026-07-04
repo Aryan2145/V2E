@@ -1,4 +1,5 @@
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import { TERMINAL_STATUS_PHASES, type Task, type TaskStatus } from '@/lib/types/tasks'
 
 // The Kanban board's meaning follows the viewer's role: on "My Tasks" a drag acts on
@@ -10,9 +11,9 @@ export function isTerminalType(type?: string | null): boolean {
   return !!type && TERMINAL_STATUS_PHASES.includes(type as never)
 }
 
-/** Is a closed task still inside its frictionless undo window? */
+/** Is a closed task still inside its frictionless undo window? (sim-clock aware) */
 export function withinUndoWindow(task: Task): boolean {
-  return !!task.reopen_expires_at && new Date(task.reopen_expires_at).getTime() > Date.now()
+  return !!task.reopen_expires_at && new Date(task.reopen_expires_at).getTime() > getNow().getTime()
 }
 
 /**
@@ -87,13 +88,22 @@ export async function resolveKanbanDrop(
     if (!withinUndoWindow(task)) {
       return { kind: 'blocked', message: 'This task is locked. Reopen it from the task page to change the outcome.' }
     }
-    const reopened = await tasksApi.reopenTask(orgId, task.id) // frictionless undo
-    if (!targetTerminal) {
-      if (!allMust) return { kind: 'done', task: await tasksApi.setSharedStatus(orgId, task.id, target.id) }
-      if (perspective === 'assignee') return { kind: 'done', task: await tasksApi.setAssigneeStatus(orgId, task.id, target.id) }
-      return { kind: 'done', task: reopened } // owner all_must → just reopened (per-person set on the task page)
+    if (allMust && perspective === 'assignee') {
+      // Undo ONLY the viewer's part — one person's drag-back must never erase the
+      // co-assignees' finished work. The whole-task reset stays an owner action.
+      await tasksApi.reopenAssigneePart(orgId, task.id, 'me')
+      if (!targetTerminal) {
+        return { kind: 'done', task: await tasksApi.setAssigneeStatus(orgId, task.id, target.id) }
+      }
+      // target terminal → re-close their now-open part below
+    } else {
+      const reopened = await tasksApi.reopenTask(orgId, task.id) // frictionless undo
+      if (!targetTerminal) {
+        if (!allMust) return { kind: 'done', task: await tasksApi.setSharedStatus(orgId, task.id, target.id) }
+        return { kind: 'done', task: reopened } // owner all_must → just reopened (per-person set on the task page)
+      }
+      // target terminal → re-close the now-open task below
     }
-    // target terminal → re-close the now-open task below
   }
 
   // Target: an open stage.

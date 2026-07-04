@@ -560,8 +560,8 @@ export default function TaskDetailPage() {
       setShowReopenModal(false)
       setReopenReason('')
       await loadTask()
-    } catch {
-      // ignore
+    } catch (e) {
+      showActionError(e)
     } finally {
       setActionLoading(null)
     }
@@ -579,8 +579,8 @@ export default function TaskDetailPage() {
       setIncompleteTarget(null)
       setIncompleteReason('')
       await loadTask()
-    } catch {
-      // ignore — surfaced by staying on the reason box
+    } catch (e) {
+      showActionError(e)
     } finally {
       setActionLoading(null)
     }
@@ -596,19 +596,26 @@ export default function TaskDetailPage() {
       setSelectedStatusId(updated.status_id)
       setIncompleteTarget(null)
       setIncompleteReason('')
-    } catch {
-      // ignore
+    } catch (e) {
+      showActionError(e)
     } finally {
       setActionLoading(null)
     }
   }
 
   async function handleDelete() {
+    // The backend requires a non-blank reason — catch it here so the field's
+    // "(optional)" label never lies and a blank submit doesn't silently no-op.
+    if (!deleteReason.trim()) {
+      addToast('A reason is required to delete this task.', 'warning')
+      return
+    }
     setActionLoading('delete')
     try {
-      await tasksApi.deleteTask(orgId, taskId, deleteReason || undefined)
+      await tasksApi.deleteTask(orgId, taskId, deleteReason.trim())
       router.push('/dashboard/tasks')
-    } catch {
+    } catch (e) {
+      showActionError(e)
       setActionLoading(null)
     }
   }
@@ -1152,15 +1159,16 @@ export default function TaskDetailPage() {
               type="text"
               value={deleteReason}
               onChange={(e) => setDeleteReason(e.target.value)}
-              placeholder="Reason for deletion (optional)"
+              placeholder="Reason for deletion (required)"
+              autoFocus
               className="mt-2 w-full border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none bg-white focus:border-[#DC2626]"
             />
           </div>
           <div className="flex gap-2 shrink-0">
             <button
               onClick={handleDelete}
-              disabled={actionLoading === 'delete'}
-              className="px-4 py-2 text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:opacity-60 transition-colors"
+              disabled={actionLoading === 'delete' || !deleteReason.trim()}
+              className="px-4 py-2 text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
               {actionLoading === 'delete' ? 'Deleting...' : 'Confirm Delete'}
             </button>
@@ -1439,31 +1447,53 @@ export default function TaskDetailPage() {
                     <p className="mt-1 text-[11px] text-[#64748B]">
                       {reopenSecondsLeft > 0
                         ? `You can undo this for the next ${formatCountdown(reopenSecondsLeft)}. After that it locks.`
-                        : 'Reopen the task to change its status.'}
+                        : isCreator
+                          ? 'Reopen the task to change its status.'
+                          : 'This task is locked. Only the task creator can reopen it.'}
                     </p>
                   </div>
                 ) : isAllMustComplete ? (
                   <>
                   {isAssignee ? (
-                    // My own status track — moves only my part. The terminal "Can't complete"
-                    // (my part) and, for the owner, "Mark whole task incomplete" live at the
-                    // bottom of the same dropdown, below a divider.
-                    <>
-                      <StyledSelect
-                        value={myTrackId}
-                        onChange={(v) => {
-                          if (v === MARK_MY_PART) { setIncompleteReason(''); setIncompleteTarget('my_part') }
-                          else if (v === MARK_TASK) { setIncompleteReason(''); setIncompleteTarget('task') }
-                          else handleMyTrackChange(v)
-                        }}
-                        options={[
-                          ...openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
-                          ...(myAssignee?.is_completed ? [] : [{ value: MARK_MY_PART, label: "Can't complete (my part)", variant: 'danger' as const, divider: true, action: true }]),
-                          ...(canEdit ? [{ value: MARK_TASK, label: 'Mark whole task incomplete', variant: 'danger' as const, divider: !myAssignee?.is_completed ? false : true, action: true }] : []),
-                        ]}
-                      />
-                      <p className="mt-2 text-[11px] text-[#64748B]">This is <span className="font-semibold text-[#64748B]">your</span> status. Everyone&apos;s progress is shown in Assignees below.</p>
-                    </>
+                    // My own status track — moves only my part. Once MY part is done, the
+                    // track control no longer applies to me (there's no open state left to
+                    // pick) — show a read-only "done" chip instead of a select that looks
+                    // unset and silently no-ops on change.
+                    myAssignee?.is_completed ? (
+                      <>
+                        <span className="inline-flex items-center gap-1.5 rounded-[999px] px-3 py-1 text-sm font-medium text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0]">
+                          <CheckCircle2 size={14} /> Your part is done
+                        </span>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => { setIncompleteReason(''); setIncompleteTarget('task') }}
+                            className="mt-2 flex items-center gap-1.5 text-[12px] font-semibold text-[#DC2626] hover:text-[#B91C1C] transition-colors"
+                          >
+                            <XCircle size={13} />
+                            Mark whole task incomplete
+                          </button>
+                        )}
+                        <p className="mt-2 text-[11px] text-[#64748B]">Everyone&apos;s progress is shown in Assignees below.</p>
+                      </>
+                    ) : (
+                      <>
+                        <StyledSelect
+                          value={myTrackId}
+                          onChange={(v) => {
+                            if (v === MARK_MY_PART) { setIncompleteReason(''); setIncompleteTarget('my_part') }
+                            else if (v === MARK_TASK) { setIncompleteReason(''); setIncompleteTarget('task') }
+                            else handleMyTrackChange(v)
+                          }}
+                          options={[
+                            ...openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color })),
+                            { value: MARK_MY_PART, label: "Can't complete (my part)", variant: 'danger' as const, divider: true, action: true },
+                            ...(canEdit ? [{ value: MARK_TASK, label: 'Mark whole task incomplete', variant: 'danger' as const, divider: true, action: true }] : []),
+                          ]}
+                        />
+                        <p className="mt-2 text-[11px] text-[#64748B]">This is <span className="font-semibold text-[#64748B]">your</span> status. Everyone&apos;s progress is shown in Assignees below.</p>
+                      </>
+                    )
                   ) : (
                     // Creator/admin without a personal part — read-only overall roll-up, plus
                     // the owner's "Mark task incomplete" action (kept inside the Status card).

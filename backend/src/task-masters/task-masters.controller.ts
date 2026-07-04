@@ -19,6 +19,7 @@ import { RequirePermission } from '../common/decorators/require-permission.decor
 import { TaskMastersService } from './task-masters.service';
 import { ChecklistAccessService } from './checklist-access.service';
 import { ChecklistImportService } from './checklist-import.service';
+import { PermissionsService, principalFromUser } from '../access-rights/permissions.service';
 import { BulkImportChecklistsDto } from './dto/bulk-import-checklist.dto';
 import { UpdateConfigDto } from './dto/update-config.dto';
 import { CreateCategoryDto } from './dto/create-category.dto';
@@ -35,6 +36,7 @@ export class TaskMastersController {
     private readonly service: TaskMastersService,
     private readonly checklistAccess: ChecklistAccessService,
     private readonly checklistImport: ChecklistImportService,
+    private readonly permissions: PermissionsService,
   ) {}
 
   // ─── Config ─────────────────────────────────────────────────────────────────
@@ -191,9 +193,18 @@ export class TaskMastersController {
   // ─── Checklist Templates ─────────────────────────────────────────────────────
 
   @Get('checklist-templates')
-  @ApiOperation({ summary: 'List checklist templates' })
-  listTemplates(@Param('orgId') orgId: string) {
-    return this.service.listChecklistTemplates(orgId);
+  @ApiOperation({ summary: 'List checklist templates (managers see all; others only what they may use)' })
+  async listTemplates(@Param('orgId') orgId: string, @Request() req: any) {
+    // A restricted template's CONTENTS must not leak through the masters list: only
+    // someone who may manage templates sees the full catalogue; everyone else gets
+    // exactly the set they could pick in task creation (access rules applied).
+    const principal = principalFromUser(req.user);
+    const canManage =
+      principal.isAdmin ||
+      (await this.permissions.hasEffective(orgId, principal, 'tasks.config.checklist_templates.manage', PermissionAction.edit)) ||
+      (await this.permissions.hasEffective(orgId, principal, 'tasks.config.checklist_templates.manage', PermissionAction.write));
+    if (canManage) return this.service.listChecklistTemplates(orgId);
+    return this.checklistAccess.listAccessibleTemplates(orgId, req.user.id);
   }
 
   @Get('checklist-templates/accessible')

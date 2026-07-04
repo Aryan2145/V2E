@@ -108,17 +108,40 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   }, [deadlineDate, orgId])
 
   useEffect(() => {
-    function handle(e: KeyboardEvent) { if (e.key === 'Escape') onClose() }
+    function handle(e: KeyboardEvent) { if (e.key === 'Escape') handleCloseAttempt() }
     document.addEventListener('keydown', handle)
     return () => document.removeEventListener('keydown', handle)
-  }, [onClose])
+  })
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
   }, [])
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Surface the backend's real reason (e.g. an inactive category, an ineligible
+  // assignee) instead of a generic message — the same convention as CreateTaskModal.
+  function apiErrorMessage(e: unknown, fallback: string): string {
+    const m = (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message
+    if (Array.isArray(m)) return m[0] ?? fallback
+    return typeof m === 'string' && m ? m : fallback
+  }
+
+  const isDirty =
+    title !== task.title ||
+    description !== (task.description ?? '') ||
+    priorityId !== (task.priority_id ?? '') ||
+    categoryId !== (task.category_id ?? '') ||
+    (!taskIsTerminal && statusId !== task.status_id) ||
+    deadline !== (task.deadline ?? '') ||
+    completionMode !== (task.completion_mode ?? 'any_can_complete') ||
+    proofRequired !== (task.proof_required ?? false)
+
+  function handleCloseAttempt() {
+    if (isDirty && !window.confirm('Discard your unsaved changes?')) return
+    onClose()
+  }
+
+  async function handleSubmit(e: React.FormEvent, holidayOverride = false) {
     e.preventDefault()
     if (!title.trim()) { setError('Title is required.'); return }
     if (!deadlineDate) { setError('Deadline is required.'); return }
@@ -133,13 +156,24 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
         // Don't touch status for a closed task — that's the Reopen action's job.
         status_id: taskIsTerminal ? undefined : (statusId || undefined),
         deadline: deadline || undefined,
+        holiday_override: holidayOverride,
         completion_mode: completionMode,
         proof_required: proofRequired,
         proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
-      })
+      } as any)
       onSaved(updated)
-    } catch {
-      setError('Failed to save changes. Please try again.')
+    } catch (e2) {
+      const msg = apiErrorMessage(e2, 'Failed to save changes. Please try again.')
+      // The holiday rule never forces itself — if this is the holiday rejection,
+      // offer to keep the date as-is instead of just failing.
+      if (/non-working day/i.test(msg)) {
+        if (window.confirm(`${msg}\n\nKeep this date anyway?`)) {
+          setSubmitting(false)
+          await handleSubmit(e, true)
+          return
+        }
+      }
+      setError(msg)
     } finally {
       setSubmitting(false)
     }
@@ -150,13 +184,16 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   return createPortal(
     <div
       className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={(e) => { if (e.target === e.currentTarget) handleCloseAttempt() }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="edit-task-modal-title"
     >
       <div className="relative w-full max-w-2xl bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[92vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0] shrink-0">
-          <h2 className="text-[22px] font-semibold text-[#0F172A]">Edit Task</h2>
-          <button onClick={onClose} className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors">
+          <h2 id="edit-task-modal-title" className="text-[22px] font-semibold text-[#0F172A]">Edit Task</h2>
+          <button onClick={handleCloseAttempt} className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors">
             <X size={18} />
           </button>
         </div>

@@ -281,7 +281,15 @@ export default function CreateTaskModal({
     if (!deadlineTime) setDeadlineTime('23:59')
   }
 
-  async function handleSubmit(e: React.FormEvent) {
+  // Surface the backend's real reason (e.g. an inactive category, an ineligible
+  // assignee) instead of a generic message.
+  function apiErrorMessage(e: unknown, fallback: string): string {
+    const m = (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message
+    if (Array.isArray(m)) return m[0] ?? fallback
+    return typeof m === 'string' && m ? m : fallback
+  }
+
+  async function handleSubmit(e: React.FormEvent, holidayOverride = false) {
     e.preventDefault()
     if (mode === 'recurring') { await handleCreateRecurring(); return }
     if (!title.trim()) { setError('Title is required.'); return }
@@ -304,6 +312,7 @@ export default function CreateTaskModal({
         category_id: categoryId || undefined,
         status_id: statusId || undefined,
         deadline: deadline || undefined,
+        holiday_override: holidayOverride,
         completion_mode: completionMode,
         proof_required: proofRequired,
         proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
@@ -316,7 +325,7 @@ export default function CreateTaskModal({
           new Set(checklistGroups.filter((g) => g.templateId).map((g) => g.templateId as string)),
         ),
         reminders: buildReminderSpecs(reminders, true, deadlineDate),
-      })
+      } as any)
       // Upload any attached documents to the freshly-created task. Files upload
       // sequentially so a partial failure is easy to surface without losing the task.
       if (attachmentFiles.length > 0) {
@@ -325,19 +334,29 @@ export default function CreateTaskModal({
             await tasksApi.uploadTaskAttachment(orgId, newTask.id, file)
           }
         } catch {
-          // The task exists — only the upload failed. Keep the modal open so the user
-          // sees why; the task will still appear in the list once they close it.
-          setError('Task created, but an attachment failed to upload. Open the task to add it again.')
+          // The task exists — only the upload failed. Keep the modal OPEN so the user
+          // actually sees why: every caller closes the modal inside onCreated, which
+          // would unmount this message before it ever rendered. onTaskCreated still
+          // refreshes the underlying list so the new task is visible in the background.
+          setError('Task created, but an attachment failed to upload. Close this to view the task and add it again.')
           onTaskCreated?.(newTask)
-          onCreated()
           return
         }
       }
       reset()
       onTaskCreated?.(newTask)
       onCreated()
-    } catch {
-      setError('Failed to create task. Please try again.')
+    } catch (e2) {
+      const msg = apiErrorMessage(e2, 'Failed to create task. Please try again.')
+      // The holiday rule never forces itself — offer to keep the chosen date.
+      if (/non-working day/i.test(msg)) {
+        if (window.confirm(`${msg}\n\nKeep this date anyway?`)) {
+          setSubmitting(false)
+          await handleSubmit(e, true)
+          return
+        }
+      }
+      setError(msg)
     } finally {
       setSubmitting(false)
     }

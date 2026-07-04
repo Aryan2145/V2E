@@ -194,14 +194,26 @@ export class TaskAttachmentsService {
     return this.enrich(attachment.id).catch(() => ({ ...attachment, uploaded_by_name: null }));
   }
 
+  /**
+   * A "private" proof must stay private EVERYWHERE — the ordinary attachments list and
+   * download must never surface what the Proof panel hides. Same rule as listProofs:
+   * the uploader, the assigner (task creator), or an admin.
+   */
+  private filterProofVisibility<
+    T extends { is_proof: boolean; proof_visibility: ProofVisibility | null; uploaded_by_user_id: string },
+  >(rows: T[], creatorUserId: string, viewer: { userId: string; isAdmin: boolean }): T[] {
+    const isCreator = creatorUserId === viewer.userId;
+    return rows.filter((r) => !r.is_proof || this.canSeeProof(r, { ...viewer, isCreator }));
+  }
+
   /** Task-level attachments (not tied to a comment), newest first. */
-  async listForTask(orgId: string, taskId: string) {
-    await this.assertTask(orgId, taskId);
+  async listForTask(orgId: string, taskId: string, viewer: { userId: string; isAdmin: boolean }) {
+    const task = await this.loadTaskForProof(orgId, taskId);
     const rows = await this.prisma.taskAttachment.findMany({
       where: { organization_id: orgId, task_id: taskId, comment_id: null, is_deleted: false },
       orderBy: { created_at: 'desc' },
     });
-    return this.attachUploaderNames(rows);
+    return this.attachUploaderNames(this.filterProofVisibility(rows, task.created_by_user_id, viewer));
   }
 
   /**
@@ -209,21 +221,25 @@ export class TaskAttachmentsService {
    * AND those shared inside comments — newest first. Each row keeps its `comment_id`
    * so the UI can show where it came from, plus the uploader's name.
    */
-  async listAllForTask(orgId: string, taskId: string) {
-    await this.assertTask(orgId, taskId);
+  async listAllForTask(orgId: string, taskId: string, viewer: { userId: string; isAdmin: boolean }) {
+    const task = await this.loadTaskForProof(orgId, taskId);
     const rows = await this.prisma.taskAttachment.findMany({
       where: { organization_id: orgId, task_id: taskId, is_deleted: false, ...LIVE_PARENT_COMMENT },
       orderBy: { created_at: 'desc' },
     });
-    return this.attachUploaderNames(rows);
+    return this.attachUploaderNames(this.filterProofVisibility(rows, task.created_by_user_id, viewer));
   }
 
   /** A short-lived signed URL that streams the file with its original name. */
-  async getDownloadUrl(orgId: string, taskId: string, attachmentId: string) {
+  async getDownloadUrl(orgId: string, taskId: string, attachmentId: string, viewer: { userId: string; isAdmin: boolean }) {
+    const task = await this.loadTaskForProof(orgId, taskId);
     const att = await this.prisma.taskAttachment.findFirst({
       where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false, ...LIVE_PARENT_COMMENT },
     });
-    if (!att) throw new NotFoundException('Attachment not found');
+    // 404 (not 403) when hidden — never leak that a private proof exists.
+    if (!att || (att.is_proof && !this.canSeeProof(att, { ...viewer, isCreator: task.created_by_user_id === viewer.userId }))) {
+      throw new NotFoundException('Attachment not found');
+    }
     const url = await this.r2.getSignedDownloadUrl(att.storage_key, att.file_name);
     return { url, file_name: att.file_name };
   }
@@ -338,7 +354,37 @@ export class TaskAttachmentsService {
       this.logger.warn(`Proof activity log failed for ${attachment.id}: ${(err as Error).message}`);
     }
 
+    // The assigner is waiting on this — tell them the proof arrived (best-effort,
+    // mirroring how ordinary attachments already notify).
+    await this.notifyProofSubmitted(orgId, userId, taskId, task, (file as UploadedFile).originalname);
+
     return this.enrich(attachment.id).catch(() => ({ ...attachment, uploaded_by_name: null }));
+  }
+
+  /** Best-effort "proof submitted" ping to the assigner. Never fails the upload. */
+  private async notifyProofSubmitted(
+    orgId: string,
+    uploaderId: string,
+    taskId: string,
+    task: { title: string; created_by_user_id: string },
+    fileName: string,
+  ) {
+    try {
+      if (task.created_by_user_id === uploaderId) return;
+      const uploaderName = await this.notifications.userName(uploaderId);
+      await this.notifications.emit({
+        orgId,
+        module: 'tasks',
+        event_type: 'task_proof_submitted',
+        recipients: [task.created_by_user_id],
+        title: `${uploaderName} submitted proof of completion`,
+        body: `“${fileName}”\non “${task.title}”`,
+        link: `/dashboard/tasks/${taskId}`,
+        entity: { type: 'task', id: taskId },
+      });
+    } catch (err) {
+      this.logger.warn(`Proof-submitted notification failed for task ${taskId}: ${(err as Error).message}`);
+    }
   }
 
   /**
@@ -387,6 +433,7 @@ export class TaskAttachmentsService {
       } catch (err) {
         this.logger.warn(`Proof (from comment) log failed for ${att.id}: ${(err as Error).message}`);
       }
+      await this.notifyProofSubmitted(orgId, userId, taskId, task, att.file_name);
     }
     return this.enrich(att.id).catch(() => ({ ...att, uploaded_by_name: null }));
   }

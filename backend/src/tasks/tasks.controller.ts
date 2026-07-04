@@ -363,7 +363,7 @@ export class TasksController {
   }
 
   @Post(':id/assignees/:userId/reopen')
-  @ApiOperation({ summary: "Reopen one assignee's finished part for rework (creator/editor, all_must_complete)" })
+  @ApiOperation({ summary: "Reopen one assignee's finished part for rework (assigner; or self-undo within the window)" })
   reopenAssigneePart(
     @Param('orgId') orgId: string,
     @Request() req: any,
@@ -371,7 +371,8 @@ export class TasksController {
     @Param('userId') userId: string,
     @Body() body: { reason?: string },
   ) {
-    return this.service.reopenAssigneePart(orgId, req.user.id, id, userId, body?.reason);
+    const target = userId === 'me' ? req.user.id : userId;
+    return this.service.reopenAssigneePart(orgId, req.user.id, id, target, body?.reason);
   }
 
   @Patch(':id/assignee-status')
@@ -559,21 +560,27 @@ export class TasksController {
   }
 
   @Get(':id/attachments')
-  @ApiOperation({ summary: 'List task-level attachments' })
+  @ApiOperation({ summary: 'List task-level attachments (private proofs visibility-filtered)' })
   async listAttachments(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
     await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
-    return this.attachments.listForTask(orgId, id);
+    return this.attachments.listForTask(orgId, id, {
+      userId: req.user.id,
+      isAdmin: !!(req.user.is_admin || req.user.isSuperAdmin),
+    });
   }
 
   @Get(':id/attachments/all')
-  @ApiOperation({ summary: 'List every attachment on the task (task-level + comment files)' })
+  @ApiOperation({ summary: 'List every attachment on the task (task-level + comment files; private proofs visibility-filtered)' })
   async listAllAttachments(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
     await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
-    return this.attachments.listAllForTask(orgId, id);
+    return this.attachments.listAllForTask(orgId, id, {
+      userId: req.user.id,
+      isAdmin: !!(req.user.is_admin || req.user.isSuperAdmin),
+    });
   }
 
   @Get(':id/attachments/:attachmentId/download')
-  @ApiOperation({ summary: 'Get a short-lived signed download URL for an attachment' })
+  @ApiOperation({ summary: 'Get a short-lived signed download URL for an attachment (private proofs visibility-gated)' })
   async downloadAttachment(
     @Param('orgId') orgId: string,
     @Param('id') id: string,
@@ -581,7 +588,10 @@ export class TasksController {
     @Request() req: any,
   ) {
     await this.service.assertCanViewTask(orgId, principalFromUser(req.user), id);
-    return this.attachments.getDownloadUrl(orgId, id, attachmentId);
+    return this.attachments.getDownloadUrl(orgId, id, attachmentId, {
+      userId: req.user.id,
+      isAdmin: !!(req.user.is_admin || req.user.isSuperAdmin),
+    });
   }
 
   @Delete(':id/attachments/:attachmentId')

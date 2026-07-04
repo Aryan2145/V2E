@@ -232,7 +232,13 @@ export class TaskMastersService {
   }
 
   async updateStatus(orgId: string, statusId: string, dto: Partial<CreateStatusDto>) {
-    await this.findStatusOrFail(orgId, statusId);
+    const status = await this.findStatusOrFail(orgId, statusId);
+    // Turning a status OFF through the edit form is a deactivation — it must pass the
+    // exact same guards as the delete action. Otherwise an admin could switch off
+    // "Completed" and silently break completion company-wide.
+    if (dto.is_active === false && status.is_active) {
+      await this.assertStatusDeactivatable(orgId, status);
+    }
     // A status's phase (`type`) and its default-ness are immutable after creation — editing
     // only touches the presentation (label / colour / order) and active flag. This keeps the
     // phase invariants (one not_started/completed/incomplete, default == not_started) intact.
@@ -245,6 +251,38 @@ export class TaskMastersService {
         ...(dto.is_active !== undefined && { is_active: dto.is_active }),
       },
     });
+  }
+
+  /**
+   * The single source of truth for whether a status may be switched off:
+   *  - the singleton phases (Not Started / Completed / Partially Completed / Incomplete)
+   *    are structural and can never be removed;
+   *  - at least one active "In Progress" stage must remain;
+   *  - no live task may currently sit in the status — its cards would silently vanish
+   *    from the Kanban board (columns are built from active statuses only).
+   */
+  private async assertStatusDeactivatable(orgId: string, status: { id: string; type: string; label: string }) {
+    if (isSingletonPhase(status.type)) {
+      throw new BadRequestException(
+        'Not Started, Completed, Partially Completed and Incomplete are required statuses and cannot be removed.',
+      );
+    }
+    if (status.type === 'in_progress') {
+      const activeInProgress = await this.prisma.taskStatus.count({
+        where: { organization_id: orgId, type: 'in_progress', is_active: true },
+      });
+      if (activeInProgress <= 1) {
+        throw new BadRequestException('At least one "In Progress" stage is required.');
+      }
+    }
+    const liveTasks = await this.prisma.task.count({
+      where: { organization_id: orgId, status_id: status.id, is_deleted: false },
+    });
+    if (liveTasks > 0) {
+      throw new BadRequestException(
+        `${liveTasks} task${liveTasks > 1 ? 's are' : ' is'} currently in "${status.label}". Move them to another status first — otherwise they would disappear from the board.`,
+      );
+    }
   }
 
   async getDefaultStatus(orgId: string) {
@@ -268,20 +306,7 @@ export class TaskMastersService {
 
   async deactivateStatus(orgId: string, statusId: string) {
     const status = await this.findStatusOrFail(orgId, statusId);
-    // The three singleton phases are structural — every board needs exactly one of each, so
-    // none of them can be removed.
-    if (isSingletonPhase(status.type)) {
-      throw new BadRequestException(
-        'Not Started, Completed and Incomplete are required statuses and cannot be removed.',
-      );
-    }
-    // A board must keep at least one active In Progress stage.
-    const activeInProgress = await this.prisma.taskStatus.count({
-      where: { organization_id: orgId, type: 'in_progress', is_active: true },
-    });
-    if (status.type === 'in_progress' && activeInProgress <= 1) {
-      throw new BadRequestException('At least one "In Progress" stage is required.');
-    }
+    await this.assertStatusDeactivatable(orgId, status);
     return this.prisma.taskStatus.update({
       where: { id: statusId },
       data: { is_active: false },

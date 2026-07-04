@@ -283,6 +283,105 @@ export class TasksService {
   }
 
   /**
+   * Rebuild a Principal for a userId-only code path so the scope toolkit can be
+   * applied where only the actor's id was threaded through (legacy signatures).
+   */
+  private async principalFor(orgId: string, userId: string): Promise<Principal> {
+    const [member, profile] = await Promise.all([
+      this.prisma.organizationMember.findUnique({
+        where: { organization_id_user_id: { organization_id: orgId, user_id: userId } },
+        select: { is_admin: true },
+      }),
+      this.prisma.employeeProfile.findFirst({
+        where: { organization_id: orgId, user_id: userId },
+        select: { system_role_id: true },
+      }),
+    ]);
+    return {
+      userId,
+      systemRoleId: profile?.system_role_id ?? null,
+      isAdmin: !!member?.is_admin,
+      isSuperAdmin: false,
+    };
+  }
+
+  /**
+   * Assigner-level rights over ONE task (owner override, acting on someone else's
+   * part, editing/reassigning). The creator and org admins always qualify; anyone
+   * else needs BOTH the org's task-edit-roles gate AND edit scope over the task's
+   * core participants — the action gate alone is scope-blind and must never be a
+   * skeleton key for every task in the company (AUTHORIZATION.md rule 6).
+   */
+  private async assertAssignerRights(orgId: string, actorId: string, task: any): Promise<void> {
+    if (task.created_by_user_id === actorId) return;
+    if (await this.isOrgAdmin(orgId, actorId)) return;
+    await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    const principal = await this.principalFor(orgId, actorId);
+    await this.scope.assertCanActOn(orgId, principal, TasksService.TASK_LEAF, PermissionAction.edit, [
+      task.created_by_user_id,
+      ...(task.assignees ?? []).filter((a: any) => !a.is_cc).map((a: any) => a.user_id),
+    ]);
+  }
+
+  /**
+   * Master references (category / priority / department) must belong to THIS org
+   * and be active — a pasted foreign, deleted or deactivated id must fail loud
+   * with a clean 400, never store a cross-tenant reference or crash with a 500.
+   */
+  private async assertMastersUsable(
+    orgId: string,
+    refs: { category_id?: string | null; priority_id?: string | null; department_id?: string | null },
+  ): Promise<void> {
+    const checks: Promise<void>[] = [];
+    if (refs.category_id) {
+      checks.push(
+        this.prisma.taskCategory
+          .findFirst({ where: { id: refs.category_id, organization_id: orgId, is_active: true }, select: { id: true } })
+          .then((r) => {
+            if (!r) throw new BadRequestException('Category not found or no longer active in this organization.');
+          }),
+      );
+    }
+    if (refs.priority_id) {
+      checks.push(
+        this.prisma.taskPriority
+          .findFirst({ where: { id: refs.priority_id, organization_id: orgId, is_active: true }, select: { id: true } })
+          .then((r) => {
+            if (!r) throw new BadRequestException('Priority not found or no longer active in this organization.');
+          }),
+      );
+    }
+    if (refs.department_id) {
+      checks.push(
+        this.prisma.department
+          .findFirst({ where: { id: refs.department_id, organization_id: orgId }, select: { id: true } })
+          .then((r) => {
+            if (!r) throw new BadRequestException('Department not found in this organization.');
+          }),
+      );
+    }
+    await Promise.all(checks);
+  }
+
+  /**
+   * The assignee picker's visibility rules re-checked at SAVE time — a hand-crafted
+   * request must not reach people the assigner can't see in the picker. Applies to
+   * working assignees AND CCs (both are chosen through the same visibility-scoped
+   * picker). Uses the exact same resolved pool the picker itself renders.
+   */
+  private async assertAssigneesVisible(orgId: string, assignerId: string, userIds: string[]): Promise<void> {
+    const ids = [...new Set(userIds.filter(Boolean))];
+    if (!ids.length) return;
+    const { pool } = await this.assigneeVisibility.resolve(orgId, assignerId);
+    const outside = ids.filter((id) => !pool.has(id));
+    if (outside.length) {
+      throw new BadRequestException(
+        'One or more selected people are outside the set you are allowed to assign tasks to.',
+      );
+    }
+  }
+
+  /**
    * Recompute a task's single shared status from its per-person tracks. Only meaningful
    * for `all_must_complete` (per-person) tasks, and never touches a terminal status —
    * the completed transition is owned by completeTask / reopenTask. Rolls the open
@@ -389,8 +488,11 @@ export class TasksService {
           : CompletionTiming.incomplete;
     const summary = outcome === 'completed' ? null : `${completedCount} of ${workers.length} completed; ${cannotCount} couldn’t.`;
 
-    await this.prisma.task.update({
-      where: { id: taskId },
+    // Optimistic close: only settle if the status is still what we read above. When two
+    // people finish at the same instant, exactly ONE settle wins — the loser skips the
+    // duplicate notification and workflow/project advance instead of double-firing.
+    const settled = await this.prisma.task.updateMany({
+      where: { id: taskId, status_id: task.status_id },
       data: {
         status_id: statusRow.id,
         reopen_expires_at: new Date(now.getTime() + config.reopen_window_minutes * 60_000),
@@ -402,6 +504,7 @@ export class TasksService {
         overdue_at: null,
       },
     });
+    if (settled.count === 0) return 'open';
 
     if (outcome !== 'completed') {
       await this.logActivity(orgId, taskId, actorId, 'marked_incomplete', { auto: true, outcome, reason: summary });
@@ -445,17 +548,25 @@ export class TasksService {
     if (task.completion_mode !== CompletionMode.all_must_complete) {
       throw new BadRequestException('Per-person status only applies to "all must complete" tasks.');
     }
+    // A closed task's scoreboard is a frozen record — a later personal-status change
+    // must never clear someone's done flag underneath a Completed task.
+    if (isTerminal((task as any).status?.type)) {
+      throw new BadRequestException('This task is closed. Reopen it before changing anyone’s status.');
+    }
 
     const isSelf = actorId === targetUserId;
-    if (!isSelf && task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    if (!isSelf) {
+      await this.assertAssignerRights(orgId, actorId, task);
+    } else {
+      const onTask = (task.assignees ?? []).some((a: any) => a.user_id === actorId && !a.is_cc);
+      if (!onTask) throw new ForbiddenException('Only someone on this task can change their status.');
     }
 
     const target = (task.assignees ?? []).find((a: any) => a.user_id === targetUserId && !a.is_cc);
     if (!target) throw new BadRequestException('That person is not a working assignee on this task.');
 
-    const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId } });
-    if (!st) throw new BadRequestException(`Status ${statusId} not found`);
+    const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId, is_active: true } });
+    if (!st) throw new BadRequestException(`Status ${statusId} not found or inactive`);
     if (isTerminal(st.type)) {
       throw new BadRequestException('To finish a part, use Complete — the status control only moves between open states.');
     }
@@ -504,7 +615,16 @@ export class TasksService {
       throw new BadRequestException('Reopening one person’s part only applies to “all must complete” tasks.');
     }
     if (task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+      // An assignee may undo THEIR OWN finished part while the task is still open or
+      // within the undo window — their undo must never reset co-assignees' finished
+      // work (that whole-task hammer is reopenTask). Anything else is an assigner action.
+      const isSelfUndo =
+        actorId === targetUserId &&
+        (!isTerminal((task as any).status?.type) ||
+          (!!task.reopen_expires_at && task.reopen_expires_at > new Date()));
+      if (!isSelfUndo) {
+        await this.assertAssignerRights(orgId, actorId, task);
+      }
     }
     const part = (task.assignees ?? []).find((a: any) => a.user_id === targetUserId && !a.is_cc);
     if (!part) throw new BadRequestException('That person is not a working assignee on this task.');
@@ -585,15 +705,15 @@ export class TasksService {
     const isParticipant =
       task.created_by_user_id === actorId ||
       (task.assignees ?? []).some((a: any) => a.user_id === actorId && !a.is_cc);
-    if (!isParticipant && !(await this.isOrgAdmin(orgId, actorId))) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    if (!isParticipant) {
+      await this.assertAssignerRights(orgId, actorId, task);
     }
 
     if (isTerminal((task as any).status?.type)) {
       throw new BadRequestException('Reopen the task to change its status.');
     }
-    const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId } });
-    if (!st) throw new BadRequestException(`Status ${statusId} not found`);
+    const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId, is_active: true } });
+    if (!st) throw new BadRequestException(`Status ${statusId} not found or inactive`);
     if (isTerminal(st.type)) {
       throw new BadRequestException('To close a task, use the Complete action — the status control only moves between open states.');
     }
@@ -653,9 +773,19 @@ export class TasksService {
     );
     const config = await this.getOrgConfig(orgId);
 
+    // Master references must be this org's own, active rows (foreign/stale ids fail loud).
+    await this.assertMastersUsable(orgId, dto);
+
     // Subject eligibility (fail loud, before any writes): every assignee must be
     // eligible to be assigned a task — even if they have no Tasks actor access.
     await this.subjects.assertAllEligible(orgId, TasksService.TASK_SUBJECT, dto.assignee_user_ids ?? []);
+
+    // The picker's visibility rules re-checked at save time: the creator may only
+    // put people they're allowed to assign to on the task (assignees AND CCs).
+    await this.assertAssigneesVisible(orgId, userId, [
+      ...(dto.assignee_user_ids ?? []),
+      ...(dto.cc_user_ids ?? []),
+    ]);
 
     // Checklist template access: the creator may only apply a template they're
     // allowed to use (by department / role / explicit grant). A task may now
@@ -671,11 +801,18 @@ export class TasksService {
       }
     }
 
-    // Resolve status
+    // Resolve status. A task can never be BORN closed — terminal outcomes carry
+    // business rules (proof, checklists, completion stamps) that only the dedicated
+    // Complete / Mark Incomplete actions apply.
     let statusId = dto.status_id;
     if (statusId) {
-      const st = await this.prisma.taskStatus.findFirst({ where: { id: statusId, organization_id: orgId } });
-      if (!st) throw new BadRequestException(`Status ${statusId} not found in this organization`);
+      const st = await this.prisma.taskStatus.findFirst({
+        where: { id: statusId, organization_id: orgId, is_active: true },
+      });
+      if (!st) throw new BadRequestException(`Status ${statusId} not found or inactive in this organization`);
+      if (isTerminal(st.type)) {
+        throw new BadRequestException('A task cannot start in a closed status. Create it open, then use Complete.');
+      }
     } else {
       statusId = await this.getDefaultStatusId(orgId);
     }
@@ -701,8 +838,10 @@ export class TasksService {
       include: TASK_INCLUDE,
     });
 
-    // Holiday deadline adjustment (after create so we have task.id for audit log)
-    if (dto.deadline) {
+    // Holiday deadline adjustment (after create so we have task.id for audit log).
+    // The system never FORCES the holiday rule on the user: when the creator has
+    // explicitly chosen to keep a holiday date (holiday_override), it stands as-is.
+    if (dto.deadline && !dto.holiday_override) {
       const rawDeadline = new Date(dto.deadline);
       const adjusted = await this.holidaysService.adjustDeadline(
         rawDeadline, orgId,
@@ -712,7 +851,7 @@ export class TasksService {
       if (adjusted === null) {
         await this.prisma.task.delete({ where: { id: task.id } });
         throw new BadRequestException(
-          'Deadline falls on a non-working day. Org settings prevent task creation on holidays. Please select a different date.',
+          'Deadline falls on a non-working day. Keep the date to override, or select a different one.',
         );
       }
       if (adjusted.getTime() !== rawDeadline.getTime()) {
@@ -1372,7 +1511,14 @@ export class TasksService {
 
   // ─── Bulk actions ──────────────────────────────────────────────────────────────
 
-  /** Bulk status / deadline / complete over the subset of `taskIds` within the actor's scope. */
+  /**
+   * Bulk status / deadline / complete over the subset of `taskIds` the actor may EDIT.
+   * The bulk tool obeys every rule the single-task actions enforce — read visibility is
+   * not edit rights, terminal states can't be hand-set or silently dragged back open,
+   * and "complete" routes through the real completion engine (proof, checklists,
+   * per-person scoreboards, notifications, the undo window). Tasks that fail a rule are
+   * skipped and reported, never force-updated.
+   */
   async bulkUpdate(
     orgId: string,
     principal: Principal,
@@ -1380,46 +1526,124 @@ export class TasksService {
     action: 'status' | 'deadline' | 'complete',
     payload: { status_id?: string; deadline?: string | null },
   ) {
-    if (!taskIds?.length) return { updated: 0 };
-    const scopeWhere = await this.scope.listWhere(orgId, principal, TasksService.TASK_LEAF);
-    const allowed = await this.prisma.task.findMany({
-      where: { organization_id: orgId, is_deleted: false, id: { in: taskIds }, ...(Object.keys(scopeWhere).length ? { AND: [scopeWhere] } : {}) },
-      select: { id: true },
-    });
-    const ids = allowed.map((t) => t.id);
-    if (!ids.length) return { updated: 0 };
+    const skipped: { id: string; title: string; reason: string }[] = [];
+    if (!taskIds?.length) return { updated: 0, skipped };
 
-    let activity: TaskActionType = 'edited';
-    if (action === 'status' && payload.status_id) {
-      const st = await this.prisma.taskStatus.findFirst({ where: { id: payload.status_id, organization_id: orgId } });
-      if (!st) throw new BadRequestException('Status not found');
-      // "Partially Completed" is a system-derived outcome (all_must_complete: some finished,
-      // some couldn't) — it can never be hand-set, not even in bulk.
-      if (st.type === 'partially_completed') {
-        throw new BadRequestException('“Partially Completed” is set automatically and cannot be applied manually.');
+    // Read visibility bounds the candidate set…
+    const scopeWhere = await this.scope.listWhere(orgId, principal, TasksService.TASK_LEAF);
+    const candidates = await this.prisma.task.findMany({
+      where: { organization_id: orgId, is_deleted: false, id: { in: taskIds }, ...(Object.keys(scopeWhere).length ? { AND: [scopeWhere] } : {}) },
+      select: {
+        id: true,
+        title: true,
+        created_by_user_id: true,
+        completion_mode: true,
+        status: { select: { type: true } },
+        assignees: { select: { user_id: true, is_cc: true } },
+      },
+    });
+    if (!candidates.length) return { updated: 0, skipped };
+
+    // …then each task needs EDIT rights: participants act on their own tasks; anyone
+    // else must hold edit scope over the task's core participants.
+    const editable: typeof candidates = [];
+    for (const t of candidates) {
+      const onTask =
+        t.created_by_user_id === principal.userId ||
+        t.assignees.some((a) => a.user_id === principal.userId && !a.is_cc);
+      if (onTask || principal.isAdmin) {
+        editable.push(t);
+        continue;
       }
-      await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { status_id: payload.status_id } });
-      // Keep completion stamps in sync with the new phase.
-      if (st.type === 'completed') await this.stampCompletionTiming(ids, await this.clock.now(orgId), 'completed');
-      else if (st.type === 'incomplete') await this.stampCompletionTiming(ids, await this.clock.now(orgId), 'incomplete');
-      else await this.clearCompletionTiming(ids);
-      activity = 'status_changed';
-    } else if (action === 'deadline') {
-      await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { deadline: payload.deadline ? new Date(payload.deadline) : null } });
-    } else if (action === 'complete') {
-      const completed = await this.prisma.taskStatus.findFirst({ where: { organization_id: orgId, type: 'completed', is_active: true }, orderBy: { order_index: 'asc' } });
-      if (completed) {
-        await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { status_id: completed.id } });
-        await this.stampCompletionTiming(ids, await this.clock.now(orgId));
+      try {
+        await this.scope.assertCanActOn(orgId, principal, TasksService.TASK_LEAF, PermissionAction.edit, [
+          t.created_by_user_id,
+          ...t.assignees.filter((a) => !a.is_cc).map((a) => a.user_id),
+        ]);
+        editable.push(t);
+      } catch {
+        skipped.push({ id: t.id, title: t.title, reason: 'You do not have edit access to this task.' });
       }
-      await this.prisma.taskAssignee.updateMany({ where: { task_id: { in: ids }, is_cc: false }, data: { is_completed: true, completed_at: new Date() } });
-      activity = 'completed';
-    } else {
-      throw new BadRequestException('Unknown bulk action');
     }
 
-    await Promise.all(ids.map((id) => this.logActivity(orgId, id, principal.userId, activity, { bulk: true }).catch(() => null)));
-    return { updated: ids.length };
+    if (action === 'status') {
+      if (!payload.status_id) throw new BadRequestException('Status is required');
+      const st = await this.prisma.taskStatus.findFirst({
+        where: { id: payload.status_id, organization_id: orgId, is_active: true },
+      });
+      if (!st) throw new BadRequestException('Status not found or inactive');
+      // Terminal outcomes carry business rules (proof, checklists, the undo window) —
+      // they can never be hand-set, not even in bulk. Use the Complete action.
+      if (isTerminal(st.type)) {
+        throw new BadRequestException('Closed statuses can’t be set by hand — use the Complete or Mark Incomplete action.');
+      }
+      const ids: string[] = [];
+      for (const t of editable) {
+        if (isTerminal(t.status?.type)) {
+          skipped.push({ id: t.id, title: t.title, reason: 'Closed — reopen it before changing its status.' });
+        } else if (t.completion_mode === CompletionMode.all_must_complete) {
+          skipped.push({ id: t.id, title: t.title, reason: 'Tracks per-person statuses — set them on the task itself.' });
+        } else {
+          ids.push(t.id);
+        }
+      }
+      if (ids.length) {
+        await this.prisma.task.updateMany({
+          where: { id: { in: ids } },
+          data: { status_id: payload.status_id, status_actor_user_id: principal.userId },
+        });
+        await Promise.all(ids.map((id) => this.logActivity(orgId, id, principal.userId, 'status_changed', { bulk: true }).catch(() => null)));
+      }
+      return { updated: ids.length, skipped };
+    }
+
+    if (action === 'deadline') {
+      const newDeadline = payload.deadline ? new Date(payload.deadline) : null;
+      const ids: string[] = [];
+      for (const t of editable) {
+        if (isTerminal(t.status?.type)) {
+          skipped.push({ id: t.id, title: t.title, reason: 'Closed — its deadline is part of the record.' });
+        } else {
+          ids.push(t.id);
+        }
+      }
+      if (ids.length) {
+        // Keep the persisted overdue flag in sync with the new deadline (the sweep
+        // re-flags if it lapses again). Holiday adjustment is not forced here — a
+        // bulk deadline is an explicit, deliberate user choice.
+        const stillOverdue = !!newDeadline && newDeadline < new Date();
+        await this.prisma.task.updateMany({
+          where: { id: { in: ids } },
+          data: { deadline: newDeadline, is_overdue: stillOverdue, overdue_at: stillOverdue ? new Date() : null },
+        });
+        await Promise.all(ids.map((id) => this.logActivity(orgId, id, principal.userId, 'edited', { bulk: true, field: 'deadline' }).catch(() => null)));
+      }
+      return { updated: ids.length, skipped };
+    }
+
+    if (action === 'complete') {
+      // Route every task through the REAL completion engine so nothing is skipped:
+      // proof gates, checklist gates, per-person scoreboards, terminal guards,
+      // notifications and the undo window all apply. all_must tasks are closed via
+      // the owner override (creator/admin only); an assignee completes their own part.
+      let updated = 0;
+      for (const t of editable) {
+        try {
+          const isOwner = t.created_by_user_id === principal.userId || principal.isAdmin;
+          if (t.completion_mode === CompletionMode.all_must_complete && isOwner) {
+            await this.completeTask(orgId, principal.userId, t.id, undefined, true);
+          } else {
+            await this.completeTask(orgId, principal.userId, t.id);
+          }
+          updated++;
+        } catch (err) {
+          skipped.push({ id: t.id, title: t.title, reason: (err as Error).message ?? 'Could not be completed.' });
+        }
+      }
+      return { updated, skipped };
+    }
+
+    throw new BadRequestException('Unknown bulk action');
   }
 
   // ─── CSV export ────────────────────────────────────────────────────────────────
@@ -1752,10 +1976,14 @@ export class TasksService {
 
   async updateTask(orgId: string, userId: string, taskId: string, dto: UpdateTaskDto) {
     const old = await this.findTaskOrFail(orgId, taskId);
-    if (old.created_by_user_id !== userId) {
-      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
-    }
+    await this.assertAssignerRights(orgId, userId, old);
     await this.assertGoalInOrg(orgId, dto.goal_id);
+    // Edited master references get the same org+active validation as create.
+    await this.assertMastersUsable(orgId, {
+      category_id: dto.category_id !== old.category_id ? dto.category_id : undefined,
+      priority_id: dto.priority_id !== old.priority_id ? dto.priority_id : undefined,
+      department_id: dto.department_id !== old.department_id ? dto.department_id : undefined,
+    });
     const changedFields: Array<{ field: string; from: unknown; to: unknown }> = [];
 
     const updateData: any = {};
@@ -1787,7 +2015,23 @@ export class TasksService {
     }
 
     if (dto.deadline !== undefined) {
-      const newDeadline = dto.deadline ? new Date(dto.deadline) : null;
+      let newDeadline = dto.deadline ? new Date(dto.deadline) : null;
+      // The create-time holiday rule applies to EDITS too — but never by force: an
+      // explicit user override (holiday_override) keeps the chosen date as-is.
+      if (newDeadline && !dto.holiday_override && String(old.deadline) !== String(newDeadline)) {
+        const firstWorker = ((old as any).assignees ?? []).find((a: any) => !a.is_cc)?.user_id;
+        const adjusted = await this.holidaysService.adjustDeadline(
+          newDeadline, orgId,
+          dto.department_id ?? old.department_id ?? undefined, firstWorker,
+          'task', taskId, old.title,
+        );
+        if (adjusted === null) {
+          throw new BadRequestException(
+            'Deadline falls on a non-working day. Keep the date to override, or select a different one.',
+          );
+        }
+        newDeadline = adjusted;
+      }
       if (String(old.deadline) !== String(newDeadline)) {
         changedFields.push({ field: 'deadline', from: old.deadline, to: newDeadline });
         updateData.deadline = newDeadline;
@@ -1802,8 +2046,10 @@ export class TasksService {
 
     let newStatusLabel: string | null = null;
     if (dto.status_id !== undefined && dto.status_id !== old.status_id) {
-      const st = await this.prisma.taskStatus.findFirst({ where: { id: dto.status_id, organization_id: orgId } });
-      if (!st) throw new BadRequestException(`Status ${dto.status_id} not found`);
+      const st = await this.prisma.taskStatus.findFirst({
+        where: { id: dto.status_id, organization_id: orgId, is_active: true },
+      });
+      if (!st) throw new BadRequestException(`Status ${dto.status_id} not found or inactive`);
       const oldType = (old as any).status?.type;
       // Terminal transitions carry business rules (proof, per-assignee completion,
       // the reopen window) — they must go through the dedicated actions, never a raw
@@ -1936,48 +2182,35 @@ export class TasksService {
     return CompletionTiming.on_time;
   }
 
-  /**
-   * Stamp `completed_at` + `completion_timing` on a batch of tasks that just reached a
-   * completed status. Timing is per-task (each task has its own deadline), so we read the
-   * deadlines, bucket in JS, and write each timing group in one updateMany.
-   */
-  private async stampCompletionTiming(ids: string[], now: Date, kind: 'completed' | 'incomplete' | 'partial' = 'completed') {
-    if (!ids.length) return;
-    // Closed not-fully-successfully → a single flat bucket (no deadline comparison).
-    if (kind === 'incomplete' || kind === 'partial') {
-      await this.prisma.task.updateMany({
-        where: { id: { in: ids } },
-        data: { completed_at: now, completion_timing: kind === 'partial' ? CompletionTiming.partial : CompletionTiming.incomplete },
-      });
-      return;
-    }
-    const tasks = await this.prisma.task.findMany({ where: { id: { in: ids } }, select: { id: true, deadline: true } });
-    const groups: Record<'early' | 'on_time' | 'late', string[]> = { early: [], on_time: [], late: [] };
-    for (const t of tasks) groups[this.completionTiming(now, t.deadline) as 'early' | 'on_time' | 'late'].push(t.id);
-    await Promise.all(
-      (Object.keys(groups) as ('early' | 'on_time' | 'late')[])
-        .filter((k) => groups[k].length)
-        .map((k) => this.prisma.task.updateMany({ where: { id: { in: groups[k] } }, data: { completed_at: now, completion_timing: k } })),
-    );
-  }
-
-  /** Clear completion stamps when a task leaves a completed status (e.g. reopened, moved back). */
-  private async clearCompletionTiming(ids: string[]) {
-    if (!ids.length) return;
-    await this.prisma.task.updateMany({ where: { id: { in: ids } }, data: { completed_at: null, completion_timing: null } });
-  }
-
   async completeTask(orgId: string, userId: string, taskId: string, targetUserId?: string, closeWholeTask = false) {
     const task = await this.findTaskOrFail(orgId, taskId);
+    // A closed outcome is locked — Completed can never be stacked on top of
+    // Incomplete / Partially Completed. Reopen first (the rule every screen shows).
+    if (isTerminal((task as any).status?.type)) {
+      throw new BadRequestException('This task is already closed. Reopen it first to change its outcome.');
+    }
     const config = await this.getOrgConfig(orgId);
 
     // Who is being marked done. Self by default; a creator/editor may finish another
     // assignee's part (all_must_complete) on their behalf.
     const target = targetUserId ?? userId;
     // The owner override (closeWholeTask, all_must) and acting on someone else's part
-    // both require creator / editor rights.
-    if ((closeWholeTask || target !== userId) && task.created_by_user_id !== userId) {
-      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
+    // are assigner actions: creator, admin, or a scope-verified editor.
+    if (closeWholeTask || target !== userId) {
+      await this.assertAssignerRights(orgId, userId, task);
+    } else {
+      // Finishing "your own part" (or closing an any_can task) requires you to actually
+      // BE on the task — knowing a task's id must never be enough to complete it.
+      const isCreator = task.created_by_user_id === userId;
+      const isWorker = (task.assignees ?? []).some((a: any) => a.user_id === userId && !a.is_cc);
+      if (!isCreator && !isWorker && !(await this.isOrgAdmin(orgId, userId))) {
+        throw new ForbiddenException('Only someone on this task can complete it.');
+      }
+    }
+    // all_must: the part being finished must belong to a working assignee.
+    if (task.completion_mode === CompletionMode.all_must_complete && !closeWholeTask) {
+      const part = (task.assignees ?? []).find((a: any) => a.user_id === target && !a.is_cc);
+      if (!part) throw new BadRequestException('That person is not a working assignee on this task.');
     }
 
     // Proof of completion is enforced PER MODE below — any_can: any single proof on
@@ -2065,8 +2298,10 @@ export class TasksService {
         const now = new Date();
         const completionNow = await this.clock.now(orgId);
         const reopenExpiresAt = new Date(now.getTime() + config.reopen_window_minutes * 60_000);
-        await this.prisma.task.update({
-          where: { id: taskId },
+        // Optimistic close: if someone closed (or moved) the task between our read and
+        // this write, exactly one completion wins — no double notification/workflow fire.
+        const closed = await this.prisma.task.updateMany({
+          where: { id: taskId, status_id: task.status_id },
           data: {
             status_id: completedStatus.id,
             reopen_expires_at: reopenExpiresAt,
@@ -2075,6 +2310,9 @@ export class TasksService {
             completed_by_user_id: userId,
           },
         });
+        if (closed.count === 0) {
+          throw new BadRequestException('This task was just updated by someone else — refresh and try again.');
+        }
       }
       await this.prisma.taskAssignee.updateMany({
         where: { task_id: taskId, user_id: userId, is_cc: false },
@@ -2325,9 +2563,9 @@ export class TasksService {
     }
 
     const target = targetUserId || actorId;
-    // Acting on someone else's part requires creator / editor rights.
-    if (target !== actorId && task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    // Acting on someone else's part is an assigner action (creator / admin / scoped editor).
+    if (target !== actorId) {
+      await this.assertAssignerRights(orgId, actorId, task);
     }
     const part = (task.assignees ?? []).find((a: any) => a.user_id === target && !a.is_cc);
     if (!part) {
@@ -2370,8 +2608,8 @@ export class TasksService {
   async clearAssigneeCannotComplete(orgId: string, actorId: string, taskId: string, targetUserId: string) {
     const task = await this.findTaskOrFail(orgId, taskId);
     const target = targetUserId || actorId;
-    if (target !== actorId && task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    if (target !== actorId) {
+      await this.assertAssignerRights(orgId, actorId, task);
     }
     await this.prisma.taskAssignee.updateMany({
       where: { task_id: taskId, user_id: target, is_cc: false },
@@ -2599,8 +2837,7 @@ export class TasksService {
       task.created_by_user_id === actorId ||
       (task.assignees ?? []).some((a: any) => a.user_id === actorId && !a.is_cc);
     if (isParticipant) return;
-    if (await this.isOrgAdmin(orgId, actorId)) return;
-    await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
+    await this.assertAssignerRights(orgId, actorId, task);
   }
 
   /** Join requirement phrases into a natural list: "A", "A and B", "A, B, and C". */
@@ -2797,9 +3034,7 @@ export class TasksService {
       throw new BadRequestException('“Mark done for everyone” applies to “all must complete” tasks.');
     }
     this.assertTaskOpenForChecklist(task);
-    if (task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
-    }
+    await this.assertAssignerRights(orgId, actorId, task);
 
     const workers = (task.assignees ?? []).filter((a: any) => !a.is_cc);
     const existing = await this.prisma.taskChecklistItemState.findMany({
@@ -2844,9 +3079,7 @@ export class TasksService {
   async clearChecklistOverride(orgId: string, actorId: string, taskId: string, itemId: string) {
     const { task } = await this.loadChecklistItemForWrite(orgId, taskId, itemId);
     this.assertTaskOpenForChecklist(task);
-    if (task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
-    }
+    await this.assertAssignerRights(orgId, actorId, task);
     await this.prisma.taskChecklistItemState.deleteMany({
       where: { checklist_id: itemId, task_id: taskId, is_override: true },
     });
@@ -2864,9 +3097,7 @@ export class TasksService {
       throw new BadRequestException('Challenging a checklist item applies to “all must complete” tasks.');
     }
     if (!targetUserId) throw new BadRequestException('Whose checklist item are you challenging?');
-    if (task.created_by_user_id !== actorId) {
-      await this.checkTaskPermission(orgId, actorId, 'task_edit_roles');
-    }
+    await this.assertAssignerRights(orgId, actorId, task);
     const part = (task.assignees ?? []).find((a: any) => a.user_id === targetUserId && !a.is_cc);
     if (!part) throw new BadRequestException('That person is not a working assignee on this task.');
 
@@ -2933,13 +3164,13 @@ export class TasksService {
 
   async addAssignee(orgId: string, userId: string, taskId: string, dto: AddAssigneeDto) {
     const task = await this.findTaskOrFail(orgId, taskId);
-    // Only the creator (or someone with edit permission) may change who a task is
-    // assigned to — a plain assignee can't reassign the work.
-    if (task.created_by_user_id !== userId) {
-      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
-    }
+    // Only the creator (or an admin / scope-verified editor) may change who a task
+    // is assigned to — a plain assignee can't reassign the work.
+    await this.assertAssignerRights(orgId, userId, task);
     // Anyone put on a task — assignee or CC — must be an active member of this org.
     await assertActiveOrgMembers(this.prisma, orgId, [dto.user_id], 'assignees or CC recipients');
+    // …and within the people this actor is allowed to assign to (picker rules re-checked).
+    await this.assertAssigneesVisible(orgId, userId, [dto.user_id]);
     // A real assignee (not a CC) must additionally be eligible to be assigned a task. Fail loud.
     if (!dto.is_cc) {
       await this.subjects.assertEligible(orgId, TasksService.TASK_SUBJECT, dto.user_id);
@@ -2974,10 +3205,8 @@ export class TasksService {
 
   async removeAssignee(orgId: string, userId: string, taskId: string, assigneeUserId: string) {
     const task = await this.findTaskOrFail(orgId, taskId);
-    // Only the creator (or someone with edit permission) may change assignees.
-    if (task.created_by_user_id !== userId) {
-      await this.checkTaskPermission(orgId, userId, 'task_edit_roles');
-    }
+    // Only the creator (or an admin / scope-verified editor) may change assignees.
+    await this.assertAssignerRights(orgId, userId, task);
     const existing = await this.prisma.taskAssignee.findUnique({
       where: { task_id_user_id: { task_id: taskId, user_id: assigneeUserId } },
     });
@@ -2998,6 +3227,13 @@ export class TasksService {
       where: { task_id_user_id: { task_id: taskId, user_id: assigneeUserId } },
     });
     await this.logActivity(orgId, taskId, userId, 'reassigned', { removed_user_id: assigneeUserId });
+
+    // Removing a worker changes the completion maths: if everyone REMAINING has already
+    // responded, the task must settle now (Completed / Partial / Incomplete) instead of
+    // sitting open forever waiting on the person who just left.
+    if (!existing.is_cc && task.completion_mode === CompletionMode.all_must_complete && !isTerminal((task as any).status?.type)) {
+      await this.settleAllMustComplete(orgId, taskId, userId);
+    }
 
     // Let the removed person know — politely — that they're no longer on the task.
     if (assigneeUserId !== userId) {

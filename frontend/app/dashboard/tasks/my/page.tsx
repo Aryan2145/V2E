@@ -57,10 +57,23 @@ export default function MyTasksPage() {
   async function handleStatusChange(taskId: string, newStatusId: string) {
     const task = tasks.find((t) => t.id === taskId)
     if (!task) return
-    // Optimistic — patch the row in place so the list doesn't flash the spinner.
+    // Optimistic — patch the row in place so the list doesn't flash the spinner. In
+    // all_must mode this call moves MY track (an assignee row), not the shared status.
     const prev = tasks
     const nextStatus = statuses.find((s) => s.id === newStatusId)
-    setTasks((ts) => ts.map((t) => (t.id === taskId ? { ...t, status_id: newStatusId, status: nextStatus ?? t.status } : t)))
+    const isAllMust = task.completion_mode === 'all_must_complete'
+    setTasks((ts) => ts.map((t) => {
+      if (t.id !== taskId) return t
+      if (isAllMust) {
+        return {
+          ...t,
+          assignees: (t.assignees ?? []).map((a) =>
+            a.user_id === user?.id && !a.is_cc ? { ...a, status_id: newStatusId, status: nextStatus ?? a.status } : a,
+          ),
+        }
+      }
+      return { ...t, status_id: newStatusId, status: nextStatus ?? t.status }
+    }))
     try {
       // Mode-aware, like the Kanban / task page: on My Tasks I'm always an assignee, so
       // all_must moves MY track, any_can moves the shared status. (Never updateTask — it
@@ -151,18 +164,33 @@ export default function MyTasksPage() {
             </div>
           ) : (
             <div className="flex flex-col gap-2">
-              {filtered.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
-                  priorities={priorities}
-                  statuses={statuses}
-                  categories={categories}
-                  onStatusChange={(sid) => handleStatusChange(task.id, sid)}
-                  currentUserId={user?.id}
-                />
-              ))}
+              {filtered.map((task) => {
+                // The pill must show what clicking it actually changes. In "everyone must
+                // finish" mode the control moves MY track, not the shared/overall status —
+                // so the card has to display MY track, or a change looks like it snapped
+                // back (it silently succeeded, just on a different field than what showed).
+                const mine = task.assignees?.find((a) => a.user_id === user?.id && !a.is_cc)
+                const displayTask =
+                  task.completion_mode === 'all_must_complete' && mine
+                    ? {
+                        ...task,
+                        status_id: mine.status_id ?? task.status_id,
+                        status: mine.status ?? task.status,
+                      }
+                    : task
+                return (
+                  <TaskCard
+                    key={task.id}
+                    task={displayTask}
+                    onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
+                    priorities={priorities}
+                    statuses={statuses}
+                    categories={categories}
+                    onStatusChange={(sid) => handleStatusChange(task.id, sid)}
+                    currentUserId={user?.id}
+                  />
+                )
+              })}
             </div>
           )}
         </>
