@@ -224,6 +224,12 @@ export interface TaskAttachment {
   created_at: string
 }
 
+export interface RecurringInstanceAttachment extends TaskAttachment {
+  task_title: string
+  task_date: string
+}
+
+
 export interface TaskActivityLog {
   id: string
   task_id: string
@@ -290,7 +296,56 @@ export interface RecurringTemplate {
   reminder_specs?: ReminderSpec[]
   department_id?: string
   created_at: string
+  created_by_user_id: string
+  created_by_name?: string
   schedule_entries?: RecurringScheduleEntry[]
+  // Enriched by the scoped list endpoint (present on list rows).
+  assignee_names?: string[]
+  cc_names?: string[]
+  department_name?: string | null
+  occurrences?: number
+  next_run?: string | null
+  /** Whether the current viewer may manage this template's sharing (creator or admin). */
+  can_manage?: boolean
+}
+
+/** Mine/Team perspective: work SENT (outgoing) vs work RECEIVED (incoming). */
+export type RecurringRelation = 'incoming' | 'outgoing' | 'all'
+
+export interface RecurringListQuery {
+  scope?: WorkScope
+  relation?: RecurringRelation
+  status?: 'active' | 'paused'
+  category_id?: string
+  priority_id?: string
+  department_id?: string
+  search?: string
+}
+
+export interface RecurringTemplateList {
+  items: RecurringTemplate[]
+  max_scope: WorkScope | null
+  applied_scope: WorkScope | null
+}
+
+// ── Google-Drive-style template access ─────────────────────────────────────────
+export type RecurringAccessLevel = 'view' | 'edit'
+
+export interface RecurringAccessPerson {
+  user_id: string
+  name: string
+  /** For rule-based viewers: how they got access. */
+  source?: 'creator' | 'assignee' | 'cc'
+  /** For shares: the granted level. */
+  level?: RecurringAccessLevel
+}
+
+export interface RecurringAccessPanel {
+  template_id: string
+  title: string
+  rule_viewers: RecurringAccessPerson[]
+  shares: RecurringAccessPerson[]
+  revokes: RecurringAccessPerson[]
 }
 
 /** One instance's timing verdict in the recurring performance report. */

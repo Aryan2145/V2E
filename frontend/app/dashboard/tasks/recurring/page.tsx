@@ -339,15 +339,20 @@ function RecurringCard({
 
       {/* Meta row */}
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-[#475569]">
-        {earliestStart && (
-          <div className="flex items-center gap-1.5">
-            <Calendar size={12} className="text-[#94A3B8]" />
-            <span>From {formatDate(earliestStart)}</span>
-          </div>
-        )}
+        <span>By {template.created_by_name ?? 'Unknown'}</span>
         <span className="text-[#CBD5E1]">·</span>
+        {earliestStart && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <Calendar size={12} className="text-[#94A3B8]" />
+              <span>From {formatDate(earliestStart)}</span>
+            </div>
+            <span className="text-[#CBD5E1]">·</span>
+          </>
+        )}
         <span>{totalOccurrences} occurrence{totalOccurrences !== 1 ? 's' : ''}</span>
       </div>
+
 
       {/* Assignee avatars */}
       {people.length > 0 && (

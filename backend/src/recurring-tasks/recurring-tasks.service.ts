@@ -1,28 +1,103 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { PermissionAction } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { DataScope, PermissionAction, RecurringAccessKind, RecurringAccessLevel } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ScopeService } from '../access-rights/scope.service';
 import { Principal } from '../access-rights/permissions.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { CreateRecurringDto } from './dto/create-recurring.dto';
 import { UpdateRecurringDto } from './dto/update-recurring.dto';
 import { CreateScheduleEntryDto } from './dto/create-schedule-entry.dto';
 import { TERMINAL_TYPES } from '../tasks/status-phase';
 import { normaliseExtensions } from '../tasks/task-attachments.service';
 import { assertActiveOrgMembers } from '../common/org-members';
+import { assertMastersUsable } from '../common/task-masters-usable';
+import { shouldEntryFireToday, type RecurrenceEntry } from '../common/recurrence/should-fire-today';
 
 const ENTRY_INCLUDE = { orderBy: { order_index: 'asc' as const } };
 
 /** Recurring templates are task content — they share the task content leaf. */
 const TASK_LEAF = 'tasks.task.manage';
 
+/** Which slice of templates the caller wants: work they SENT vs work they RECEIVED. */
+export type RecurringRelation = 'incoming' | 'outgoing' | 'all';
+
+export interface ListTemplatesQuery {
+  scope?: DataScope;
+  relation?: RecurringRelation;
+  status?: 'active' | 'paused';
+  category_id?: string;
+  priority_id?: string;
+  department_id?: string;
+  search?: string;
+}
+
 @Injectable()
 export class RecurringTasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: ScopeService,
+    private readonly notifications: NotificationsService,
   ) {}
 
+  /** Read a JSON user-id array column safely. */
+  private jsonIds(value: unknown): string[] {
+    return (Array.isArray(value) ? value : []) as string[];
+  }
+
   // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+  private async enrichTemplates(templates: any[], now: Date = new Date(), principal?: Principal) {
+    if (templates.length === 0) return [];
+    // One batched lookup for every person referenced (creator + assignees + cc).
+    const userIds = new Set<string>();
+    const deptIds = new Set<string>();
+    for (const t of templates) {
+      userIds.add(t.created_by_user_id);
+      this.jsonIds(t.assignee_user_ids).forEach((id) => userIds.add(id));
+      this.jsonIds(t.cc_user_ids).forEach((id) => userIds.add(id));
+      if (t.department_id) deptIds.add(t.department_id);
+    }
+    const [users, depts] = await Promise.all([
+      userIds.size
+        ? this.prisma.user.findMany({ where: { id: { in: [...userIds] } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      deptIds.size
+        ? this.prisma.department.findMany({ where: { id: { in: [...deptIds] } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+    ]);
+    const nameMap = new Map(users.map((u) => [u.id, u.name]));
+    const deptMap = new Map(depts.map((d) => [d.id, d.name]));
+    const nameOf = (id: string) => nameMap.get(id) ?? 'Unknown';
+
+    return templates.map((t) => {
+      const assignees = this.jsonIds(t.assignee_user_ids);
+      const cc = this.jsonIds(t.cc_user_ids);
+      const occurrences = (t.schedule_entries ?? []).reduce((sum: number, e: any) => sum + (e.occurrence_count ?? 0), 0);
+      return {
+        ...t,
+        created_by_name: nameOf(t.created_by_user_id),
+        assignee_names: assignees.map(nameOf),
+        cc_names: cc.map(nameOf),
+        department_name: t.department_id ? deptMap.get(t.department_id) ?? null : null,
+        occurrences,
+        next_run: this.nextRunDate(t, now),
+        can_manage: principal ? t.created_by_user_id === principal.userId || principal.isAdmin : false,
+      };
+    });
+  }
+
+  private async enrichTemplate(template: any) {
+    if (!template) return null;
+    const user = await this.prisma.user.findUnique({
+      where: { id: template.created_by_user_id },
+      select: { name: true },
+    });
+    return {
+      ...template,
+      created_by_name: user?.name ?? 'Unknown',
+    };
+  }
+
 
   /**
    * A recurring template is a private record (it spawns private tasks). Allow an
@@ -47,11 +122,150 @@ export class RecurringTasksService {
     const isCreator = t.created_by_user_id === principal.userId;
     const isAssignee = assigneeIds.includes(principal.userId);
     // Being assigned grants read/edit on the template, never the right to destroy it.
+    // Creator and assignees are participants and are never hidden by a revoke.
     if (action === PermissionAction.delete ? isCreator : isCreator || isAssignee) return;
+
+    // Google-Drive-style per-user override, layered on top of the rules.
+    const override = await this.prisma.recurringTemplateAccess.findUnique({
+      where: { recurring_template_id_user_id: { recurring_template_id: templateId, user_id: principal.userId } },
+      select: { kind: true, level: true },
+    });
+    // A grant extends read (any level) or edit (level=edit) to a non-participant.
+    // It never confers delete — destroying a template stays with the creator/admin.
+    if (override?.kind === RecurringAccessKind.grant && action !== PermissionAction.delete) {
+      if (action === PermissionAction.read) return;
+      if (action === PermissionAction.edit && override.level === RecurringAccessLevel.edit) return;
+    }
+    // A revoke hides the template from a would-be scope viewer (admins bypass; fails
+    // closed as NotFound so we don't leak the row's existence).
+    if (override?.kind === RecurringAccessKind.revoke && !principal.isAdmin) {
+      throw new NotFoundException(`Recurring template ${templateId} not found`);
+    }
+
     await this.scope.assertCanActOn(orgId, principal, TASK_LEAF, action, [
       t.created_by_user_id,
       ...assigneeIds,
     ]);
+  }
+
+  // ─── Google-Drive-style access management ────────────────────────────────────
+
+  /** Only the creator or an admin may manage a template's sharing. Returns the template. */
+  private async assertCanManageAccess(orgId: string, principal: Principal, templateId: string) {
+    const t = await this.prisma.recurringTemplate.findFirst({
+      where: { id: templateId, organization_id: orgId },
+      select: { id: true, title: true, created_by_user_id: true, assignee_user_ids: true, cc_user_ids: true },
+    });
+    if (!t) throw new NotFoundException(`Recurring template ${templateId} not found`);
+    if (t.created_by_user_id !== principal.userId && !principal.isAdmin) {
+      throw new ForbiddenException('Only the creator or an admin can manage who can see this recurring task');
+    }
+    return t;
+  }
+
+  /** The access panel: rule-based participants + explicit shares + explicit removals. */
+  async getAccess(orgId: string, principal: Principal, templateId: string) {
+    const t = await this.assertCanManageAccess(orgId, principal, templateId);
+    const assignees = this.jsonIds(t.assignee_user_ids);
+    const cc = this.jsonIds(t.cc_user_ids);
+    const overrides = await this.prisma.recurringTemplateAccess.findMany({
+      where: { organization_id: orgId, recurring_template_id: templateId },
+      orderBy: { created_at: 'asc' },
+    });
+    const ids = new Set<string>([t.created_by_user_id, ...assignees, ...cc, ...overrides.map((o) => o.user_id)]);
+    const people = ids.size
+      ? await this.prisma.user.findMany({ where: { id: { in: [...ids] } }, select: { id: true, name: true } })
+      : [];
+    const nameMap = new Map(people.map((p) => [p.id, p.name]));
+    const person = (uid: string, extra: Record<string, unknown>) => ({ user_id: uid, name: nameMap.get(uid) ?? 'Unknown', ...extra });
+
+    const ruleViewers = [
+      person(t.created_by_user_id, { source: 'creator' }),
+      ...assignees.filter((id) => id !== t.created_by_user_id).map((id) => person(id, { source: 'assignee' })),
+      ...cc.filter((id) => id !== t.created_by_user_id && !assignees.includes(id)).map((id) => person(id, { source: 'cc' })),
+    ];
+    const shares = overrides.filter((o) => o.kind === RecurringAccessKind.grant).map((o) => person(o.user_id, { level: o.level }));
+    const revokes = overrides.filter((o) => o.kind === RecurringAccessKind.revoke).map((o) => person(o.user_id, {}));
+
+    return { template_id: templateId, title: t.title, rule_viewers: ruleViewers, shares, revokes };
+  }
+
+  /** Add or change an override for one person (grant view/edit, or revoke). Notifies them. */
+  async setAccess(
+    orgId: string,
+    principal: Principal,
+    templateId: string,
+    targetUserId: string,
+    kind: RecurringAccessKind,
+    level?: RecurringAccessLevel,
+  ) {
+    const t = await this.assertCanManageAccess(orgId, principal, templateId);
+    if (targetUserId === t.created_by_user_id) {
+      throw new BadRequestException('The creator always has full access and cannot be changed here');
+    }
+    await assertActiveOrgMembers(this.prisma, orgId, [targetUserId], 'people');
+
+    const key = { recurring_template_id_user_id: { recurring_template_id: templateId, user_id: targetUserId } };
+    if (kind === RecurringAccessKind.grant) {
+      const lvl = level === RecurringAccessLevel.edit ? RecurringAccessLevel.edit : RecurringAccessLevel.view;
+      await this.prisma.recurringTemplateAccess.upsert({
+        where: key,
+        create: { organization_id: orgId, recurring_template_id: templateId, user_id: targetUserId, kind, level: lvl, created_by_user_id: principal.userId },
+        update: { kind, level: lvl, created_by_user_id: principal.userId },
+      });
+      await this.notifyAccess(orgId, targetUserId, templateId, t.title, 'shared', lvl);
+    } else {
+      await this.prisma.recurringTemplateAccess.upsert({
+        where: key,
+        create: { organization_id: orgId, recurring_template_id: templateId, user_id: targetUserId, kind, level: null, created_by_user_id: principal.userId },
+        update: { kind, level: null, created_by_user_id: principal.userId },
+      });
+      await this.notifyAccess(orgId, targetUserId, templateId, t.title, 'removed');
+    }
+    return this.getAccess(orgId, principal, templateId);
+  }
+
+  /** Clear an override entirely: un-share (was a grant) or restore (was a revoke). Notifies them. */
+  async clearAccess(orgId: string, principal: Principal, templateId: string, targetUserId: string) {
+    const t = await this.assertCanManageAccess(orgId, principal, templateId);
+    const existing = await this.prisma.recurringTemplateAccess.findUnique({
+      where: { recurring_template_id_user_id: { recurring_template_id: templateId, user_id: targetUserId } },
+      select: { kind: true },
+    });
+    if (existing) {
+      await this.prisma.recurringTemplateAccess.delete({
+        where: { recurring_template_id_user_id: { recurring_template_id: templateId, user_id: targetUserId } },
+      });
+      await this.notifyAccess(orgId, targetUserId, templateId, t.title, existing.kind === RecurringAccessKind.grant ? 'removed' : 'restored');
+    }
+    return this.getAccess(orgId, principal, templateId);
+  }
+
+  private async notifyAccess(
+    orgId: string,
+    userId: string,
+    templateId: string,
+    title: string,
+    kind: 'shared' | 'removed' | 'restored',
+    level?: RecurringAccessLevel,
+  ) {
+    const copy = {
+      shared: { event_type: 'recurring_shared', title: 'Shared with you', body: `You were given ${level === RecurringAccessLevel.edit ? 'edit' : 'view'} access to the recurring task “${title}”.` },
+      restored: { event_type: 'recurring_shared', title: 'Access restored', body: `Your access to the recurring task “${title}” was restored.` },
+      removed: { event_type: 'recurring_access_removed', title: 'Access updated', body: `Your access to the recurring task “${title}” was removed.` },
+    }[kind];
+    await this.notifications
+      .emit({
+        orgId,
+        module: 'tasks',
+        event_type: copy.event_type,
+        recipients: [userId],
+        title: copy.title,
+        body: copy.body,
+        link: `/dashboard/tasks/recurring/${templateId}`,
+        entity: { type: 'recurring_template', id: templateId },
+      })
+      .catch(() => {});
   }
 
   private async findTemplateOrFail(orgId: string, templateId: string) {
@@ -96,18 +310,121 @@ export class RecurringTasksService {
 
   // ─── List ─────────────────────────────────────────────────────────────────────
 
-  async listTemplates(orgId: string) {
-    return this.prisma.recurringTemplate.findMany({
-      where: { organization_id: orgId },
+  /**
+   * Scope- and relation-aware template list. This is the read side of the
+   * Mine / My Team / Company switcher — and it is what closes the old leak where
+   * every member could read every template in the org.
+   *
+   * - `scope` is clamped to the caller's entitled ceiling (never widened).
+   * - `relation` ('outgoing' = templates they created, 'incoming' = templates
+   *   assigned to them / their team). Ignored at Company (org) scope, which is a
+   *   flat complete list.
+   * - Per-caller Google-Drive overrides are layered on: a personal grant reveals a
+   *   template outside their scope; a personal revoke hides one they'd otherwise see
+   *   (never for the creator, an assignee, or an admin).
+   */
+  async listTemplates(orgId: string, principal?: Principal, query: ListTemplatesQuery = {}, now: Date = new Date()) {
+    // Internal callers (no principal) get the raw org list — external HTTP always scopes.
+    if (!principal) {
+      const all = await this.prisma.recurringTemplate.findMany({
+        where: { organization_id: orgId },
+        include: { schedule_entries: ENTRY_INCLUDE },
+        orderBy: { created_at: 'desc' },
+      });
+      return { items: await this.enrichTemplates(all, now), max_scope: null, applied_scope: null };
+    }
+
+    const { max, effective } = await this.scope.resolveListScope(orgId, principal, TASK_LEAF, query.scope ?? null);
+    if (effective === null) {
+      return { items: [], max_scope: max, applied_scope: null };
+    }
+    const visible = await this.scope.visibleUserIds(orgId, principal.userId, effective);
+    const allowed = visible === 'ALL' ? null : new Set(visible);
+    const inScope = (uid: string) => allowed === null || allowed.has(uid);
+    const isOrg = effective === DataScope.org;
+
+    // DB-pushable filters.
+    const where: Record<string, unknown> = { organization_id: orgId };
+    if (query.status === 'active') where.is_active = true;
+    else if (query.status === 'paused') where.is_active = false;
+    if (query.category_id) where.category_id = query.category_id;
+    if (query.priority_id) where.priority_id = query.priority_id;
+    if (query.department_id) where.department_id = query.department_id;
+    if (query.search) {
+      where.OR = [
+        { title: { contains: query.search, mode: 'insensitive' } },
+        { description: { contains: query.search, mode: 'insensitive' } },
+      ];
+    }
+
+    const templates = await this.prisma.recurringTemplate.findMany({
+      where,
       include: { schedule_entries: ENTRY_INCLUDE },
       orderBy: { created_at: 'desc' },
     });
+
+    // The caller's own access overrides across this candidate set.
+    const overrides = templates.length
+      ? await this.prisma.recurringTemplateAccess.findMany({
+          where: { organization_id: orgId, user_id: principal.userId, recurring_template_id: { in: templates.map((t) => t.id) } },
+          select: { recurring_template_id: true, kind: true },
+        })
+      : [];
+    const grantedToMe = new Set(overrides.filter((o) => o.kind === RecurringAccessKind.grant).map((o) => o.recurring_template_id));
+    const revokedFromMe = new Set(overrides.filter((o) => o.kind === RecurringAccessKind.revoke).map((o) => o.recurring_template_id));
+
+    const relation: RecurringRelation = query.relation ?? 'all';
+
+    const filtered = templates.filter((t) => {
+      const assignees = this.jsonIds(t.assignee_user_ids);
+      const isCreator = t.created_by_user_id === principal.userId;
+      const isAssignee = assignees.includes(principal.userId);
+      // A revoke hides the template from the caller — but never from the creator, an
+      // assignee (assignment ≠ visibility), or an admin.
+      if (revokedFromMe.has(t.id) && !isCreator && !isAssignee && !principal.isAdmin) return false;
+      // Company view: flat complete list (admins & org-scope readers see everything).
+      if (isOrg) return true;
+      const creatorInScope = inScope(t.created_by_user_id);
+      const assigneeInScope = assignees.some(inScope);
+      // A personal grant surfaces a shared-with-me template in the Mine view only.
+      const sharedToMe = effective === DataScope.own && grantedToMe.has(t.id);
+      if (relation === 'outgoing') return creatorInScope;
+      if (relation === 'incoming') return assigneeInScope || sharedToMe;
+      return creatorInScope || assigneeInScope || sharedToMe;
+    });
+
+    return {
+      items: await this.enrichTemplates(filtered, now, principal),
+      max_scope: max,
+      applied_scope: effective,
+    };
   }
+
+  /** The next calendar day (from `now`) any active schedule entry fires, ISO or null. */
+  private nextRunDate(template: any, now: Date): string | null {
+    if (!template.is_active) return null;
+    const entries = (template.schedule_entries ?? []).filter((e: any) => e.is_active) as RecurrenceEntry[];
+    if (entries.length === 0) return null;
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    for (let i = 0; i <= 366; i++) {
+      const day = new Date(start);
+      day.setDate(day.getDate() + i);
+      if (entries.some((e) => shouldEntryFireToday(e, day))) return day.toISOString();
+    }
+    return null;
+  }
+
 
   // ─── Create ──────────────────────────────────────────────────────────────────
 
   async createTemplate(orgId: string, userId: string, dto: CreateRecurringDto) {
     await this.assertGoalInOrg(orgId, dto.linked_goal_id);
+    await assertMastersUsable(this.prisma, orgId, {
+      category_id: dto.category_id,
+      priority_id: dto.priority_id,
+      department_id: dto.department_id,
+    });
     await assertActiveOrgMembers(this.prisma, orgId, dto.escalation_user_ids, 'escalation contacts');
     await assertActiveOrgMembers(
       this.prisma,
@@ -142,17 +459,24 @@ export class RecurringTasksService {
       data: dto.schedule_entries.map((e, i) => this.entryData(orgId, template.id, e, i)),
     });
 
-    return this.prisma.recurringTemplate.findUnique({
+    const created = await this.prisma.recurringTemplate.findUnique({
       where: { id: template.id },
       include: { schedule_entries: ENTRY_INCLUDE },
     });
+    return this.enrichTemplate(created);
   }
+
 
   // ─── Update ──────────────────────────────────────────────────────────────────
 
   async updateTemplate(orgId: string, templateId: string, dto: UpdateRecurringDto) {
     await this.findTemplateOrFail(orgId, templateId);
     await this.assertGoalInOrg(orgId, dto.linked_goal_id);
+    await assertMastersUsable(this.prisma, orgId, {
+      category_id: dto.category_id,
+      priority_id: dto.priority_id,
+      department_id: dto.department_id,
+    });
     await assertActiveOrgMembers(this.prisma, orgId, dto.escalation_user_ids, 'escalation contacts');
     await assertActiveOrgMembers(
       this.prisma,
@@ -177,7 +501,7 @@ export class RecurringTasksService {
       where: { recurring_template_id: templateId },
     });
 
-    return this.prisma.recurringTemplate.update({
+    const updated = await this.prisma.recurringTemplate.update({
       where: { id: templateId },
       data: {
         ...(dto.title !== undefined && { title: dto.title }),
@@ -201,7 +525,9 @@ export class RecurringTasksService {
       },
       include: { schedule_entries: ENTRY_INCLUDE },
     });
+    return this.enrichTemplate(updated);
   }
+
 
   // ─── Schedule Entries ─────────────────────────────────────────────────────────
 
@@ -260,6 +586,13 @@ export class RecurringTasksService {
 
   async deleteScheduleEntry(orgId: string, templateId: string, entryId: string) {
     await this.findTemplateOrFail(orgId, templateId);
+    // Bind the entry to this template (and thereby this org) before touching it —
+    // a bare `where: { id: entryId }` is a cross-parent/cross-org IDOR (AUTHORIZATION.md rule 2).
+    const entry = await this.prisma.recurringScheduleEntry.findFirst({
+      where: { id: entryId, recurring_template_id: templateId },
+      select: { id: true },
+    });
+    if (!entry) throw new NotFoundException(`Schedule entry ${entryId} not found`);
     const count = await this.prisma.recurringScheduleEntry.count({
       where: { recurring_template_id: templateId },
     });
@@ -278,21 +611,24 @@ export class RecurringTasksService {
 
   async pauseTemplate(orgId: string, templateId: string) {
     await this.findTemplateOrFail(orgId, templateId);
-    return this.prisma.recurringTemplate.update({
+    const updated = await this.prisma.recurringTemplate.update({
       where: { id: templateId },
       data: { is_active: false },
       include: { schedule_entries: ENTRY_INCLUDE },
     });
+    return this.enrichTemplate(updated);
   }
 
   async resumeTemplate(orgId: string, templateId: string) {
     await this.findTemplateOrFail(orgId, templateId);
-    return this.prisma.recurringTemplate.update({
+    const updated = await this.prisma.recurringTemplate.update({
       where: { id: templateId },
       data: { is_active: true },
       include: { schedule_entries: ENTRY_INCLUDE },
     });
+    return this.enrichTemplate(updated);
   }
+
 
   // ─── Delete ──────────────────────────────────────────────────────────────────
 
@@ -541,5 +877,81 @@ export class RecurringTasksService {
       by_assignee: byAssignee,
       trend_monthly: months.map(({ key, ...rest }) => ({ month: key, ...rest })),
     };
+  }
+
+  async getInstanceAttachments(orgId: string, templateId: string, principal: Principal) {
+    await this.findTemplateOrFail(orgId, templateId);
+
+    const tasks = await this.prisma.task.findMany({
+      where: { organization_id: orgId, recurring_template_id: templateId, is_deleted: false },
+      select: {
+        id: true,
+        title: true,
+        created_at: true,
+        deadline: true,
+        created_by_user_id: true,
+      },
+    });
+
+    const taskIds = tasks.map((t) => t.id);
+    if (taskIds.length === 0) return [];
+
+    const attachments = await this.prisma.taskAttachment.findMany({
+      where: {
+        organization_id: orgId,
+        task_id: { in: taskIds },
+        is_deleted: false,
+        OR: [
+          { comment_id: null },
+          { comment: { is_deleted: false } }
+        ]
+      },
+      orderBy: { created_at: 'desc' },
+    });
+
+    const userIds = Array.from(new Set(attachments.map((a) => a.uploaded_by_user_id)));
+    const users = userIds.length
+      ? await this.prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const userMap = new Map(users.map((u) => [u.id, u.name]));
+    const taskMap = new Map(tasks.map((t) => [t.id, t]));
+
+    const result = [];
+    for (const att of attachments) {
+      const task = taskMap.get(att.task_id);
+      if (!task) continue;
+
+      const isCreator = task.created_by_user_id === principal.userId;
+      const isOwner = att.uploaded_by_user_id === principal.userId;
+      const isAdmin = principal.isAdmin || false;
+
+      const visible = !att.is_proof ||
+        att.proof_visibility === 'everyone' ||
+        isOwner ||
+        isCreator ||
+        isAdmin;
+
+      if (!visible) continue;
+
+      result.push({
+        id: att.id,
+        file_name: att.file_name,
+        mime_type: att.mime_type,
+        size_bytes: att.size_bytes,
+        created_at: att.created_at,
+        is_proof: att.is_proof,
+        comment_id: att.comment_id,
+        uploaded_by_user_id: att.uploaded_by_user_id,
+        uploaded_by_name: userMap.get(att.uploaded_by_user_id) ?? 'Unknown',
+        task_id: att.task_id,
+        task_title: task.title,
+        task_date: task.deadline ?? task.created_at,
+      });
+    }
+
+    return result;
   }
 }

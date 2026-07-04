@@ -30,6 +30,7 @@ import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { normaliseExtensions } from './task-attachments.service';
 import { assertActiveOrgMembers } from '../common/org-members';
+import { assertMastersUsable as assertMastersUsableShared } from '../common/task-masters-usable';
 import { R2Service } from '../storage/r2.service';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
@@ -338,35 +339,8 @@ export class TasksService {
     orgId: string,
     refs: { category_id?: string | null; priority_id?: string | null; department_id?: string | null },
   ): Promise<void> {
-    const checks: Promise<void>[] = [];
-    if (refs.category_id) {
-      checks.push(
-        this.prisma.taskCategory
-          .findFirst({ where: { id: refs.category_id, organization_id: orgId, is_active: true }, select: { id: true } })
-          .then((r) => {
-            if (!r) throw new BadRequestException('Category not found or no longer active in this organization.');
-          }),
-      );
-    }
-    if (refs.priority_id) {
-      checks.push(
-        this.prisma.taskPriority
-          .findFirst({ where: { id: refs.priority_id, organization_id: orgId, is_active: true }, select: { id: true } })
-          .then((r) => {
-            if (!r) throw new BadRequestException('Priority not found or no longer active in this organization.');
-          }),
-      );
-    }
-    if (refs.department_id) {
-      checks.push(
-        this.prisma.department
-          .findFirst({ where: { id: refs.department_id, organization_id: orgId }, select: { id: true } })
-          .then((r) => {
-            if (!r) throw new BadRequestException('Department not found in this organization.');
-          }),
-      );
-    }
-    await Promise.all(checks);
+    // One source of truth, shared with the recurring service (see common/task-masters-usable.ts).
+    return assertMastersUsableShared(this.prisma, orgId, refs);
   }
 
   /**

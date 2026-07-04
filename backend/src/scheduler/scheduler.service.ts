@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { HolidaysService } from '../holidays/holidays.service';
@@ -266,29 +267,41 @@ export class SchedulerService {
         goalId = goal?.id;
       }
 
-      const task = await this.prisma.task.create({
-        data: {
-          organization_id: template.organization_id,
-          title: template.title,
-          description: template.description ?? undefined,
-          category_id: template.category_id ?? undefined,
-          priority_id: template.priority_id ?? undefined,
-          status_id: status.id,
-          quadrant: template.quadrant,
-          type: 'recurring',
-          created_by_user_id: template.created_by_user_id,
-          department_id: template.department_id ?? undefined,
-          completion_mode: template.completion_mode,
-          proof_required: template.proof_required,
-          proof_allowed_extensions: Array.isArray(template.proof_allowed_extensions)
-            ? template.proof_allowed_extensions
-            : [],
-          goal_id: goalId,
-          deadline: adjustedDeadline,
-          recurring_template_id: template.id,
-          created_at: now, // align instance date with the (possibly simulated) clock
-        },
-      });
+      let task;
+      try {
+        task = await this.prisma.task.create({
+          data: {
+            organization_id: template.organization_id,
+            title: template.title,
+            description: template.description ?? undefined,
+            category_id: template.category_id ?? undefined,
+            priority_id: template.priority_id ?? undefined,
+            status_id: status.id,
+            quadrant: template.quadrant,
+            type: 'recurring',
+            created_by_user_id: template.created_by_user_id,
+            department_id: template.department_id ?? undefined,
+            completion_mode: template.completion_mode,
+            proof_required: template.proof_required,
+            proof_allowed_extensions: Array.isArray(template.proof_allowed_extensions)
+              ? template.proof_allowed_extensions
+              : [],
+            goal_id: goalId,
+            deadline: adjustedDeadline,
+            recurring_template_id: template.id,
+            recurring_spawn_date: todayStart, // date-only; unique index blocks a same-day duplicate
+            created_at: now, // align instance date with the (possibly simulated) clock
+          },
+        });
+      } catch (err) {
+        // A concurrent scheduler tick / template-create trigger, or a repeat "Run Today",
+        // lost the race — the DB unique index (template, spawn day) already holds today's
+        // instance. This is expected, not a failure: no-op quietly, don't spawn a duplicate.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          return false;
+        }
+        throw err;
+      }
 
       const assigneeIds = template.assignee_user_ids as string[];
       const ccIds = template.cc_user_ids as string[];

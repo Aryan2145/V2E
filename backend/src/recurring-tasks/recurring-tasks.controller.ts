@@ -14,12 +14,13 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PermissionAction } from '@prisma/client';
+import { DataScope, PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { principalFromUser } from '../access-rights/permissions.service';
-import { RecurringTasksService } from './recurring-tasks.service';
+import { RecurringTasksService, type RecurringRelation } from './recurring-tasks.service';
+import { SetAccessDto } from './dto/set-access.dto';
 import { RecurringAttachmentsService } from './recurring-attachments.service';
 import { SchedulerService } from '../scheduler/scheduler.service';
 import { ClockService } from '../clock/clock.service';
@@ -41,9 +42,45 @@ export class RecurringTasksController {
   ) {}
 
   @Get()
-  @ApiOperation({ summary: 'List recurring task templates' })
-  list(@Param('orgId') orgId: string) {
-    return this.service.listTemplates(orgId);
+  @ApiOperation({ summary: 'List recurring task templates (scope + relation aware)' })
+  async list(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: DataScope,
+    @Query('relation') relation?: RecurringRelation,
+    @Query('status') status?: 'active' | 'paused',
+    @Query('category_id') categoryId?: string,
+    @Query('priority_id') priorityId?: string,
+    @Query('department_id') departmentId?: string,
+    @Query('search') search?: string,
+  ) {
+    const now = await this.clock.now(orgId);
+    return this.service.listTemplates(
+      orgId,
+      principalFromUser(req.user),
+      { scope, relation, status, category_id: categoryId, priority_id: priorityId, department_id: departmentId, search },
+      now,
+    );
+  }
+
+  // ─── Manage access (Google-Drive-style sharing) ──────────────────────────────
+
+  @Get(':id/access')
+  @ApiOperation({ summary: 'Who can see this template — rule-based viewers + shares + removals' })
+  getAccess(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    return this.service.getAccess(orgId, principalFromUser(req.user), id);
+  }
+
+  @Post(':id/access')
+  @ApiOperation({ summary: 'Share with / remove a person (creator or admin only)' })
+  setAccess(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Body() dto: SetAccessDto) {
+    return this.service.setAccess(orgId, principalFromUser(req.user), id, dto.user_id, dto.kind, dto.level);
+  }
+
+  @Delete(':id/access/:userId')
+  @ApiOperation({ summary: 'Clear a person’s override — un-share or restore (creator or admin only)' })
+  clearAccess(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string, @Param('userId') userId: string) {
+    return this.service.clearAccess(orgId, principalFromUser(req.user), id, userId);
   }
 
   @Post()
@@ -139,6 +176,14 @@ export class RecurringTasksController {
     await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
     return this.attachments.listForTemplate(orgId, id);
   }
+
+  @Get(':id/instance-attachments')
+  @ApiOperation({ summary: 'List attachments across spawned task instances' })
+  async listInstanceAttachments(@Param('orgId') orgId: string, @Request() req: any, @Param('id') id: string) {
+    await this.service.assertCanAccessTemplate(orgId, principalFromUser(req.user), id, PermissionAction.read);
+    return this.service.getInstanceAttachments(orgId, id, principalFromUser(req.user));
+  }
+
 
   @Get(':id/attachments/:attachmentId/download')
   @ApiOperation({ summary: 'Get a short-lived signed download URL for a template attachment' })

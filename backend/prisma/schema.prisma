@@ -868,6 +868,16 @@ enum RecurringEndCondition {
   after_n
 }
 
+enum RecurringAccessKind {
+  grant
+  revoke
+}
+
+enum RecurringAccessLevel {
+  view
+  edit
+}
+
 // All task tables use plain string IDs for cross-module references
 // (no FK constraints to Organization/User/Department tables)
 // This allows extraction as a standalone microservice.
@@ -1091,6 +1101,12 @@ model Task {
   status_actor_user_id String?
   completed_by_user_id String?
   recurring_template_id     String?
+  // Date-only stamp of the day this instance was spawned from its recurring
+  // template. Paired with a unique index below so the DB physically rejects a
+  // second spawn of the same template on the same day — the race-safe guard the
+  // scheduler's count-then-create check cannot provide on its own. NULL for every
+  // non-recurring task (NULLs are distinct in a Postgres unique index).
+  recurring_spawn_date      DateTime? @db.Date
   workflow_instance_step_id String?
   goal_id              String?        // links a task to a QUARTERLY goal (initiative)
   created_at           DateTime       @default(now())
@@ -1109,6 +1125,7 @@ model Task {
   attachments TaskAttachment[]
   views      TaskView[]
 
+  @@unique([recurring_template_id, recurring_spawn_date], map: "tasks_recurring_template_day_unique")
   @@index([goal_id])
   @@index([organization_id])
   @@index([created_by_user_id])
@@ -1440,8 +1457,36 @@ model RecurringTemplate {
 
   schedule_entries RecurringScheduleEntry[]
   attachments      RecurringTemplateAttachment[]
+  access_entries   RecurringTemplateAccess[]
 
   @@map("recurring_templates")
+}
+
+// Google-Drive-style per-template access overrides layered ON TOP of the rule-based
+// (scope/participation) visibility. A template's real audience =
+//   (rule-based viewers) + (kind=grant rows) − (kind=revoke rows).
+// A `grant` lets someone the rules wouldn't otherwise admit see (level=view) or edit
+// (level=edit) the template; a `revoke` hides it from someone the rules WOULD admit
+// (never the creator or an org-scope admin). One row per (template, user); the
+// affected person is notified on add/remove. Managed only by the creator or an admin.
+model RecurringTemplateAccess {
+  id                    String                @id @default(uuid())
+  organization_id       String
+  recurring_template_id String
+  user_id               String
+  kind                  RecurringAccessKind
+  level                 RecurringAccessLevel? // set only when kind=grant; null for revoke
+  created_by_user_id    String
+  created_at            DateTime              @default(now())
+  updated_at            DateTime              @updatedAt
+
+  template RecurringTemplate @relation(fields: [recurring_template_id], references: [id], onDelete: Cascade)
+
+  @@unique([recurring_template_id, user_id])
+  @@index([recurring_template_id])
+  @@index([organization_id])
+  @@index([user_id])
+  @@map("recurring_template_access")
 }
 
 // Attachments defined once on a recurring template. On each spawn the scheduler

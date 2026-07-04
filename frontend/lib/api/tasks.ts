@@ -31,6 +31,11 @@ import type {
   BulkAction,
   ReminderSpec,
   ProofVisibility,
+  RecurringInstanceAttachment,
+  RecurringTemplateList,
+  RecurringListQuery,
+  RecurringAccessPanel,
+  RecurringAccessLevel,
 } from '@/lib/types/tasks'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/tasks`
@@ -499,9 +504,44 @@ export const tasksApi = {
 
   // ── Recurring ────────────────────────────────────────────────────────────────
 
+  // Simple array (default scope) — used where the caller just needs the templates
+  // it can see, e.g. resolving the current one on the detail page.
   getRecurringTemplates: async (orgId: string): Promise<RecurringTemplate[]> => {
     const res = await apiClient.get(`${base(orgId)}/recurring`)
-    return unwrap<RecurringTemplate[]>(res)
+    return unwrap<RecurringTemplateList>(res).items
+  },
+
+  // Scope + relation + filter aware list, with the viewer's authority ceiling.
+  listRecurringTemplates: async (orgId: string, query: RecurringListQuery = {}): Promise<RecurringTemplateList> => {
+    const params = new URLSearchParams()
+    if (query.scope) params.set('scope', query.scope)
+    if (query.relation) params.set('relation', query.relation)
+    if (query.status) params.set('status', query.status)
+    if (query.category_id) params.set('category_id', query.category_id)
+    if (query.priority_id) params.set('priority_id', query.priority_id)
+    if (query.department_id) params.set('department_id', query.department_id)
+    if (query.search) params.set('search', query.search)
+    const qs = params.toString()
+    const res = await apiClient.get(`${base(orgId)}/recurring${qs ? `?${qs}` : ''}`)
+    return unwrap<RecurringTemplateList>(res)
+  },
+
+  // ── Recurring template access (Google-Drive-style sharing) ────────────────────
+  getRecurringAccess: async (orgId: string, id: string): Promise<RecurringAccessPanel> => {
+    const res = await apiClient.get(`${base(orgId)}/recurring/${id}/access`)
+    return unwrap<RecurringAccessPanel>(res)
+  },
+  setRecurringAccess: async (
+    orgId: string,
+    id: string,
+    body: { user_id: string; kind: 'grant' | 'revoke'; level?: RecurringAccessLevel },
+  ): Promise<RecurringAccessPanel> => {
+    const res = await apiClient.post(`${base(orgId)}/recurring/${id}/access`, body)
+    return unwrap<RecurringAccessPanel>(res)
+  },
+  clearRecurringAccess: async (orgId: string, id: string, userId: string): Promise<RecurringAccessPanel> => {
+    const res = await apiClient.delete(`${base(orgId)}/recurring/${id}/access/${userId}`)
+    return unwrap<RecurringAccessPanel>(res)
   },
 
   createRecurring: async (orgId: string, dto: {
@@ -547,6 +587,12 @@ export const tasksApi = {
     const res = await apiClient.get(`${base(orgId)}/recurring/${templateId}/attachments`)
     return unwrap<TaskAttachment[]>(res)
   },
+
+  listRecurringInstanceAttachments: async (orgId: string, templateId: string): Promise<RecurringInstanceAttachment[]> => {
+    const res = await apiClient.get(`${base(orgId)}/recurring/${templateId}/instance-attachments`)
+    return unwrap<RecurringInstanceAttachment[]>(res)
+  },
+
 
   downloadRecurringAttachment: async (orgId: string, templateId: string, attachmentId: string): Promise<void> => {
     const res = await apiClient.get(`${base(orgId)}/recurring/${templateId}/attachments/${attachmentId}/download`)
