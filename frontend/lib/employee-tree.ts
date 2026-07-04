@@ -33,7 +33,23 @@ const sortPeople = (arr: EmployeeProfile[]) =>
       (a.user?.name ?? '').localeCompare(b.user?.name ?? ''),
   )
 
-export function buildEmployeeForest(employees: EmployeeProfile[]): EmployeeForest {
+export interface BuildForestOpts {
+  /**
+   * A root with no in-set reports normally lands in the free-radical band. When
+   * the set is filtered (e.g. by department), some of those roots actually DO
+   * have connections — a manager or reports that were filtered out. Return true
+   * only for people who are genuinely unlinked in the FULL org (no manager and
+   * no reports at all); the rest stay in the forest as standalone roots (they
+   * carry a "hidden neighbour" dot instead). Defaults to treating every
+   * reportless root as a free radical (unfiltered behaviour).
+   */
+  isGenuinelyUnlinked?: (e: EmployeeProfile) => boolean
+}
+
+export function buildEmployeeForest(
+  employees: EmployeeProfile[],
+  opts?: BuildForestOpts,
+): EmployeeForest {
   const byUser = new Map<string, EmployeeProfile>()
   for (const e of employees) byUser.set(e.user_id, e)
 
@@ -52,8 +68,11 @@ export function buildEmployeeForest(employees: EmployeeProfile[]): EmployeeFores
   childrenOf.forEach((arr, k) => childrenOf.set(k, sortPeople(arr)))
 
   const hasReports = (e: EmployeeProfile) => (childrenOf.get(e.user_id)?.length ?? 0) > 0
-  const connectedRoots = sortPeople(roots.filter(hasReports))
-  const freeRadicals = sortPeople(roots.filter((e) => !hasReports(e)))
+  const isFree = opts?.isGenuinelyUnlinked ?? (() => true)
+  // A root anchors the forest if it has in-set reports, or if it isn't genuinely
+  // unlinked (its manager/reports were merely filtered out — shown with a dot).
+  const connectedRoots = sortPeople(roots.filter((e) => hasReports(e) || !isFree(e)))
+  const freeRadicals = sortPeople(roots.filter((e) => !hasReports(e) && isFree(e)))
 
   return { byUser, childrenOf, connectedRoots, freeRadicals }
 }

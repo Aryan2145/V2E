@@ -34,8 +34,26 @@ import EmployeeNode, { type EmployeeNodeData } from './EmployeeNode'
 import type { Department, EmployeeProfile, EmployeeStatus } from '@/lib/types'
 
 interface Props {
+  /** Employees to actually render as nodes (after search + department filter). */
   employees: EmployeeProfile[]
+  /**
+   * The full (unfiltered) employee set, used to detect connections that were
+   * filtered out — a hidden manager above or hidden reports below a shown node.
+   * Defaults to `employees` (no filtering → no hidden neighbours).
+   */
+  allEmployees?: EmployeeProfile[]
   departments: Department[]
+  /**
+   * Open a profile. Supplied by the page so it can save the scroll position
+   * before navigating (so "back" returns here in place). Falls back to a plain
+   * router push.
+   */
+  onOpenEmployee?: (id: string) => void
+}
+
+interface HiddenInfo {
+  hiddenManager: boolean
+  hiddenReports: boolean
 }
 
 const statusDot: Record<EmployeeStatus, string> = {
@@ -119,12 +137,13 @@ function Flow({
   nodes,
   edges,
   fitRef,
+  onOpen,
 }: {
   nodes: Node[]
   edges: Edge[]
   fitRef: { current: (() => void) | null }
+  onOpen: (id: string) => void
 }) {
-  const router = useRouter()
   const [rfNodes, setRfNodes, onNodesChange] = useNodesState(nodes)
   const [rfEdges, setRfEdges, onEdgesChange] = useEdgesState(edges)
   const [interacted, setInteracted] = useState(false)
@@ -217,7 +236,7 @@ function Flow({
 
   const onNodeClick: NodeMouseHandler = (_e, node) => {
     const id = (node.data as { empId?: string })?.empId
-    if (id) router.push(`/settings/organization/employees/${id}`)
+    if (id) onOpen(id)
   }
 
   return (
@@ -265,11 +284,13 @@ function EmpCard({
   color,
   onOpen,
   freeRadical,
+  hidden,
 }: {
   emp: EmployeeProfile
   color: string
   onOpen: (id: string) => void
   freeRadical?: boolean
+  hidden?: HiddenInfo
 }) {
   const name = emp.user?.name ?? 'Unknown'
   return (
@@ -277,10 +298,24 @@ function EmpCard({
       type="button"
       onClick={() => onOpen(emp.id)}
       style={{ borderLeft: `4px solid ${color}` }}
-      className={`w-full flex items-center gap-2.5 bg-white rounded-[10px] border px-3 py-2.5 text-left hover:shadow-sm transition-shadow ${
+      className={`relative w-full flex items-center gap-2.5 bg-white rounded-[10px] border px-3 py-2.5 text-left hover:shadow-sm transition-shadow ${
         freeRadical ? 'border-dashed border-[#CBD5E1]' : 'border-[#E2E8F0]'
       }`}
     >
+      {hidden?.hiddenManager && (
+        <span
+          title="Reports to someone hidden by the current filter"
+          className="pointer-events-none absolute -top-[6px] left-6 w-2 h-2 rounded-full border-2 border-white shadow-sm"
+          style={{ backgroundColor: color }}
+        />
+      )}
+      {hidden?.hiddenReports && (
+        <span
+          title="Has reports hidden by the current filter"
+          className="pointer-events-none absolute -bottom-[6px] left-6 w-2 h-2 rounded-full border-2 border-white shadow-sm"
+          style={{ backgroundColor: color }}
+        />
+      )}
       <span
         className="w-9 h-9 shrink-0 rounded-full inline-flex items-center justify-center text-[11px] font-bold text-white"
         style={{ backgroundColor: color }}
@@ -313,17 +348,19 @@ function MobileBranch({
   colorFor,
   onOpen,
   depth,
+  hiddenOf,
 }: {
   emp: EmployeeProfile
   forest: ReturnType<typeof buildEmployeeForest>
   colorFor: (deptId: string) => string
   onOpen: (id: string) => void
   depth: number
+  hiddenOf: (id: string) => HiddenInfo | undefined
 }) {
   const kids = forest.childrenOf.get(emp.user_id) ?? []
   return (
     <div>
-      <EmpCard emp={emp} color={colorFor(emp.department_id)} onOpen={onOpen} />
+      <EmpCard emp={emp} color={colorFor(emp.department_id)} onOpen={onOpen} hidden={hiddenOf(emp.id)} />
       {kids.length > 0 && (
         <div className="ml-4 mt-2 pl-3 border-l border-[#E2E8F0] flex flex-col gap-2">
           {kids.map((k) => (
@@ -334,6 +371,7 @@ function MobileBranch({
               colorFor={colorFor}
               onOpen={onOpen}
               depth={depth + 1}
+              hiddenOf={hiddenOf}
             />
           ))}
         </div>
@@ -344,7 +382,7 @@ function MobileBranch({
 
 // ─── Main ───────────────────────────────────────────────────────────────────────
 
-export default function EmployeeTreeView({ employees, departments }: Props) {
+export default function EmployeeTreeView({ employees, allEmployees, departments, onOpenEmployee }: Props) {
   const router = useRouter()
   const isDesktop = useIsDesktop()
   const fitRef = useRef<(() => void) | null>(null)
@@ -352,7 +390,40 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
   const colors = useMemo(() => computeNodeColors(departments), [departments])
   const colorFor = (deptId: string) => colors[deptId]?.base ?? '#94A3B8'
 
-  const forest = useMemo(() => buildEmployeeForest(employees), [employees])
+  // Build the forest from the visible set, but classify roots against the FULL
+  // org so a person whose manager/reports were merely filtered out stays in the
+  // chart (as a standalone root carrying a dot) rather than being mislabelled
+  // "unlinked". Also derive per-node hidden-neighbour flags for the dots.
+  const { forest, hiddenInfo } = useMemo(() => {
+    const all = allEmployees ?? employees
+    const allByUser = new Map(all.map((e) => [e.user_id, e]))
+    const totalReportsOf = new Map<string, number>()
+    for (const e of all) {
+      const mgr = e.reporting_to_user_id
+      if (mgr && mgr !== e.user_id) totalReportsOf.set(mgr, (totalReportsOf.get(mgr) ?? 0) + 1)
+    }
+    const visibleUsers = new Set(employees.map((e) => e.user_id))
+    const hasMgrInOrg = (e: EmployeeProfile) =>
+      !!(e.reporting_to_user_id && e.reporting_to_user_id !== e.user_id && allByUser.has(e.reporting_to_user_id))
+    const genuinelyUnlinked = (e: EmployeeProfile) =>
+      !hasMgrInOrg(e) && (totalReportsOf.get(e.user_id) ?? 0) === 0
+
+    const forest = buildEmployeeForest(employees, { isGenuinelyUnlinked: genuinelyUnlinked })
+
+    const hiddenInfo = new Map<string, HiddenInfo>()
+    for (const e of employees) {
+      const hiddenManager = hasMgrInOrg(e) && !visibleUsers.has(e.reporting_to_user_id!)
+      const visibleReports = forest.childrenOf.get(e.user_id)?.length ?? 0
+      const totalReports = totalReportsOf.get(e.user_id) ?? 0
+      hiddenInfo.set(e.id, { hiddenManager, hiddenReports: totalReports > visibleReports })
+    }
+    return { forest, hiddenInfo }
+  }, [employees, allEmployees])
+
+  const hasHiddenNeighbours = useMemo(
+    () => Array.from(hiddenInfo.values()).some((h) => h.hiddenManager || h.hiddenReports),
+    [hiddenInfo],
+  )
 
   // Departments present in the current view, for the legend.
   const legend = useMemo(() => {
@@ -380,6 +451,8 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
       status: emp.status,
       color: colorFor(emp.department_id),
       freeRadical,
+      hiddenManager: hiddenInfo.get(emp.id)?.hiddenManager,
+      hiddenReports: hiddenInfo.get(emp.id)?.hiddenReports,
     })
 
     const ns: Node[] = []
@@ -420,7 +493,8 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forest, employees, departments])
 
-  const onOpen = (id: string) => router.push(`/settings/organization/employees/${id}`)
+  const onOpen =
+    onOpenEmployee ?? ((id: string) => router.push(`/settings/organization/employees/${id}`))
 
   if (employees.length === 0) {
     return (
@@ -449,6 +523,12 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
             <Zap size={12} className="text-[#CA8A04]" /> unlinked = no manager &amp; no reports
           </span>
         )}
+        {hasHiddenNeighbours && (
+          <span className="inline-flex items-center gap-1.5 text-[#94A3B8]">
+            <span className="w-2 h-2 rounded-full bg-[#94A3B8] border border-white shadow-sm" />
+            dot = connection hidden by filter (above = manager, below = reports)
+          </span>
+        )}
         {isDesktop && (
           <span className="ml-auto hidden items-center gap-3 md:inline-flex">
             <span className="text-[#94A3B8]">Drag to pan · Ctrl/⌘ + scroll or pinch to zoom</span>
@@ -469,7 +549,7 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
           style={{ height: 640 }}
         >
           <ReactFlowProvider>
-            <Flow nodes={nodes} edges={edges} fitRef={fitRef} />
+            <Flow nodes={nodes} edges={edges} fitRef={fitRef} onOpen={onOpen} />
           </ReactFlowProvider>
         </div>
       ) : (
@@ -482,6 +562,7 @@ export default function EmployeeTreeView({ employees, departments }: Props) {
                 colorFor={colorFor}
                 onOpen={onOpen}
                 depth={0}
+                hiddenOf={(id) => hiddenInfo.get(id)}
               />
             </div>
           ))}

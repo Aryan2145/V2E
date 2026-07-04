@@ -11,7 +11,7 @@ import type { EmployeeProfile, Department, Role, EmployeeStatus } from '@/lib/ty
 import { Search, Users, ChevronRight, UserPlus, Upload, AlertTriangle } from 'lucide-react'
 import AddEmployeeModal from '@/components/employees/AddEmployeeModal'
 import ImportEmployeesModal from '@/components/employees/ImportEmployeesModal'
-import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import DepartmentMultiSelect from '@/components/employees/DepartmentMultiSelect'
 import EmployeeTreeView from '@/components/employees/EmployeeTreeView'
 import ViewToggle, { type EmployeeView } from '@/components/employees/ViewToggle'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
@@ -105,25 +105,59 @@ export default function EmployeesPage() {
   const [departments, setDepartments] = useState<Department[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [loading, setLoading] = useState(true)
-  const [search, setSearch] = useState('')
-  const [deptFilter, setDeptFilter] = useState('all')
+  // Lazily hydrate the view + filters from sessionStorage on the very first
+  // render, so returning here (browser back from a profile) lands on the exact
+  // screen the user left — same view, search and department filter — with no
+  // flash of the default table. Reading in the initializer (rather than a mount
+  // effect) avoids racing the persistence effects below. Guarded for SSR: the
+  // view-dependent UI only renders after `loading` flips client-side, so this
+  // never affects the hydrated markup.
+  const [search, setSearch] = useState(() =>
+    typeof window === 'undefined' ? '' : sessionStorage.getItem('employees-search') ?? '',
+  )
+  const [selectedDeptIds, setSelectedDeptIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return []
+    try {
+      const raw = sessionStorage.getItem('employees-depts')
+      const arr = raw ? JSON.parse(raw) : []
+      return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []
+    } catch {
+      return []
+    }
+  })
   const [showAdd, setShowAdd] = useState(false)
   const [prefillSelf, setPrefillSelf] = useState(false)
   const [showImport, setShowImport] = useState(false)
-  const [view, setView] = useState<EmployeeView>('table')
-  const tableScrollRef = useRef<HTMLDivElement>(null)
-
-  // Restore the view + filters when returning here (e.g. browser back from a
-  // profile), so the user lands on the same screen they left rather than the
-  // default table.
-  useEffect(() => {
+  const [view, setView] = useState<EmployeeView>(() => {
+    if (typeof window === 'undefined') return 'table'
     const v = sessionStorage.getItem('employees-view')
-    if (v === 'tree' || v === 'table') setView(v)
-    const s = sessionStorage.getItem('employees-search')
-    if (s) setSearch(s)
-    const d = sessionStorage.getItem('employees-dept')
-    if (d) setDeptFilter(d)
+    return v === 'tree' || v === 'table' ? v : 'table'
+  })
+  const tableScrollRef = useRef<HTMLDivElement>(null)
+  // Set true the instant we navigate to a profile, so the scroll listener below
+  // ignores the scroll-to-top that Next fires for the new route — otherwise it
+  // would clobber the saved position with 0 and we'd land back at the top.
+  const navigatingRef = useRef(false)
+
+  // Persist the current page scroll and flag that we're leaving. Capturing here
+  // (before navigation) is what makes "back" return to the same spot — matters
+  // most in tree view, where the chart sits below the fold.
+  const markNavigating = useCallback(() => {
+    navigatingRef.current = true
+    sessionStorage.setItem(
+      'employees-page-scroll',
+      String(window.scrollY || document.documentElement.scrollTop || 0),
+    )
   }, [])
+
+  const openEmployee = useCallback(
+    (id: string) => {
+      markNavigating()
+      router.push(`/settings/organization/employees/${id}`)
+    },
+    [markNavigating, router],
+  )
+
   useEffect(() => {
     sessionStorage.setItem('employees-view', view)
   }, [view])
@@ -131,8 +165,8 @@ export default function EmployeesPage() {
     sessionStorage.setItem('employees-search', search)
   }, [search])
   useEffect(() => {
-    sessionStorage.setItem('employees-dept', deptFilter)
-  }, [deptFilter])
+    sessionStorage.setItem('employees-depts', JSON.stringify(selectedDeptIds))
+  }, [selectedDeptIds])
 
   // ── Card (inner) scroll: save + restore ──────────────────────────────────────
   // Persist the table's own scroll position so returning from a profile keeps the
@@ -184,9 +218,10 @@ export default function EmployeesPage() {
   useEffect(() => {
     let raf = 0
     const onScroll = () => {
-      if (raf) return
+      if (raf || navigatingRef.current) return
       raf = requestAnimationFrame(() => {
         raf = 0
+        if (navigatingRef.current) return
         sessionStorage.setItem(
           'employees-page-scroll',
           String(window.scrollY || document.documentElement.scrollTop || 0),
@@ -244,18 +279,20 @@ export default function EmployeesPage() {
     }).finally(() => setLoading(false))
   }, [orgId])
 
+  const selectedDeptSet = useMemo(() => new Set(selectedDeptIds), [selectedDeptIds])
+
   const filtered = useMemo(() => {
     return employees.filter((emp) => {
       const name = emp.user?.name ?? ''
       const email = emp.user?.email ?? ''
-      const matchesDept = deptFilter === 'all' || emp.department_id === deptFilter
+      const matchesDept = selectedDeptSet.size === 0 || selectedDeptSet.has(emp.department_id)
       const matchesSearch =
         !search ||
         name.toLowerCase().includes(search.toLowerCase()) ||
         email.toLowerCase().includes(search.toLowerCase())
       return matchesDept && matchesSearch
     })
-  }, [employees, deptFilter, search])
+  }, [employees, selectedDeptSet, search])
 
   if (loading) {
     return (
@@ -265,7 +302,7 @@ export default function EmployeesPage() {
     )
   }
 
-  const isFiltered = search !== '' || deptFilter !== 'all'
+  const isFiltered = search !== '' || selectedDeptIds.length > 0
 
   const columns: ResponsiveColumn<EmployeeProfile>[] = [
     {
@@ -320,7 +357,10 @@ export default function EmployeesPage() {
       render: (emp) => (
         <Link
           href={`/settings/organization/employees/${emp.id}`}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation()
+            markNavigating()
+          }}
           className="inline-flex items-center gap-1 min-h-[40px] sm:min-h-0 text-[#2563EB] text-xs font-medium hover:text-[#1D4ED8] transition-colors rounded-[6px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
         >
           View
@@ -403,9 +443,9 @@ export default function EmployeesPage() {
           />
         </div>
         <div className="w-full sm:w-60">
-          <DepartmentSelect
-            value={deptFilter === 'all' ? '' : deptFilter}
-            onChange={(id) => setDeptFilter(id || 'all')}
+          <DepartmentMultiSelect
+            selected={selectedDeptIds}
+            onChange={setSelectedDeptIds}
             departments={departments}
             allLabel="All departments"
           />
@@ -426,13 +466,18 @@ export default function EmployeesPage() {
           columns={columns}
           rows={filtered}
           rowKey={(emp) => emp.id}
-          onRowClick={(emp) => router.push(`/settings/organization/employees/${emp.id}`)}
+          onRowClick={(emp) => openEmployee(emp.id)}
           emptyState={<EmptyState filtered={isFiltered} />}
           maxBodyHeight="min(60vh, 560px)"
           scrollContainerRef={tableScrollRef}
         />
       ) : (
-        <EmployeeTreeView employees={filtered} departments={departments} />
+        <EmployeeTreeView
+          employees={filtered}
+          allEmployees={employees}
+          departments={departments}
+          onOpenEmployee={openEmployee}
+        />
       )}
 
       {/* Add / Import modals */}

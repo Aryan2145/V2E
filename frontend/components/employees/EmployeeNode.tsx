@@ -15,6 +15,10 @@ export interface EmployeeNodeData {
   status: EmployeeStatus
   color: string // department base hue
   freeRadical?: boolean
+  /** This person reports to someone who is filtered out of the current view. */
+  hiddenManager?: boolean
+  /** This person has reports who are filtered out of the current view. */
+  hiddenReports?: boolean
 }
 
 const statusDot: Record<EmployeeStatus, string> = {
@@ -28,7 +32,7 @@ function initials(name: string): string {
 }
 
 function EmployeeNode({ data }: { data: EmployeeNodeData }) {
-  const { name, roleTitle, level, department, status, color, freeRadical } = data
+  const { name, roleTitle, level, department, status, color, freeRadical, hiddenManager, hiddenReports } = data
   return (
     <div
       className={`group relative rounded-[12px] bg-white border shadow-[0_1px_3px_rgba(0,0,0,0.08)] ${
@@ -37,6 +41,23 @@ function EmployeeNode({ data }: { data: EmployeeNodeData }) {
       style={{ width: NODE_W, borderLeft: `4px solid ${color}` }}
     >
       <Handle type="target" position={Position.Top} className="!bg-[#94A3B8] !w-2 !h-2 !border-0" />
+
+      {/* Hidden-neighbour markers: a dot above means this person reports to
+          someone filtered out; a dot below means they have reports filtered out. */}
+      {hiddenManager && (
+        <span
+          title="Reports to someone hidden by the current filter"
+          className="pointer-events-none absolute -top-[7px] left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
+          style={{ backgroundColor: color }}
+        />
+      )}
+      {hiddenReports && (
+        <span
+          title="Has reports hidden by the current filter"
+          className="pointer-events-none absolute -bottom-[7px] left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
+          style={{ backgroundColor: color }}
+        />
+      )}
 
       {/* Hover details card */}
       <div className="pointer-events-none absolute left-1/2 top-full z-50 mt-2 w-[220px] -translate-x-1/2 scale-95 rounded-[10px] border border-[#E2E8F0] bg-white p-3 opacity-0 shadow-[0_8px_24px_rgba(15,23,42,0.14)] transition-all duration-150 group-hover:scale-100 group-hover:opacity-100">

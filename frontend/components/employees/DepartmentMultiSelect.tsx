@@ -1,0 +1,277 @@
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, Search, X, Check, Minus, Building2 } from 'lucide-react'
+import { flattenTree, descendantsOf, ancestorsOf } from '@/lib/dept-tree'
+import { computeNodeColors } from '@/lib/org-chart-colors'
+import type { Department } from '@/lib/types'
+
+interface Props {
+  /** Selected department ids. Empty = "all" (no filter). */
+  selected: string[]
+  onChange: (ids: string[]) => void
+  departments: Department[]
+  /** Label shown on the trigger + as the reset row when nothing is selected. */
+  allLabel?: string
+}
+
+/**
+ * Multi-select department picker with parent → sub-department cascade.
+ *
+ * Ticking a department selects it AND its whole sub-tree; any individual
+ * descendant can then be un-ticked. A parent renders checked when its entire
+ * sub-tree is selected, indeterminate when only part of it is. An empty
+ * selection means "all departments" (no filter).
+ *
+ * Always renders its panel IN-FLOW (opens downward, scrolls with the page) per
+ * the no-overflow-parent rule — this lives on a scrollable page, never in a
+ * clipping modal.
+ */
+export default function DepartmentMultiSelect({
+  selected,
+  onChange,
+  departments,
+  allLabel = 'All departments',
+}: Props) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  const selectedSet = useMemo(() => new Set(selected), [selected])
+
+  // Escape / outside-click close.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setOpen(false)
+        setQuery('')
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const colors = useMemo(() => computeNodeColors(departments), [departments])
+  const colorFor = (deptId?: string) => (deptId && colors[deptId]?.base) || '#94A3B8'
+
+  const flat = useMemo(() => flattenTree(departments), [departments])
+
+  const q = query.trim().toLowerCase()
+  const searchRows = useMemo(
+    () => (q ? departments.filter((d) => d.name.toLowerCase().includes(q)) : []),
+    [departments, q],
+  )
+
+  // The full sub-tree (self + descendants) of a department, for cascade toggles.
+  const subtreeIds = (deptId: string): string[] => [
+    deptId,
+    ...descendantsOf(departments, deptId).map((f) => f.dept.id),
+  ]
+
+  // Tri-state of a department's sub-tree: 'all' | 'some' | 'none'.
+  const subtreeState = (deptId: string): 'all' | 'some' | 'none' => {
+    const ids = subtreeIds(deptId)
+    let sel = 0
+    for (const id of ids) if (selectedSet.has(id)) sel++
+    if (sel === 0) return 'none'
+    if (sel === ids.length) return 'all'
+    return 'some'
+  }
+
+  // Toggle a department + its whole sub-tree. Selecting a leaf is just itself.
+  const toggle = (deptId: string) => {
+    const ids = subtreeIds(deptId)
+    const next = new Set(selectedSet)
+    if (subtreeState(deptId) === 'all') {
+      for (const id of ids) next.delete(id)
+    } else {
+      for (const id of ids) next.add(id)
+    }
+    onChange(Array.from(next))
+  }
+
+  const selectAll = () => onChange([])
+
+  // ── Trigger label ──────────────────────────────────────────────────────────
+  const triggerLabel = useMemo(() => {
+    if (selected.length === 0) return allLabel
+    if (selected.length === 1) {
+      const d = departments.find((x) => x.id === selected[0])
+      return d?.name ?? '1 department'
+    }
+    return `${selected.length} departments`
+  }, [selected, departments, allLabel])
+
+  // ── Checkbox ─────────────────────────────────────────────────────────────────
+  const Checkbox = ({ state }: { state: 'all' | 'some' | 'none' }) => (
+    <span
+      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px] border transition-colors ${
+        state === 'none'
+          ? 'border-[#CBD5E1] bg-white'
+          : 'border-[#2563EB] bg-[#2563EB] text-white'
+      }`}
+    >
+      {state === 'all' && <Check size={12} strokeWidth={3} />}
+      {state === 'some' && <Minus size={12} strokeWidth={3} />}
+    </span>
+  )
+
+  const triggerCls =
+    'w-full flex items-center gap-2.5 border border-[#CBD5E1] rounded-[8px] px-3 py-2.5 text-[15px] text-left bg-[#F8FAFC] hover:bg-white hover:border-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors'
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button type="button" onClick={() => setOpen((o) => !o)} className={triggerCls}>
+        <span className="flex-1 min-w-0 truncate text-[#0F172A]">{triggerLabel}</span>
+        {selected.length > 0 && (
+          <span className="inline-flex items-center justify-center rounded-[999px] bg-[#2563EB] px-1.5 min-w-[20px] h-5 text-xs font-semibold text-white">
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown
+          size={16}
+          className={`shrink-0 text-[#94A3B8] transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 flex flex-col max-h-[320px] border border-[#E2E8F0] rounded-[10px] bg-white shadow-[0_8px_28px_rgba(0,0,0,0.14)] overflow-hidden">
+          {/* Search */}
+          <div className="relative border-b border-[#E2E8F0] shrink-0">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search departments…"
+              className="w-full pl-9 pr-8 py-2.5 text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none"
+              autoFocus
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]"
+                aria-label="Clear search"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex-1 overflow-y-auto overscroll-contain min-h-0">
+            {/* All departments (reset) */}
+            {!q && (
+              <button
+                type="button"
+                onClick={selectAll}
+                className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                  selected.length === 0 ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
+                }`}
+              >
+                <span className="w-2.5 h-2.5 rounded-full shrink-0 border border-[#CBD5E1]" />
+                <span
+                  className={`flex-1 min-w-0 truncate text-sm font-medium ${
+                    selected.length === 0 ? 'text-[#2563EB]' : 'text-[#0F172A]'
+                  }`}
+                >
+                  {allLabel}
+                </span>
+                {selected.length === 0 && <Check size={15} className="text-[#2563EB] shrink-0" />}
+              </button>
+            )}
+
+            {departments.length === 0 ? (
+              <div className="flex flex-col items-center gap-1 py-8 text-center">
+                <Building2 size={22} className="text-[#CBD5E1]" />
+                <p className="text-xs text-[#94A3B8]">No departments yet.</p>
+              </div>
+            ) : q ? (
+              searchRows.length === 0 ? (
+                <p className="px-3 py-6 text-center text-sm text-[#94A3B8]">No departments found.</p>
+              ) : (
+                searchRows.map((d) => {
+                  const path = ancestorsOf(departments, d.id)
+                    .slice(0, -1)
+                    .map((a) => a.name)
+                    .join(' › ')
+                  const state = subtreeState(d.id)
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => toggle(d.id)}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-[#F8FAFC]"
+                    >
+                      <Checkbox state={state} />
+                      <span
+                        className="w-2.5 h-2.5 rounded-full shrink-0"
+                        style={{ backgroundColor: colorFor(d.id) }}
+                      />
+                      <span className="flex-1 min-w-0">
+                        <span className="block text-sm font-medium text-[#0F172A] truncate">{d.name}</span>
+                        {path && <span className="block text-xs text-[#94A3B8] truncate">{path}</span>}
+                      </span>
+                    </button>
+                  )
+                })
+              )
+            ) : (
+              flat.map(({ dept, depth }) => {
+                const state = subtreeState(dept.id)
+                return (
+                  <button
+                    key={dept.id}
+                    type="button"
+                    onClick={() => toggle(dept.id)}
+                    style={{ paddingLeft: 12 + depth * 16 }}
+                    className="w-full flex items-center gap-2.5 pr-3 py-2 text-left transition-colors hover:bg-[#F8FAFC]"
+                  >
+                    <Checkbox state={state} />
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0"
+                      style={{ backgroundColor: colorFor(dept.id) }}
+                    />
+                    <span
+                      className={`flex-1 min-w-0 truncate text-sm font-medium ${
+                        state !== 'none' ? 'text-[#0F172A]' : 'text-[#334155]'
+                      }`}
+                    >
+                      {dept.name}
+                    </span>
+                  </button>
+                )
+              })
+            )}
+          </div>
+
+          {/* Footer: quick clear when something is selected */}
+          {selected.length > 0 && (
+            <div className="flex items-center justify-between gap-2 border-t border-[#E2E8F0] px-3 py-2 shrink-0">
+              <span className="text-xs text-[#64748B]">
+                {selected.length} selected
+              </span>
+              <button
+                type="button"
+                onClick={selectAll}
+                className="text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8]"
+              >
+                Clear
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
