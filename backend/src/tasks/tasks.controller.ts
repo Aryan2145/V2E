@@ -22,6 +22,7 @@ import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { TasksService } from './tasks.service';
 import { TaskAttachmentsService, MAX_ATTACHMENT_BYTES, type UploadedFile as UploadedFileType } from './task-attachments.service';
 import { principalFromUser } from '../access-rights/permissions.service';
+import { RecurringTasksService } from '../recurring-tasks/recurring-tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -42,6 +43,7 @@ export class TasksController {
   constructor(
     private readonly service: TasksService,
     private readonly attachments: TaskAttachmentsService,
+    private readonly recurringService: RecurringTasksService,
   ) {}
 
   // ─── Task CRUD ────────────────────────────────────────────────────────────────
@@ -79,6 +81,12 @@ export class TasksController {
   }
 
   // ─── Specific sub-routes (must be BEFORE /:id) ───────────────────────────────
+
+  @Get('recurring')
+  @ApiOperation({ summary: 'List recurring task templates' })
+  listRecurring(@Param('orgId') orgId: string) {
+    return this.recurringService.listTemplates(orgId);
+  }
 
   @Get('eligible-assignees')
   @ApiOperation({ summary: 'Get eligible assignees based on visibility rules' })

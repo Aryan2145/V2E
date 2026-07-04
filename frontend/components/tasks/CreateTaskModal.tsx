@@ -22,6 +22,7 @@ import EscalationLevelsField from '@/components/tasks/EscalationLevelsField'
 import GoalSelectField from '@/components/tasks/GoalSelectField'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import { holidaysApi } from '@/lib/api/holidays'
 import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate, RecurringTemplate } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
@@ -48,7 +49,7 @@ function defaultScheduleEntry(): ScheduleEntryDraft {
     month_days: [],
     yearly_dates: [],
     time: '09:00',
-    start_date: new Date().toISOString().slice(0, 10),
+    start_date: getNow().toISOString().slice(0, 10),
     end_condition: 'never',
     end_date: '',
     end_after: 10,
@@ -121,7 +122,7 @@ export default function CreateTaskModal({
   const deadline = deadlineDate
     ? new Date(deadlineTime ? `${deadlineDate}T${deadlineTime}` : `${deadlineDate}T23:59`).toISOString()
     : ''
-  const todayStr = new Date().toISOString().split('T')[0]
+  const todayStr = getNow().toISOString().split('T')[0]
   const [completionMode, setCompletionMode] = useState<CompletionMode>('any_can_complete')
   const [proofRequired, setProofRequired] = useState(false)
   const [proofAllowedExtensions, setProofAllowedExtensions] = useState<string[]>([])
@@ -421,12 +422,23 @@ export default function CreateTaskModal({
             await tasksApi.uploadRecurringAttachment(orgId, template.id, file)
           }
         } catch {
-          setError('Recurring task created, but an attachment failed to upload. Open it in the Recurring tab to add it again.')
-          setCreatedRecurring(template)
+          if (lockMode) {
+            alert('Recurring task created, but an attachment failed to upload. Please edit the task in the Recurring tab to add it.')
+            onCreated()
+            handleClose()
+          } else {
+            setError('Recurring task created, but an attachment failed to upload. Open it in the Recurring tab to add it again.')
+            setCreatedRecurring(template)
+          }
           return
         }
       }
-      setCreatedRecurring(template)
+      if (lockMode) {
+        onCreated()
+        handleClose()
+      } else {
+        setCreatedRecurring(template)
+      }
     } catch {
       setError('Failed to create recurring task. Please try again.')
     } finally {

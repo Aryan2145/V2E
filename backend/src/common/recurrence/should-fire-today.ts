@@ -54,7 +54,25 @@ export function shouldEntryFireToday(entry: RecurrenceEntry, now: Date = new Dat
 
     case 'monthly': {
       const monthDays = entry.month_days as number[];
-      if (!Array.isArray(monthDays) || !monthDays.includes(todayDate)) return false;
+      if (!Array.isArray(monthDays)) return false;
+
+      // Check if today is the last day of the month
+      const nextDay = new Date(today);
+      nextDay.setDate(today.getDate() + 1);
+      const isLastDay = nextDay.getMonth() !== today.getMonth();
+
+      // A selected day matches today if it is exactly today's date,
+      // or if today is the last day of the month and the selected day is greater than today's date.
+      const hasMatch = monthDays.some((d) => {
+        if (d < 0) {
+          const targetDay = Math.abs(d);
+          return todayDate === targetDay || (isLastDay && targetDay > todayDate);
+        } else {
+          return todayDate === d;
+        }
+      });
+      if (!hasMatch) return false;
+
       const monthsDiff =
         (today.getFullYear() - startDate.getFullYear()) * 12 +
         (today.getMonth() - startDate.getMonth());

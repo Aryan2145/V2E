@@ -3,6 +3,7 @@
 import React from 'react'
 import { Plus } from 'lucide-react'
 import ScheduleEntryRow, { type ScheduleEntryDraft } from './ScheduleEntryRow'
+import { getNow } from '@/lib/clock'
 
 interface Props {
   entries: ScheduleEntryDraft[]
@@ -17,7 +18,7 @@ function defaultEntry(): ScheduleEntryDraft {
     month_days: [],
     yearly_dates: [],
     time: '09:00',
-    start_date: new Date().toISOString().slice(0, 10),
+    start_date: getNow().toISOString().slice(0, 10),
     end_condition: 'never',
     end_date: '',
     end_after: 10,

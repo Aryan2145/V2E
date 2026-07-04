@@ -114,6 +114,13 @@ export default function TimeTravelBar() {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
+  const compactLabel = now.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  })
 
   const inputCls = 'w-full px-2.5 py-2 rounded-[8px] border border-[#CBD5E1] text-base sm:text-sm text-[#0F172A] bg-white focus:border-2 focus:border-[#2563EB] focus:outline-none'
   const arrowCls = 'shrink-0 w-9 h-9 flex items-center justify-center rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] hover:bg-[#FFFBEB] transition-colors'
@@ -196,18 +203,19 @@ export default function TimeTravelBar() {
         </div>
       )}
 
-      {/* Floating circular toggle — always on screen */}
+      {/* Floating clock toggle — displays live-ticking date and time capsule */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-label={expanded ? 'Collapse test clock' : 'Open test clock'}
         aria-expanded={expanded}
         title="Test clock"
-        className="relative w-14 h-14 rounded-full bg-[#D97706] text-white flex items-center justify-center shadow-[0_4px_16px_rgba(0,0,0,0.20)] ring-2 ring-white hover:bg-[#B45309] transition-colors"
+        className="flex items-center gap-2 px-4 h-10 rounded-full bg-[#D97706] text-white font-medium text-xs shadow-[0_4px_16px_rgba(0,0,0,0.20)] ring-2 ring-white hover:bg-[#B45309] transition-all duration-200 cursor-pointer"
       >
-        <FlaskConical size={22} />
+        <FlaskConical size={14} className="animate-pulse shrink-0" />
+        <span className="font-semibold">{compactLabel}</span>
         {synced && (
-          <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-[#16A34A] ring-2 ring-white" />
+          <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A] shrink-0" />
         )}
       </button>
     </div>

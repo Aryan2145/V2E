@@ -13,6 +13,7 @@ import {
   ShieldAlert,
   Info,
   X,
+  Search,
 } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import { useToast } from '@/components/ui/Toast'
@@ -425,6 +426,7 @@ function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; vie
 
 function UnifySection({ orgId, view, onChange, apiError }: { orgId: string; view: AssigneeVisibilityAdminView; onChange: () => Promise<void>; apiError: (e: any, f: string) => void }) {
   const [busy, setBusy] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
   const depts = view.departments
   const byId = useMemo(() => new Map(depts.map((d) => [d.id, d])), [depts])
   // Reuse the org-chart hue scheme so swatches here match the chart (branch hue,
@@ -457,6 +459,52 @@ function UnifySection({ orgId, view, onChange, apiError }: { orgId: string; view
     }
     return n
   }
+
+  const matchingRootIds = useMemo(() => {
+    const matched = new Set<string>()
+    if (!searchQuery.trim()) return matched
+    const query = searchQuery.toLowerCase()
+
+    const getRootId = (id: string): string => {
+      let cur = id
+      while (true) {
+        const parentId = byId.get(cur)?.parent_department_id
+        if (parentId && byId.has(parentId)) {
+          cur = parentId
+        } else {
+          break
+        }
+      }
+      return cur
+    }
+
+    for (const d of depts) {
+      if (d.name.toLowerCase().includes(query)) {
+        matched.add(getRootId(d.id))
+      }
+    }
+    return matched
+  }, [depts, byId, searchQuery])
+
+  const isDeptVisible = useCallback((deptId: string, query: string): boolean => {
+    if (!query) return true
+    let cur = deptId
+    while (true) {
+      const parentId = byId.get(cur)?.parent_department_id
+      if (parentId && byId.has(parentId)) {
+        cur = parentId
+      } else {
+        break
+      }
+    }
+    return matchingRootIds.has(cur)
+  }, [byId, matchingRootIds])
+
+  const filteredRows = useMemo(() => {
+    if (!searchQuery.trim()) return rows
+    const query = searchQuery.toLowerCase()
+    return rows.filter((r) => isDeptVisible(r.dept.id, query))
+  }, [rows, searchQuery, isDeptVisible])
 
   // Nearest ancestor (excluding self) that already has unify on — self is then covered by it
   // (and the highest such flag governs the pool, so toggling the child would be redundant).
@@ -495,48 +543,77 @@ function UnifySection({ orgId, view, onChange, apiError }: { orgId: string; view
       ) : !anyParent ? (
         <p className="text-xs text-[#94A3B8] py-1">No departments have sub-departments to unify.</p>
       ) : (
-        <div className="max-h-[320px] overflow-y-auto -mr-1 pr-1 divide-y divide-[#F1F5F9]">
-          {rows.map(({ dept, depth }) => {
-            const d = byId.get(dept.id)!
-            const covered = coveringAncestor(dept.id)
-            const parent = hasChildren(dept.id)
-            const unified = d.assignee_unify_subtree && !covered
-            return (
-              <div key={dept.id} className="flex items-center justify-between gap-3 py-2">
-                <div className="flex items-center gap-2 min-w-0" style={{ paddingLeft: depth * 18 }}>
-                  {depth > 0 && <CornerDownRight size={13} className="shrink-0 text-[#CBD5E1] -mr-0.5" />}
-                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorOf(dept.id) }} />
-                  <div className="min-w-0">
-                    <p className={`text-sm truncate ${unified ? 'font-semibold text-[#0F172A]' : covered ? 'text-[#475569]' : parent ? 'font-medium text-[#0F172A]' : 'text-[#64748B]'}`}>
-                      {dept.name}
-                    </p>
-                    <p className="text-xs text-[#94A3B8]">
-                      {covered
-                        ? `In ${covered.name}'s pool`
-                        : unified
-                          ? `Unified — ${plural(descendantCount(dept.id))} assign as one`
-                          : parent
-                            ? plural(descendantCount(dept.id))
-                            : 'No sub-departments'}
-                    </p>
+        <div className="space-y-3">
+          {/* Search bar */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search departments..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-8 py-1.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:border-2 focus:border-[#2563EB] focus:outline-none bg-white"
+            />
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]">
+              <Search size={14} />
+            </span>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#0F172A]"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+
+          {filteredRows.length === 0 ? (
+            <p className="text-xs text-[#94A3B8] py-3 text-center">No matching departments found.</p>
+          ) : (
+            <div className="max-h-[320px] overflow-y-auto -mr-1 pr-1 divide-y divide-[#F1F5F9]">
+              {filteredRows.map(({ dept, depth }) => {
+                const d = byId.get(dept.id)!
+                const covered = coveringAncestor(dept.id)
+                const parent = hasChildren(dept.id)
+                const unified = d.assignee_unify_subtree && !covered
+                return (
+                  <div key={dept.id} className="flex items-center justify-between gap-3 py-2">
+                    <div className="flex items-center gap-2 min-w-0" style={{ paddingLeft: depth * 18 }}>
+                      {depth > 0 && <CornerDownRight size={13} className="shrink-0 text-[#CBD5E1] -mr-0.5" />}
+                      <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorOf(dept.id) }} />
+                      <div className="min-w-0">
+                        <p className={`text-sm truncate ${unified ? 'font-semibold text-[#0F172A]' : covered ? 'text-[#475569]' : parent ? 'font-medium text-[#0F172A]' : 'text-[#64748B]'}`}>
+                          {dept.name}
+                        </p>
+                        <p className="text-xs text-[#94A3B8]">
+                          {covered
+                            ? `In ${covered.name}'s pool`
+                            : unified
+                              ? `Unified — ${plural(descendantCount(dept.id))} assign as one`
+                              : parent
+                                ? plural(descendantCount(dept.id))
+                                : 'No sub-departments'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {busy === dept.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
+                      {covered ? (
+                        <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]" title={`Locked — controlled by ${covered.name}`}>
+                          <Lock size={12} />
+                          <Toggle on disabled onChange={() => {}} />
+                        </span>
+                      ) : parent ? (
+                        <Toggle on={d.assignee_unify_subtree} disabled={busy === dept.id} onChange={() => toggle(dept.id, !d.assignee_unify_subtree)} />
+                      ) : (
+                        <span className="text-[11px] text-[#CBD5E1] pr-1">—</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {busy === dept.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
-                  {covered ? (
-                    <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]" title={`Locked — controlled by ${covered.name}`}>
-                      <Lock size={12} />
-                      <Toggle on disabled onChange={() => {}} />
-                    </span>
-                  ) : parent ? (
-                    <Toggle on={d.assignee_unify_subtree} disabled={busy === dept.id} onChange={() => toggle(dept.id, !d.assignee_unify_subtree)} />
-                  ) : (
-                    <span className="text-[11px] text-[#CBD5E1] pr-1">—</span>
-                  )}
-                </div>
-              </div>
-            )
-          })}
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </Card>

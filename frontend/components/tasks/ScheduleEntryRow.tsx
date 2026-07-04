@@ -1,14 +1,14 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import { X } from 'lucide-react'
 import type { RecurringScheduleType, RecurringEndCondition, YearlyDate } from '@/lib/types/tasks'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
-import StyledSelect from '@/components/ui/StyledSelect'
+import MonthDayPicker from '@/components/ui/MonthDayPicker'
+import { getNow } from '@/lib/clock'
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MONTH_LABELS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 const TYPES: { value: RecurringScheduleType; label: string }[] = [
   { value: 'daily', label: 'Daily' },
   { value: 'weekly', label: 'Weekly' },
@@ -41,13 +41,35 @@ const inputCls = 'border border-[#CBD5E1] rounded-[8px] px-3 py-[8px] text-sm te
 const labelCls = 'text-sm font-medium text-[#374151]'
 
 export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, canDelete }: Props) {
+  const [isCustom, setIsCustom] = useState(() => entry.every > 1)
+
   function toggleDow(d: number) {
     const next = entry.days.includes(d) ? entry.days.filter((x) => x !== d) : [...entry.days, d]
     onUpdate({ days: next })
   }
 
+  function isMonthDaySelected(d: number) {
+    return entry.month_days.includes(d) || entry.month_days.includes(-d)
+  }
+
   function toggleMonthDay(d: number) {
-    const next = entry.month_days.includes(d) ? entry.month_days.filter((x) => x !== d) : [...entry.month_days, d]
+    const isSelected = entry.month_days.includes(d) || entry.month_days.includes(-d)
+    let next: number[]
+    if (isSelected) {
+      next = entry.month_days.filter((x) => x !== d && x !== -d)
+    } else {
+      next = [...entry.month_days, d]
+    }
+    onUpdate({ month_days: next })
+  }
+
+  function toggleFallback(d: number, enable: boolean) {
+    const next = entry.month_days.map((x) => {
+      if (Math.abs(x) === d) {
+        return enable ? -d : d
+      }
+      return x
+    })
     onUpdate({ month_days: next })
   }
 
@@ -87,13 +109,42 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
 
       {/* Type tabs */}
       <div>
-        <label className={`${labelCls} block mb-2`}>Repeat</label>
+        <div className="flex items-center justify-between mb-2">
+          <label className={labelCls}>Repeat</label>
+          <button
+            type="button"
+            onClick={() => {
+              const nextIsCustom = !isCustom
+              setIsCustom(nextIsCustom)
+              if (!nextIsCustom) {
+                onUpdate({ every: 1 })
+              }
+            }}
+            className="text-xs font-semibold text-[#2563EB] hover:underline"
+          >
+            {isCustom ? 'Use standard interval' : 'Set custom interval...'}
+          </button>
+        </div>
         <div className="flex items-center border border-[#E2E8F0] rounded-[8px] p-0.5 gap-0.5">
           {TYPES.map((t) => (
             <button
               key={t.value}
               type="button"
-              onClick={() => onUpdate({ schedule_type: t.value })}
+              onClick={() => {
+                const patch: Partial<ScheduleEntryDraft> = {
+                  schedule_type: t.value,
+                  every: 1,
+                  days: [],
+                  month_days: [],
+                  yearly_dates: [],
+                }
+                if (t.value === 'yearly') {
+                  const now = getNow()
+                  patch.yearly_dates = [{ month: now.getMonth() + 1, day: now.getDate() }]
+                }
+                setIsCustom(false)
+                onUpdate(patch)
+              }}
               className={[
                 'flex-1 py-1.5 text-sm font-medium rounded-[6px] transition-colors',
                 entry.schedule_type === t.value
@@ -108,7 +159,7 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
       </div>
 
       {/* Daily config */}
-      {entry.schedule_type === 'daily' && (
+      {entry.schedule_type === 'daily' && isCustom && (
         <div className="flex items-center gap-3">
           <span className={labelCls}>Every</span>
           <input
@@ -126,18 +177,23 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
       {/* Weekly config */}
       {entry.schedule_type === 'weekly' && (
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className={labelCls}>Every</span>
-            <input
-              type="number"
-              min={1}
-              max={52}
-              value={entry.every}
-              onChange={(e) => onUpdate({ every: Math.max(1, Number(e.target.value)) })}
-              className={`w-20 text-center ${inputCls}`}
-            />
-            <span className="text-sm text-[#475569]">week{entry.every !== 1 ? 's' : ''} on</span>
-          </div>
+          {isCustom && (
+            <div className="flex items-center gap-3">
+              <span className={labelCls}>Every</span>
+              <input
+                type="number"
+                min={1}
+                max={52}
+                value={entry.every}
+                onChange={(e) => onUpdate({ every: Math.max(1, Number(e.target.value)) })}
+                className={`w-20 text-center ${inputCls}`}
+              />
+              <span className="text-sm text-[#475569]">week{entry.every !== 1 ? 's' : ''} on</span>
+            </div>
+          )}
+          {!isCustom && (
+            <span className={`${labelCls} block`}>Repeats weekly on</span>
+          )}
           <div className="flex gap-1.5 flex-wrap">
             {DOW_LABELS.map((label, d) => (
               <button
@@ -161,18 +217,23 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
       {/* Monthly config */}
       {entry.schedule_type === 'monthly' && (
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className={labelCls}>Every</span>
-            <input
-              type="number"
-              min={1}
-              max={12}
-              value={entry.every}
-              onChange={(e) => onUpdate({ every: Math.max(1, Number(e.target.value)) })}
-              className={`w-20 text-center ${inputCls}`}
-            />
-            <span className="text-sm text-[#475569]">month{entry.every !== 1 ? 's' : ''} on day(s)</span>
-          </div>
+          {isCustom && (
+            <div className="flex items-center gap-3">
+              <span className={labelCls}>Every</span>
+              <input
+                type="number"
+                min={1}
+                max={12}
+                value={entry.every}
+                onChange={(e) => onUpdate({ every: Math.max(1, Number(e.target.value)) })}
+                className={`w-20 text-center ${inputCls}`}
+              />
+              <span className="text-sm text-[#475569]">month{entry.every !== 1 ? 's' : ''} on day(s)</span>
+            </div>
+          )}
+          {!isCustom && (
+            <span className={`${labelCls} block`}>Repeats monthly on day(s)</span>
+          )}
           <div className="grid grid-cols-7 gap-1">
             {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
               <button
@@ -181,7 +242,7 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
                 onClick={() => toggleMonthDay(d)}
                 className={[
                   'h-8 w-full text-xs font-medium rounded-[6px] border transition-colors',
-                  entry.month_days.includes(d)
+                  isMonthDaySelected(d)
                     ? 'bg-[#2563EB] text-white border-[#2563EB]'
                     : 'bg-white text-[#475569] border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]',
                 ].join(' ')}
@@ -190,47 +251,140 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
               </button>
             ))}
           </div>
+
+          {/* Monthly warnings/prompts */}
+          {(isMonthDaySelected(29) || isMonthDaySelected(30) || isMonthDaySelected(31)) && (() => {
+            const show31 = isMonthDaySelected(31)
+            const show30 = isMonthDaySelected(30) && !show31
+            const show29 = isMonthDaySelected(29) && !show31 && !show30
+
+            return (
+              <div className="p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] text-[12px] text-[#475569] space-y-3">
+                <p className="font-semibold text-[#0F172A] flex items-center gap-1">
+                  <span>📅</span> Month-End Adjustment Options:
+                </p>
+                
+                <div className="space-y-3">
+                  {show29 && (
+                    <div className="space-y-1">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={entry.month_days.includes(-29)}
+                          onChange={(e) => toggleFallback(29, e.target.checked)}
+                          className="mt-0.5 accent-[#2563EB]"
+                        />
+                        <div>
+                          <span className="font-medium text-[#1E293B]">Automatically run on February 28th in non-leap years</span>
+                        </div>
+                      </label>
+                      {!entry.month_days.includes(-29) && (
+                        <p className="text-[11px] text-[#DC2626] pl-5">
+                          ⚠️ Note: If not selected, this task will be missed in February during non-leap years.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {show30 && (
+                    <div className="space-y-1">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={entry.month_days.includes(-30)}
+                          onChange={(e) => toggleFallback(30, e.target.checked)}
+                          className="mt-0.5 accent-[#2563EB]"
+                        />
+                        <div>
+                          <span className="font-medium text-[#1E293B]">Automatically run on the last day of February</span>
+                        </div>
+                      </label>
+                      {!entry.month_days.includes(-30) && (
+                        <p className="text-[11px] text-[#DC2626] pl-5">
+                          ⚠️ Note: If not selected, this task will be missed in February.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {show31 && (
+                    <div className="space-y-1">
+                      <label className="flex items-start gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={entry.month_days.includes(-31)}
+                          onChange={(e) => toggleFallback(31, e.target.checked)}
+                          className="mt-0.5 accent-[#2563EB]"
+                        />
+                        <div>
+                          <span className="font-medium text-[#1E293B]">Automatically run on the last day of shorter months</span>
+                          <p className="text-[10px] text-[#64748B] mt-0.5">
+                            (Applies to February, April, June, September, and November)
+                          </p>
+                        </div>
+                      </label>
+                      {!entry.month_days.includes(-31) && (
+                        <p className="text-[11px] text-[#DC2626] pl-5">
+                          ⚠️ Note: If not selected, this task will be missed in February, April, June, September, and November.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 
       {/* Yearly config */}
       {entry.schedule_type === 'yearly' && (
-        <div className="space-y-2">
-          <label className={`${labelCls} block`}>On date(s) each year</label>
-          {entry.yearly_dates.map((yd, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <StyledSelect
-                value={String(yd.month)}
-                onChange={(v) => updateYearlyDate(i, { month: Number(v) })}
-                wrapperClassName="flex-1"
-                options={MONTH_LABELS.map((m, mi) => ({ value: String(mi + 1), label: m }))}
-              />
+        <div className="space-y-3">
+          {isCustom && (
+            <div className="flex items-center gap-3">
+              <span className={labelCls}>Every</span>
               <input
                 type="number"
                 min={1}
-                max={31}
-                value={yd.day}
-                onChange={(e) => updateYearlyDate(i, { day: Math.min(31, Math.max(1, Number(e.target.value))) })}
+                max={10}
+                value={entry.every}
+                onChange={(e) => onUpdate({ every: Math.max(1, Number(e.target.value)) })}
                 className={`w-20 text-center ${inputCls}`}
               />
-              {entry.yearly_dates.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => removeYearlyDate(i)}
-                  className="text-[#94A3B8] hover:text-[#DC2626] transition-colors"
-                >
-                  <X size={14} />
-                </button>
-              )}
+              <span className="text-sm text-[#475569]">year{entry.every !== 1 ? 's' : ''} on date(s)</span>
             </div>
-          ))}
-          <button
-            type="button"
-            onClick={addYearlyDate}
-            className="text-sm text-[#2563EB] hover:underline font-medium"
-          >
-            + Add date
-          </button>
+          )}
+          {!isCustom && (
+            <span className={`${labelCls} block`}>Repeats yearly on date(s)</span>
+          )}
+          <div className="space-y-2">
+            {entry.yearly_dates.map((yd, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <div className="flex-1">
+                  <MonthDayPicker
+                    value={yd}
+                    onChange={(v) => updateYearlyDate(i, v)}
+                  />
+                </div>
+                {entry.yearly_dates.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeYearlyDate(i)}
+                    className="w-7 h-7 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={addYearlyDate}
+              className="text-sm text-[#2563EB] hover:underline font-medium"
+            >
+              + Add date
+            </button>
+          </div>
         </div>
       )}
 

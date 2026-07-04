@@ -830,12 +830,13 @@ export default function TaskDetailPage() {
   const ccUsers = task.assignees?.filter((a) => a.is_cc) ?? []
   const currentUserIsCC = task.assignees?.some((a) => a.user_id === user?.id && a.is_cc) ?? false
   const isCreator = task.created_by_user_id === user?.id
-  const canEdit = isCreator || user?.is_admin
+  const isFutureTask = task ? new Date(task.created_at) > getNow() : false
+  const canEdit = (isCreator || user?.is_admin) && !isFutureTask
 
   // Completion model drives how status + completion behave (see the two modes below).
   const isAllMustComplete = task.completion_mode === 'all_must_complete'
   const myAssignee = assignees.find((a) => a.user_id === user?.id)
-  const isAssignee = !!myAssignee
+  const isAssignee = !!myAssignee && !isFutureTask
   const completedCount = assignees.filter((a) => a.is_completed).length
   const totalAssignees = assignees.length
   // Parts flagged "can't complete" that aren't done — these block the task from
@@ -848,7 +849,7 @@ export default function TaskDetailPage() {
   const isIncompleteStatus = task.status?.type === 'incomplete'
   const isPartiallyCompletedStatus = task.status?.type === 'partially_completed'
   const myTrackId = myAssignee?.status_id ?? notStartedId
-  const canMoveSharedStatus = isAssignee || !!canEdit
+  const canMoveSharedStatus = (isAssignee || !!canEdit) && !isFutureTask
   // Names of assignees who haven't finished — used in the owner's heads-up before a
   // force-complete/close of the whole task.
   const pendingNames = assignees.filter((a) => !a.is_completed).map((a) => a.user?.name ?? a.user_name ?? 'Someone')
@@ -857,6 +858,11 @@ export default function TaskDetailPage() {
     // On lg+, fill the fixed-height <main> so the two detail columns can scroll
     // independently instead of the whole page. On mobile it's a normal flowing page.
     <div className="space-y-6 max-w-7xl lg:h-full lg:flex lg:flex-col lg:overflow-hidden">
+      {isFutureTask && (
+        <div className="bg-[#FEF2F2] border border-[#FEE2E2] rounded-[10px] px-6 py-4 text-sm font-semibold text-[#991B1B] shrink-0">
+          ⌛ This task was created in a simulated future ({new Date(task.created_at).toLocaleDateString()}). To interact with it, please time-travel to this date or later.
+        </div>
+      )}
       {/* Header — a small, unobtrusive back arrow, then the title; actions on the right */}
       <div className="flex items-start justify-between gap-4 flex-wrap shrink-0">
         <div className="flex items-start gap-2 min-w-0 flex-1">
@@ -1303,7 +1309,8 @@ export default function TaskDetailPage() {
                         handleSendComment()
                       }
                     }}
-                    placeholder="Add a comment... (Enter to send, Shift+Enter for new line)"
+                    disabled={sendingComment || isFutureTask}
+                    placeholder={isFutureTask ? "Comments are locked on future tasks..." : "Add a comment... (Enter to send, Shift+Enter for new line)"}
                     rows={1}
                     className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none resize-none max-h-[120px] overflow-y-auto"
                   />
@@ -1311,7 +1318,7 @@ export default function TaskDetailPage() {
                   <button
                     type="button"
                     onClick={() => commentFileInputRef.current?.click()}
-                    disabled={sendingComment}
+                    disabled={sendingComment || isFutureTask}
                     className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#2563EB] disabled:text-[#CBD5E1] disabled:cursor-not-allowed transition-colors"
                     title="Attach files"
                     aria-label="Attach files"
@@ -1320,7 +1327,7 @@ export default function TaskDetailPage() {
                   </button>
                   <button
                     onClick={handleSendComment}
-                    disabled={sendingComment || (!commentText.trim() && commentFiles.length === 0)}
+                    disabled={sendingComment || isFutureTask || (!commentText.trim() && commentFiles.length === 0)}
                     title="Send"
                     aria-label="Send"
                     className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#64748B] disabled:cursor-not-allowed transition-colors"
@@ -1717,7 +1724,7 @@ export default function TaskDetailPage() {
                           </p>
                         </div>
                         {/* Remove — uploader only */}
-                        {a.uploaded_by_user_id === user?.id && (
+                        {a.uploaded_by_user_id === user?.id && !isFutureTask && (
                           <button
                             type="button"
                             onClick={() => setAttachmentToDelete(a)}

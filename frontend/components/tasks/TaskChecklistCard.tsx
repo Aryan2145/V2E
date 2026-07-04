@@ -6,6 +6,7 @@ import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users, X } from 'lucid
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
+import { getNow } from '@/lib/clock'
 import { TERMINAL_STATUS_PHASES, type Task, type TaskChecklistItem, type TaskChecklistItemStateEntry } from '@/lib/types/tasks'
 
 interface Props {
@@ -29,6 +30,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
   const items = task.checklist ?? []
   const isAllMust = task.completion_mode === 'all_must_complete'
   const isTerminal = !!task.status && TERMINAL_STATUS_PHASES.includes(task.status.type)
+  const isFutureTask = task ? new Date(task.created_at) > getNow() : false
   const iAmWorker = (task.assignees ?? []).some((a) => a.user_id === currentUserId && !a.is_cc)
 
   // Hover card revealing who has marked an item. Portaled + fixed so it can't be
@@ -200,7 +202,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
                       key={a.user_id}
                       name={a.user?.name ?? a.user_name ?? a.user_id}
                       state={st}
-                      canChallenge={canEdit && !!st}
+                      canChallenge={canEdit && !!st && !isFutureTask}
                       onChallenge={() => {
                         setHover(null)
                         setChallenge({ item, userId: a.user_id, userName: a.user?.name ?? a.user_name ?? 'this person' })
@@ -222,7 +224,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
     const done = item.is_completed
     const cantDo = !!item.cant_do
     const key = `shared:${item.id}`
-    const canAct = !isTerminal && (iAmWorker || canEdit)
+    const canAct = !isTerminal && (iAmWorker || canEdit) && !isFutureTask
     return (
       <div key={item.id} className="flex items-start gap-3">
         <button
@@ -309,7 +311,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
           {iAmWorker ? (
             <button
               type="button"
-              disabled={isTerminal || !!rowBusy}
+              disabled={isTerminal || !!rowBusy || isFutureTask}
               onClick={() =>
                 run(`amust:${item.id}:self`, () =>
                   my === 'done'
@@ -325,7 +327,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
                   : my === 'skipped'
                     ? 'bg-[#D97706] border-[#D97706]'
                     : 'border-[#CBD5E1] hover:border-[#2563EB]',
-                isTerminal ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+                isTerminal || isFutureTask ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
               ].join(' ')}
               role="checkbox"
               aria-checked={my === 'done'}
@@ -370,7 +372,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
           </div>
 
           {/* Personal "can't do" / clear — pinned to the right end of the line */}
-          {iAmWorker && !isTerminal && (
+          {iAmWorker && !isTerminal && !isFutureTask && (
             my !== 'skipped' ? (
               <button
                 type="button"
@@ -393,7 +395,7 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
           )}
 
           {/* Assigner override control */}
-          {canEdit && !isTerminal && (
+          {canEdit && !isTerminal && !isFutureTask && (
             overridden ? (
               <button
                 type="button"

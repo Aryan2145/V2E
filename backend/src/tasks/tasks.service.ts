@@ -191,12 +191,18 @@ export class TasksService {
     });
   }
 
-  private async findTaskOrFail(orgId: string, taskId: string) {
+  private async findTaskOrFail(orgId: string, taskId: string, isWrite = false) {
     const task = await this.prisma.task.findFirst({
       where: { id: taskId, organization_id: orgId, is_deleted: false },
       include: TASK_INCLUDE,
     });
     if (!task) throw new NotFoundException(`Task ${taskId} not found`);
+    if (isWrite) {
+      const now = await this.clock.now(orgId);
+      if (task.created_at > now) {
+        throw new ForbiddenException("This task was created in a simulated future. To interact with it, please time-travel to this date or later.");
+      }
+    }
     return task;
   }
 
@@ -544,7 +550,7 @@ export class TasksService {
    * finishing a part goes through completeTask.
    */
   async setAssigneeStatus(orgId: string, actorId: string, taskId: string, targetUserId: string, statusId: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     if (task.completion_mode !== CompletionMode.all_must_complete) {
       throw new BadRequestException('Per-person status only applies to "all must complete" tasks.');
     }
@@ -610,7 +616,7 @@ export class TasksService {
    * bypasses the reopen window (an assigner can always send a part back for rework).
    */
   async reopenAssigneePart(orgId: string, actorId: string, taskId: string, targetUserId: string, reason?: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     if (task.completion_mode !== CompletionMode.all_must_complete) {
       throw new BadRequestException('Reopening one person’s part only applies to “all must complete” tasks.');
     }
@@ -697,7 +703,7 @@ export class TasksService {
    * just the creator — may move it; the change applies to everyone and records who did it.
    */
   async setSharedStatus(orgId: string, actorId: string, taskId: string, statusId: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     if (task.completion_mode !== CompletionMode.any_can_complete) {
       throw new BadRequestException('Shared status only applies to "any can complete" tasks.');
     }
@@ -1975,7 +1981,7 @@ export class TasksService {
   // ─── Update Task ──────────────────────────────────────────────────────────────
 
   async updateTask(orgId: string, userId: string, taskId: string, dto: UpdateTaskDto) {
-    const old = await this.findTaskOrFail(orgId, taskId);
+    const old = await this.findTaskOrFail(orgId, taskId, true);
     await this.assertAssignerRights(orgId, userId, old);
     await this.assertGoalInOrg(orgId, dto.goal_id);
     // Edited master references get the same org+active validation as create.
@@ -2134,7 +2140,7 @@ export class TasksService {
       throw new BadRequestException('Deletion reason is required');
     }
 
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
 
     // Create archive snapshot
     await this.prisma.taskArchive.create({
@@ -2183,7 +2189,7 @@ export class TasksService {
   }
 
   async completeTask(orgId: string, userId: string, taskId: string, targetUserId?: string, closeWholeTask = false) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     // A closed outcome is locked — Completed can never be stacked on top of
     // Incomplete / Partially Completed. Reopen first (the rule every screen shows).
     if (isTerminal((task as any).status?.type)) {
@@ -2355,7 +2361,7 @@ export class TasksService {
   // ─── Reopen Task ──────────────────────────────────────────────────────────────
 
   async reopenTask(orgId: string, userId: string, taskId: string, reason?: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
 
     const isCreator = task.created_by_user_id === userId;
     const isAssignee = (task.assignees ?? []).some((a: any) => a.user_id === userId && !a.is_cc);
@@ -2461,7 +2467,7 @@ export class TasksService {
    *    assignees flag their own part instead (setAssigneeCannotComplete).
    */
   async markTaskIncomplete(orgId: string, userId: string, taskId: string, reason?: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     const trimmed = (reason ?? '').trim();
     if (!trimmed) {
       throw new BadRequestException('A reason is required to mark a task incomplete.');
@@ -2550,7 +2556,7 @@ export class TasksService {
    * whether to close the whole task Incomplete or reassign.
    */
   async setAssigneeCannotComplete(orgId: string, actorId: string, taskId: string, targetUserId: string, reason?: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     const trimmed = (reason ?? '').trim();
     if (!trimmed) {
       throw new BadRequestException('A reason is required to flag your part as incomplete.');
@@ -2606,7 +2612,7 @@ export class TasksService {
 
   /** Clear a previously-set can't-complete flag (the person, or the creator/editor). */
   async clearAssigneeCannotComplete(orgId: string, actorId: string, taskId: string, targetUserId: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     const target = targetUserId || actorId;
     if (target !== actorId) {
       await this.assertAssignerRights(orgId, actorId, task);
@@ -2733,7 +2739,7 @@ export class TasksService {
   }
 
   async addComment(orgId: string, userId: string, taskId: string, dto: CreateCommentDto) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     // Stamp with the org's clock (respects a test org's simulated time) rather than
     // the DB's real-time default, so comments read in the timeline the user is in.
     const now = await this.clock.now(orgId);
@@ -2783,6 +2789,7 @@ export class TasksService {
       where: { id: commentId, organization_id: orgId },
     });
     if (!comment) throw new NotFoundException(`Comment ${commentId} not found`);
+    await this.findTaskOrFail(orgId, comment.task_id, true);
     if (comment.user_id !== userId) throw new ForbiddenException('Cannot delete another user\'s comment');
 
     await this.prisma.taskComment.update({
@@ -2814,7 +2821,7 @@ export class TasksService {
 
   /** Load a task + one of its checklist items, scoped to task + org (404 on miss). */
   private async loadChecklistItemForWrite(orgId: string, taskId: string, itemId: string) {
-    const task = await this.findTaskOrFail(orgId, taskId);
+    const task = await this.findTaskOrFail(orgId, taskId, true);
     const item = await this.prisma.taskChecklist.findFirst({
       where: { id: itemId, task_id: taskId, organization_id: orgId },
     });

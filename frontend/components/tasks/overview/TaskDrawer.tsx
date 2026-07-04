@@ -148,6 +148,7 @@ export default function TaskDrawer({
 
   const status = task?.status ?? statuses.find((s) => s.id === task?.status_id)
   const isTerminal = status ? TERMINAL.has(status.type) : false
+  const isFutureTask = task ? new Date(task.created_at) > getNow() : false
   const people: AvatarPerson[] = [...(task?.assignees ?? [])]
     .sort((a, b) => Number(a.is_cc) - Number(b.is_cc))
     .map((a) => ({ id: a.id, name: a.user?.name ?? a.user_name ?? '?', department: a.user?.department, role: a.user?.role_title, isCC: a.is_cc }))
@@ -173,6 +174,12 @@ export default function TaskDrawer({
             <X size={18} />
           </button>
         </div>
+
+        {isFutureTask && task && (
+          <div className="bg-[#FEF2F2] border-b border-[#FEE2E2] px-6 py-3 text-xs font-semibold text-[#991B1B]">
+            ⌛ This task was created in a simulated future ({new Date(task.created_at).toLocaleDateString()}). To interact with it, please time-travel to this date or later.
+          </div>
+        )}
 
         {loading || !task ? (
           <div className="flex-1 flex items-center justify-center">
@@ -235,11 +242,11 @@ export default function TaskDrawer({
                       attachments={attachments}
                       onDownload={(a) => tasksApi.downloadAttachment(orgId, taskId, a.id)}
                       onRemove={removeAttachment}
-                      canRemove={(a) => a.uploaded_by_user_id === user?.id}
+                      canRemove={(a) => a.uploaded_by_user_id === user?.id && !isFutureTask}
                     />
                   </div>
                 )}
-                <FileDropzone onFiles={uploadAttachments} disabled={uploadingAtt} compact />
+                <FileDropzone onFiles={uploadAttachments} disabled={uploadingAtt || isFutureTask} compact />
               </div>
 
               {/* Checklist */}
@@ -303,14 +310,14 @@ export default function TaskDrawer({
                 <StyledSelect
                   value={task.status_id}
                   onChange={(v) => changeStatus(v)}
-                  disabled={busy}
+                  disabled={busy || isFutureTask}
                   wrapperClassName="flex-1"
                   options={statuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
                 />
                 {!isTerminal && (
                   <button
                     onClick={complete}
-                    disabled={busy}
+                    disabled={busy || isFutureTask}
                     className="shrink-0 flex items-center gap-1.5 px-3.5 py-2.5 rounded-[8px] bg-[#16A34A] text-white text-sm font-semibold hover:bg-[#15803D] disabled:opacity-60 transition-colors"
                   >
                     <CheckCircle2 size={15} /> Complete
@@ -331,19 +338,20 @@ export default function TaskDrawer({
                   onChange={(e) => setDraft(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
                   rows={1}
-                  placeholder="Write a comment…"
+                  disabled={isFutureTask}
+                  placeholder={isFutureTask ? "Comments are locked on future tasks..." : "Write a comment…"}
                   className="flex-1 resize-none rounded-[8px] border border-[#CBD5E1] bg-white px-3 py-2.5 text-[14px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] max-h-28"
                 />
                 <button
                   onClick={send}
-                  disabled={!draft.trim() || sending}
+                  disabled={!draft.trim() || sending || isFutureTask}
                   className="shrink-0 w-[42px] h-[42px] rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors"
                 >
                   <Send size={16} />
                 </button>
               </div>
               {/* Attach documents to the comment */}
-              <FileDropzone onFiles={(fs) => setDraftFiles((prev) => [...prev, ...fs])} disabled={sending} compact />
+              <FileDropzone onFiles={(fs) => setDraftFiles((prev) => [...prev, ...fs])} disabled={sending || isFutureTask} compact />
               <PendingFileList
                 files={draftFiles}
                 uploading={sending && draftFiles.length > 0}

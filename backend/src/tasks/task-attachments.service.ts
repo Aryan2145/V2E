@@ -10,6 +10,7 @@ import { Prisma, ProofVisibility } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ClockService } from '../clock/clock.service';
 import { isTerminal } from './status-phase';
 
 /** 25 MB cap, matching the product decision for document attachments. */
@@ -112,7 +113,21 @@ export class TaskAttachmentsService {
     private readonly prisma: PrismaService,
     private readonly r2: R2Service,
     private readonly notifications: NotificationsService,
+    private readonly clock: ClockService,
   ) {}
+
+  private async assertNotFutureTask(orgId: string, taskId: string) {
+    const task = await this.prisma.task.findFirst({
+      where: { id: taskId, organization_id: orgId },
+      select: { created_at: true },
+    });
+    if (task) {
+      const now = await this.clock.now(orgId);
+      if (task.created_at > now) {
+        throw new ForbiddenException("This task was created in a simulated future. To interact with it, please time-travel to this date or later.");
+      }
+    }
+  }
 
   private async assertTask(orgId: string, taskId: string) {
     const task = await this.prisma.task.findFirst({
@@ -132,6 +147,7 @@ export class TaskAttachmentsService {
   ) {
     validateAttachmentFile(file);
     await this.assertTask(orgId, taskId);
+    await this.assertNotFutureTask(orgId, taskId);
 
     if (commentId) {
       const comment = await this.prisma.taskComment.findFirst({
@@ -250,6 +266,7 @@ export class TaskAttachmentsService {
       where: { id: attachmentId, organization_id: orgId, task_id: taskId, is_deleted: false },
     });
     if (!att) throw new NotFoundException('Attachment not found');
+    await this.assertNotFutureTask(orgId, taskId);
     if (att.uploaded_by_user_id !== userId) {
       throw new ForbiddenException('You can only remove attachments you uploaded.');
     }
@@ -319,6 +336,7 @@ export class TaskAttachmentsService {
     visibility: ProofVisibility,
   ) {
     const task = await this.loadTaskForProof(orgId, taskId);
+    await this.assertNotFutureTask(orgId, taskId);
     if (!task.proof_required) {
       throw new BadRequestException('This task does not require proof of completion.');
     }
@@ -394,6 +412,7 @@ export class TaskAttachmentsService {
    */
   async markCommentAttachmentAsProof(orgId: string, userId: string, taskId: string, attachmentId: string) {
     const task = await this.loadTaskForProof(orgId, taskId);
+    await this.assertNotFutureTask(orgId, taskId);
     if (!task.proof_required) {
       throw new BadRequestException('This task does not require proof of completion.');
     }
