@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { Calendar, GitBranch, MessageSquare, Paperclip, ChevronDown, Check } from 'lucide-react'
+import { Calendar, GitBranch, MessageSquare, Paperclip, ChevronDown, Check, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
@@ -16,6 +16,10 @@ interface TaskCardProps {
   categories: TaskCategory[]
   /** When provided, the status pill becomes a click-to-change control (no drill-in). */
   onStatusChange?: (statusId: string) => void | Promise<void>
+  /** When provided (My Tasks only), the status menu also offers a "Mark Complete" action. */
+  onComplete?: () => void
+  /** When provided (My Tasks only), the status menu also offers a "Mark Incomplete" action. */
+  onMarkIncomplete?: () => void
   // The viewer's user id. Lets the row show who assigned the task and list the
   // OTHER assignees (everyone but the viewer). Omit on cross-org/collective views.
   currentUserId?: string
@@ -57,10 +61,16 @@ function StatusControl({
   status,
   statuses,
   onChange,
+  onComplete,
+  onMarkIncomplete,
 }: {
   status: TaskStatus
   statuses: TaskStatus[]
-  onChange: (statusId: string) => void | Promise<void>
+  // Optional: when omitted the menu shows only the terminal actions (Complete /
+  // Incomplete) — e.g. an assigner who shouldn't move a worker's per-person status.
+  onChange?: (statusId: string) => void | Promise<void>
+  onComplete?: () => void
+  onMarkIncomplete?: () => void
 }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -90,7 +100,7 @@ function StatusControl({
 
   async function pick(id: string) {
     setOpen(false)
-    if (id === status.id) return
+    if (id === status.id || !onChange) return
     try {
       setBusy(true)
       await onChange(id)
@@ -123,7 +133,7 @@ function StatusControl({
           role="listbox"
           className="absolute right-0 top-full mt-1 z-50 w-52 max-h-64 overflow-y-auto rounded-[10px] border border-[#E2E8F0] bg-white shadow-[0_8px_24px_rgba(0,0,0,0.12)] py-1"
         >
-          {ordered.map((s) => {
+          {onChange && ordered.map((s) => {
             const active = s.id === status.id
             return (
               <button
@@ -142,6 +152,33 @@ function StatusControl({
               </button>
             )
           })}
+
+          {/* Terminal outcomes. These aren't plain status moves — Complete runs the
+              real completion gate (checklist/proof); Incomplete needs a reason. The
+              divider only shows when the status list sits above them. */}
+          {onChange && (onComplete || onMarkIncomplete) && (
+            <div className="my-1 border-t border-[#E2E8F0]" />
+          )}
+          {onComplete && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onComplete() }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-[#15803D] hover:bg-[#F0FDF4] transition-colors"
+            >
+              <CheckCircle2 size={14} className="shrink-0" />
+              <span className="flex-1">Mark Complete</span>
+            </button>
+          )}
+          {onMarkIncomplete && (
+            <button
+              type="button"
+              onClick={() => { setOpen(false); onMarkIncomplete() }}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-[#DC2626] hover:bg-[#FEF2F2] transition-colors"
+            >
+              <XCircle size={14} className="shrink-0" />
+              <span className="flex-1">Mark Incomplete</span>
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -150,7 +187,7 @@ function StatusControl({
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function TaskCard({ task, onClick, priorities, statuses, categories, onStatusChange, currentUserId }: TaskCardProps) {
+export default function TaskCard({ task, onClick, priorities, statuses, categories, onStatusChange, onComplete, onMarkIncomplete, currentUserId }: TaskCardProps) {
   const priority = priorities.find((p) => p.id === task.priority_id)
   const status = statuses.find((s) => s.id === task.status_id) ?? task.status
   const category = categories.find((c) => c.id === task.category_id) ?? task.category
@@ -204,18 +241,6 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
               }}
             >
               {category.name}
-            </span>
-          )}
-          {priority && (
-            <span
-              className="inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium"
-              style={{
-                backgroundColor: priority.color + '22',
-                color: priority.color,
-                border: `1px solid ${priority.color}44`,
-              }}
-            >
-              {priority.label}
             </span>
           )}
           {task.workflow_step?.show_on_card && (
@@ -285,11 +310,45 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
         </div>
       )}
 
+      {/* Overdue — a red flag when the deadline has passed and the task is still
+          open. Orthogonal to status, so it rides alongside the status pill. */}
+      {task.is_overdue && (
+        <div className="shrink-0">
+          <span className="inline-flex items-center gap-1 rounded-[999px] px-2 py-0.5 text-[11px] font-medium bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA]">
+            <AlertTriangle size={11} />
+            Overdue
+          </span>
+        </div>
+      )}
+
+      {/* Priority — moved out of the title sub-row to sit alongside the deadline
+          and status in the right-hand meta cluster. */}
+      {priority && (
+        <div className="shrink-0">
+          <span
+            className="inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium"
+            style={{
+              backgroundColor: priority.color + '22',
+              color: priority.color,
+              border: `1px solid ${priority.color}44`,
+            }}
+          >
+            {priority.label}
+          </span>
+        </div>
+      )}
+
       {/* Status — interactive control for open states only; terminal states are a
           read-only pill (close/reopen happens via actions on the task). */}
       {status && (
-        onStatusChange && !isTerminalStatus ? (
-          <StatusControl status={status} statuses={openStatuses} onChange={onStatusChange} />
+        (onStatusChange || onComplete || onMarkIncomplete) && !isTerminalStatus ? (
+          <StatusControl
+            status={status}
+            statuses={openStatuses}
+            onChange={onStatusChange}
+            onComplete={onComplete}
+            onMarkIncomplete={onMarkIncomplete}
+          />
         ) : (
           <div className="shrink-0">
             <span

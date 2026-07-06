@@ -10,14 +10,24 @@ import KanbanView from '@/components/tasks/KanbanView'
 import CalendarView from '@/components/tasks/CalendarView'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
 import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
-import { Plus, UserCheck, LayoutList, Columns, CalendarDays } from 'lucide-react'
+import Modal from '@/components/ui/Modal'
+import { useToast } from '@/components/ui/Toast'
+import { Plus, UserCheck, LayoutList, Columns, CalendarDays, AlertCircle } from 'lucide-react'
 
 type ViewMode = 'list' | 'kanban' | 'calendar'
+
+// Surface the backend's real message (completion gate, already-closed, etc.).
+function apiErrorMessage(e: unknown, fallback: string): string {
+  const m = (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message
+  if (Array.isArray(m)) return m[0] ?? fallback
+  return typeof m === 'string' && m ? m : fallback
+}
 
 export default function AssignedByMePage() {
   const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { addToast } = useToast()
   const orgId = user?.organizationId ?? ''
 
   const [tasks, setTasks] = useState<Task[]>([])
@@ -38,6 +48,13 @@ export default function AssignedByMePage() {
 
   const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
 
+  // Assigner-side close controls. Mark Incomplete captures a required reason in a
+  // popup here; Mark Complete closes it outright, or sends the assigner to the task
+  // page when a clean close isn't possible from the list (gate / pending parts).
+  const [incompleteTask, setIncompleteTask] = useState<Task | null>(null)
+  const [incompleteReason, setIncompleteReason] = useState('')
+  const [incompleteSubmitting, setIncompleteSubmitting] = useState(false)
+
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
     setLoading(true)
@@ -53,8 +70,43 @@ export default function AssignedByMePage() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const filtered = useMemo(() => applyTaskFilters(tasks, filters), [tasks, filters])
+  const filtered = useMemo(() => applyTaskFilters(tasks, filters, statuses), [tasks, filters, statuses])
   const isFiltered = isTaskFiltered(filters)
+
+  // As the assigner, try to close the task straight from the row. When a clean close
+  // isn't possible from here — a checklist/proof gate, or a multi-person task with
+  // pending parts that needs the proper confirm — take the assigner to the task page.
+  async function handleComplete(task: Task) {
+    try {
+      const updated = await tasksApi.completeTask(orgId, task.id)
+      setTasks((ts) => ts.map((t) => (t.id === task.id ? updated : t)))
+      addToast('Task marked complete.', 'success')
+    } catch (e) {
+      const msg = apiErrorMessage(e, 'Could not complete this task from here.')
+      addToast(`${msg} Opening the task to finish closing it.`, 'warning')
+      router.push(`/dashboard/tasks/${task.id}`)
+    }
+  }
+
+  // The assigner closing a task as not-done always closes the WHOLE task (a reason is
+  // required) — unlike My Tasks, there's no "just my part" here.
+  async function submitIncomplete() {
+    if (!incompleteTask) return
+    const reason = incompleteReason.trim()
+    if (!reason) { addToast('A reason is required to mark a task incomplete.', 'warning'); return }
+    setIncompleteSubmitting(true)
+    try {
+      const updated = await tasksApi.markIncomplete(orgId, incompleteTask.id, reason)
+      setTasks((ts) => ts.map((t) => (t.id === incompleteTask.id ? updated : t)))
+      addToast('Task marked incomplete.', 'success')
+      setIncompleteTask(null)
+      setIncompleteReason('')
+    } catch (e) {
+      addToast(apiErrorMessage(e, 'Could not mark this task incomplete.'), 'error')
+    } finally {
+      setIncompleteSubmitting(false)
+    }
+  }
 
   if (!orgId) {
     return (
@@ -148,6 +200,8 @@ export default function AssignedByMePage() {
                   priorities={priorities}
                   statuses={statuses}
                   categories={categories}
+                  onComplete={() => handleComplete(task)}
+                  onMarkIncomplete={() => { setIncompleteReason(''); setIncompleteTask(task) }}
                   currentUserId={user?.id}
                 />
               ))}
@@ -177,6 +231,59 @@ export default function AssignedByMePage() {
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />
       )}
+
+      {/* Mark-incomplete reason popup — the assigner closes the whole task as not-done. */}
+      <Modal
+        isOpen={!!incompleteTask}
+        onClose={() => { if (!incompleteSubmitting) { setIncompleteTask(null); setIncompleteReason('') } }}
+        title="Mark task incomplete"
+        size="md"
+        closeOnEscape={!incompleteSubmitting}
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-2 px-3 py-2 rounded-[8px] bg-[#FEF9C3] border border-[#FDE68A]">
+            <AlertCircle size={15} className="text-[#CA8A04] shrink-0 mt-0.5" />
+            <p className="text-xs text-[#854D0E]">
+              This closes the task as not-done for everyone. A reason is required.
+            </p>
+          </div>
+
+          {incompleteTask && (
+            <p className="text-sm font-semibold text-[#0F172A] truncate">{incompleteTask.title}</p>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-[#475569] mb-1.5">Reason</label>
+            <textarea
+              value={incompleteReason}
+              onChange={(e) => setIncompleteReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Why is this being closed as not-done?"
+              className="w-full rounded-[8px] border border-[#E2E8F0] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] resize-none"
+            />
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => { setIncompleteTask(null); setIncompleteReason('') }}
+              disabled={incompleteSubmitting}
+              className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-[#475569] rounded-[8px] hover:bg-[#F1F5F9] disabled:opacity-60 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitIncomplete}
+              disabled={incompleteSubmitting || !incompleteReason.trim()}
+              className="w-full sm:w-auto px-5 py-2 text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            >
+              {incompleteSubmitting ? 'Saving…' : 'Mark Incomplete'}
+            </button>
+          </div>
+        </div>
+      </Modal>
 
       <CreateTaskModal
         isOpen={showCreateModal}

@@ -355,7 +355,12 @@ export default function EditRecurringModal({ template, orgId, categories, priori
               allowedExtensions={proofAllowedExtensions}
               onAllowedExtensionsChange={setProofAllowedExtensions}
             />
-            <EscalationLevelsField orgId={orgId} value={escalationIds} onChange={setEscalationIds} />
+            <EscalationLevelsField
+              orgId={orgId}
+              value={escalationIds}
+              onChange={setEscalationIds}
+              excludeUserIds={assignees.filter((a) => !a.is_cc).map((a) => a.user_id)}
+            />
             <RemindersField
               reminders={reminders}
               onChange={setReminders}

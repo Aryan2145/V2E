@@ -70,6 +70,8 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
+  // The system suggests a non-working-day adjustment; the user may override it.
+  const [holidayOverride, setHolidayOverride] = useState(false)
   const holidayDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [leaveAvail, setLeaveAvail] = useState<LeaveAvailability | null>(null)
   // Portal target only exists on the client — guard against SSR mismatch.
@@ -99,6 +101,8 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
 
   useEffect(() => {
     if (holidayDebounceRef.current) clearTimeout(holidayDebounceRef.current)
+    // A new deadline is a fresh decision — clear any prior override.
+    setHolidayOverride(false)
     if (!deadlineDate || !orgId) { setHolidayCheck(null); return }
     holidayDebounceRef.current = setTimeout(async () => {
       try { setHolidayCheck(await holidaysApi.checkDate(orgId, deadlineDate)) }
@@ -141,8 +145,9 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
     onClose()
   }
 
-  async function handleSubmit(e: React.FormEvent, holidayOverride = false) {
+  async function handleSubmit(e: React.FormEvent, holidayOverrideArg?: boolean) {
     e.preventDefault()
+    const useHolidayOverride = holidayOverrideArg ?? holidayOverride
     if (!title.trim()) { setError('Title is required.'); return }
     if (!deadlineDate) { setError('Deadline is required.'); return }
     setSubmitting(true)
@@ -156,7 +161,7 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
         // Don't touch status for a closed task — that's the Reopen action's job.
         status_id: taskIsTerminal ? undefined : (statusId || undefined),
         deadline: deadline || undefined,
-        holiday_override: holidayOverride,
+        holiday_override: useHolidayOverride,
         completion_mode: completionMode,
         proof_required: proofRequired,
         proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
@@ -273,7 +278,11 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
                 />
               </div>
             </div>
-            <HolidayWarningBadge check={holidayCheck} />
+            <HolidayWarningBadge
+              check={holidayCheck}
+              overridden={holidayOverride}
+              onToggleOverride={setHolidayOverride}
+            />
             {deadlineDate && <LeaveWarningBadge availability={leaveAvail} deadline={deadlineDate} today={todayStr} />}
           </div>
 

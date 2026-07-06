@@ -57,6 +57,17 @@ function unwrap<T>(res: { data: { data: T } | T }): T {
   return d.data !== undefined ? (d.data as T) : (res.data as T)
 }
 
+/**
+ * Tolerate both the scoped `{ items, max_scope, applied_scope }` shape and the legacy
+ * bare-array shape (e.g. while the dev server is still restarting on new code) so the
+ * list never lands `undefined` in component state.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeRecurringList(raw: any): RecurringTemplateList {
+  if (Array.isArray(raw)) return { items: raw, max_scope: null, applied_scope: null }
+  return { items: raw?.items ?? [], max_scope: raw?.max_scope ?? null, applied_scope: raw?.applied_scope ?? null }
+}
+
 // ─── Tasks API ────────────────────────────────────────────────────────────────
 
 export const tasksApi = {
@@ -508,7 +519,7 @@ export const tasksApi = {
   // it can see, e.g. resolving the current one on the detail page.
   getRecurringTemplates: async (orgId: string): Promise<RecurringTemplate[]> => {
     const res = await apiClient.get(`${base(orgId)}/recurring`)
-    return unwrap<RecurringTemplateList>(res).items
+    return normalizeRecurringList(unwrap(res)).items
   },
 
   // Scope + relation + filter aware list, with the viewer's authority ceiling.
@@ -523,7 +534,7 @@ export const tasksApi = {
     if (query.search) params.set('search', query.search)
     const qs = params.toString()
     const res = await apiClient.get(`${base(orgId)}/recurring${qs ? `?${qs}` : ''}`)
-    return unwrap<RecurringTemplateList>(res)
+    return normalizeRecurringList(unwrap(res))
   },
 
   // ── Recurring template access (Google-Drive-style sharing) ────────────────────

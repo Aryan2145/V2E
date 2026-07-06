@@ -1,66 +1,34 @@
 'use client'
 
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useMemo, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
+import { getDepartments } from '@/lib/api/departments'
+import type { Department } from '@/lib/types'
 import type {
   RecurringTemplate,
-  RecurringScheduleEntry,
   TaskCategory,
   TaskPriority,
   TaskStatus,
+  WorkScope,
+  RecurringRelation,
+  EligibleAssigneesResponse,
 } from '@/lib/types/tasks'
-import type { EligibleAssigneesResponse } from '@/lib/types/tasks'
+import type { EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import AssigneeAvatars, { type AvatarPerson } from '@/components/tasks/AssigneeAvatars'
-import type { ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
+import ManageAccessModal from '@/components/tasks/ManageAccessModal'
+import RecurringTable from '@/components/tasks/RecurringTable'
+import ScopeSwitcher from '@/components/tasks/overview/ScopeSwitcher'
+import StyledSelect from '@/components/ui/StyledSelect'
+import { entryLabel, formatDate } from '@/lib/tasks/recurrence-label'
 import {
-  RotateCcw, Play, Pause, Calendar, Users, Plus, Trash2, Edit2, Zap,
+  RotateCcw, Play, Pause, Calendar, Users, Plus, Trash2, Edit2, Zap, Shield,
+  LayoutGrid, Table as TableIcon, Search, ArrowUpRight, ArrowDownLeft, Inbox,
 } from 'lucide-react'
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-
-function entryLabel(entry: RecurringScheduleEntry | ScheduleEntryDraft): string {
-  const e = entry as RecurringScheduleEntry
-  switch (e.schedule_type) {
-    case 'daily':
-      return `Every ${e.every > 1 ? `${e.every} days` : 'day'}`
-    case 'weekly': {
-      const days = Array.isArray(e.days) ? (e.days as number[]).map((d) => DOW[d]).join(', ') : ''
-      return `Every ${e.every > 1 ? `${e.every} weeks` : 'week'}${days ? ` on ${days}` : ''}`
-    }
-    case 'monthly': {
-      const md = Array.isArray(e.month_days) ? (e.month_days as number[]) : []
-      const dayStr = md.length === 0 ? '?' : md.length <= 3 ? md.join(', ') : `${md.slice(0, 3).join(', ')}…`
-      return `Day${md.length !== 1 ? 's' : ''} ${dayStr} every ${e.every > 1 ? `${e.every} months` : 'month'}`
-    }
-    case 'yearly': {
-      const dates = Array.isArray(e.yearly_dates) ? (e.yearly_dates as { month: number; day: number }[]) : []
-      if (dates.length === 0) return 'Yearly'
-      if (dates.length === 1) return `${MONTHS_SHORT[dates[0].month - 1]} ${dates[0].day} each year`
-      return `${dates.length} dates each year`
-    }
-    default:
-      return e.schedule_type
-  }
-}
-
-function scheduleLabel(t: RecurringTemplate): string {
-  const entries = t.schedule_entries ?? []
-  if (entries.length === 0) return 'No schedule'
-  if (entries.length === 1) return entryLabel(entries[0])
-  return `${entries.length} schedules`
-}
-
-function formatDate(str: string): string {
-  return new Date(str).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
 
 // ─── Delete flow ──────────────────────────────────────────────────────────────
 
@@ -88,10 +56,7 @@ const DELETE_COPY: Record<DeleteMode, { title: string; body: string; confirm: st
 }
 
 function DeleteConfirmDialog({
-  template,
-  mode,
-  onCancel,
-  onConfirm,
+  template, mode, onCancel, onConfirm,
 }: {
   template: RecurringTemplate
   mode: DeleteMode
@@ -114,38 +79,23 @@ function DeleteConfirmDialog({
           <span className="font-medium text-[#0F172A]">“{template.title}”</span> — {copy.body}
         </p>
         {error && (
-          <div className="mt-3 bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#DC2626]">
-            {error}
-          </div>
+          <div className="mt-3 bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-3 py-2 text-sm text-[#DC2626]">{error}</div>
         )}
         <div className="flex justify-end gap-2 mt-4">
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={busy}
-            className="px-4 py-2 text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] disabled:opacity-60 transition-colors"
-          >
+          <button type="button" onClick={onCancel} disabled={busy}
+            className="px-4 py-2 text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] disabled:opacity-60 transition-colors">
             Cancel
           </button>
-          <button
-            type="button"
+          <button type="button"
             onClick={async () => {
-              setBusy(true)
-              setError(null)
-              try {
-                await onConfirm()
-              } catch {
-                setError('Could not do this — you may not have permission to delete this recurring task.')
-              } finally {
-                setBusy(false)
-              }
+              setBusy(true); setError(null)
+              try { await onConfirm() }
+              catch (e: any) { setError(e?.response?.data?.message ?? 'Could not do this — please try again.') }
+              finally { setBusy(false) }
             }}
             disabled={busy}
-            className={[
-              'px-4 py-2 text-sm font-semibold text-white rounded-[8px] disabled:opacity-60 transition-colors',
-              copy.danger ? 'bg-[#DC2626] hover:bg-[#B91C1C]' : 'bg-[#2563EB] hover:bg-[#1D4ED8]',
-            ].join(' ')}
-          >
+            className={['px-4 py-2 text-sm font-semibold text-white rounded-[8px] disabled:opacity-60 transition-colors',
+              copy.danger ? 'bg-[#DC2626] hover:bg-[#B91C1C]' : 'bg-[#2563EB] hover:bg-[#1D4ED8]'].join(' ')}>
             {busy ? 'Working…' : copy.confirm}
           </button>
         </div>
@@ -158,14 +108,7 @@ function DeleteConfirmDialog({
 // ─── Template card ─────────────────────────────────────────────────────────────
 
 function RecurringCard({
-  template,
-  onEdit,
-  onPause,
-  onResume,
-  onDelete,
-  onSpawnToday,
-  onClick,
-  userMap,
+  template, onEdit, onPause, onResume, onDelete, onSpawnToday, onClick, onManageAccess, userMap,
 }: {
   template: RecurringTemplate
   onEdit: () => void
@@ -174,31 +117,33 @@ function RecurringCard({
   onDelete: (mode: DeleteMode) => void
   onSpawnToday: () => Promise<{ spawned: number }>
   onClick: () => void
+  onManageAccess: () => void
   userMap: Map<string, { name: string; department?: string; role?: string }>
 }) {
   const [toggling, setToggling] = useState(false)
   const [spawning, setSpawning] = useState(false)
   const [spawnMsg, setSpawnMsg] = useState<string | null>(null)
+  const [toggleErr, setToggleErr] = useState<string | null>(null)
   const [showDeleteMenu, setShowDeleteMenu] = useState(false)
 
   async function handleToggle() {
-    setToggling(true)
+    setToggling(true); setToggleErr(null)
     try {
       if (template.is_active) await onPause()
       else await onResume()
-    } finally {
-      setToggling(false)
-    }
+    } catch (e: any) {
+      setToggleErr(e?.response?.data?.message ?? 'Could not change status.')
+      setTimeout(() => setToggleErr(null), 3000)
+    } finally { setToggling(false) }
   }
 
   async function handleSpawnToday() {
-    setSpawning(true)
-    setSpawnMsg(null)
+    setSpawning(true); setSpawnMsg(null)
     try {
       const result = await onSpawnToday()
       setSpawnMsg(result.spawned > 0 ? `${result.spawned} task${result.spawned !== 1 ? 's' : ''} created` : 'Already spawned today')
-    } catch {
-      setSpawnMsg('Failed')
+    } catch (e: any) {
+      setSpawnMsg(e?.response?.data?.message ? 'Failed' : 'Failed')
     } finally {
       setSpawning(false)
       setTimeout(() => setSpawnMsg(null), 3000)
@@ -209,7 +154,7 @@ function RecurringCard({
   const earliestStart = entries.length > 0
     ? entries.reduce((min, e) => e.start_date < min ? e.start_date : min, entries[0].start_date)
     : null
-  const totalOccurrences = entries.reduce((sum, e) => sum + (e.occurrence_count ?? 0), 0)
+  const totalOccurrences = template.occurrences ?? entries.reduce((sum, e) => sum + (e.occurrence_count ?? 0), 0)
 
   const toPerson = (uid: string, isCC: boolean): AvatarPerson => {
     const u = userMap.get(uid)
@@ -221,20 +166,13 @@ function RecurringCard({
   ]
 
   return (
-    <div
-      onClick={onClick}
-      className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 cursor-pointer hover:border-[#2563EB] hover:shadow-md transition-all duration-150 group"
-    >
-      {/* Header: badges + actions on top row, title full-width below */}
+    <div onClick={onClick}
+      className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 cursor-pointer hover:border-[#2563EB] hover:shadow-md transition-all duration-150 group flex flex-col h-[280px]">
       <div className="mb-3">
         <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className={[
-              'inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium',
-              template.is_active
-                ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]'
-                : 'bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA]',
-            ].join(' ')}>
+            <span className={['inline-flex items-center rounded-[999px] px-2 py-0.5 text-[11px] font-medium',
+              template.is_active ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]' : 'bg-[#FEE2E2] text-[#DC2626] border border-[#FECACA]'].join(' ')}>
               {template.is_active ? 'Active' : 'Paused'}
             </span>
             {entries.length > 1 && (
@@ -244,89 +182,60 @@ function RecurringCard({
             )}
           </div>
           <div className="flex items-center gap-1 shrink-0">
-          {/* Edit button */}
-          <button
-            onClick={(e) => { e.stopPropagation(); onEdit() }}
-            title="Edit template"
-            className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
-          >
-            <Edit2 size={13} />
-          </button>
-          {/* Run today button */}
-          {template.is_active && (
-            <button
-              onClick={(e) => { e.stopPropagation(); handleSpawnToday() }}
-              disabled={spawning}
-              title="Spawn today's task now"
-              className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-[8px] text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] disabled:opacity-60 transition-colors"
-            >
-              <Zap size={11} />
-              {spawning ? '...' : spawnMsg ?? 'Run Today'}
-            </button>
-          )}
-          <button
-            onClick={(e) => { e.stopPropagation(); handleToggle() }}
-            disabled={toggling}
-            className={[
-              'flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[8px] transition-colors disabled:opacity-60',
-              template.is_active
-                ? 'text-[#D97706] bg-[#FEF9C3] border border-[#FDE68A] hover:bg-[#FDE68A]'
-                : 'text-[#16A34A] bg-[#DCFCE7] border border-[#BBF7D0] hover:bg-[#BBF7D0]',
-            ].join(' ')}
-          >
-            {template.is_active ? <Pause size={11} /> : <Play size={11} />}
-            {toggling ? '...' : template.is_active ? 'Pause' : 'Resume'}
-          </button>
-          <div className="relative">
-            <button
-              onClick={(e) => { e.stopPropagation(); setShowDeleteMenu((v) => !v) }}
-              className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"
-            >
-              <Trash2 size={13} />
-            </button>
-            {showDeleteMenu && (
-              <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] p-1.5 min-w-[220px]">
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('stop') }}
-                  className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#F1F5F9]"
-                >
-                  <span className="block text-sm font-medium text-[#0F172A]">Stop (keep all tasks)</span>
-                  <span className="block text-[11px] text-[#475569]">No new tasks; existing ones stay</span>
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('delete-future') }}
-                  className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#FEE2E2]"
-                >
-                  <span className="block text-sm font-medium text-[#DC2626]">Stop & remove open tasks</span>
-                  <span className="block text-[11px] text-[#475569]">Completed ones are kept</span>
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('delete-all') }}
-                  className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#FEE2E2]"
-                >
-                  <span className="block text-sm font-medium text-[#DC2626]">Delete everything</span>
-                  <span className="block text-[11px] text-[#475569]">Removes it and every task it created</span>
-                </button>
-              </div>
+            {template.can_manage && (
+              <button onClick={(e) => { e.stopPropagation(); onManageAccess() }} title="Manage access"
+                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
+                <Shield size={13} />
+              </button>
             )}
-          </div>
+            <button onClick={(e) => { e.stopPropagation(); onEdit() }} title="Edit template"
+              className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
+              <Edit2 size={13} />
+            </button>
+            {template.is_active && (
+              <button onClick={(e) => { e.stopPropagation(); handleSpawnToday() }} disabled={spawning} title="Spawn today's task now"
+                className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-[8px] text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] disabled:opacity-60 transition-colors">
+                <Zap size={11} />{spawning ? '...' : spawnMsg ?? 'Run Today'}
+              </button>
+            )}
+            <button onClick={(e) => { e.stopPropagation(); handleToggle() }} disabled={toggling}
+              className={['flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[8px] transition-colors disabled:opacity-60',
+                template.is_active ? 'text-[#D97706] bg-[#FEF9C3] border border-[#FDE68A] hover:bg-[#FDE68A]' : 'text-[#16A34A] bg-[#DCFCE7] border border-[#BBF7D0] hover:bg-[#BBF7D0]'].join(' ')}>
+              {template.is_active ? <Pause size={11} /> : <Play size={11} />}
+              {toggling ? '...' : template.is_active ? 'Pause' : 'Resume'}
+            </button>
+            <div className="relative">
+              <button onClick={(e) => { e.stopPropagation(); setShowDeleteMenu((v) => !v) }}
+                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors">
+                <Trash2 size={13} />
+              </button>
+              {showDeleteMenu && (
+                <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-[#E2E8F0] rounded-[10px] shadow-[0_4px_16px_rgba(0,0,0,0.12)] p-1.5 min-w-[220px]">
+                  <button onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('stop') }} className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#F1F5F9]">
+                    <span className="block text-sm font-medium text-[#0F172A]">Stop (keep all tasks)</span>
+                    <span className="block text-[11px] text-[#475569]">No new tasks; existing ones stay</span>
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('delete-future') }} className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#FEE2E2]">
+                    <span className="block text-sm font-medium text-[#DC2626]">Stop & remove open tasks</span>
+                    <span className="block text-[11px] text-[#475569]">Completed ones are kept</span>
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); setShowDeleteMenu(false); onDelete('delete-all') }} className="w-full text-left px-3 py-2 rounded-[6px] hover:bg-[#FEE2E2]">
+                    <span className="block text-sm font-medium text-[#DC2626]">Delete everything</span>
+                    <span className="block text-[11px] text-[#475569]">Removes it and every task it created</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
-        <h3 className="text-[15px] font-semibold text-[#0F172A] break-words group-hover:text-[#2563EB] transition-colors">{template.title}</h3>
-        {template.description && (
-          <p className="text-sm text-[#475569] mt-0.5 line-clamp-2">{template.description}</p>
-        )}
+        <h3 className="text-[15px] font-semibold text-[#0F172A] break-words group-hover:text-[#2563EB] transition-colors line-clamp-1">{template.title}</h3>
+        {template.description && <p className="text-sm text-[#475569] mt-0.5 line-clamp-2">{template.description}</p>}
+        {toggleErr && <p className="text-[12px] text-[#DC2626] mt-1">{toggleErr}</p>}
       </div>
 
-      {/* Schedule info */}
-      <div className="space-y-1 mb-3">
+      <div className="space-y-1 mb-3 overflow-y-auto flex-1 min-h-0">
         {entries.length === 0 ? (
           <p className="text-sm text-[#94A3B8]">No schedule configured</p>
-        ) : entries.length === 1 ? (
-          <div className="flex items-center gap-1.5 text-sm text-[#475569]">
-            <RotateCcw size={12} className="text-[#94A3B8] shrink-0" />
-            <span>{scheduleLabel(template)}</span>
-          </div>
         ) : (
           entries.map((entry, i) => (
             <div key={i} className="flex items-center gap-1.5 text-sm text-[#475569]">
@@ -337,26 +246,20 @@ function RecurringCard({
         )}
       </div>
 
-      {/* Meta row */}
-      <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-[#475569]">
+      <div className="flex flex-wrap gap-x-3 gap-y-1 text-sm text-[#475569] shrink-0">
         <span>By {template.created_by_name ?? 'Unknown'}</span>
         <span className="text-[#CBD5E1]">·</span>
         {earliestStart && (
           <>
-            <div className="flex items-center gap-1.5">
-              <Calendar size={12} className="text-[#94A3B8]" />
-              <span>From {formatDate(earliestStart)}</span>
-            </div>
+            <div className="flex items-center gap-1.5"><Calendar size={12} className="text-[#94A3B8]" /><span>From {formatDate(earliestStart)}</span></div>
             <span className="text-[#CBD5E1]">·</span>
           </>
         )}
         <span>{totalOccurrences} occurrence{totalOccurrences !== 1 ? 's' : ''}</span>
       </div>
 
-
-      {/* Assignee avatars */}
       {people.length > 0 && (
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center gap-2 shrink-0">
           <Users size={12} className="text-[#94A3B8]" />
           <AssigneeAvatars people={people} max={5} size="sm" />
           <span className="text-xs text-[#475569]">
@@ -371,122 +274,221 @@ function RecurringCard({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+const SCOPE_BLURB: Record<WorkScope, string> = {
+  own: 'Recurring work you send and receive.',
+  team: 'Recurring work your reporting team sends and receives.',
+  department: 'Your department’s recurring work.',
+  org: 'Every recurring template across the company.',
+}
+
 export default function RecurringPage() {
   const { user } = useAuth()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
 
+  // Scope / relation / view
+  const [requestedScope, setRequestedScope] = useState<WorkScope | undefined>(undefined)
+  const [appliedScope, setAppliedScope] = useState<WorkScope>('own')
+  const [maxScope, setMaxScope] = useState<WorkScope | null>(null)
+  const [relation, setRelation] = useState<Exclude<RecurringRelation, 'all'>>('outgoing')
+  const [view, setView] = useState<'cards' | 'table'>('cards')
+  const [viewTouched, setViewTouched] = useState(false)
+
+  // Filters
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'paused'>('')
+  const [categoryId, setCategoryId] = useState('')
+  const [priorityId, setPriorityId] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
+
+  // Data
   const [templates, setTemplates] = useState<RecurringTemplate[]>([])
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [userMap, setUserMap] = useState<Map<string, { name: string; department?: string; role?: string }>>(new Map())
+  const [employees, setEmployees] = useState<EmployeePickerOption[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Modals
   const [showCreate, setShowCreate] = useState(false)
   const [editingTemplate, setEditingTemplate] = useState<RecurringTemplate | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ template: RecurringTemplate; mode: DeleteMode } | null>(null)
+  const [manageTarget, setManageTarget] = useState<RecurringTemplate | null>(null)
 
-  const loadData = useCallback(() => {
-    if (!orgId) { setLoading(false); return }
-    setLoading(true)
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 350)
+    return () => clearTimeout(t)
+  }, [searchInput])
+
+  // Static reference data (once).
+  useEffect(() => {
+    if (!orgId) return
     Promise.all([
-      tasksApi.getRecurringTemplates(orgId).catch(() => [] as RecurringTemplate[]),
       tasksApi.getCategories(orgId).catch(() => [] as TaskCategory[]),
       tasksApi.getPriorities(orgId).catch(() => [] as TaskPriority[]),
       tasksApi.getStatuses(orgId).catch(() => [] as TaskStatus[]),
+      getDepartments(orgId).catch(() => [] as Department[]),
       tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 } as EligibleAssigneesResponse)),
-    ]).then(([t, c, p, s, eligible]) => {
-      setTemplates(t); setCategories(c); setPriorities(p); setStatuses(s)
+    ]).then(([c, p, s, d, eligible]) => {
+      setCategories(c); setPriorities(p); setStatuses(s); setDepartments(d)
       const map = new Map<string, { name: string; department?: string; role?: string }>()
-      eligible.departments.forEach((dept) =>
-        dept.users.forEach((u) => map.set(u.user_id, { name: u.name, department: u.department_name, role: u.role_title })),
-      )
-      setUserMap(map)
-    }).finally(() => setLoading(false))
+      const opts: EmployeePickerOption[] = []
+      eligible.departments.forEach((dept) => dept.users.forEach((u) => {
+        map.set(u.user_id, { name: u.name, department: u.department_name, role: u.role_title })
+        opts.push({ user_id: u.user_id, name: u.name, role_title: u.role_title, department_name: u.department_name })
+      }))
+      setUserMap(map); setEmployees(opts)
+    })
   }, [orgId])
 
+  const query = useMemo(() => ({
+    scope: requestedScope,
+    relation: appliedScope === 'org' ? undefined : relation,
+    status: statusFilter || undefined,
+    category_id: categoryId || undefined,
+    priority_id: priorityId || undefined,
+    department_id: departmentId || undefined,
+    search: search || undefined,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [requestedScope, relation, appliedScope, statusFilter, categoryId, priorityId, departmentId, search])
+
+  const queryKey = JSON.stringify(query)
+  const loadData = useCallback(() => {
+    if (!orgId) { setLoading(false); return }
+    setLoading(true)
+    tasksApi.listRecurringTemplates(orgId, JSON.parse(queryKey))
+      .then((res) => {
+        setTemplates(res.items)
+        setMaxScope(res.max_scope)
+        if (res.applied_scope) setAppliedScope(res.applied_scope)
+      })
+      .catch(() => setTemplates([]))
+      .finally(() => setLoading(false))
+  }, [orgId, queryKey])
+
   useEffect(() => { loadData() }, [loadData])
+
+  function handleScopeChange(s: WorkScope) {
+    setRequestedScope(s)
+    if (!viewTouched) setView(s === 'org' ? 'table' : 'cards')
+  }
+  function switchView(v: 'cards' | 'table') { setView(v); setViewTouched(true) }
 
   async function handlePause(id: string) {
     await tasksApi.pauseRecurring(orgId, id)
     setTemplates((prev) => prev.map((t) => t.id === id ? { ...t, is_active: false } : t))
   }
-
   async function handleResume(id: string) {
     await tasksApi.resumeRecurring(orgId, id)
     setTemplates((prev) => prev.map((t) => t.id === id ? { ...t, is_active: true } : t))
   }
-
   async function handleDeleteConfirmed() {
     if (!deleteTarget) return
     const { template, mode } = deleteTarget
     await tasksApi.deleteRecurring(orgId, template.id, mode)
-    if (mode === 'delete-all') {
-      // The template row itself is gone.
-      setTemplates((prev) => prev.filter((t) => t.id !== template.id))
-    } else {
-      // stop / delete-future keep the template around, just deactivated.
-      setTemplates((prev) => prev.map((t) => (t.id === template.id ? { ...t, is_active: false } : t)))
-    }
+    if (mode === 'delete-all') setTemplates((prev) => prev.filter((t) => t.id !== template.id))
+    else setTemplates((prev) => prev.map((t) => (t.id === template.id ? { ...t, is_active: false } : t)))
     setDeleteTarget(null)
   }
 
   if (!orgId) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64">
-        <p className="font-semibold text-[#0F172A]">No organization found</p>
-      </div>
-    )
+    return <div className="flex flex-col items-center justify-center h-64"><p className="font-semibold text-[#0F172A]">No organization found</p></div>
   }
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
-      </div>
-    )
-  }
+  const showRelation = appliedScope !== 'org'
+  const relationEmpty = relation === 'outgoing'
+    ? { icon: <ArrowUpRight size={24} className="text-[#94A3B8]" />, title: 'Nothing sent yet', sub: 'Recurring tasks you set up for others show here.' }
+    : { icon: <Inbox size={24} className="text-[#94A3B8]" />, title: 'Nothing received', sub: 'Recurring tasks assigned to you show here.' }
+  const emptyState = appliedScope === 'org'
+    ? { icon: <RotateCcw size={24} className="text-[#94A3B8]" />, title: 'No recurring templates', sub: 'No templates match this view.' }
+    : relationEmpty
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5 pb-16">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Recurring Tasks</h1>
-          <p className="mt-1 text-[15px] text-[#475569]">
-            Scheduled templates that automatically spawn new task instances.
-          </p>
+          <p className="mt-1 text-[15px] text-[#475569]">{SCOPE_BLURB[appliedScope]}</p>
         </div>
-        <button
-          onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors shrink-0"
-        >
-          <Plus size={16} />
-          New Recurring Task
-        </button>
-      </div>
-
-      <p className="text-sm text-[#475569]">
-        {templates.length} template{templates.length !== 1 ? 's' : ''}
-      </p>
-
-      {templates.length === 0 ? (
-        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
-          <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
-            <RotateCcw size={24} className="text-[#94A3B8]" />
-          </div>
-          <p className="font-semibold text-[#0F172A]">No recurring templates yet</p>
-          <p className="text-sm text-[#475569] mt-1 mb-5">
-            Set up a schedule and tasks will be created automatically.
-          </p>
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors"
-          >
-            <Plus size={16} />
-            New Recurring Task
+        <div className="flex items-center gap-2">
+          <ScopeSwitcher maxScope={maxScope} value={appliedScope} onChange={handleScopeChange} />
+          <button onClick={() => setShowCreate(true)}
+            className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors shrink-0">
+            <Plus size={16} /> New Recurring Task
           </button>
         </div>
+      </div>
+
+      {/* Relation (incoming/outgoing) — Mine & Team only */}
+      {showRelation && (
+        <div className="inline-flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5">
+          {([
+            { key: 'outgoing', label: appliedScope === 'team' ? 'Sent by team' : 'Sent', icon: <ArrowUpRight size={15} /> },
+            { key: 'incoming', label: appliedScope === 'team' ? 'Received by team' : 'Received', icon: <ArrowDownLeft size={15} /> },
+          ] as const).map(({ key, label, icon }) => {
+            const active = relation === key
+            return (
+              <button key={key} onClick={() => setRelation(key)}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-[6px] text-sm font-medium transition-colors ${active ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:text-[#0F172A] hover:bg-[#F1F5F9]'}`}>
+                {icon}<span>{label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Toolbar: search + filters + view toggle */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+          <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search templates…"
+            className="w-full rounded-[8px] border border-[#CBD5E1] bg-white pl-9 pr-3 py-2.5 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]" />
+        </div>
+        <StyledSelect value={statusFilter} onChange={(v) => setStatusFilter(v as typeof statusFilter)} wrapperClassName="w-[130px]"
+          options={[{ value: '', label: 'All status' }, { value: 'active', label: 'Active' }, { value: 'paused', label: 'Paused' }]} />
+        <StyledSelect value={categoryId} onChange={setCategoryId} wrapperClassName="w-[150px]"
+          options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color }))]} />
+        <StyledSelect value={priorityId} onChange={setPriorityId} wrapperClassName="w-[150px]"
+          options={[{ value: '', label: 'All priorities' }, ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color }))]} />
+        <StyledSelect value={departmentId} onChange={setDepartmentId} wrapperClassName="w-[160px]"
+          options={[{ value: '', label: 'All departments' }, ...departments.map((d) => ({ value: d.id, label: d.name }))]} />
+        <div className="inline-flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5">
+          <button onClick={() => switchView('cards')} title="Cards"
+            className={`flex items-center justify-center w-8 h-8 rounded-[6px] transition-colors ${view === 'cards' ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}><LayoutGrid size={15} /></button>
+          <button onClick={() => switchView('table')} title="Table"
+            className={`flex items-center justify-center w-8 h-8 rounded-[6px] transition-colors ${view === 'table' ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}><TableIcon size={15} /></button>
+        </div>
+      </div>
+
+      {/* Count */}
+      {!loading && templates.length > 0 && (
+        <p className="text-sm text-[#475569]"><span className="font-semibold text-[#0F172A] tabular-nums">{templates.length}</span> template{templates.length !== 1 ? 's' : ''}</p>
+      )}
+
+      {/* Body */}
+      {loading ? (
+        <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" /></div>
+      ) : templates.length === 0 ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
+          <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">{emptyState.icon}</div>
+          <p className="font-semibold text-[#0F172A]">{emptyState.title}</p>
+          <p className="text-sm text-[#475569] mt-1 mb-5">{emptyState.sub}</p>
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors">
+            <Plus size={16} /> New Recurring Task
+          </button>
+        </div>
+      ) : view === 'table' ? (
+        <RecurringTable
+          rows={templates}
+          categories={categories}
+          priorities={priorities}
+          onOpen={(id) => router.push(`/dashboard/tasks/recurring/${id}`)}
+          onManageAccess={(t) => setManageTarget(t)}
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {templates.map((t) => (
@@ -499,15 +501,13 @@ export default function RecurringPage() {
               onResume={() => handleResume(t.id)}
               onDelete={(mode) => setDeleteTarget({ template: t, mode })}
               onSpawnToday={() => tasksApi.spawnTodayRecurring(orgId, t.id).then((r) => { loadData(); return r })}
+              onManageAccess={() => setManageTarget(t)}
               userMap={userMap}
             />
           ))}
         </div>
       )}
 
-      {/* Same full-featured Create Task modal as everywhere else, locked to
-          Recurring — checklists, reminders, attachments, proof and escalation
-          all included (the old stripped-down recurring form is gone). */}
       <CreateTaskModal
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
@@ -526,20 +526,16 @@ export default function RecurringPage() {
           categories={categories}
           priorities={priorities}
           onClose={() => setEditingTemplate(null)}
-          onUpdated={(updated) => {
-            setTemplates((prev) => prev.map((t) => t.id === updated.id ? updated : t))
-            setEditingTemplate(null)
-          }}
+          onUpdated={(updated) => { setTemplates((prev) => prev.map((t) => t.id === updated.id ? { ...t, ...updated } : t)); setEditingTemplate(null) }}
         />
       )}
 
       {deleteTarget && (
-        <DeleteConfirmDialog
-          template={deleteTarget.template}
-          mode={deleteTarget.mode}
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={handleDeleteConfirmed}
-        />
+        <DeleteConfirmDialog template={deleteTarget.template} mode={deleteTarget.mode} onCancel={() => setDeleteTarget(null)} onConfirm={handleDeleteConfirmed} />
+      )}
+
+      {manageTarget && (
+        <ManageAccessModal orgId={orgId} templateId={manageTarget.id} employees={employees} onClose={() => setManageTarget(null)} />
       )}
     </div>
   )

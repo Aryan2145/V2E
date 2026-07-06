@@ -144,6 +144,9 @@ export default function CreateTaskModal({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [holidayCheck, setHolidayCheck] = useState<HolidayCheckResult | null>(null)
+  // When the deadline lands on a non-working day the system suggests an
+  // adjustment; the user may override and keep their chosen date.
+  const [holidayOverride, setHolidayOverride] = useState(false)
   const holidayDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [leaveAvail, setLeaveAvail] = useState<LeaveAvailability | null>(null)
   // Reminders — one seeded from the admin default on open, all editable/removable.
@@ -224,6 +227,8 @@ export default function CreateTaskModal({
   // Holiday check on deadline change (debounced 300ms)
   useEffect(() => {
     if (holidayDebounceRef.current) clearTimeout(holidayDebounceRef.current)
+    // A new deadline is a fresh decision — clear any prior override.
+    setHolidayOverride(false)
     if (!deadlineDate || !orgId) { setHolidayCheck(null); return }
     holidayDebounceRef.current = setTimeout(async () => {
       try {
@@ -250,6 +255,7 @@ export default function CreateTaskModal({
     )
     setDeadlineDate('')
     setDeadlineTime('')
+    setHolidayOverride(false)
     setMode(initialMode)
     setScheduleEntries([defaultScheduleEntry()])
     setCreatedRecurring(null)
@@ -290,8 +296,11 @@ export default function CreateTaskModal({
     return typeof m === 'string' && m ? m : fallback
   }
 
-  async function handleSubmit(e: React.FormEvent, holidayOverride = false) {
+  async function handleSubmit(e: React.FormEvent, holidayOverrideArg?: boolean) {
     e.preventDefault()
+    // Default to the user's inline override choice; the confirm-fallback below
+    // may force it true on retry.
+    const useHolidayOverride = holidayOverrideArg ?? holidayOverride
     if (mode === 'recurring') { await handleCreateRecurring(); return }
     if (!title.trim()) { setError('Title is required.'); return }
     if (assignees.filter((a) => !a.is_cc).length === 0) { setError('At least one assignee is required. CC-only tasks are not allowed.'); return }
@@ -313,7 +322,7 @@ export default function CreateTaskModal({
         category_id: categoryId || undefined,
         status_id: statusId || undefined,
         deadline: deadline || undefined,
-        holiday_override: holidayOverride,
+        holiday_override: useHolidayOverride,
         completion_mode: completionMode,
         proof_required: proofRequired,
         proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
@@ -661,7 +670,11 @@ export default function CreateTaskModal({
               </div>
             </div>
 
-            <HolidayWarningBadge check={holidayCheck} />
+            <HolidayWarningBadge
+              check={holidayCheck}
+              overridden={holidayOverride}
+              onToggleOverride={setHolidayOverride}
+            />
             {deadlineDate && <LeaveWarningBadge availability={leaveAvail} deadline={deadlineDate} today={todayStr} />}
           </div>
           ) : (
@@ -778,7 +791,14 @@ export default function CreateTaskModal({
 
           {/* Escalation contacts — alerted level by level once the task is overdue.
               On a recurring task they apply to every spawned instance. */}
-          <EscalationLevelsField orgId={orgId} value={escalationIds} onChange={setEscalationIds} />
+          <EscalationLevelsField
+            orgId={orgId}
+            value={escalationIds}
+            onChange={setEscalationIds}
+            assignerId={user?.id}
+            defaultToAssigner
+            excludeUserIds={primaryAssignees.map((a) => a.user_id)}
+          />
 
           {/* Attachments — collapsed by default to save space; the + button in the
               header expands the full dropzone. Applies to both one-time and recurring
@@ -854,7 +874,7 @@ export default function CreateTaskModal({
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={submitting || (mode === 'one_time' && holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day)}
+            disabled={submitting || (mode === 'one_time' && holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day && !holidayOverride)}
             className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
           >
             {submitting ? 'Creating...' : mode === 'recurring' ? 'Create Recurring Task' : 'Create Task'}

@@ -39,7 +39,7 @@ export default function EscalatedPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const filtered = useMemo(() => applyTaskFilters(tasks, filters), [tasks, filters])
+  const filtered = useMemo(() => applyTaskFilters(tasks, filters, statuses), [tasks, filters, statuses])
   const isFiltered = isTaskFiltered(filters)
 
   if (!orgId) {

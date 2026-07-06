@@ -386,8 +386,9 @@ export class RecurringTasksService {
       if (isOrg) return true;
       const creatorInScope = inScope(t.created_by_user_id);
       const assigneeInScope = assignees.some(inScope);
-      // A personal grant surfaces a shared-with-me template in the Mine view only.
-      const sharedToMe = effective === DataScope.own && grantedToMe.has(t.id);
+      // A personal grant is about ME specifically — it surfaces the shared-with-me
+      // template under 'received' at any scope (it's work that came to me).
+      const sharedToMe = grantedToMe.has(t.id);
       if (relation === 'outgoing') return creatorInScope;
       if (relation === 'incoming') return assigneeInScope || sharedToMe;
       return creatorInScope || assigneeInScope || sharedToMe;

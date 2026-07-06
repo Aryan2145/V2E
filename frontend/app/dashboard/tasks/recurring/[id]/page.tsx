@@ -12,6 +12,8 @@ import type {
 } from '@/lib/types/tasks'
 import TaskCard from '@/components/tasks/TaskCard'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
+import ManageAccessModal from '@/components/tasks/ManageAccessModal'
+import type { EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import StyledSelect from '@/components/ui/StyledSelect'
 import { FILE_TYPE_GROUPS, groupsFromExtensions } from '@/lib/attachments'
 import {
@@ -262,6 +264,8 @@ export default function RecurringDetailPage() {
 
   const [filterStatus, setFilterStatus] = useState('all')
   const [showEditModal, setShowEditModal] = useState(false)
+  const [showManageAccess, setShowManageAccess] = useState(false)
+  const [employees, setEmployees] = useState<EmployeePickerOption[]>([])
   const [toggling, setToggling] = useState(false)
 
 
@@ -288,10 +292,15 @@ export default function RecurringDetailPage() {
       setPriorities(prios)
       setStatuses(statuses)
       const map = new Map<string, string>()
+      const opts: EmployeePickerOption[] = []
       ;(eligible as { departments: { users: EligibleAssigneeUser[] }[] }).departments.forEach((dept) =>
-        dept.users.forEach((u) => map.set(u.user_id, u.name))
+        dept.users.forEach((u) => {
+          map.set(u.user_id, u.name)
+          opts.push({ user_id: u.user_id, name: u.name, role_title: u.role_title, department_name: u.department_name })
+        })
       )
       setUserMap(map)
+      setEmployees(opts)
       setInstanceAttachments(instAtts as RecurringInstanceAttachment[])
     }).finally(() => setLoading(false))
   }, [orgId, templateId])
@@ -424,6 +433,16 @@ export default function RecurringDetailPage() {
             >
               <Edit2 size={14} />
             </button>
+            {template.can_manage && (
+              <button
+                onClick={() => setShowManageAccess(true)}
+                aria-label="Manage access"
+                title="Manage who can see this"
+                className="mt-1 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
+              >
+                <Shield size={14} />
+              </button>
+            )}
           </div>
           <div className="mt-2 flex items-center gap-2 flex-wrap text-xs text-[#475569]">
             <RotateCcw size={11} className="shrink-0" />
@@ -971,6 +990,10 @@ export default function RecurringDetailPage() {
           onClose={() => setShowEditModal(false)}
           onUpdated={() => { setShowEditModal(false); loadData() }}
         />
+      )}
+
+      {showManageAccess && (
+        <ManageAccessModal orgId={orgId} templateId={template.id} employees={employees} onClose={() => setShowManageAccess(false)} />
       )}
     </div>
   )

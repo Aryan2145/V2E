@@ -22,7 +22,8 @@ import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { TasksService } from './tasks.service';
 import { TaskAttachmentsService, MAX_ATTACHMENT_BYTES, type UploadedFile as UploadedFileType } from './task-attachments.service';
 import { principalFromUser } from '../access-rights/permissions.service';
-import { RecurringTasksService } from '../recurring-tasks/recurring-tasks.service';
+import { RecurringTasksService, type RecurringRelation } from '../recurring-tasks/recurring-tasks.service';
+import { ClockService } from '../clock/clock.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
@@ -44,6 +45,7 @@ export class TasksController {
     private readonly service: TasksService,
     private readonly attachments: TaskAttachmentsService,
     private readonly recurringService: RecurringTasksService,
+    private readonly clock: ClockService,
   ) {}
 
   // ─── Task CRUD ────────────────────────────────────────────────────────────────
@@ -82,10 +84,30 @@ export class TasksController {
 
   // ─── Specific sub-routes (must be BEFORE /:id) ───────────────────────────────
 
+  // NOTE: this path also matches RecurringTasksController's base route; whichever is
+  // registered first wins, so this handler MUST scope identically (pass the principal
+  // + query) or it becomes a leak. It exists here to intercept 'recurring' before the
+  // task `:id` route below.
   @Get('recurring')
-  @ApiOperation({ summary: 'List recurring task templates' })
-  listRecurring(@Param('orgId') orgId: string) {
-    return this.recurringService.listTemplates(orgId);
+  @ApiOperation({ summary: 'List recurring task templates (scope + relation aware)' })
+  async listRecurring(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('scope') scope?: string,
+    @Query('relation') relation?: RecurringRelation,
+    @Query('status') status?: 'active' | 'paused',
+    @Query('category_id') categoryId?: string,
+    @Query('priority_id') priorityId?: string,
+    @Query('department_id') departmentId?: string,
+    @Query('search') search?: string,
+  ) {
+    const now = await this.clock.now(orgId);
+    return this.recurringService.listTemplates(
+      orgId,
+      principalFromUser(req.user),
+      { scope: toDataScope(scope), relation, status, category_id: categoryId, priority_id: priorityId, department_id: departmentId, search },
+      now,
+    );
   }
 
   @Get('eligible-assignees')

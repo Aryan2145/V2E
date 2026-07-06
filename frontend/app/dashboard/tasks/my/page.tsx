@@ -9,7 +9,23 @@ import TaskCard from '@/components/tasks/TaskCard'
 import KanbanView from '@/components/tasks/KanbanView'
 import CalendarView from '@/components/tasks/CalendarView'
 import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
-import { CheckSquare, LayoutList, Columns, CalendarDays } from 'lucide-react'
+import Modal from '@/components/ui/Modal'
+import { useToast } from '@/components/ui/Toast'
+import { CheckSquare, LayoutList, Columns, CalendarDays, AlertCircle } from 'lucide-react'
+
+// Read the backend's real message (the completion gate, an already-closed task, etc.)
+// instead of a generic failure — same convention as the task detail page.
+function apiErrorMessage(e: unknown, fallback: string): string {
+  const m = (e as { response?: { data?: { message?: string | string[] } } })?.response?.data?.message
+  if (Array.isArray(m)) return m[0] ?? fallback
+  return typeof m === 'string' && m ? m : fallback
+}
+
+// The completion gate rejects with a message naming the missing checklist / proof.
+// Those (and only those) mean "go finish the requirements on the task page".
+function isCompletionGate(msg: string): boolean {
+  return /before (completing|finishing)|checklist|proof/i.test(msg)
+}
 
 type ViewMode = 'list' | 'kanban' | 'calendar'
 
@@ -17,6 +33,7 @@ export default function MyTasksPage() {
   const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { addToast } = useToast()
   const orgId = user?.organizationId ?? ''
 
   const [tasks, setTasks] = useState<Task[]>([])
@@ -36,6 +53,13 @@ export default function MyTasksPage() {
 
   const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
 
+  // Mark-incomplete flow — a reason is required, captured in a popup right here on
+  // My Tasks (no drill-in). Completion, by contrast, may need checklist/proof, which
+  // live on the task page — so a gated Complete sends the user there.
+  const [incompleteTask, setIncompleteTask] = useState<Task | null>(null)
+  const [incompleteReason, setIncompleteReason] = useState('')
+  const [incompleteSubmitting, setIncompleteSubmitting] = useState(false)
+
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
     setLoading(true)
@@ -51,7 +75,7 @@ export default function MyTasksPage() {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const filtered = useMemo(() => applyTaskFilters(tasks, filters), [tasks, filters])
+  const filtered = useMemo(() => applyTaskFilters(tasks, filters, statuses), [tasks, filters, statuses])
   const isFiltered = isTaskFiltered(filters)
 
   async function handleStatusChange(taskId: string, newStatusId: string) {
@@ -86,6 +110,48 @@ export default function MyTasksPage() {
       setTasks((ts) => ts.map((t) => (t.id === taskId ? updated : t)))
     } catch {
       setTasks(prev) // revert on failure
+    }
+  }
+
+  // Mark Complete straight from the row. Completion runs the real gate: if the task
+  // needs a checklist ticked or proof attached, the backend rejects with a message —
+  // we surface it and send the user to the task page to satisfy it there.
+  async function handleComplete(task: Task) {
+    try {
+      const updated = await tasksApi.completeTask(orgId, task.id)
+      setTasks((ts) => ts.map((t) => (t.id === task.id ? updated : t)))
+      addToast('Task marked complete.', 'success')
+    } catch (e) {
+      const msg = apiErrorMessage(e, 'Could not complete this task.')
+      if (isCompletionGate(msg)) {
+        addToast(`${msg} Opening the task so you can add what’s needed.`, 'warning')
+        router.push(`/dashboard/tasks/${task.id}`)
+      } else {
+        addToast(msg, 'error')
+      }
+    }
+  }
+
+  async function submitIncomplete() {
+    if (!incompleteTask) return
+    const reason = incompleteReason.trim()
+    if (!reason) { addToast('A reason is required to mark a task incomplete.', 'warning'); return }
+    setIncompleteSubmitting(true)
+    try {
+      // all_must_complete → flag only MY part as can't-complete; any_can_complete →
+      // close the whole task as not-done. Both require a reason (enforced above + backend).
+      const updated =
+        incompleteTask.completion_mode === 'all_must_complete'
+          ? await tasksApi.flagCannotComplete(orgId, incompleteTask.id, reason)
+          : await tasksApi.markIncomplete(orgId, incompleteTask.id, reason)
+      setTasks((ts) => ts.map((t) => (t.id === incompleteTask.id ? updated : t)))
+      addToast('Task marked incomplete.', 'success')
+      setIncompleteTask(null)
+      setIncompleteReason('')
+    } catch (e) {
+      addToast(apiErrorMessage(e, 'Could not mark this task incomplete.'), 'error')
+    } finally {
+      setIncompleteSubmitting(false)
     }
   }
 
@@ -187,6 +253,8 @@ export default function MyTasksPage() {
                     statuses={statuses}
                     categories={categories}
                     onStatusChange={(sid) => handleStatusChange(task.id, sid)}
+                    onComplete={() => handleComplete(task)}
+                    onMarkIncomplete={() => { setIncompleteReason(''); setIncompleteTask(task) }}
                     currentUserId={user?.id}
                   />
                 )
@@ -217,6 +285,63 @@ export default function MyTasksPage() {
           onTaskClick={(id) => router.push(`/dashboard/tasks/${id}`)}
         />
       )}
+
+      {/* Mark-incomplete reason popup — required remark captured right here, no drill-in.
+          For "everyone must finish" tasks this flags only your own part. */}
+      <Modal
+        isOpen={!!incompleteTask}
+        onClose={() => { if (!incompleteSubmitting) { setIncompleteTask(null); setIncompleteReason('') } }}
+        title="Mark task incomplete"
+        size="md"
+        closeOnEscape={!incompleteSubmitting}
+      >
+        <div className="space-y-4">
+          <div className="flex items-start gap-2 px-3 py-2 rounded-[8px] bg-[#FEF9C3] border border-[#FDE68A]">
+            <AlertCircle size={15} className="text-[#CA8A04] shrink-0 mt-0.5" />
+            <p className="text-xs text-[#854D0E]">
+              {incompleteTask?.completion_mode === 'all_must_complete'
+                ? 'Your part will be flagged as not-done. The task creator decides how the whole task is closed.'
+                : 'The task will be closed as not-done for everyone.'}{' '}
+              A reason is required.
+            </p>
+          </div>
+
+          {incompleteTask && (
+            <p className="text-sm font-semibold text-[#0F172A] truncate">{incompleteTask.title}</p>
+          )}
+
+          <div>
+            <label className="block text-xs font-semibold text-[#475569] mb-1.5">Reason</label>
+            <textarea
+              value={incompleteReason}
+              onChange={(e) => setIncompleteReason(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder="Why can’t this be completed?"
+              className="w-full rounded-[8px] border border-[#E2E8F0] px-3 py-2 text-sm text-[#0F172A] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] resize-none"
+            />
+          </div>
+
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => { setIncompleteTask(null); setIncompleteReason('') }}
+              disabled={incompleteSubmitting}
+              className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-[#475569] rounded-[8px] hover:bg-[#F1F5F9] disabled:opacity-60 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={submitIncomplete}
+              disabled={incompleteSubmitting || !incompleteReason.trim()}
+              className="w-full sm:w-auto px-5 py-2 text-sm font-semibold text-white bg-[#DC2626] rounded-[8px] hover:bg-[#B91C1C] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            >
+              {incompleteSubmitting ? 'Saving…' : 'Mark Incomplete'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
