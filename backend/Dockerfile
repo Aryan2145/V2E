@@ -8,7 +8,8 @@ COPY prisma ./prisma
 RUN npm ci --legacy-peer-deps && npx prisma generate
 
 COPY . .
-RUN npm run build
+# nest build is memory-hungry; raise V8 heap so it doesn't OOM on small instances
+RUN NODE_OPTIONS=--max-old-space-size=2048 npm run build
 
 EXPOSE 3001
 
