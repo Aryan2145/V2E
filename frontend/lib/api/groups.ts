@@ -18,7 +18,7 @@ export async function getGroup(id: string): Promise<OrganizationGroup> {
   return data.data;
 }
 
-export async function createGroup(dto: { name: string; slug: string; description?: string }): Promise<OrganizationGroup> {
+export async function createGroup(dto: { name: string; description?: string }): Promise<OrganizationGroup> {
   const { data } = await apiClient.post<ApiResponse<OrganizationGroup>>('/api/v1/groups', dto);
   return data.data;
 }

@@ -60,11 +60,6 @@ export default function GroupsPage() {
               ),
             },
             {
-              key: 'slug',
-              header: 'Slug',
-              render: (g) => <span className="text-[#475569] font-mono text-xs">{g.slug}</span>,
-            },
-            {
               key: 'organizations',
               header: 'Organizations',
               render: (g) => (

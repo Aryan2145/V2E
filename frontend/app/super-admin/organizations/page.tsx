@@ -63,11 +63,6 @@ export default function OrganizationsPage() {
       ),
     },
     {
-      key: 'slug',
-      header: 'Slug',
-      render: (org) => <span className="text-[#475569] font-mono text-xs">{org.slug}</span>,
-    },
-    {
       key: 'industry',
       header: 'Industry',
       render: (org) => <span className="text-[#475569]">{org.industry ?? '—'}</span>,

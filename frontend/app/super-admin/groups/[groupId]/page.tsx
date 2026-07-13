@@ -115,7 +115,6 @@ export default function GroupDetailPage() {
           </div>
           <div>
             <h2 className="text-xl font-bold text-[#0F172A]">{group.name}</h2>
-            <p className="text-sm text-[#94A3B8] font-mono">{group.slug}</p>
           </div>
         </div>
         <div className="mt-5 pt-5 border-t border-[#E2E8F0] flex gap-8">
@@ -167,7 +166,6 @@ export default function GroupDetailPage() {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-[#0F172A] truncate">{org.name}</p>
-                  <p className="text-xs text-[#475569] font-mono">{org.slug}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button

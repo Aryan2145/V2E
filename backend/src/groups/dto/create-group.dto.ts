@@ -7,10 +7,12 @@ export class CreateGroupDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty()
+  // Optional — a URL-safe slug is auto-derived from the name (like organizations)
+  // when omitted. Kept accepting an explicit value for API/back-compat.
+  @ApiPropertyOptional()
   @IsString()
-  @IsNotEmpty()
-  slug: string;
+  @IsOptional()
+  slug?: string;
 
   @ApiPropertyOptional()
   @IsString()

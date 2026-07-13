@@ -35,9 +35,42 @@ export class GroupsService {
   }
 
   async create(dto: CreateGroupDto) {
-    const existing = await this.prisma.organizationGroup.findUnique({ where: { slug: dto.slug } });
-    if (existing) throw new ConflictException(`Slug '${dto.slug}' is already taken`);
-    return this.prisma.organizationGroup.create({ data: dto });
+    let slug: string;
+    if (dto.slug?.trim()) {
+      slug = dto.slug.trim();
+      const existing = await this.prisma.organizationGroup.findUnique({ where: { slug } });
+      if (existing) throw new ConflictException(`Slug '${slug}' is already taken`);
+    } else {
+      // Slug is an internal identifier — derive it from the name and guarantee
+      // uniqueness, exactly like organizations do.
+      slug = await this.generateUniqueSlug(dto.name);
+    }
+    return this.prisma.organizationGroup.create({
+      data: { name: dto.name, slug, description: dto.description },
+    });
+  }
+
+  /**
+   * Turn a group name into a URL-safe slug and ensure it's unique by appending
+   * a numeric suffix (`rgb-group`, `rgb-group-2`, …) on collision.
+   */
+  private async generateUniqueSlug(name: string): Promise<string> {
+    const base =
+      name
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'group';
+
+    let candidate = base;
+    let n = 2;
+    // eslint-disable-next-line no-await-in-loop
+    while (await this.prisma.organizationGroup.findUnique({ where: { slug: candidate } })) {
+      candidate = `${base}-${n++}`;
+    }
+    return candidate;
   }
 
   async update(id: string, dto: UpdateGroupDto) {

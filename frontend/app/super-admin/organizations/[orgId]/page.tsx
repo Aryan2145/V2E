@@ -391,7 +391,6 @@ export default function OrgDetailPage() {
                 </button>
               )}
             </div>
-            <p className="text-sm text-[#94A3B8] font-mono mt-0.5">{org.slug}</p>
           </div>
         </div>
 

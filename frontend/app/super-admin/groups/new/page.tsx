@@ -12,7 +12,6 @@ import Card from '@/components/ui/Card'
 
 const schema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
-  slug: z.string().min(2, 'Slug must be at least 2 characters').regex(/^[a-z0-9-]+$/, 'Only lowercase letters, numbers, and hyphens'),
   description: z.string().optional(),
 })
 
@@ -40,14 +39,9 @@ export default function NewGroupPage() {
   const router = useRouter()
   const [serverError, setServerError] = useState<string | null>(null)
 
-  const { register, handleSubmit, setValue, formState: { errors, isSubmitting } } = useForm<FormValues>({
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<FormValues>({
     resolver: zodResolver(schema),
   })
-
-  const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const slug = e.target.value.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-')
-    setValue('slug', slug, { shouldValidate: true })
-  }
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
@@ -82,19 +76,13 @@ export default function NewGroupPage() {
         <Card>
           <h2 className="text-[16px] font-semibold text-[#0F172A] mb-5 pb-4 border-b border-[#E2E8F0]">Group Details</h2>
           <div className="flex flex-col gap-5">
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Group Name" error={errors.name?.message} required>
-                <input
-                  {...register('name')}
-                  onChange={(e) => { register('name').onChange(e); handleNameChange(e) }}
-                  placeholder="RGB Group"
-                  className={inputCls(!!errors.name)}
-                />
-              </Field>
-              <Field label="Slug" error={errors.slug?.message} required>
-                <input {...register('slug')} placeholder="rgb-group" className={inputCls(!!errors.slug)} />
-              </Field>
-            </div>
+            <Field label="Group Name" error={errors.name?.message} required>
+              <input
+                {...register('name')}
+                placeholder="RGB Group"
+                className={inputCls(!!errors.name)}
+              />
+            </Field>
             <Field label="Description" error={errors.description?.message}>
               <textarea
                 {...register('description')}
