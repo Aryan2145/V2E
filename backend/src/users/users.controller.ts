@@ -5,7 +5,6 @@ import {
   Get,
   Param,
   Patch,
-  Post,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -13,7 +12,6 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { RequireAdmin } from '../common/decorators/require-admin.decorator';
-import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -36,16 +34,6 @@ export class UsersController {
   @UseGuards(OrgScopeGuard)
   findMembers(@Param('orgId') orgId: string) {
     return this.usersService.findMembers(orgId);
-  }
-
-  @Post()
-  @UseGuards(OrgScopeGuard)
-  @RequireAdmin()
-  create(
-    @Param('orgId') orgId: string,
-    @Body() dto: CreateUserDto,
-  ) {
-    return this.usersService.create({ ...dto, organization_id: orgId });
   }
 
   @Get(':id')

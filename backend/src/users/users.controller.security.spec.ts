@@ -1,13 +1,16 @@
 /**
  * Cross-organization isolation regression tests for the users write routes.
  *
- * These cover SECURITY_AUDIT.md findings C2, C3 and C6: the three mutating
- * routes on the users controller (PATCH /:id, POST /, DELETE /:id/deactivate)
- * were missing `OrgScopeGuard`. Because `@RequireAdmin` only proves the caller
- * is an admin of THEIR OWN org (and never binds them to the `:orgId` in the
- * URL), an admin of organization A could reach into organization B and reset a
- * password, mint an admin, or deactivate a member. Only `OrgScopeGuard` ties
- * the caller's org to the path org — so its absence was the whole hole.
+ * These cover SECURITY_AUDIT.md findings C2 and C6: the mutating routes on the
+ * users controller (PATCH /:id, DELETE /:id/deactivate) were missing
+ * `OrgScopeGuard`. Because `@RequireAdmin` only proves the caller is an admin of
+ * THEIR OWN org (and never binds them to the `:orgId` in the URL), an admin of
+ * organization A could reach into organization B and reset a password or
+ * deactivate a member. Only `OrgScopeGuard` ties the caller's org to the path
+ * org — so its absence was the whole hole.
+ *
+ * (The old POST /org/:orgId/users create route — SECURITY_AUDIT C3 — has since
+ * been removed entirely; people are provisioned only via the Employees flow.)
  *
  * The test stands up the REAL guard stack (`RolesGuard` + `OrgScopeGuard`)
  * around the real controller. Only the JWT layer is faked: `JwtAuthGuard` is
@@ -52,7 +55,6 @@ describe('UsersController cross-org isolation (SECURITY_AUDIT C2/C3/C6)', () => 
 
   const usersService = {
     update: jest.fn().mockResolvedValue({ id: 'victim', organization_id: 'org-B' }),
-    create: jest.fn().mockResolvedValue({ id: 'new-user', organization_id: 'org-B' }),
     deactivate: jest.fn().mockResolvedValue({ id: 'victim', is_active: false }),
   };
 
@@ -113,29 +115,6 @@ describe('UsersController cross-org isolation (SECURITY_AUDIT C2/C3/C6)', () => 
       expect(usersService.update).toHaveBeenCalledWith('member-in-a', 'org-A', {
         is_admin: true,
       });
-    });
-  });
-
-  // ── C3 — POST /org/:orgId/users (mint an admin) ──────────────────────────
-  describe('C3 — POST /org/:orgId/users', () => {
-    it('BLOCKS an org-A admin from creating a user in org-B (403, service untouched)', async () => {
-      await request(app.getHttpServer())
-        .post('/api/v1/org/org-B/users')
-        .send({ name: 'Planted', email: 'planted@org-b.example', password: 'x', is_admin: true })
-        .expect(403);
-
-      expect(usersService.create).not.toHaveBeenCalled();
-    });
-
-    it('ALLOWS an org-A admin to create a user in their OWN org', async () => {
-      await request(app.getHttpServer())
-        .post('/api/v1/org/org-A/users')
-        .send({ name: 'New Hire', email: 'new@org-a.example', password: 'x' })
-        .expect(201);
-
-      expect(usersService.create).toHaveBeenCalledWith(
-        expect.objectContaining({ email: 'new@org-a.example', organization_id: 'org-A' }),
-      );
     });
   });
 

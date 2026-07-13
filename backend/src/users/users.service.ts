@@ -1,12 +1,10 @@
 import {
-  ConflictException,
   Injectable,
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
-import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 const USER_SELECT = {
@@ -53,33 +51,6 @@ export class UsersService {
     });
     if (!member) throw new NotFoundException(`User with id ${id} not found in this organization`);
     return this.toUserDto(member, orgId);
-  }
-
-  async create(dto: CreateUserDto) {
-    const { password, organization_id, is_admin, ...rest } = dto;
-
-    let user = await this.prisma.user.findUnique({ where: { email: rest.email } });
-
-    if (user) {
-      const existingMember = await this.prisma.organizationMember.findFirst({
-        where: { user_id: user.id, organization_id },
-      });
-      if (existingMember) {
-        throw new ConflictException(`User is already a member of this organization`);
-      }
-    } else {
-      const password_hash = await bcrypt.hash(password, 12);
-      user = await this.prisma.user.create({
-        data: { name: rest.name, email: rest.email, password_hash, is_active: true },
-      });
-    }
-
-    const member = await this.prisma.organizationMember.create({
-      data: { organization_id: organization_id!, user_id: user.id, is_admin: is_admin ?? false },
-      include: { user: { select: USER_SELECT } },
-    });
-
-    return this.toUserDto(member, organization_id!);
   }
 
   async update(id: string, orgId: string, dto: UpdateUserDto) {
