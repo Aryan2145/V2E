@@ -2,6 +2,7 @@ import { ForbiddenException, Inject, Injectable, NotFoundException, forwardRef }
 import * as bcrypt from 'bcryptjs';
 import { EmploymentType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import { LearningService } from '../learning/learning.service';
 import { AssigneeVisibilityService } from '../assignee-visibility/assignee-visibility.service';
 import {
@@ -67,6 +68,7 @@ export class EmployeeImportService {
     @Inject(forwardRef(() => LearningService))
     private readonly learningService: LearningService,
     private readonly assigneeVisibility: AssigneeVisibilityService,
+    private readonly mail: MailService,
   ) {}
 
   // ─── Public API ─────────────────────────────────────────────────────────────
@@ -122,6 +124,9 @@ export class EmployeeImportService {
     });
 
     const createdUserByEmail = new Map<string, string>();
+    // Recipients of a welcome email, collected during the loop and sent after the
+    // batch commits so a slow/failing SMTP never stalls the import transaction.
+    const welcomeQueue: { email: string; name: string; password: string | null }[] = [];
     let created = 0;
 
     // Pre-hash passwords in parallel outside transaction to avoid blocking connection pool
@@ -144,8 +149,9 @@ export class EmployeeImportService {
           reportingToUserId = id;
         }
 
-        const userIdCreated = await this.prisma.$transaction(async (tx) => {
+        const { id: userIdCreated, wasCreated } = await this.prisma.$transaction(async (tx) => {
           let user = await tx.user.findUnique({ where: { email: p.email } });
+          let wasCreated = false;
           if (user) {
             const existing = await tx.organizationMember.findFirst({
               where: { user_id: user.id, organization_id: orgId },
@@ -154,6 +160,7 @@ export class EmployeeImportService {
           } else {
             const password_hash = passwordHashMap.get(p.email)!;
             user = await tx.user.create({ data: { name: p.name, email: p.email, password_hash, is_active: true } });
+            wasCreated = true;
           }
           await tx.organizationMember.create({
             data: { organization_id: orgId, user_id: user.id, is_admin: false },
@@ -186,10 +193,16 @@ export class EmployeeImportService {
           } catch {
             /* non-critical */
           }
-          return user.id;
+          return { id: user.id, wasCreated };
         });
 
         createdUserByEmail.set(p.email, userIdCreated);
+        welcomeQueue.push({
+          email: p.email,
+          name: p.name,
+          // New users get the import password; existing users get no credentials.
+          password: wasCreated ? p.password : null,
+        });
         results.push({ row: p.rowNum, name: p.name, email: p.email, status: 'created' });
         created++;
       } catch (e) {
@@ -225,6 +238,24 @@ export class EmployeeImportService {
     });
 
     if (created > 0) this.assigneeVisibility.invalidate(orgId);
+
+    // Welcome the imported employees — best-effort, after the batch is committed.
+    // Never let a mail failure affect the import result the admin sees.
+    if (welcomeQueue.length) {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { name: true },
+      });
+      const firmName = org?.name ?? 'your organisation';
+      await Promise.allSettled(
+        welcomeQueue.map((w) =>
+          w.password
+            ? this.mail.sendWelcomeCredentials({ to: w.email, name: w.name, firmName, password: w.password })
+            : this.mail.sendAddedToFirm({ to: w.email, name: w.name, firmName }),
+        ),
+      );
+    }
+
     return { batch_id: batch.id, created, failed, results: this.sortResults(results) };
   }
 

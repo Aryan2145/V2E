@@ -9,6 +9,7 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { EmployeeStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { LearningService } from '../learning/learning.service';
@@ -37,6 +38,7 @@ export class EmployeesService {
     @Inject(forwardRef(() => LearningService))
     private readonly learningService: LearningService,
     private readonly assigneeVisibility: AssigneeVisibilityService,
+    private readonly mail: MailService,
   ) {}
 
   async findAll(orgId: string) {
@@ -143,9 +145,10 @@ export class EmployeesService {
 
     const password_hash = await bcrypt.hash(password, 12);
 
-    const { profile, createdUserId } = await this.prisma.$transaction(async (tx) => {
+    const { profile, createdUserId, userWasCreated } = await this.prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { email } });
       let isExistingMember = false;
+      let userWasCreated = false;
       if (user) {
         const existingProfile = await tx.employeeProfile.findFirst({
           where: { user_id: user.id, organization_id: orgId },
@@ -163,6 +166,7 @@ export class EmployeesService {
         user = await tx.user.create({
           data: { name, email, password_hash, is_active: true },
         });
+        userWasCreated = true;
       }
 
       if (!isExistingMember) {
@@ -196,7 +200,7 @@ export class EmployeesService {
         }
       }
 
-      return { profile, createdUserId: user.id };
+      return { profile, createdUserId: user.id, userWasCreated };
     });
 
     // Auto-assign published learning paths after transaction commits
@@ -208,6 +212,23 @@ export class EmployeesService {
     );
 
     this.assigneeVisibility.invalidate(orgId);
+
+    // Welcome the employee — best-effort, never fail creation on a mail error.
+    try {
+      const org = await this.prisma.organization.findUnique({
+        where: { id: orgId },
+        select: { name: true },
+      });
+      const firmName = org?.name ?? 'your organisation';
+      if (userWasCreated) {
+        await this.mail.sendWelcomeCredentials({ to: email, name, firmName, password });
+      } else {
+        await this.mail.sendAddedToFirm({ to: email, name, firmName });
+      }
+    } catch {
+      /* MailService logs failures; swallow so the employee is still created. */
+    }
+
     return profile;
   }
 

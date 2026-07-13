@@ -7,6 +7,7 @@ import {
 import * as bcrypt from 'bcryptjs';
 import { DataScope, EntitlementState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
@@ -21,7 +22,10 @@ const ENTITLEMENT_MODULES = PERMISSION_REGISTRY.filter((m) => m.entitlementContr
 
 @Injectable()
 export class OrganizationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
   async findAll() {
     return this.prisma.organization.findMany({
@@ -179,12 +183,13 @@ export class OrganizationsService {
     // Slug is an internal identifier — derive it from the name and guarantee uniqueness.
     const slug = await this.generateUniqueSlug(orgData.name);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const organization = await tx.organization.create({
         data: { ...orgData, slug, status: 'active' as any },
       });
 
       let adminUser: { id: string; name: string; email: string; is_active: boolean; created_at: Date };
+      let adminWasCreated = false;
 
       if (existing_user_id) {
         // Path A: pick an existing user directly by ID
@@ -208,6 +213,7 @@ export class OrganizationsService {
             data: { name: admin_name!, email: admin_email!, password_hash, is_active: true },
             select: { id: true, name: true, email: true, is_active: true, created_at: true },
           });
+          adminWasCreated = true;
         }
       }
 
@@ -251,6 +257,7 @@ export class OrganizationsService {
 
       return {
         organization,
+        adminWasCreated,
         admin: {
           id: adminUser.id,
           name: adminUser.name,
@@ -262,6 +269,31 @@ export class OrganizationsService {
         },
       };
     });
+
+    // Welcome the new admin — best-effort, never fail provisioning on a mail error.
+    // A freshly-created admin gets their credentials; an existing user who was
+    // made admin of this new firm gets a "you've been added" notice instead.
+    try {
+      if (result.adminWasCreated && admin_password) {
+        await this.mail.sendWelcomeCredentials({
+          to: result.admin.email,
+          name: result.admin.name,
+          firmName: result.organization.name,
+          password: admin_password,
+        });
+      } else {
+        await this.mail.sendAddedToFirm({
+          to: result.admin.email,
+          name: result.admin.name,
+          firmName: result.organization.name,
+        });
+      }
+    } catch (err) {
+      // MailService already logs; swallow so the org+admin still succeed.
+    }
+
+    const { adminWasCreated: _omit, ...response } = result;
+    return response;
   }
 
   async update(id: string, dto: UpdateOrganizationDto) {
