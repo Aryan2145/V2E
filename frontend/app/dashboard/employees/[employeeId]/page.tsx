@@ -6,13 +6,15 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
-import { getEmployee, getEmployees, updateEmployee } from '@/lib/api/employees'
+import { getEmployee, getEmployees, updateEmployee, updateEmployeeStatus } from '@/lib/api/employees'
+import { updateUser } from '@/lib/api/users'
+import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
 import { getRoles } from '@/lib/api/roles'
 import { getDepartments } from '@/lib/api/departments'
 import Button from '@/components/ui/Button'
 import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissionsPanel'
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
-import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X } from 'lucide-react'
+import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X, Eye, EyeOff } from 'lucide-react'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 import DatePicker from '@/components/ui/DatePicker'
 
@@ -161,7 +163,11 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   const orgId = user?.organizationId ?? ''
 
   const [form, setForm] = useState({
+    name: employee.user?.name ?? '',
+    email: employee.user?.email ?? '',
+    password: '',
     role_id: employee.role_id,
+    system_role_id: employee.system_role_id ?? employee.system_role?.id ?? '',
     department_id: employee.department_id,
     reporting_to_user_id: employee.reporting_to_user_id ?? '',
     employment_type: employee.employment_type,
@@ -179,6 +185,20 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [mounted, setMounted] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+
+  // System roles carry access rights — required, and editable here just like on
+  // the Add Employee form so the two stay consistent.
+  const [systemRoles, setSystemRoles] = useState<SystemRoleLite[]>([])
+  useEffect(() => {
+    if (!orgId) return
+    listSystemRoles(orgId)
+      .then(({ systemRoles }) => setSystemRoles(systemRoles))
+      .catch(() => setSystemRoles([]))
+  }, [orgId])
+
+  // Job roles are scoped to the chosen department — mirror the Add form.
+  const deptRoles = roles.filter((r) => r.department_id === form.department_id)
 
   // Portal-safe mount + lock background scroll while open.
   useEffect(() => {
@@ -193,14 +213,42 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   }
 
   async function handleSave() {
-    setSaving(true)
     setError('')
+
+    if (!form.name.trim() || !form.email.trim()) {
+      setError('Name and email are required.')
+      return
+    }
+    if (form.password && form.password.length < 8) {
+      setError('Password must be at least 8 characters.')
+      return
+    }
+    if (!form.system_role_id) {
+      setError('Please select a system role.')
+      return
+    }
+    if (!form.role_id) {
+      setError('Please select a job role.')
+      return
+    }
+
+    setSaving(true)
     try {
+      // 1) User-level fields (name / email / password) — only what changed.
+      const userChanges: Record<string, string> = {}
+      if (form.name.trim() !== (employee.user?.name ?? '')) userChanges.name = form.name.trim()
+      if (form.email.trim() !== (employee.user?.email ?? '')) userChanges.email = form.email.trim()
+      if (form.password) userChanges.password = form.password
+      if (Object.keys(userChanges).length > 0 && employee.user_id) {
+        await updateUser(orgId, employee.user_id, userChanges)
+      }
+
+      // 2) Profile fields (system role, job role, department, etc.).
       const payload: any = {
         role_id: form.role_id,
+        system_role_id: form.system_role_id,
         department_id: form.department_id,
         employment_type: form.employment_type,
-        status: form.status,
       }
       if (form.reporting_to_user_id) payload.reporting_to_user_id = form.reporting_to_user_id
       if (form.employee_code) payload.employee_code = form.employee_code
@@ -208,7 +256,13 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
       if (form.date_of_birth) payload.date_of_birth = form.date_of_birth
       if (form.marriage_date) payload.marriage_date = form.marriage_date
 
-      const updated = await updateEmployee(orgId, employee.id, payload)
+      let updated = await updateEmployee(orgId, employee.id, payload)
+
+      // 3) Status is a dedicated, guarded endpoint — only call it if it changed.
+      if (form.status !== employee.status) {
+        updated = await updateEmployeeStatus(orgId, employee.id, form.status)
+      }
+
       onSaved(updated)
     } catch (err: any) {
       setError(err?.response?.data?.message ?? 'Failed to save changes')
@@ -217,7 +271,8 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
     }
   }
 
-  const selectClass = 'w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
+  const inputClass = 'w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
+  const selectClass = inputClass
   const labelClass = 'block text-sm font-medium text-[#374151] mb-1.5'
 
   const otherEmployees = allEmployees.filter((e) => e.id !== employee.id)
@@ -243,23 +298,84 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
             </div>
           )}
 
+          {/* Identity — name / email / password reset */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className={labelClass}>Full name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => set('name', e.target.value)}
+                placeholder="Jane Doe"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className={labelClass}>Email</label>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(e) => set('email', e.target.value)}
+                placeholder="jane@company.com"
+                className={inputClass}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className={labelClass}>Reset password</label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={form.password}
+                onChange={(e) => set('password', e.target.value)}
+                placeholder="Leave blank to keep current password"
+                className={`${inputClass} pr-10`}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             {/* Department */}
             <div>
               <label className={labelClass}>Department</label>
-              <select value={form.department_id} onChange={(e) => set('department_id', e.target.value)} className={selectClass}>
+              <select
+                value={form.department_id}
+                onChange={(e) => setForm((f) => ({ ...f, department_id: e.target.value, role_id: '' }))}
+                className={selectClass}
+              >
                 {departments.map((d) => (
                   <option key={d.id} value={d.id}>{d.name}</option>
                 ))}
               </select>
             </div>
 
-            {/* Role */}
+            {/* Job Role — scoped to the selected department */}
             <div>
-              <label className={labelClass}>Role</label>
+              <label className={labelClass}>Job Role</label>
               <select value={form.role_id} onChange={(e) => set('role_id', e.target.value)} className={selectClass}>
-                {roles.map((r) => (
+                <option value="">— Select —</option>
+                {deptRoles.map((r) => (
                   <option key={r.id} value={r.id}>{r.title}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* System Role — access-rights bundle (required) */}
+            <div>
+              <label className={labelClass}>System Role</label>
+              <select value={form.system_role_id} onChange={(e) => set('system_role_id', e.target.value)} className={selectClass}>
+                <option value="">— Select —</option>
+                {systemRoles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
                 ))}
               </select>
             </div>
@@ -351,10 +467,7 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0] shrink-0">
-          <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold text-[#475569] hover:text-[#0F172A] transition-colors">
-            Cancel
-          </button>
+        <div className="flex items-center justify-end px-6 py-4 border-t border-[#E2E8F0] shrink-0">
           <button
             onClick={handleSave}
             disabled={saving}

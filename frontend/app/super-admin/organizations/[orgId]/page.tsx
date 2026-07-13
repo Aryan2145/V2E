@@ -12,6 +12,9 @@ import {
   Shield,
   AlertTriangle,
   FlaskConical,
+  Pencil,
+  Eye,
+  EyeOff,
 } from 'lucide-react'
 import {
   getOrganization,
@@ -21,6 +24,7 @@ import {
   type ModuleEntitlement,
   type EntitlementState,
 } from '@/lib/api/organizations'
+import { updateUser } from '@/lib/api/users'
 import { getRoles } from '@/lib/api/roles'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -166,6 +170,112 @@ function EntitlementsCard({ orgId }: { orgId: string }) {
   )
 }
 
+// ─── Edit member modal ───────────────────────────────────────────────────────
+
+function EditMemberModal({
+  orgId,
+  member,
+  onClose,
+  onSaved,
+}: {
+  orgId: string
+  member: OrgMember
+  onClose: () => void
+  onSaved: (vals: { name: string; email: string; is_admin: boolean }) => void
+}) {
+  const [name, setName] = useState(member.user.name)
+  const [email, setEmail] = useState(member.user.email)
+  const [password, setPassword] = useState('')
+  const [isAdmin, setIsAdmin] = useState(member.is_admin)
+  const [showPassword, setShowPassword] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const inputCls =
+    'w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
+  const labelCls = 'block text-sm font-medium text-[#374151] mb-1.5'
+
+  const save = async () => {
+    setError(null)
+    if (!name.trim() || !email.trim()) {
+      setError('Name and email are required.')
+      return
+    }
+    if (password && password.length < 8) {
+      setError('Password must be at least 8 characters.')
+      return
+    }
+    setSaving(true)
+    try {
+      const changes: Record<string, unknown> = {}
+      if (name.trim() !== member.user.name) changes.name = name.trim()
+      if (email.trim() !== member.user.email) changes.email = email.trim()
+      if (password) changes.password = password
+      if (isAdmin !== member.is_admin) changes.is_admin = isAdmin
+      if (Object.keys(changes).length > 0) {
+        await updateUser(orgId, member.user_id, changes)
+      }
+      onSaved({ name: name.trim(), email: email.trim(), is_admin: isAdmin })
+    } catch (err: any) {
+      setError(err?.response?.data?.message ?? 'Failed to save changes.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Edit Member" size="sm">
+      <div className="flex flex-col gap-4">
+        {error && (
+          <div className="text-sm text-[#DC2626] bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3">
+            {error}
+          </div>
+        )}
+        <div>
+          <label className={labelCls}>Full name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Reset password</label>
+          <div className="relative">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="Leave blank to keep current password"
+              className={`${inputCls} pr-10`}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((v) => !v)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={isAdmin}
+            onChange={(e) => setIsAdmin(e.target.checked)}
+            className="w-4 h-4 rounded border-[#CBD5E1] text-[#2563EB] focus:ring-[#2563EB]"
+          />
+          <span className="text-sm font-medium text-[#374151]">Organization administrator</span>
+        </label>
+        <div className="flex justify-end pt-1">
+          <Button variant="primary" onClick={save} isLoading={saving}>Save changes</Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function OrgDetailPage() {
@@ -178,6 +288,7 @@ export default function OrgDetailPage() {
   const [showConfirm, setShowConfirm] = useState(false)
   const [isDeactivating, setIsDeactivating] = useState(false)
   const [deactivateError, setDeactivateError] = useState<string | null>(null)
+  const [editingMember, setEditingMember] = useState<OrgMember | null>(null)
 
   useEffect(() => {
     if (!orgId) return
@@ -360,12 +471,48 @@ export default function OrgDetailPage() {
                   />
                 ),
               },
+              {
+                key: 'actions',
+                header: '',
+                render: (m) => (
+                  <button
+                    onClick={() => setEditingMember(m)}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8]"
+                  >
+                    <Pencil size={13} /> Edit
+                  </button>
+                ),
+              },
             ]}
             rows={members}
             rowKey={(m) => m.id}
           />
         )}
       </Card>
+
+      {/* Edit member modal */}
+      {editingMember && (
+        <EditMemberModal
+          orgId={orgId}
+          member={editingMember}
+          onClose={() => setEditingMember(null)}
+          onSaved={(vals) => {
+            setOrg((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    members: prev.members.map((m) =>
+                      m.id === editingMember.id
+                        ? { ...m, is_admin: vals.is_admin, user: { ...m.user, name: vals.name, email: vals.email } }
+                        : m,
+                    ),
+                  }
+                : prev,
+            )
+            setEditingMember(null)
+          }}
+        />
+      )}
 
       {/* Deactivate confirm modal */}
       <Modal

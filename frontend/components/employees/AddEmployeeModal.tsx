@@ -477,14 +477,7 @@ export default function AddEmployeeModal({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-[#E2E8F0]">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-5 py-2.5 rounded-[8px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
-            >
-              Cancel
-            </button>
+          <div className="flex items-center justify-end px-6 py-4 border-t border-[#E2E8F0]">
             <button
               type="submit"
               disabled={saving}

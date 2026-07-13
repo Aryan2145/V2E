@@ -10,17 +10,19 @@ export async function getUsers(orgId: string): Promise<User[]> {
   return data.data;
 }
 
-export async function createUser(
+export async function updateUser(
   orgId: string,
-  userData: {
+  userId: string,
+  userData: Partial<{
     name: string;
     email: string;
     password: string;
-    is_admin?: boolean;
-  }
+    is_admin: boolean;
+    is_active: boolean;
+  }>
 ): Promise<User> {
-  const { data } = await apiClient.post<ApiResponse<User>>(
-    `/api/v1/org/${orgId}/users`,
+  const { data } = await apiClient.patch<ApiResponse<User>>(
+    `/api/v1/org/${orgId}/users/${userId}`,
     userData
   );
   return data.data;

@@ -238,6 +238,24 @@ export async function updateEmployee(
   return data.data;
 }
 
+/**
+ * Update an employee's active/inactive status. This is a DEDICATED endpoint —
+ * status is deliberately NOT part of the generic profile update, because the
+ * server enforces guards here (e.g. the primary administrator cannot be
+ * deactivated).
+ */
+export async function updateEmployeeStatus(
+  orgId: string,
+  id: string,
+  status: EmployeeStatus
+): Promise<EmployeeProfile> {
+  const { data } = await apiClient.patch<ApiResponse<EmployeeProfile>>(
+    `/api/v1/org/${orgId}/employees/${id}/status`,
+    { status }
+  );
+  return data.data;
+}
+
 // ─── Self-service ────────────────────────────────────────────────────────────────
 
 /** The caller's own employee profile (resolved server-side from the JWT). */
