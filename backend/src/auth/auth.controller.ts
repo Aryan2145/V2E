@@ -1,10 +1,12 @@
 import { Controller, Post, Body, UseGuards, Get, Param, Patch, Delete, Put } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { SwitchOrgDto } from './dto/switch-org.dto';
+import { ForgotPasswordDto, VerifyResetOtpDto, ResetPasswordDto } from './dto/forgot-password.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -13,11 +15,31 @@ import { SuperAdmin } from '../common/decorators/super-admin.decorator';
 @ApiTags('Auth')
 @Controller('api/v1/auth')
 export class AuthController {
-  constructor(private authService: AuthService) {}
+  constructor(
+    private authService: AuthService,
+    private passwordResetService: PasswordResetService,
+  ) {}
 
   @Post('register')
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
+  }
+
+  // ─── Self-service password reset (public, OTP by email) ───────────────────────
+
+  @Post('forgot-password')
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.passwordResetService.requestReset(dto.email);
+  }
+
+  @Post('reset-password/verify')
+  verifyResetOtp(@Body() dto: VerifyResetOtpDto) {
+    return this.passwordResetService.verifyOtp(dto.email, dto.otp);
+  }
+
+  @Post('reset-password')
+  resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.passwordResetService.resetPassword(dto.email, dto.reset_token, dto.password);
   }
 
   @Post('login')

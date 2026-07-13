@@ -31,6 +31,28 @@ export async function register(registerData: {
   return data;
 }
 
+// ─── Self-service password reset (OTP by email) ───────────────────────────────
+
+export async function forgotPassword(email: string): Promise<void> {
+  await apiClient.post('/api/v1/auth/forgot-password', { email });
+}
+
+export async function verifyResetOtp(email: string, otp: string): Promise<{ reset_token: string }> {
+  const { data } = await apiClient.post<{ data: { reset_token: string } }>(
+    '/api/v1/auth/reset-password/verify',
+    { email, otp }
+  );
+  return data.data;
+}
+
+export async function resetPassword(
+  email: string,
+  reset_token: string,
+  password: string
+): Promise<void> {
+  await apiClient.post('/api/v1/auth/reset-password', { email, reset_token, password });
+}
+
 export async function refreshToken(token: string): Promise<{ access_token: string; refresh_token?: string }> {
   const { data } = await apiClient.post<ApiResponse<{ access_token: string; refresh_token?: string }>>(
     '/api/v1/auth/refresh',

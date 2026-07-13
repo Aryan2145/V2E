@@ -239,6 +239,24 @@ model User {
   @@map("users")
 }
 
+/// Short-lived password-reset requests. One row per active request per email;
+/// the OTP is stored HASHED (bcrypt), never in plaintext. `reset_token` is minted
+/// only after the OTP is verified and is single-use. Rows are disposable — the
+/// newest un-consumed row for an email is the source of truth.
+model PasswordReset {
+  id          String    @id @default(uuid())
+  email       String
+  otp_hash    String
+  reset_token String?
+  attempts    Int       @default(0)
+  expires_at  DateTime
+  consumed_at DateTime?
+  created_at  DateTime  @default(now())
+
+  @@index([email])
+  @@map("password_resets")
+}
+
 model OrgIdentity {
   id              String   @id @default(uuid())
   organization_id String   @unique
