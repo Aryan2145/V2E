@@ -1,15 +1,20 @@
 import { Module } from '@nestjs/common';
 import { TasksModule } from '../tasks/tasks.module';
+import { SchedulerModule } from '../scheduler/scheduler.module';
+import { HolidaysModule } from '../holidays/holidays.module';
 import { MeetingsController } from './meetings.controller';
 import { MeetingsService } from './meetings.service';
 import { MeetingsReportsService } from './meetings-reports.service';
+import { MeetingRhythmsService } from './meeting-rhythms.service';
 
-// PrismaModule, AuditModule, AccessRightsModule, NotificationsModule and ClockModule
-// are all global; TasksModule is imported to reuse TasksService for action items.
+// PrismaModule, AuditModule, AccessRightsModule, NotificationsModule, ClockModule and
+// LeaveModule are all global. TasksModule is imported to reuse TasksService (action
+// items). SchedulerModule provides the rhythm spawner; HolidaysModule powers the busy
+// view's holiday overlay.
 @Module({
-  imports: [TasksModule],
+  imports: [TasksModule, SchedulerModule, HolidaysModule],
   controllers: [MeetingsController],
-  providers: [MeetingsService, MeetingsReportsService],
+  providers: [MeetingsService, MeetingsReportsService, MeetingRhythmsService],
   exports: [MeetingsService],
 })
 export class MeetingsModule {}

@@ -1,0 +1,152 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowLeft, Plus, Repeat, Pause, Play, Square, Clock, Users, CalendarClock } from 'lucide-react'
+import { useAuth } from '@/lib/auth/context'
+import { meetingsApi } from '@/lib/api/meetings'
+import { getEmployees } from '@/lib/api/employees'
+import type { MeetingRhythm } from '@/lib/types/meetings'
+import { useMeetingPermissions } from '@/components/meetings/shared'
+import type { PersonOption } from '@/components/meetings/MeetingAttendeeSelector'
+import CreateRhythmModal from '@/components/meetings/CreateRhythmModal'
+import Button from '@/components/ui/Button'
+import Modal from '@/components/ui/Modal'
+import { useToast } from '@/components/ui/Toast'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
+
+function cadence(r: MeetingRhythm): string {
+  const e = r.schedule_entries?.[0]
+  if (!e) return '—'
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const every = e.every > 1 ? `every ${e.every} ` : ''
+  if (e.schedule_type === 'daily') return `${every ? every + 'days' : 'Daily'} at ${e.time}`
+  if (e.schedule_type === 'weekly') return `${every ? 'Every ' + e.every + ' weeks' : 'Weekly'} · ${(e.days ?? []).map((d) => DOW[d]).join(', ')} at ${e.time}`
+  if (e.schedule_type === 'monthly') return `Monthly · day ${(e.month_days ?? []).join(', ')} at ${e.time}`
+  return `Yearly at ${e.time}`
+}
+
+function fmt(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short' })
+}
+
+export default function RhythmsPage() {
+  const { user } = useAuth()
+  const router = useRouter()
+  const { addToast } = useToast()
+  const orgId = user?.organizationId ?? ''
+  const { perms, loading: permsLoading } = useMeetingPermissions(orgId)
+
+  const [rhythms, setRhythms] = useState<MeetingRhythm[]>([])
+  const [people, setPeople] = useState<PersonOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [stopping, setStopping] = useState<MeetingRhythm | null>(null)
+
+  const load = useCallback(() => {
+    if (!orgId) { setLoading(false); return }
+    setLoading(true)
+    Promise.all([meetingsApi.listRhythms(orgId).catch(() => []), getEmployees(orgId).catch(() => [])])
+      .then(([rs, emps]: any[]) => {
+        setRhythms(rs)
+        setPeople((emps as any[]).map((e) => ({ user_id: e.user_id, name: e.user?.name ?? e.name ?? e.email ?? 'Unknown', email: e.user?.email })))
+      })
+      .finally(() => setLoading(false))
+  }, [orgId])
+
+  useEffect(() => { load() }, [load])
+
+  const active = useMemo(() => rhythms.filter((r) => r.is_active).length, [rhythms])
+
+  async function toggle(r: MeetingRhythm) {
+    try {
+      const updated = r.is_active ? await meetingsApi.pauseRhythm(orgId, r.id) : await meetingsApi.resumeRhythm(orgId, r.id)
+      setRhythms((rs) => rs.map((x) => (x.id === r.id ? updated : x)))
+      addToast(r.is_active ? 'Rhythm paused' : 'Rhythm resumed', 'success')
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
+  }
+
+  async function stop(mode: 'stop' | 'delete-future') {
+    if (!stopping) return
+    try {
+      await meetingsApi.removeRhythm(orgId, stopping.id, mode)
+      addToast('Rhythm stopped', 'success')
+      setStopping(null)
+      load()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
+  }
+
+  return (
+    <div>
+      <Link href="/dashboard/governance/meetings" className="inline-flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] w-fit mb-4"><ArrowLeft size={15} /> Meetings</Link>
+
+      <div className="flex items-start justify-between gap-4 mb-5">
+        <div>
+          <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight flex items-center gap-2"><Repeat size={24} className="text-[#7C3AED]" /> Rhythms</h1>
+          <p className="text-sm text-[#475569] mt-1">Recurring meetings — a daily huddle, an every-Thursday review. Occurrences appear 60 days ahead.</p>
+        </div>
+        {perms.write && (
+          <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] shrink-0">
+            <Plus size={16} /> New Rhythm
+          </button>
+        )}
+      </div>
+
+      {!permsLoading && !perms.read ? (
+        <AccessHiddenState orgId={orgId} leaf="meetings" moduleLabel="Meetings" />
+      ) : loading ? (
+        <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
+      ) : rhythms.length === 0 ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-12 text-center">
+          <div className="w-14 h-14 rounded-[16px] bg-[#F5F3FF] flex items-center justify-center text-[#7C3AED] mx-auto mb-3"><Repeat size={26} /></div>
+          <h3 className="text-[18px] font-semibold text-[#0F172A]">No rhythms yet</h3>
+          <p className="text-sm text-[#475569] mt-1">Set up a recurring meeting to build a cadence.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {rhythms.map((r) => (
+            <div key={r.id} className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 flex flex-col">
+              <div className="flex items-start justify-between gap-2">
+                <h3 className="text-[16px] font-semibold text-[#0F172A]">{r.title}</h3>
+                <span className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border shrink-0"
+                  style={r.is_active ? { backgroundColor: '#DCFCE7', color: '#16A34A', borderColor: '#BBF7D0' } : { backgroundColor: '#F1F5F9', color: '#475569', borderColor: '#E2E8F0' }}>
+                  {r.is_active ? 'Active' : 'Paused'}
+                </span>
+              </div>
+              <div className="flex flex-col gap-1.5 mt-3 text-sm text-[#475569]">
+                <span className="inline-flex items-center gap-1.5"><Clock size={14} /> {cadence(r)}</span>
+                <span className="inline-flex items-center gap-1.5"><CalendarClock size={14} /> Next: {fmt(r.next_run)}</span>
+                <span className="inline-flex items-center gap-1.5"><Users size={14} /> {(r.attendee_user_ids ?? []).length} attendee(s) · {r.occurrences ?? 0} held</span>
+              </div>
+              <div className="flex items-center gap-2 mt-4 pt-3 border-t border-[#E2E8F0]">
+                <Link href={`/dashboard/governance/meetings?rhythm_id=${r.id}`} className="text-sm font-medium text-[#2563EB] hover:underline">View meetings</Link>
+                {r.can_manage && (
+                  <div className="ml-auto flex items-center gap-1">
+                    <button onClick={() => toggle(r)} title={r.is_active ? 'Pause' : 'Resume'} className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]">
+                      {r.is_active ? <Pause size={16} /> : <Play size={16} />}
+                    </button>
+                    <button onClick={() => setStopping(r)} title="Stop" className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px]"><Square size={16} /></button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <CreateRhythmModal isOpen={createOpen} onClose={() => setCreateOpen(false)} orgId={orgId} people={people} onCreated={() => load()} />
+
+      <Modal isOpen={!!stopping} onClose={() => setStopping(null)} title="Stop rhythm" size="sm">
+        <p className="text-sm text-[#1E293B]">Stop “{stopping?.title}”? No new occurrences will be created. Past meetings are kept.</p>
+        <div className="flex flex-col gap-2 mt-5">
+          <Button variant="primary" onClick={() => stop('stop')}>Stop — keep upcoming meetings</Button>
+          <Button variant="danger" onClick={() => stop('delete-future')}>Stop &amp; remove upcoming (still-scheduled) meetings</Button>
+          <Button variant="secondary" onClick={() => setStopping(null)}>Cancel</Button>
+        </div>
+      </Modal>
+    </div>
+  )
+}

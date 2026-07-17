@@ -5,9 +5,11 @@ import type {
   MeetingDecision,
   MeetingReport,
   MeetingType,
-  MeetingMode,
   MeetingLinkType,
-  MeetingVote,
+  MeetingRhythm,
+  BusyView,
+  RecurringScheduleType,
+  RecurringEndCondition,
 } from '@/lib/types/meetings'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/meetings`
@@ -30,24 +32,56 @@ function qs(filters?: Record<string, string | undefined>): string {
 export interface CreateMeetingInput {
   title: string
   type: MeetingType
-  mode: MeetingMode
   online_link?: string
   online_password?: string
   location?: string
   link_type?: MeetingLinkType
   link_entity_id?: string
   attendee_user_ids?: string[]
+  optional_user_ids?: string[]
   agenda?: string
   minutes?: string
   scheduled_start?: string
   scheduled_end?: string
-  poll_window_start?: string
-  poll_window_end?: string
-  poll_duration_min?: number
-  slots?: { start_at: string; end_at: string }[]
   log_past?: boolean
   actual_start?: string
   actual_end?: string
+}
+
+export interface RhythmScheduleInput {
+  schedule_type: RecurringScheduleType
+  every?: number
+  days?: number[]
+  month_days?: number[]
+  yearly_dates?: { month: number; day: number }[]
+  time: string
+  start_date: string
+  end_condition?: RecurringEndCondition
+  end_date?: string
+  end_after?: number
+}
+
+export interface CreateRhythmInput {
+  title: string
+  type: MeetingType
+  online_link?: string
+  online_password?: string
+  location?: string
+  link_type?: MeetingLinkType
+  link_entity_id?: string
+  agenda?: string
+  duration_min: number
+  attendee_user_ids?: string[]
+  optional_user_ids?: string[]
+  schedule: RhythmScheduleInput
+}
+
+export interface BusyInput {
+  user_ids: string[]
+  required_user_ids?: string[]
+  from: string
+  to: string
+  duration_min?: number
 }
 
 export const meetingsApi = {
@@ -70,27 +104,11 @@ export const meetingsApi = {
   updateRecord: async (orgId: string, id: string, dto: { agenda?: string; minutes?: string }): Promise<Meeting> =>
     unwrap(await apiClient.put(`${base(orgId)}/${id}/record`, dto)),
 
-  // scheduling
-  respond: async (
-    orgId: string,
-    id: string,
-    dto: { action: 'accept' | 'reject' | 'reschedule'; reason?: string; reschedule_at?: string; reschedule_note?: string },
-  ): Promise<Meeting> => unwrap(await apiClient.post(`${base(orgId)}/${id}/respond`, dto)),
-
-  convertToPoll: async (orgId: string, id: string): Promise<Meeting> =>
-    unwrap(await apiClient.post(`${base(orgId)}/${id}/convert-to-poll`)),
-
-  addSlot: async (orgId: string, id: string, dto: { start_at: string; end_at: string }): Promise<Meeting> =>
-    unwrap(await apiClient.post(`${base(orgId)}/${id}/slots`, dto)),
-
-  dismissSlot: async (orgId: string, id: string, slotId: string): Promise<Meeting> =>
-    unwrap(await apiClient.delete(`${base(orgId)}/${id}/slots/${slotId}`)),
-
-  voteSlot: async (orgId: string, id: string, slotId: string, vote: MeetingVote): Promise<Meeting> =>
-    unwrap(await apiClient.post(`${base(orgId)}/${id}/slots/${slotId}/vote`, { vote })),
-
-  confirmSlot: async (orgId: string, id: string, slotId: string): Promise<Meeting> =>
-    unwrap(await apiClient.post(`${base(orgId)}/${id}/confirm-slot`, { slot_id: slotId })),
+  // attendance response — opt-out: only decline / undo
+  decline: async (orgId: string, id: string, reason: string): Promise<Meeting> =>
+    unwrap(await apiClient.post(`${base(orgId)}/${id}/decline`, { reason })),
+  undoDecline: async (orgId: string, id: string): Promise<Meeting> =>
+    unwrap(await apiClient.post(`${base(orgId)}/${id}/undo-decline`)),
 
   // lifecycle
   start: async (orgId: string, id: string): Promise<Meeting> => unwrap(await apiClient.post(`${base(orgId)}/${id}/start`)),
@@ -110,6 +128,10 @@ export const meetingsApi = {
   saveMyNote: async (orgId: string, id: string, body: string): Promise<void> => {
     await apiClient.put(`${base(orgId)}/${id}/my-note`, { body })
   },
+
+  // busy view — floor, not a guarantee
+  busy: async (orgId: string, dto: BusyInput): Promise<BusyView> =>
+    unwrap(await apiClient.post(`${base(orgId)}/busy`, dto)),
 
   // action items
   addActionItem: async (orgId: string, id: string, dto: { text: string; owner_user_id?: string; due_date?: string }): Promise<Meeting> =>
@@ -142,4 +164,20 @@ export const meetingsApi = {
     unwrap(await apiClient.get(`${base(orgId)}/reports${qs(filters)}`)),
   decisionLog: async (orgId: string, filters?: Record<string, string | undefined>): Promise<MeetingDecision[]> =>
     unwrap(await apiClient.get(`${base(orgId)}/decisions${qs(filters)}`)),
+
+  // rhythms
+  listRhythms: async (orgId: string, filters?: Record<string, string | undefined>): Promise<MeetingRhythm[]> =>
+    unwrap(await apiClient.get(`${base(orgId)}/rhythms${qs(filters)}`)),
+  getRhythm: async (orgId: string, id: string): Promise<MeetingRhythm> =>
+    unwrap(await apiClient.get(`${base(orgId)}/rhythms/${id}`)),
+  createRhythm: async (orgId: string, dto: CreateRhythmInput): Promise<MeetingRhythm> =>
+    unwrap(await apiClient.post(`${base(orgId)}/rhythms`, dto)),
+  updateRhythm: async (orgId: string, id: string, dto: Partial<CreateRhythmInput>): Promise<MeetingRhythm> =>
+    unwrap(await apiClient.patch(`${base(orgId)}/rhythms/${id}`, dto)),
+  pauseRhythm: async (orgId: string, id: string): Promise<MeetingRhythm> =>
+    unwrap(await apiClient.post(`${base(orgId)}/rhythms/${id}/pause`)),
+  resumeRhythm: async (orgId: string, id: string): Promise<MeetingRhythm> =>
+    unwrap(await apiClient.post(`${base(orgId)}/rhythms/${id}/resume`)),
+  removeRhythm: async (orgId: string, id: string, mode: 'stop' | 'delete-future' = 'stop'): Promise<{ message: string }> =>
+    unwrap(await apiClient.delete(`${base(orgId)}/rhythms/${id}?mode=${mode}`)),
 }

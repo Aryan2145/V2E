@@ -10,7 +10,7 @@ import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useNotifications } from '@/lib/notifications/NotificationsProvider'
 import { useToast } from '@/components/ui/Toast'
-import { enablePush, disablePush, getPushStatus, type PushStatus } from '@/lib/push'
+import { enablePush, disablePush, getPushStatus, PUSH_ERROR_MESSAGES, type PushStatus } from '@/lib/push'
 import type { AppNotification } from '@/lib/api/notifications'
 
 const MODULE_COLORS: Record<string, string> = {
@@ -98,18 +98,13 @@ export default function NotificationBell() {
         setPushStatus(await getPushStatus())
         addToast('Device notifications turned off for this device', 'info')
       } else {
-        const ok = await enablePush(orgId)
+        const result = await enablePush(orgId)
         setPushStatus(await getPushStatus())
-        if (ok) {
+        if (result.ok) {
           addToast("Device notifications are on — you'll get alerts on this device", 'success')
         } else {
-          // enablePush returns false on denied permission or unconfigured backend.
-          addToast(
-            Notification.permission === 'denied'
-              ? 'Notifications are blocked in your browser settings. Allow them to continue.'
-              : 'Could not enable device notifications. Please try again.',
-            'error',
-          )
+          addToast(PUSH_ERROR_MESSAGES[result.reason], 'error')
+          if (result.detail) console.warn('[push] enable failed:', result.reason, result.detail)
         }
       }
     } catch {

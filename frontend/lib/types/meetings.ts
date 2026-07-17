@@ -1,10 +1,11 @@
 export type MeetingType = 'online' | 'offline' | 'hybrid'
-export type MeetingMode = 'fixed' | 'poll'
-export type MeetingStatus = 'polling' | 'scheduled' | 'in_progress' | 'closed' | 'cancelled'
+export type MeetingStatus = 'scheduled' | 'in_progress' | 'closed' | 'cancelled'
 export type MeetingLinkType = 'goal' | 'project' | 'task' | 'ticket'
-export type MeetingAttendeeResponse = 'pending' | 'accepted' | 'rejected' | 'reschedule_requested'
-export type MeetingSlotSource = 'caller' | 'invitee' | 'system'
-export type MeetingVote = 'available' | 'unavailable' | 'maybe'
+// Opt-out attendance: everyone is attending by default; declining (with a reason)
+// is the only opt-out. No pending, no accept.
+export type MeetingAttendeeResponse = 'attending' | 'declined'
+export type RecurringScheduleType = 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type RecurringEndCondition = 'never' | 'on_date' | 'after_n'
 
 export interface UserLite {
   id: string
@@ -17,34 +18,13 @@ export interface MeetingAttendee {
   meeting_id: string
   user_id: string
   is_organizer: boolean
+  is_required: boolean
   response: MeetingAttendeeResponse
   reject_reason: string | null
-  reschedule_at: string | null
-  reschedule_note: string | null
   attended: boolean
   attended_in_at: string | null
   attended_out_at: string | null
   user?: UserLite
-}
-
-export interface MeetingSlotVoteRow {
-  id: string
-  slot_id: string
-  user_id: string
-  vote: MeetingVote
-}
-
-export interface MeetingSlot {
-  id: string
-  meeting_id: string
-  start_at: string
-  end_at: string
-  source: MeetingSlotSource
-  proposed_by_user_id: string | null
-  system_rank: number | null
-  is_dismissed: boolean
-  is_confirmed: boolean
-  votes?: MeetingSlotVoteRow[]
 }
 
 export interface MeetingActionItem {
@@ -84,7 +64,6 @@ export interface Meeting {
   online_link: string | null
   online_password: string | null
   location: string | null
-  mode: MeetingMode
   status: MeetingStatus
   link_type: MeetingLinkType | null
   link_entity_id: string | null
@@ -94,21 +73,19 @@ export interface Meeting {
   scheduled_end: string | null
   actual_start: string | null
   actual_end: string | null
-  poll_window_start: string | null
-  poll_window_end: string | null
-  poll_duration_min: number | null
+  attendance_taken_at: string | null
+  rhythm_id: string | null
+  rhythm_spawn_date: string | null
   created_by_user_id: string
   created_at: string
   updated_at: string
   organizer?: UserLite
   attendees?: MeetingAttendee[]
-  slots?: MeetingSlot[]
   action_items?: MeetingActionItem[]
   decisions?: MeetingDecision[]
   _count?: { attendees?: number; action_items?: number; decisions?: number }
   // detail-only
   my_note?: string
-  can_convert_to_poll?: boolean
   conflicts?: MeetingConflict[]
   can_manage?: boolean
 }
@@ -117,11 +94,30 @@ export interface MeetingAnalytics {
   planned_minutes: number | null
   actual_minutes: number | null
   overrun_minutes: number | null
-  attendance: { invited: number; accepted: number; attended: number; late: number; no_show: number }
+  attendance: {
+    roster: number
+    expected: number
+    declined: number
+    declined_required: number
+    attended: number
+    late: number
+    no_show: number | null // null = attendance not recorded (never fabricated)
+    attendance_recorded: boolean
+  }
   action_items: { created: number; linked: number; done: number }
   decisions: number
   linkage: string
   started_on_time: boolean | null
+}
+
+export interface MeetingReportPerson {
+  user_id: string
+  name: string
+  expected: number
+  attended: number
+  declined: number
+  declined_required: number
+  no_show: number
 }
 
 export interface MeetingReport {
@@ -132,7 +128,14 @@ export interface MeetingReport {
     avg_overrun_min: number
     load_per_person: { user_id: string; meetings: number }[]
   }
-  attendance: { attendance_rate: number; no_show_rate: number; started_on_time_rate: number }
+  attendance: {
+    attendance_rate: number
+    no_show_rate: number
+    declined_rate: number
+    declined_required: number
+    started_on_time_rate: number
+    unrecorded_meetings: number
+  }
   output: {
     decisions_total: number
     decisions_per_meeting: number
@@ -145,11 +148,79 @@ export interface MeetingReport {
     hours_by_type: { type: string; hours: number }[]
     goal_attention: { goal_id: string; meetings: number; hours: number }[]
   }
+  by_person: MeetingReportPerson[]
+}
+
+// ─── Rhythms (recurring meetings) ──────────────────────────────────────────────
+export interface RhythmSchedule {
+  id: string
+  schedule_type: RecurringScheduleType
+  every: number
+  days: number[]
+  month_days: number[]
+  yearly_dates: { month: number; day: number }[]
+  time: string
+  start_date: string
+  end_condition: RecurringEndCondition
+  end_date: string | null
+  end_after: number | null
+  occurrence_count: number
+  is_active: boolean
+}
+
+export interface MeetingRhythm {
+  id: string
+  organization_id: string
+  title: string
+  type: MeetingType
+  online_link: string | null
+  online_password: string | null
+  location: string | null
+  link_type: MeetingLinkType | null
+  link_entity_id: string | null
+  agenda: string | null
+  duration_min: number
+  attendee_user_ids: string[]
+  optional_user_ids: string[]
+  is_active: boolean
+  created_by_user_id: string
+  created_at: string
+  schedule_entries?: RhythmSchedule[]
+  created_by_name?: string
+  occurrences?: number
+  next_run?: string | null
+  can_manage?: boolean
+}
+
+// ─── Busy view ─────────────────────────────────────────────────────────────────
+export interface BusyBlock {
+  start: string
+  end: string
+  kind: 'meeting' | 'leave' | 'holiday'
+  label: string
+}
+export interface BusyPerson {
+  user_id: string
+  name: string
+  required: boolean
+  busy: BusyBlock[]
+}
+export interface BusySuggestion {
+  start: string
+  end: string
+  hard_conflicts: string[]
+  soft_conflicts: string[]
+}
+export interface BusyView {
+  from: string
+  to: string
+  people: BusyPerson[]
+  suggestions: BusySuggestion[]
+  caveat: string
 }
 
 // ─── Labels & palette (DESIGN_RULES badge colors) ──────────────────────────────
 export const MEETING_STATUS_META: Record<MeetingStatus, { label: string; bg: string; text: string; border: string }> = {
-  polling: { label: 'Polling', bg: '#FEF9C3', text: '#CA8A04', border: '#FDE68A' },
   scheduled: { label: 'Scheduled', bg: '#E0F2FE', text: '#0369A1', border: '#BAE6FD' },
   in_progress: { label: 'In progress', bg: '#EFF6FF', text: '#2563EB', border: '#BFDBFE' },
   closed: { label: 'Closed', bg: '#DCFCE7', text: '#16A34A', border: '#BBF7D0' },
@@ -157,10 +228,8 @@ export const MEETING_STATUS_META: Record<MeetingStatus, { label: string; bg: str
 }
 
 export const RESPONSE_META: Record<MeetingAttendeeResponse, { label: string; bg: string; text: string }> = {
-  pending: { label: 'Pending', bg: '#F1F5F9', text: '#475569' },
-  accepted: { label: 'Accepted', bg: '#DCFCE7', text: '#16A34A' },
-  rejected: { label: 'Declined', bg: '#FEE2E2', text: '#DC2626' },
-  reschedule_requested: { label: 'Reschedule', bg: '#FEF9C3', text: '#CA8A04' },
+  attending: { label: 'Attending', bg: '#DCFCE7', text: '#16A34A' },
+  declined: { label: "Won't make it", bg: '#FEE2E2', text: '#DC2626' },
 }
 
 export const TYPE_LABEL: Record<MeetingType, string> = { online: 'Online', offline: 'Offline', hybrid: 'Hybrid' }

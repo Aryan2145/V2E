@@ -3,24 +3,12 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
-  IsInt,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
-  Min,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { MeetingLinkType, MeetingMode, MeetingType } from '@prisma/client';
-
-export class SlotInputDto {
-  @IsDateString()
-  start_at!: string;
-
-  @IsDateString()
-  end_at!: string;
-}
+import { MeetingLinkType, MeetingType } from '@prisma/client';
 
 export class CreateMeetingDto {
   @IsString()
@@ -42,9 +30,6 @@ export class CreateMeetingDto {
   @IsString()
   location?: string;
 
-  @IsEnum(MeetingMode)
-  mode!: MeetingMode;
-
   // Linkage — omit both for an ad-hoc meeting.
   @IsOptional()
   @IsEnum(MeetingLinkType)
@@ -54,10 +39,19 @@ export class CreateMeetingDto {
   @IsString()
   link_entity_id?: string;
 
+  // Everyone here is attending by default (opt-out). No invitations, no accept step.
   @IsOptional()
   @IsArray()
   @IsUUID('all', { each: true })
   attendee_user_ids?: string[];
+
+  // Subset of attendee_user_ids flagged OPTIONAL (is_required=false). Everyone not
+  // listed here is required. Required attendees drive busy-view slot ranking and are
+  // the ones governance holds to "declined but required".
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  optional_user_ids?: string[];
 
   @IsOptional()
   @IsString()
@@ -67,7 +61,7 @@ export class CreateMeetingDto {
   @IsString()
   minutes?: string; // captured up-front when logging a past meeting
 
-  // Fixed mode
+  // The organiser picks the time. The system never sets it.
   @IsOptional()
   @IsDateString()
   scheduled_start?: string;
@@ -76,27 +70,7 @@ export class CreateMeetingDto {
   @IsDateString()
   scheduled_end?: string;
 
-  // Poll mode
-  @IsOptional()
-  @IsDateString()
-  poll_window_start?: string;
-
-  @IsOptional()
-  @IsDateString()
-  poll_window_end?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(5)
-  poll_duration_min?: number;
-
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SlotInputDto)
-  slots?: SlotInputDto[];
-
-  // Log a meeting that already happened → jump to write-up (no invitations).
+  // Log a meeting that already happened → jump to write-up (no attendees to notify).
   @IsOptional()
   @IsBoolean()
   log_past?: boolean;

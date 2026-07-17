@@ -70,6 +70,9 @@ export class ReplayService {
         const dayInstant = endOfDay(cursor);
         await this.scheduler.spawnRecurringForOrg(orgId, dayInstant);
         await this.scheduler.spawnDemandedLogsForOrg(orgId, dayInstant);
+        // Rhythms replay day-of (horizon 0): each simulated day materialises only its
+        // own occurrence, mirroring how recurring tasks replay one day at a time.
+        await this.scheduler.spawnMeetingRhythmsForOrg(orgId, dayInstant, 0);
         await this.workflow.processDateTriggersForOrg(orgId, dayInstant);
         cursor.setDate(cursor.getDate() + 1);
         daysReplayed++;

@@ -10,6 +10,8 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ClockService } from '../clock/clock.service';
 import { TasksService } from '../tasks/tasks.service';
+import { LeaveService } from '../leave/leave.service';
+import { HolidaysService } from '../holidays/holidays.service';
 import { PermissionsService, principalFromUser } from '../access-rights/permissions.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
@@ -18,12 +20,10 @@ import { CreateMeetingDto } from './dto/create-meeting.dto';
 import {
   UpdateMeetingDto,
   UpdateRecordDto,
-  RespondDto,
-  AddSlotDto,
-  VoteSlotDto,
-  ConfirmSlotDto,
+  DeclineDto,
   MarkAttendanceDto,
   PrivateNoteDto,
+  BusyQueryDto,
 } from './dto/meeting-actions.dto';
 import {
   CreateActionItemDto,
@@ -40,14 +40,24 @@ export interface Actor {
   isSuperAdmin: boolean;
 }
 
-const RESCHEDULE_THRESHOLD = 2; // reschedule requests before offering the poll hatch
 const MEETING = 'meetings';
 const LINK = '/dashboard/governance/meetings';
+
+// Fields whose change re-notifies every attendee: under opt-out the attendee never
+// chose the time, so a silent reschedule would strand them. Take away their voice,
+// you owe them notification.
+const NOTIFY_ON_CHANGE: (keyof Prisma.MeetingUpdateInput)[] = [
+  'scheduled_start',
+  'scheduled_end',
+  'location',
+  'online_link',
+  'link_type',
+  'link_entity_id',
+];
 
 const DETAIL_INCLUDE = {
   organizer: { select: { id: true, name: true, email: true } },
   attendees: { include: { user: { select: { id: true, name: true, email: true } } } },
-  slots: { include: { votes: true }, orderBy: { start_at: 'asc' } },
   action_items: { orderBy: { created_at: 'asc' } },
   decisions: { orderBy: { decided_on: 'desc' } },
 } satisfies Prisma.MeetingInclude;
@@ -60,6 +70,8 @@ export class MeetingsService {
     private readonly notifications: NotificationsService,
     private readonly clock: ClockService,
     private readonly tasks: TasksService,
+    private readonly leave: LeaveService,
+    private readonly holidays: HolidaysService,
     private readonly permissions: PermissionsService,
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
@@ -79,11 +91,9 @@ export class MeetingsService {
 
   // ─── Create ─────────────────────────────────────────────────────────────────
   async create(orgId: string, actor: Actor, dto: CreateMeetingDto) {
-    if ((dto.location === undefined || dto.location === '') && dto.type !== 'online') {
-      // offline/hybrid should have a location, but keep it soft (free text, optional)
-    }
     const attendeeIds = [...new Set((dto.attendee_user_ids ?? []).filter((id) => id !== actor.id))];
-    // Subject eligibility (fail loud): everyone invited must be allowed to be a meeting subject.
+    const optionalIds = new Set((dto.optional_user_ids ?? []).filter((id) => id !== actor.id));
+    // Subject eligibility (fail loud): everyone added must be allowed to be a meeting subject.
     await this.subjects.assertAllEligible(orgId, 'meetings.subject.invitable', attendeeIds);
 
     const data: Prisma.MeetingCreateInput = {
@@ -93,7 +103,6 @@ export class MeetingsService {
       online_link: dto.online_link ?? null,
       online_password: dto.online_password ?? null,
       location: dto.location ?? null,
-      mode: dto.mode,
       link_type: dto.link_type ?? null,
       link_entity_id: dto.link_type ? dto.link_entity_id ?? null : null,
       agenda: dto.agenda ?? null,
@@ -110,47 +119,34 @@ export class MeetingsService {
       data.scheduled_start = dto.scheduled_start ? new Date(dto.scheduled_start) : new Date(dto.actual_start);
       data.scheduled_end = dto.scheduled_end ? new Date(dto.scheduled_end) : data.actual_end ?? null;
       // A meeting that already happened lands as the closed, official record.
-      // Use Reopen to amend it later.
       data.status = 'closed';
       if (dto.minutes !== undefined) data.minutes = dto.minutes;
-    } else if (dto.mode === 'fixed') {
+    } else {
       if (!dto.scheduled_start || !dto.scheduled_end) {
-        throw new BadRequestException('A fixed meeting needs a start and end time.');
+        throw new BadRequestException('A meeting needs a start and end time.');
       }
       data.scheduled_start = new Date(dto.scheduled_start);
       data.scheduled_end = new Date(dto.scheduled_end);
       data.status = 'scheduled';
+      // Opt-out framing: they are ON the meeting, not asked to accept it.
       notify = {
         event: 'meeting_invited',
-        title: "You're invited to a meeting",
-        body: `${await this.notifications.userName(actor.id)} invited you to "${dto.title}"`,
-      };
-    } else {
-      // poll
-      if (!dto.poll_window_start || !dto.poll_window_end || !dto.poll_duration_min) {
-        throw new BadRequestException('A poll needs a window (start, end) and a duration.');
-      }
-      data.poll_window_start = new Date(dto.poll_window_start);
-      data.poll_window_end = new Date(dto.poll_window_end);
-      data.poll_duration_min = dto.poll_duration_min;
-      data.status = 'polling';
-      notify = {
-        event: 'meeting_poll_opened',
-        title: 'Help schedule a meeting',
-        body: `${await this.notifications.userName(actor.id)} opened a time poll for "${dto.title}"`,
+        title: 'You are on a meeting',
+        body: `${await this.notifications.userName(actor.id)} added you to "${dto.title}"`,
       };
     }
 
     const meeting = await this.prisma.meeting.create({ data });
 
-    // Organizer + invited attendees
+    // Organizer + attendees. Everyone is `attending` by default (opt-out).
     await this.prisma.meetingAttendee.create({
       data: {
         organization_id: orgId,
         meeting_id: meeting.id,
         user_id: actor.id,
         is_organizer: true,
-        response: 'accepted',
+        is_required: true,
+        response: 'attending',
         attended: !!dto.log_past,
       },
     });
@@ -160,31 +156,11 @@ export class MeetingsService {
           organization_id: orgId,
           meeting_id: meeting.id,
           user_id: uid,
-          response: dto.log_past ? ('accepted' as const) : ('pending' as const),
+          is_required: !optionalIds.has(uid),
+          response: 'attending' as const,
           attended: !!dto.log_past,
         })),
         skipDuplicates: true,
-      });
-    }
-
-    // Caller-provided poll slots + system-suggested slots
-    if (dto.mode === 'poll' && !dto.log_past) {
-      if (dto.slots?.length) {
-        await this.prisma.meetingSlot.createMany({
-          data: dto.slots.map((s) => ({
-            organization_id: orgId,
-            meeting_id: meeting.id,
-            start_at: new Date(s.start_at),
-            end_at: new Date(s.end_at),
-            source: 'caller' as const,
-            proposed_by_user_id: actor.id,
-          })),
-        });
-      }
-      await this.generateSystemSlots(orgId, meeting.id, attendeeIds.concat(actor.id), {
-        windowStart: new Date(dto.poll_window_start!),
-        windowEnd: new Date(dto.poll_window_end!),
-        durationMin: dto.poll_duration_min!,
       });
     }
 
@@ -221,13 +197,13 @@ export class MeetingsService {
     if (Object.keys(scopeWhere).length) where.AND = [scopeWhere as Prisma.MeetingWhereInput];
     if (filters.status) where.status = filters.status as any;
     if (filters.type) where.type = filters.type as any;
-    if (filters.mode) where.mode = filters.mode as any;
     if (filters.link_type) where.link_type = filters.link_type as any;
     if (filters.mine === 'true') {
       where.attendees = { some: { user_id: actor.id } };
     } else if (filters.attendee) {
       where.attendees = { some: { user_id: filters.attendee } };
     }
+    if (filters.rhythm_id) where.rhythm_id = filters.rhythm_id;
     if (filters.from_date || filters.to_date) {
       where.scheduled_start = {};
       if (filters.from_date) (where.scheduled_start as any).gte = new Date(filters.from_date);
@@ -261,16 +237,12 @@ export class MeetingsService {
       where: { meeting_id_user_id: { meeting_id: id, user_id: actor.id } },
     });
 
-    const rescheduleCount = meeting.attendees.filter(
-      (a) => a.response === 'reschedule_requested',
-    ).length;
-
-    // Conflict signal for the current schedule (accepted attendees double-booked)
+    // Conflict signal for the current schedule (non-declined attendees double-booked).
     let conflicts: any[] = [];
     if (meeting.scheduled_start && meeting.scheduled_end) {
       conflicts = await this.conflictsFor(
         orgId,
-        meeting.attendees.filter((a) => a.response === 'accepted').map((a) => a.user_id),
+        meeting.attendees.filter((a) => a.response !== 'declined').map((a) => a.user_id),
         meeting.scheduled_start,
         meeting.scheduled_end,
         meeting.id,
@@ -280,7 +252,6 @@ export class MeetingsService {
     return {
       ...meeting,
       my_note: myNote?.body ?? '',
-      can_convert_to_poll: meeting.mode === 'fixed' && meeting.status === 'scheduled' && rescheduleCount >= RESCHEDULE_THRESHOLD,
       conflicts,
       can_manage: canManage,
     };
@@ -303,9 +274,21 @@ export class MeetingsService {
     if (dto.scheduled_start !== undefined) data.scheduled_start = new Date(dto.scheduled_start);
     if (dto.scheduled_end !== undefined) data.scheduled_end = new Date(dto.scheduled_end);
 
+    // Did any attendee-visible field actually change? (drives the re-notify)
+    const notifyKeys = NOTIFY_ON_CHANGE.filter((k) => {
+      if (!(k in data)) return false;
+      const before = (meeting as any)[k];
+      const after = (data as any)[k];
+      const b = before instanceof Date ? before.getTime() : before;
+      const a = after instanceof Date ? after.getTime() : after;
+      return b !== a;
+    });
+
     const updated = await this.prisma.meeting.update({ where: { id }, data });
 
-    if (dto.attendee_user_ids) await this.syncAttendees(orgId, id, dto.attendee_user_ids, meeting.created_by_user_id);
+    if (dto.attendee_user_ids) {
+      await this.syncAttendees(orgId, id, dto.attendee_user_ids, dto.optional_user_ids ?? [], meeting.created_by_user_id);
+    }
 
     const changes = this.audit.diff(
       meeting,
@@ -324,6 +307,28 @@ export class MeetingsService {
         entityId: id, entityLabel: updated.title, changes,
       });
     }
+
+    // Re-notify every non-declined attendee that the meeting they're ON has moved.
+    if (notifyKeys.length) {
+      const attendees = await this.prisma.meetingAttendee.findMany({
+        where: { meeting_id: id, is_organizer: false, response: { not: 'declined' } },
+        select: { user_id: true },
+      });
+      if (attendees.length) {
+        const whenStr = updated.scheduled_start ? updated.scheduled_start.toISOString() : 'a new time';
+        await this.notifications.emit({
+          orgId,
+          module: 'meetings',
+          event_type: 'meeting_updated',
+          recipients: attendees.map((a) => a.user_id),
+          title: 'Meeting updated',
+          body: `"${updated.title}" changed — it is now ${whenStr}. You are still on it.`,
+          link: `${LINK}/${id}`,
+          entity: { type: 'meeting', id },
+        });
+      }
+    }
+
     return this.getOne(orgId, actor, id);
   }
 
@@ -361,175 +366,42 @@ export class MeetingsService {
     return this.getOne(orgId, actor, id);
   }
 
-  // ─── Fixed-mode response ───────────────────────────────────────────────────────
-  async respond(orgId: string, actor: Actor, id: string, dto: RespondDto) {
+  // ─── Attendance response — opt-out. The only action is to decline (with reason).
+  async decline(orgId: string, actor: Actor, id: string, dto: DeclineDto) {
     const meeting = await this.findOrFail(orgId, id);
     const attendee = await this.getAttendeeOrFail(id, actor.id);
-    if (meeting.mode !== 'fixed' || meeting.status !== 'scheduled') {
-      throw new BadRequestException('You can only respond to a scheduled, fixed-time meeting.');
+    if (meeting.status === 'closed' || meeting.status === 'cancelled') {
+      throw new BadRequestException('This meeting is closed.');
     }
+    if (!dto.reason?.trim()) throw new BadRequestException('A reason is required to decline.');
 
-    const data: Prisma.MeetingAttendeeUpdateInput = {};
-    if (dto.action === 'accept') {
-      data.response = 'accepted';
-      data.reject_reason = null;
-      data.reschedule_at = null;
-      data.reschedule_note = null;
-    } else if (dto.action === 'reject') {
-      if (!dto.reason?.trim()) throw new BadRequestException('A reason is required to reject.');
-      data.response = 'rejected';
-      data.reject_reason = dto.reason.trim();
-    } else {
-      if (!dto.reschedule_at) throw new BadRequestException('A preferred date/time is required to request a reschedule.');
-      data.response = 'reschedule_requested';
-      data.reschedule_at = new Date(dto.reschedule_at);
-      data.reschedule_note = dto.reschedule_note ?? null;
-    }
-    await this.prisma.meetingAttendee.update({ where: { id: attendee.id }, data });
+    await this.prisma.meetingAttendee.update({
+      where: { id: attendee.id },
+      data: { response: 'declined', reject_reason: dto.reason.trim() },
+    });
 
-    const event = dto.action === 'reschedule' ? 'meeting_reschedule_requested' : 'meeting_response';
     await this.notifications.emit({
-      orgId, module: 'meetings', event_type: event,
+      orgId, module: 'meetings', event_type: 'meeting_response',
       recipients: [meeting.created_by_user_id].filter((u) => u !== actor.id),
-      title: 'Meeting response',
-      body: `${await this.notifications.userName(actor.id)} ${dto.action === 'accept' ? 'accepted' : dto.action === 'reject' ? 'declined' : 'requested a reschedule for'} "${meeting.title}"`,
+      title: attendee.is_required ? 'A required attendee declined' : 'An attendee declined',
+      body: `${await this.notifications.userName(actor.id)} won't make "${meeting.title}": ${dto.reason.trim()}`,
       link: `${LINK}/${id}`,
       entity: { type: 'meeting', id },
     });
     return this.getOne(orgId, actor, id);
   }
 
-  async convertToPoll(orgId: string, actor: Actor, id: string) {
+  // Undo one's OWN decline → back to attending. Never touches another person's row,
+  // and never lets the organiser flip someone else's stated intent.
+  async undoDecline(orgId: string, actor: Actor, id: string) {
     const meeting = await this.findOrFail(orgId, id);
-    await this.requireManage(orgId, meeting, actor);
-    if (meeting.mode !== 'fixed') throw new BadRequestException('Only a fixed meeting can be converted to a poll.');
-
-    const attendees = await this.prisma.meetingAttendee.findMany({ where: { meeting_id: id } });
-    const slots: Prisma.MeetingSlotCreateManyInput[] = [];
-    // keep original time as a candidate
-    if (meeting.scheduled_start && meeting.scheduled_end) {
-      slots.push({
-        organization_id: orgId, meeting_id: id,
-        start_at: meeting.scheduled_start, end_at: meeting.scheduled_end,
-        source: 'caller', proposed_by_user_id: meeting.created_by_user_id,
-      });
+    const attendee = await this.getAttendeeOrFail(id, actor.id);
+    if (meeting.status === 'closed' || meeting.status === 'cancelled') {
+      throw new BadRequestException('This meeting is closed.');
     }
-    // seed from reschedule preferences
-    const durationMs =
-      meeting.scheduled_start && meeting.scheduled_end
-        ? meeting.scheduled_end.getTime() - meeting.scheduled_start.getTime()
-        : 60 * 60_000;
-    for (const a of attendees) {
-      if (a.reschedule_at) {
-        slots.push({
-          organization_id: orgId, meeting_id: id,
-          start_at: a.reschedule_at, end_at: new Date(a.reschedule_at.getTime() + durationMs),
-          source: 'invitee', proposed_by_user_id: a.user_id,
-        });
-      }
-    }
-    if (slots.length) await this.prisma.meetingSlot.createMany({ data: slots });
-
-    await this.prisma.meeting.update({
-      where: { id },
-      data: {
-        mode: 'poll', status: 'polling',
-        poll_window_start: meeting.scheduled_start ?? new Date(),
-        poll_window_end: meeting.scheduled_end ?? new Date(Date.now() + 14 * 86_400_000),
-        poll_duration_min: Math.round(durationMs / 60_000),
-      },
-    });
-    await this.audit.record({
-      orgId, actorId: actor.id, action: 'update', resource: 'meeting',
-      entityId: id, entityLabel: meeting.title,
-      changes: { mode: { before: 'fixed', after: 'poll' } },
-    });
-    await this.notifications.emit({
-      orgId, module: 'meetings', event_type: 'meeting_poll_opened',
-      recipients: attendees.map((a) => a.user_id).filter((u) => u !== actor.id),
-      title: 'Meeting moved to a time poll',
-      body: `Pick the times that work for "${meeting.title}"`,
-      link: `${LINK}/${id}`, entity: { type: 'meeting', id },
-    });
-    return this.getOne(orgId, actor, id);
-  }
-
-  // ─── Poll slots ────────────────────────────────────────────────────────────────
-  async addSlot(orgId: string, actor: Actor, id: string, dto: AddSlotDto) {
-    const meeting = await this.findOrFail(orgId, id);
-    await this.requireAttendee(orgId, meeting, actor);
-    if (meeting.status !== 'polling') throw new BadRequestException('Slots can only be added while the poll is open.');
-    const isCaller = actor.id === meeting.created_by_user_id;
-    await this.prisma.meetingSlot.create({
-      data: {
-        organization_id: orgId, meeting_id: id,
-        start_at: new Date(dto.start_at), end_at: new Date(dto.end_at),
-        source: isCaller ? 'caller' : 'invitee', proposed_by_user_id: actor.id,
-      },
-    });
-    return this.getOne(orgId, actor, id);
-  }
-
-  async dismissSlot(orgId: string, actor: Actor, id: string, slotId: string) {
-    const meeting = await this.findOrFail(orgId, id);
-    await this.requireManage(orgId, meeting, actor); // caller owns the board
-    await this.prisma.meetingSlot.updateMany({
-      where: { id: slotId, meeting_id: id },
-      data: { is_dismissed: true },
-    });
-    return this.getOne(orgId, actor, id);
-  }
-
-  async voteSlot(orgId: string, actor: Actor, id: string, slotId: string, dto: VoteSlotDto) {
-    const meeting = await this.findOrFail(orgId, id);
-    await this.requireAttendee(orgId, meeting, actor);
-    if (meeting.status !== 'polling') throw new BadRequestException('Voting is closed.');
-    const slot = await this.prisma.meetingSlot.findFirst({ where: { id: slotId, meeting_id: id, is_dismissed: false } });
-    if (!slot) throw new NotFoundException('Slot not found');
-    await this.prisma.meetingSlotVote.upsert({
-      where: { slot_id_user_id: { slot_id: slotId, user_id: actor.id } },
-      create: { organization_id: orgId, slot_id: slotId, meeting_id: id, user_id: actor.id, vote: dto.vote },
-      update: { vote: dto.vote },
-    });
-    return this.getOne(orgId, actor, id);
-  }
-
-  async confirmSlot(orgId: string, actor: Actor, id: string, dto: ConfirmSlotDto) {
-    const meeting = await this.findOrFail(orgId, id);
-    await this.requireManage(orgId, meeting, actor);
-    if (meeting.status !== 'polling') throw new BadRequestException('This meeting is not in a poll.');
-    const slot = await this.prisma.meetingSlot.findFirst({ where: { id: dto.slot_id, meeting_id: id } });
-    if (!slot) throw new NotFoundException('Slot not found');
-
-    await this.prisma.meetingSlot.update({ where: { id: slot.id }, data: { is_confirmed: true } });
-    await this.prisma.meeting.update({
-      where: { id },
-      data: { status: 'scheduled', scheduled_start: slot.start_at, scheduled_end: slot.end_at, reminder_sent: false },
-    });
-
-    // Auto-resolve attendee responses from their vote on the confirmed slot
-    const [attendees, votes] = await Promise.all([
-      this.prisma.meetingAttendee.findMany({ where: { meeting_id: id, is_organizer: false } }),
-      this.prisma.meetingSlotVote.findMany({ where: { slot_id: slot.id } }),
-    ]);
-    const voteBy = new Map(votes.map((v) => [v.user_id, v.vote]));
-    for (const a of attendees) {
-      const v = voteBy.get(a.user_id);
-      const response = v === 'available' || v === 'maybe' ? 'accepted' : v === 'unavailable' ? 'rejected' : 'pending';
-      await this.prisma.meetingAttendee.update({ where: { id: a.id }, data: { response } });
-    }
-
-    await this.audit.record({
-      orgId, actorId: actor.id, action: 'update', resource: 'meeting',
-      entityId: id, entityLabel: meeting.title,
-      changes: { scheduled_start: { before: null, after: slot.start_at } },
-    });
-    await this.notifications.emit({
-      orgId, module: 'meetings', event_type: 'meeting_slot_confirmed',
-      recipients: attendees.map((a) => a.user_id),
-      title: 'Meeting time confirmed',
-      body: `"${meeting.title}" is set for ${slot.start_at.toISOString()}`,
-      link: `${LINK}/${id}`, entity: { type: 'meeting', id },
+    await this.prisma.meetingAttendee.update({
+      where: { id: attendee.id },
+      data: { response: 'attending', reject_reason: null },
     });
     return this.getOne(orgId, actor, id);
   }
@@ -602,6 +474,14 @@ export class MeetingsService {
           attended_in_at: row.attended_in_at ? new Date(row.attended_in_at) : null,
           attended_out_at: row.attended_out_at ? new Date(row.attended_out_at) : null,
         },
+      });
+    }
+    // Stamp the ledger the first time attendance is recorded, so governance can tell
+    // "attendance not recorded" from "everyone no-showed". Never un-stamp.
+    if (!meeting.attendance_taken_at) {
+      await this.prisma.meeting.update({
+        where: { id },
+        data: { attendance_taken_at: await this.clock.now(orgId) },
       });
     }
     return this.getOne(orgId, actor, id);
@@ -747,6 +627,119 @@ export class MeetingsService {
     return this.audit.list(orgId, { resource: 'meeting', entity_id: id, take: 200 });
   }
 
+  // ─── Busy view ─────────────────────────────────────────────────────────────────
+  // The organiser sees people's busy times BEFORE he picks a slot (he still picks;
+  // the system only suggests). HONEST FLOOR: this reflects only what THIS app knows —
+  // in-app meetings, leave and holidays. It is never a guarantee someone is free.
+  async busyView(orgId: string, actor: Actor, dto: BusyQueryDto) {
+    const userIds = [...new Set(dto.user_ids.filter(Boolean))];
+    if (userIds.length === 0) {
+      return { from: dto.from, to: dto.to, people: [], suggestions: [], caveat: BUSY_CAVEAT };
+    }
+    const from = new Date(dto.from);
+    const to = new Date(dto.to);
+    if (isNaN(from.getTime()) || isNaN(to.getTime()) || to < from) {
+      throw new BadRequestException('Invalid date range.');
+    }
+    // Bound the window so a wide range can't fan out into an unbounded day scan.
+    const MAX_DAYS = 62;
+    if ((to.getTime() - from.getTime()) / 86_400_000 > MAX_DAYS) {
+      throw new BadRequestException(`The busy window cannot exceed ${MAX_DAYS} days.`);
+    }
+    const required = new Set((dto.required_user_ids ?? userIds).filter((id) => userIds.includes(id)));
+
+    // (a) In-app meetings — one bounded query, attendees pre-filtered to our people.
+    const meetings = await this.prisma.meeting.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        status: { in: ['scheduled', 'in_progress'] },
+        scheduled_start: { lt: to },
+        scheduled_end: { gt: from },
+        attendees: { some: { user_id: { in: userIds }, response: { not: 'declined' } } },
+      },
+      select: {
+        id: true, title: true, scheduled_start: true, scheduled_end: true,
+        attendees: { where: { user_id: { in: userIds }, response: { not: 'declined' } }, select: { user_id: true } },
+      },
+    });
+
+    // (b) Leave (whole-day) and (c) holidays (whole-day, org-wide).
+    const [leave, holidays, users] = await Promise.all([
+      this.leave.availability(orgId, userIds, dto.from, dto.to),
+      this.holidays.getHolidaysInRange(orgId, startOfDay(from), startOfDay(to)),
+      this.prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }),
+    ]);
+    const nameOf = new Map(users.map((u) => [u.id, u.name]));
+    const leaveByUser = new Map(leave.results.map((r) => [r.user_id, r.windows]));
+
+    const people = userIds.map((uid) => {
+      const busy: { start: string; end: string; kind: 'meeting' | 'leave' | 'holiday'; label: string }[] = [];
+      for (const m of meetings) {
+        if (m.attendees.some((a) => a.user_id === uid) && m.scheduled_start && m.scheduled_end) {
+          busy.push({ start: m.scheduled_start.toISOString(), end: m.scheduled_end.toISOString(), kind: 'meeting', label: m.title });
+        }
+      }
+      for (const w of leaveByUser.get(uid) ?? []) {
+        busy.push({ start: w.start_date, end: w.end_date, kind: 'leave', label: `On leave${w.state ? ` (${w.state})` : ''}` });
+      }
+      for (const h of holidays) {
+        busy.push({ start: h.date, end: h.date, kind: 'holiday', label: h.name });
+      }
+      busy.sort((a, b) => a.start.localeCompare(b.start));
+      return { user_id: uid, name: nameOf.get(uid) ?? 'Unknown', required: required.has(uid), busy };
+    });
+
+    // Ranked suggestions (only when a duration is supplied). Required-attendee clashes
+    // are HARD (drive ranking); optional-attendee clashes are soft warnings.
+    let suggestions: any[] = [];
+    if (dto.duration_min && dto.duration_min > 0) {
+      suggestions = this.rankSuggestions(meetings, from, to, dto.duration_min, required);
+    }
+
+    return { from: dto.from, to: dto.to, people, suggestions, caveat: BUSY_CAVEAT };
+  }
+
+  private rankSuggestions(
+    meetings: { scheduled_start: Date | null; scheduled_end: Date | null; attendees: { user_id: string }[] }[],
+    from: Date,
+    to: Date,
+    durationMin: number,
+    required: Set<string>,
+  ) {
+    const HOURS = [9, 11, 14, 16];
+    const durationMs = durationMin * 60_000;
+    const candidates: { start: Date; end: Date }[] = [];
+    const cursor = startOfDay(from);
+    let days = 0;
+    while (cursor <= to && days < 62) {
+      const dow = cursor.getDay();
+      if (dow !== 0 && dow !== 6) {
+        for (const h of HOURS) {
+          const start = new Date(cursor); start.setHours(h, 0, 0, 0);
+          const end = new Date(start.getTime() + durationMs);
+          if (start >= from && end <= to) candidates.push({ start, end });
+        }
+      }
+      cursor.setDate(cursor.getDate() + 1);
+      days++;
+    }
+    return candidates
+      .map((c) => {
+        const hard = new Set<string>();
+        const soft = new Set<string>();
+        for (const m of meetings) {
+          if (m.scheduled_start && m.scheduled_end && m.scheduled_start < c.end && m.scheduled_end > c.start) {
+            for (const a of m.attendees) (required.has(a.user_id) ? hard : soft).add(a.user_id);
+          }
+        }
+        return { start: c.start.toISOString(), end: c.end.toISOString(), hard_conflicts: [...hard], soft_conflicts: [...soft] };
+      })
+      // Fewest required clashes first, then fewest optional clashes.
+      .sort((a, b) => a.hard_conflicts.length - b.hard_conflicts.length || a.soft_conflicts.length - b.soft_conflicts.length)
+      .slice(0, 5);
+  }
+
   // ─── Helpers ───────────────────────────────────────────────────────────────────
   private async findOrFail(orgId: string, id: string) {
     const m = await this.prisma.meeting.findFirst({ where: { id, organization_id: orgId, is_deleted: false } });
@@ -836,13 +829,14 @@ export class MeetingsService {
     if (meeting.status === 'cancelled') throw new BadRequestException('This meeting was cancelled.');
   }
 
-  private async syncAttendees(orgId: string, meetingId: string, userIds: string[], organizerId: string) {
+  private async syncAttendees(orgId: string, meetingId: string, userIds: string[], optionalUserIds: string[], organizerId: string) {
     // Fail loud: newly added attendees must be eligible meeting subjects.
     await this.subjects.assertAllEligible(
       orgId,
       'meetings.subject.invitable',
       userIds.filter((u) => u !== organizerId),
     );
+    const optional = new Set(optionalUserIds);
     const wanted = new Set(userIds.concat(organizerId));
     const existing = await this.prisma.meetingAttendee.findMany({ where: { meeting_id: meetingId } });
     const existingIds = new Set(existing.map((a) => a.user_id));
@@ -850,14 +844,29 @@ export class MeetingsService {
     const toRemove = existing.filter((a) => !wanted.has(a.user_id) && !a.is_organizer).map((a) => a.id);
     if (toAdd.length) {
       await this.prisma.meetingAttendee.createMany({
-        data: toAdd.map((uid) => ({ organization_id: orgId, meeting_id: meetingId, user_id: uid, is_organizer: uid === organizerId, response: uid === organizerId ? ('accepted' as const) : ('pending' as const) })),
+        data: toAdd.map((uid) => ({
+          organization_id: orgId,
+          meeting_id: meetingId,
+          user_id: uid,
+          is_organizer: uid === organizerId,
+          is_required: uid === organizerId ? true : !optional.has(uid),
+          response: 'attending' as const,
+        })),
         skipDuplicates: true,
       });
     }
     if (toRemove.length) await this.prisma.meetingAttendee.deleteMany({ where: { id: { in: toRemove } } });
+    // Keep is_required in sync for people who stayed on the meeting (never the organizer).
+    for (const a of existing) {
+      if (a.is_organizer || !wanted.has(a.user_id)) continue;
+      const shouldRequire = !optional.has(a.user_id);
+      if (a.is_required !== shouldRequire) {
+        await this.prisma.meetingAttendee.update({ where: { id: a.id }, data: { is_required: shouldRequire } });
+      }
+    }
   }
 
-  /** Overlapping accepted meetings for any of the given users (a soft conflict signal). */
+  /** Overlapping non-declined meetings for any of the given users (a soft conflict signal). */
   async conflictsFor(orgId: string, userIds: string[], start: Date, end: Date, excludeMeetingId?: string) {
     if (!userIds.length) return [];
     const meetings = await this.prisma.meeting.findMany({
@@ -868,69 +877,24 @@ export class MeetingsService {
         status: { in: ['scheduled', 'in_progress'] },
         scheduled_start: { lt: end },
         scheduled_end: { gt: start },
-        attendees: { some: { user_id: { in: userIds }, response: 'accepted' } },
+        attendees: { some: { user_id: { in: userIds }, response: { not: 'declined' } } },
       },
       select: {
         id: true, title: true, scheduled_start: true, scheduled_end: true,
-        attendees: { where: { user_id: { in: userIds }, response: 'accepted' }, select: { user_id: true } },
+        attendees: { where: { user_id: { in: userIds }, response: { not: 'declined' } }, select: { user_id: true } },
       },
     });
     return meetings.flatMap((m) =>
       m.attendees.map((a) => ({ user_id: a.user_id, meeting_id: m.id, title: m.title, scheduled_start: m.scheduled_start })),
     );
   }
+}
 
-  /** Generate up to 3 calendar-aware "suggested" slots (never guaranteed-free). */
-  private async generateSystemSlots(
-    orgId: string,
-    meetingId: string,
-    attendeeIds: string[],
-    win: { windowStart: Date; windowEnd: Date; durationMin: number },
-  ) {
-    const HOURS = [9, 11, 14, 16];
-    const durationMs = win.durationMin * 60_000;
-    const candidates: { start: Date; end: Date }[] = [];
-    const cursor = new Date(win.windowStart);
-    cursor.setHours(0, 0, 0, 0);
-    let days = 0;
-    while (cursor <= win.windowEnd && days < 21) {
-      const dow = cursor.getDay();
-      if (dow !== 0 && dow !== 6) {
-        for (const h of HOURS) {
-          const start = new Date(cursor);
-          start.setHours(h, 0, 0, 0);
-          const end = new Date(start.getTime() + durationMs);
-          if (start >= win.windowStart && end <= win.windowEnd) candidates.push({ start, end });
-        }
-      }
-      cursor.setDate(cursor.getDate() + 1);
-      days++;
-    }
-    if (!candidates.length) return;
+const BUSY_CAVEAT =
+  'Shows only meetings, leave and holidays this app knows about. It is not a guarantee someone is free — check with them for anything outside the system.';
 
-    // Accepted meetings in the window for these attendees
-    const busy = await this.prisma.meeting.findMany({
-      where: {
-        organization_id: orgId, is_deleted: false,
-        status: { in: ['scheduled', 'in_progress'] },
-        scheduled_start: { lt: win.windowEnd }, scheduled_end: { gt: win.windowStart },
-        attendees: { some: { user_id: { in: attendeeIds }, response: 'accepted' } },
-      },
-      select: { scheduled_start: true, scheduled_end: true },
-    });
-    const ranked = candidates
-      .map((c) => ({
-        ...c,
-        conflicts: busy.filter((b) => b.scheduled_start! < c.end && b.scheduled_end! > c.start).length,
-      }))
-      .sort((a, b) => a.conflicts - b.conflicts)
-      .slice(0, 3);
-
-    await this.prisma.meetingSlot.createMany({
-      data: ranked.map((r, i) => ({
-        organization_id: orgId, meeting_id: meetingId,
-        start_at: r.start, end_at: r.end, source: 'system' as const, system_rank: i,
-      })),
-    });
-  }
+function startOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
 }

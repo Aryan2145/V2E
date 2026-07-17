@@ -34,12 +34,9 @@ export const NOTIF_EVENTS = {
   ],
   tickets: ['ticket_raised', 'ticket_status_changed', 'ticket_sla_breached', 'ticket_comment', 'ticket_escalated'],
   meetings: [
-    'meeting_invited',
-    'meeting_poll_opened',
-    'meeting_response',
-    'meeting_reschedule_requested',
-    'meeting_slot_confirmed',
-    'meeting_updated',
+    'meeting_invited', // added to a meeting / rhythm (opt-out: you're on it, not asked)
+    'meeting_response', // an attendee declined (with a reason)
+    'meeting_updated', // time/location/link changed on a meeting you're on
     'meeting_reminder',
     'meeting_cancelled',
   ],

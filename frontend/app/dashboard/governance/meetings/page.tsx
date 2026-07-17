@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { CalendarDays, List, Plus, Search, Video, MapPin, Users } from 'lucide-react'
+import { CalendarDays, List, Plus, Search, Video, MapPin, Users, Repeat, BarChart3 } from 'lucide-react'
+import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { meetingsApi } from '@/lib/api/meetings'
 import { getEmployees } from '@/lib/api/employees'
@@ -36,7 +37,7 @@ const meetingColumns: ResponsiveColumn<Meeting>[] = [
         <div className="text-xs text-[#64748B] mt-0.5 flex items-center gap-2">
           <span>{TYPE_LABEL[m.type]}</span>
           <span className="inline-flex items-center gap-1"><Users size={11} /> {m._count?.attendees ?? 0}</span>
-          {m.mode === 'poll' && <span className="text-[#CA8A04]">poll</span>}
+          {m.rhythm_id && <span className="inline-flex items-center gap-1 text-[#7C3AED]"><Repeat size={11} /> rhythm</span>}
         </div>
       </>
     ),
@@ -46,7 +47,7 @@ const meetingColumns: ResponsiveColumn<Meeting>[] = [
     header: 'When',
     desktopHiddenBelow: 'md',
     render: (m) => (
-      <span className="text-sm text-[#475569]">{m.status === 'polling' ? 'Finding a slot' : fmtDateTime(m.scheduled_start)}</span>
+      <span className="text-sm text-[#475569]">{fmtDateTime(m.scheduled_start)}</span>
     ),
   },
   {
@@ -108,10 +109,10 @@ export default function MeetingsPage() {
   }), [meetings, search, status, type, mine, user?.id])
 
   const stats = useMemo(() => {
-    const s = { total: meetings.length, scheduled: 0, polling: 0, closed: 0 }
+    const s = { total: meetings.length, scheduled: 0, in_progress: 0, closed: 0 }
     for (const m of meetings) {
       if (m.status === 'scheduled') s.scheduled++
-      else if (m.status === 'polling') s.polling++
+      else if (m.status === 'in_progress') s.in_progress++
       else if (m.status === 'closed') s.closed++
     }
     return s
@@ -124,11 +125,19 @@ export default function MeetingsPage() {
           <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">Meetings</h1>
           <p className="text-sm text-[#475569] mt-1">Schedule, run and record meetings — with action items and decisions.</p>
         </div>
-        {perms.write && (
-          <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] shrink-0">
-            <Plus size={16} /> New Meeting
-          </button>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          <Link href="/dashboard/governance/meetings/rhythms" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]">
+            <Repeat size={16} /> Rhythms
+          </Link>
+          <Link href="/dashboard/governance/meetings/reports" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]">
+            <BarChart3 size={16} /> Governance
+          </Link>
+          {perms.write && (
+            <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]">
+              <Plus size={16} /> New Meeting
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -136,7 +145,7 @@ export default function MeetingsPage() {
         {[
           { label: 'Total', value: stats.total, color: '#2563EB' },
           { label: 'Scheduled', value: stats.scheduled, color: '#0369A1' },
-          { label: 'In poll', value: stats.polling, color: '#CA8A04' },
+          { label: 'In progress', value: stats.in_progress, color: '#2563EB' },
           { label: 'Closed', value: stats.closed, color: '#16A34A' },
         ].map((s) => (
           <div key={s.label} className="bg-white border border-[#E2E8F0] rounded-[12px] p-4">
@@ -154,7 +163,7 @@ export default function MeetingsPage() {
         </div>
         <select className={selectClass} value={status} onChange={(e) => setStatus(e.target.value as any)}>
           <option value="">All statuses</option>
-          {['polling', 'scheduled', 'in_progress', 'closed', 'cancelled'].map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
+          {['scheduled', 'in_progress', 'closed', 'cancelled'].map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
         </select>
         <select className={selectClass} value={type} onChange={(e) => setType(e.target.value as any)}>
           <option value="">All types</option>

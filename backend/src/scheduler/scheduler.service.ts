@@ -14,6 +14,10 @@ import { filterActiveOrgMembers } from '../common/org-members';
 import { resolveRemindAt, expandReminderRows, type ReminderSpec } from '../common/reminders/reminder-spec';
 import { isTerminal, TERMINAL_TYPES } from '../tasks/status-phase';
 
+// Rolling look-ahead for meeting rhythms: the nightly cron keeps the next 60 days
+// of occurrences materialised. (Tasks spawn day-of; rhythms need advance visibility.)
+const MEETING_RHYTHM_HORIZON_DAYS = 60;
+
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
@@ -86,6 +90,9 @@ export class SchedulerService {
       const r = await this.spawnRecurringForOrg(org.id, now);
       spawned += r.spawned;
       await this.spawnDemandedLogsForOrg(org.id, now);
+      // Meeting rhythms materialise a rolling 60-day look-ahead (nightly top-up) so
+      // people can see the series on their calendars in advance.
+      await this.spawnMeetingRhythmsForOrg(org.id, now, MEETING_RHYTHM_HORIZON_DAYS);
     }
 
     this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
@@ -426,6 +433,156 @@ export class SchedulerService {
     }
   }
 
+  // ─── Meeting Rhythm Spawn Engine ──────────────────────────────────────────────
+  // Reuses shouldEntryFireToday verbatim (the SAME evaluator as tasks/work-logs).
+  // Divergences from the task engine, by design:
+  //   • rolling look-ahead (horizonDays) instead of day-of, so people see the series;
+  //   • holiday = SKIP (a Thursday review must never slide onto Saturday), and a
+  //     skipped day does NOT consume an after_n count;
+  //   • after_n is measured against the live count of already-spawned instances
+  //     (COUNT), so the rolling horizon and nightly re-runs can never double-count.
+  async spawnMeetingRhythmsForOrg(orgId: string, now: Date, horizonDays = 0): Promise<{ spawned: number }> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'meeting_rhythm_spawn', occurredAt: now },
+      () => this.spawnMeetingRhythmsImpl(orgId, now, horizonDays, null),
+    );
+  }
+
+  // Immediate top-up for one rhythm (called right after create/resume so the series
+  // appears without waiting for the nightly cron).
+  async spawnForMeetingRhythm(orgId: string, rhythmId: string, now: Date, horizonDays: number): Promise<{ spawned: number }> {
+    return this.auditWriter.runAsSystem(
+      { orgId, triggerSource: 'meeting_rhythm_spawn', occurredAt: now },
+      () => this.spawnMeetingRhythmsImpl(orgId, now, horizonDays, rhythmId),
+    );
+  }
+
+  private async spawnMeetingRhythmsImpl(orgId: string, now: Date, horizonDays: number, onlyRhythmId: string | null): Promise<{ spawned: number }> {
+    const entries = await this.prisma.meetingRhythmSchedule.findMany({
+      where: {
+        is_active: true,
+        organization_id: orgId,
+        rhythm: { is_active: true, ...(onlyRhythmId ? { id: onlyRhythmId } : {}) },
+      },
+      include: { rhythm: true },
+    });
+    if (entries.length === 0) return { spawned: 0 };
+
+    // Non-working days for the whole horizon, computed ONCE (not per-rhythm-per-day).
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const horizonEnd = new Date(today); horizonEnd.setDate(today.getDate() + horizonDays);
+    const holidays = await this.holidaysService.getHolidaysInRange(orgId, today, horizonEnd).catch(() => []);
+    const nonWorking = new Set(holidays.map((h) => h.date)); // ISO yyyy-mm-dd
+
+    let spawned = 0;
+    for (const entry of entries) {
+      spawned += await this.spawnRhythmEntry(entry, today, horizonDays, nonWorking, now);
+    }
+    return { spawned };
+  }
+
+  private async spawnRhythmEntry(entry: any, today: Date, horizonDays: number, nonWorking: Set<string>, now: Date): Promise<number> {
+    const rhythm = entry.rhythm;
+    // Source of truth for after_n: how many instances this rhythm has EVER spawned
+    // (soft-deleted rows count — they occupy their spawn day via the unique index).
+    let spawnedCount = await this.prisma.meeting.count({ where: { rhythm_id: rhythm.id } });
+    let created = 0;
+
+    for (let offset = 0; offset <= horizonDays; offset++) {
+      if (entry.end_condition === 'after_n' && entry.end_after !== null && spawnedCount >= entry.end_after) break;
+
+      const day = new Date(today); day.setDate(today.getDate() + offset); day.setHours(0, 0, 0, 0);
+      const probe = { ...entry, occurrence_count: spawnedCount };
+      if (!shouldEntryFireToday(probe, day)) continue;
+
+      // Holiday = SKIP (never slide), and do NOT consume an after_n count.
+      if (nonWorking.has(day.toISOString().slice(0, 10))) continue;
+
+      const didCreate = await this.materialiseRhythmMeeting(rhythm, entry, day, now);
+      if (didCreate) { created++; spawnedCount++; }
+    }
+
+    // Persist the display counter and retire the entry/rhythm when after_n is met.
+    const done = entry.end_condition === 'after_n' && entry.end_after !== null && spawnedCount >= entry.end_after;
+    await this.prisma.meetingRhythmSchedule.update({
+      where: { id: entry.id },
+      data: { occurrence_count: spawnedCount, ...(done && { is_active: false }) },
+    });
+    if (done) {
+      const activeCount = await this.prisma.meetingRhythmSchedule.count({ where: { meeting_rhythm_id: rhythm.id, is_active: true } });
+      if (activeCount === 0) {
+        await this.prisma.meetingRhythm.update({ where: { id: rhythm.id }, data: { is_active: false } });
+      }
+    }
+    return created;
+  }
+
+  // Create one Meeting instance for a rhythm on `day`. Attendees are `attending` by
+  // default (opt-out). P2002 (unique rhythm+day) means a concurrent run already made
+  // it — a quiet no-op, never a duplicate. No per-instance notification (60-days-ahead
+  // spam); attendees see it on their list + the standard 15-minute reminder fires.
+  private async materialiseRhythmMeeting(rhythm: any, entry: any, day: Date, now: Date): Promise<boolean> {
+    const [h, m] = String(entry.time).split(':').map(Number);
+    const start = new Date(day); start.setHours(h || 0, m || 0, 0, 0);
+    const end = new Date(start.getTime() + (rhythm.duration_min ?? 30) * 60_000);
+    const spawnDate = new Date(day); spawnDate.setHours(0, 0, 0, 0);
+
+    let meeting;
+    try {
+      meeting = await this.prisma.meeting.create({
+        data: {
+          organization_id: rhythm.organization_id,
+          title: rhythm.title,
+          type: rhythm.type,
+          online_link: rhythm.online_link ?? undefined,
+          online_password: rhythm.online_password ?? undefined,
+          location: rhythm.location ?? undefined,
+          status: 'scheduled',
+          link_type: rhythm.link_type ?? undefined,
+          link_entity_id: rhythm.link_entity_id ?? undefined,
+          agenda: rhythm.agenda ?? undefined,
+          scheduled_start: start,
+          scheduled_end: end,
+          created_by_user_id: rhythm.created_by_user_id,
+          rhythm_id: rhythm.id,
+          rhythm_spawn_date: spawnDate,
+          created_at: now,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') return false;
+      this.logger.error(`Failed to spawn rhythm meeting for rhythm ${rhythm.id} on ${spawnDate.toISOString()}: ${err}`);
+      return false;
+    }
+
+    const attendeeIds = (Array.isArray(rhythm.attendee_user_ids) ? rhythm.attendee_user_ids : []) as string[];
+    const optional = new Set((Array.isArray(rhythm.optional_user_ids) ? rhythm.optional_user_ids : []) as string[]);
+    await this.prisma.meetingAttendee.create({
+      data: {
+        organization_id: rhythm.organization_id,
+        meeting_id: meeting.id,
+        user_id: rhythm.created_by_user_id,
+        is_organizer: true,
+        is_required: true,
+        response: 'attending',
+      },
+    });
+    const roster = attendeeIds.filter((uid) => uid !== rhythm.created_by_user_id);
+    if (roster.length > 0) {
+      await this.prisma.meetingAttendee.createMany({
+        data: roster.map((uid) => ({
+          organization_id: rhythm.organization_id,
+          meeting_id: meeting.id,
+          user_id: uid,
+          is_required: !optional.has(uid),
+          response: 'attending' as const,
+        })),
+        skipDuplicates: true,
+      });
+    }
+    return true;
+  }
+
   // ─── Reminder Engine ──────────────────────────────────────────────────────────
 
   @Cron(CronExpression.EVERY_HOUR)
@@ -563,7 +720,10 @@ export class SchedulerService {
         id: true,
         title: true,
         scheduled_start: true,
-        attendees: { where: { response: 'accepted' }, select: { user_id: true } },
+        // Opt-out: remind everyone who has NOT declined (attending-by-default), not
+        // just those who opted in — nobody chose the time, so everyone still on it
+        // gets the heads-up.
+        attendees: { where: { response: { not: 'declined' } }, select: { user_id: true } },
       },
       take: 500,
     });

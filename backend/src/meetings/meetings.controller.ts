@@ -19,17 +19,18 @@ import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { MeetingsService, Actor } from './meetings.service';
 import { MeetingsReportsService } from './meetings-reports.service';
+import { MeetingRhythmsService } from './meeting-rhythms.service';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 import {
   UpdateMeetingDto,
   DeleteMeetingDto,
   UpdateRecordDto,
-  RespondDto,
-  AddSlotDto,
-  VoteSlotDto,
-  ConfirmSlotDto,
+  DeclineDto,
   MarkAttendanceDto,
   PrivateNoteDto,
+  BusyQueryDto,
+  CreateRhythmDto,
+  UpdateRhythmDto,
 } from './dto/meeting-actions.dto';
 import {
   CreateActionItemDto,
@@ -53,6 +54,7 @@ export class MeetingsController {
   constructor(
     private readonly service: MeetingsService,
     private readonly reports: MeetingsReportsService,
+    private readonly rhythms: MeetingRhythmsService,
   ) {}
 
   // ─── List / detail ──────────────────────────────────────────────────────────
@@ -65,7 +67,7 @@ export class MeetingsController {
 
   @Get('reports')
   @RequirePermission(MEETINGS, PermissionAction.read)
-  @ApiOperation({ summary: 'Aggregated meeting reports (viewer-scoped)' })
+  @ApiOperation({ summary: 'Aggregated meeting reports (creator-scoped in v1)' })
   reportsAggregate(@Param('orgId') orgId: string, @Request() req: any, @Query() query: Record<string, string>) {
     return this.reports.report(orgId, actorOf(req), query);
   }
@@ -75,6 +77,57 @@ export class MeetingsController {
   @ApiOperation({ summary: 'Org-wide decision log' })
   decisionLog(@Param('orgId') orgId: string, @Query() query: Record<string, string>) {
     return this.service.listDecisions(orgId, query);
+  }
+
+  // ─── Busy view (organiser sees busy times before picking a slot) ──────────────
+  @Post('busy')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  @ApiOperation({ summary: 'Busy times for a set of people over a window (floor, not a guarantee)' })
+  busy(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: BusyQueryDto) {
+    return this.service.busyView(orgId, actorOf(req), dto);
+  }
+
+  // ─── Rhythms (recurring meetings) ──────────────────────────────────────────────
+  @Get('rhythms')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  listRhythms(@Param('orgId') orgId: string, @Request() req: any, @Query() query: Record<string, string>) {
+    return this.rhythms.list(orgId, actorOf(req), query);
+  }
+
+  @Post('rhythms')
+  @RequirePermission(MEETINGS, PermissionAction.write)
+  createRhythm(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateRhythmDto) {
+    return this.rhythms.create(orgId, actorOf(req), dto);
+  }
+
+  @Get('rhythms/:rhythmId')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  getRhythm(@Param('orgId') orgId: string, @Param('rhythmId') rhythmId: string, @Request() req: any) {
+    return this.rhythms.getOne(orgId, actorOf(req), rhythmId);
+  }
+
+  @Patch('rhythms/:rhythmId')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  updateRhythm(@Param('orgId') orgId: string, @Param('rhythmId') rhythmId: string, @Request() req: any, @Body() dto: UpdateRhythmDto) {
+    return this.rhythms.update(orgId, actorOf(req), rhythmId, dto);
+  }
+
+  @Post('rhythms/:rhythmId/pause')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  pauseRhythm(@Param('orgId') orgId: string, @Param('rhythmId') rhythmId: string, @Request() req: any) {
+    return this.rhythms.pause(orgId, actorOf(req), rhythmId);
+  }
+
+  @Post('rhythms/:rhythmId/resume')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  resumeRhythm(@Param('orgId') orgId: string, @Param('rhythmId') rhythmId: string, @Request() req: any) {
+    return this.rhythms.resume(orgId, actorOf(req), rhythmId);
+  }
+
+  @Delete('rhythms/:rhythmId')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  removeRhythm(@Param('orgId') orgId: string, @Param('rhythmId') rhythmId: string, @Request() req: any, @Query('mode') mode?: 'stop' | 'delete-future') {
+    return this.rhythms.remove(orgId, actorOf(req), rhythmId, mode ?? 'stop');
   }
 
   @Get(':id')
@@ -122,41 +175,17 @@ export class MeetingsController {
     return this.service.updateRecord(orgId, actorOf(req), id, dto);
   }
 
-  // ─── Scheduling: fixed responses + poll ────────────────────────────────────────
-  @Post(':id/respond')
+  // ─── Attendance response (opt-out: only decline / undo) ─────────────────────────
+  @Post(':id/decline')
   @RequirePermission(MEETINGS, PermissionAction.read)
-  respond(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any, @Body() dto: RespondDto) {
-    return this.service.respond(orgId, actorOf(req), id, dto);
+  decline(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any, @Body() dto: DeclineDto) {
+    return this.service.decline(orgId, actorOf(req), id, dto);
   }
 
-  @Post(':id/convert-to-poll')
+  @Post(':id/undo-decline')
   @RequirePermission(MEETINGS, PermissionAction.read)
-  convert(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
-    return this.service.convertToPoll(orgId, actorOf(req), id);
-  }
-
-  @Post(':id/slots')
-  @RequirePermission(MEETINGS, PermissionAction.read)
-  addSlot(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any, @Body() dto: AddSlotDto) {
-    return this.service.addSlot(orgId, actorOf(req), id, dto);
-  }
-
-  @Delete(':id/slots/:slotId')
-  @RequirePermission(MEETINGS, PermissionAction.read)
-  dismissSlot(@Param('orgId') orgId: string, @Param('id') id: string, @Param('slotId') slotId: string, @Request() req: any) {
-    return this.service.dismissSlot(orgId, actorOf(req), id, slotId);
-  }
-
-  @Post(':id/slots/:slotId/vote')
-  @RequirePermission(MEETINGS, PermissionAction.read)
-  vote(@Param('orgId') orgId: string, @Param('id') id: string, @Param('slotId') slotId: string, @Request() req: any, @Body() dto: VoteSlotDto) {
-    return this.service.voteSlot(orgId, actorOf(req), id, slotId, dto);
-  }
-
-  @Post(':id/confirm-slot')
-  @RequirePermission(MEETINGS, PermissionAction.read)
-  confirm(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any, @Body() dto: ConfirmSlotDto) {
-    return this.service.confirmSlot(orgId, actorOf(req), id, dto);
+  undoDecline(@Param('orgId') orgId: string, @Param('id') id: string, @Request() req: any) {
+    return this.service.undoDecline(orgId, actorOf(req), id);
   }
 
   // ─── Lifecycle / time capture ──────────────────────────────────────────────────

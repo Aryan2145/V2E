@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Plus, Trash2, Eye, EyeOff } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Eye, EyeOff, CalendarSearch } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
@@ -9,8 +9,9 @@ import TimeField from '@/components/ui/TimeField'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi, type CreateMeetingInput } from '@/lib/api/meetings'
 import { goalsApi } from '@/lib/api/goals'
-import type { Meeting, MeetingLinkType, MeetingMode, MeetingType } from '@/lib/types/meetings'
+import type { Meeting, MeetingLinkType, MeetingType } from '@/lib/types/meetings'
 import MeetingAttendeeSelector, { type PersonOption } from './MeetingAttendeeSelector'
+import BusyTimesPanel from './BusyTimesPanel'
 
 const inputClass =
   'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
@@ -24,18 +25,17 @@ interface Props {
   onCreated: (m: Meeting) => void
 }
 
-interface SlotRow {
-  date: string
-  start: string
-  end: string
-}
-
-type CallMode = MeetingMode | 'log_past'
+type CallMode = 'fixed' | 'log_past'
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 function toISO(date: string, time: string): string | undefined {
   if (!date) return undefined
   return new Date(`${date}T${time || '09:00'}`).toISOString()
+}
+function minutesBetween(start: string, end: string): number {
+  const [sh, sm] = start.split(':').map(Number)
+  const [eh, em] = end.split(':').map(Number)
+  return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))
 }
 
 export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onCreated }: Props) {
@@ -47,36 +47,34 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
   const [location, setLocation] = useState('')
   const [callMode, setCallMode] = useState<CallMode>('fixed')
   const [attendees, setAttendees] = useState<string[]>([])
+  const [optional, setOptional] = useState<string[]>([]) // subset of attendees marked optional
   const [agenda, setAgenda] = useState('')
   const [minutes, setMinutes] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  const [showBusy, setShowBusy] = useState(false)
 
   const [linkType, setLinkType] = useState<'' | MeetingLinkType>('')
   const [linkEntityId, setLinkEntityId] = useState('')
   const [goals, setGoals] = useState<{ id: string; title: string }[]>([])
 
-  // fixed
   const [date, setDate] = useState('')
   const [startTime, setStartTime] = useState('10:00')
   const [endTime, setEndTime] = useState('11:00')
-  // poll
-  const [windowStart, setWindowStart] = useState('')
-  const [windowEnd, setWindowEnd] = useState('')
-  const [durationMin, setDurationMin] = useState(60)
-  const [slots, setSlots] = useState<SlotRow[]>([])
-  // log past
   const [actualDate, setActualDate] = useState('')
   const [actualStart, setActualStart] = useState('10:00')
   const [actualEnd, setActualEnd] = useState('11:00')
 
   const [saving, setSaving] = useState(false)
 
+  const nameOf = useMemo(() => new Map(people.map((p) => [p.user_id, p.name])), [people])
+  const requiredIds = useMemo(() => attendees.filter((a) => !optional.includes(a)), [attendees, optional])
+
   useEffect(() => {
     if (!isOpen) return
     setTitle(''); setType('online'); setOnlineLink(''); setOnlinePassword(''); setLocation('')
-    setCallMode('fixed'); setAttendees([]); setAgenda(''); setMinutes(''); setShowPassword(false); setLinkType(''); setLinkEntityId('')
+    setCallMode('fixed'); setAttendees([]); setOptional([]); setAgenda(''); setMinutes(''); setShowPassword(false); setShowBusy(false)
+    setLinkType(''); setLinkEntityId('')
     setDate(''); setStartTime('10:00'); setEndTime('11:00')
-    setWindowStart(''); setWindowEnd(''); setDurationMin(60); setSlots([])
     setActualDate(''); setActualStart('10:00'); setActualEnd('11:00')
   }, [isOpen])
 
@@ -86,6 +84,13 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
     }
   }, [linkType, orgId, goals.length])
 
+  // Keep the optional set a subset of the current attendees.
+  useEffect(() => { setOptional((opt) => opt.filter((id) => attendees.includes(id))) }, [attendees])
+
+  function toggleOptional(id: string) {
+    setOptional((opt) => (opt.includes(id) ? opt.filter((x) => x !== id) : [...opt, id]))
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) return addToast('Title is required', 'error')
@@ -93,8 +98,8 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
     const dto: CreateMeetingInput = {
       title: title.trim(),
       type,
-      mode: callMode === 'log_past' ? 'fixed' : callMode,
       attendee_user_ids: attendees,
+      optional_user_ids: optional,
     }
     if (type !== 'offline') { if (onlineLink) dto.online_link = onlineLink; if (onlinePassword) dto.online_password = onlinePassword }
     if (type !== 'online') dto.location = location
@@ -105,16 +110,7 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
       if (!date) return addToast('Pick a date', 'error')
       dto.scheduled_start = toISO(date, startTime)
       dto.scheduled_end = toISO(date, endTime)
-    } else if (callMode === 'poll') {
-      if (!windowStart || !windowEnd) return addToast('Set the poll window', 'error')
-      dto.poll_window_start = toISO(windowStart, '00:00')
-      dto.poll_window_end = toISO(windowEnd, '23:59')
-      dto.poll_duration_min = durationMin
-      dto.slots = slots
-        .filter((s) => s.date)
-        .map((s) => ({ start_at: toISO(s.date, s.start)!, end_at: toISO(s.date, s.end)! }))
     } else {
-      // log past
       if (!actualDate) return addToast('Pick the date it happened', 'error')
       dto.log_past = true
       dto.actual_start = toISO(actualDate, actualStart)
@@ -227,75 +223,94 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
           )}
         </div>
 
-        {/* Attendees */}
+        {/* Attendees — opt-out: everyone added is attending by default */}
         <div>
           <label className={labelClass}>Attendees</label>
           <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} />
+          <p className="text-xs text-[#64748B] mt-1">Everyone added is on the meeting. They can mark “can’t make it” with a reason. Toggle who is optional.</p>
+          {attendees.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {attendees.map((id) => {
+                const isOptional = optional.includes(id)
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => toggleOptional(id)}
+                    className="inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border"
+                    style={isOptional
+                      ? { backgroundColor: '#F1F5F9', color: '#475569', borderColor: '#E2E8F0' }
+                      : { backgroundColor: '#EFF6FF', color: '#2563EB', borderColor: '#BFDBFE' }}
+                    title="Toggle required / optional"
+                  >
+                    {nameOf.get(id) ?? 'Unknown'} · {isOptional ? 'Optional' : 'Required'}
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Call mode */}
         <div>
           <label className={labelClass}>How to schedule</label>
           <div className="flex flex-wrap gap-2">
-            {modeTab('fixed', 'Fixed time')}
-            {modeTab('poll', 'Poll for a slot')}
+            {modeTab('fixed', 'Pick a time')}
             {modeTab('log_past', 'Log a past meeting')}
           </div>
         </div>
 
         {callMode === 'fixed' && (
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className={labelClass}>Date *</label>
-              <DatePicker value={date} onChange={setDate} min={todayStr()} placeholder="Select date" />
-            </div>
-            <div>
-              <label className={labelClass}>Start</label>
-              <TimeField value={startTime} onChange={setStartTime} />
-            </div>
-            <div>
-              <label className={labelClass}>End</label>
-              <TimeField value={endTime} onChange={setEndTime} />
-            </div>
-          </div>
-        )}
-
-        {callMode === 'poll' && (
-          <div className="flex flex-col gap-3">
+          <>
             <div className="grid grid-cols-3 gap-3">
               <div>
-                <label className={labelClass}>Window from *</label>
-                <DatePicker value={windowStart} onChange={setWindowStart} min={todayStr()} placeholder="Select date" />
+                <label className={labelClass}>Date *</label>
+                <DatePicker value={date} onChange={setDate} min={todayStr()} placeholder="Select date" />
               </div>
               <div>
-                <label className={labelClass}>Window to *</label>
-                <DatePicker value={windowEnd} onChange={setWindowEnd} min={windowStart || todayStr()} placeholder="Select date" />
+                <label className={labelClass}>Start</label>
+                <TimeField value={startTime} onChange={setStartTime} />
               </div>
               <div>
-                <label className={labelClass}>Duration (min)</label>
-                <input type="number" className={inputClass} value={durationMin} min={5} step={5} onChange={(e) => setDurationMin(Number(e.target.value))} />
+                <label className={labelClass}>End</label>
+                <TimeField value={endTime} onChange={setEndTime} />
               </div>
             </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className={labelClass + ' mb-0'}>Candidate slots</label>
-                <button type="button" onClick={() => setSlots((s) => [...s, { date: '', start: '10:00', end: '11:00' }])} className="inline-flex items-center gap-1 text-sm font-medium text-[#2563EB]">
-                  <Plus size={14} /> Add slot
+            {/* Busy-times peek: the organiser picks the time; the system only shows/ranks. */}
+            {attendees.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowBusy((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2563EB]"
+                >
+                  <CalendarSearch size={15} /> {showBusy ? 'Hide' : 'Check'} people’s busy times
                 </button>
-              </div>
-              <p className="text-xs text-[#94A3B8] mb-2">Smart calendar-aware suggestions are added automatically too.</p>
-              <div className="flex flex-col gap-2">
-                {slots.map((s, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <DatePicker value={s.date} onChange={(iso) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, date: iso } : r))} placeholder="Select date" />
-                    <div className="w-28"><TimeField value={s.start} onChange={(v) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, start: v } : r))} /></div>
-                    <div className="w-28"><TimeField value={s.end} onChange={(v) => setSlots((rows) => rows.map((r, idx) => idx === i ? { ...r, end: v } : r))} /></div>
-                    <button type="button" onClick={() => setSlots((rows) => rows.filter((_, idx) => idx !== i))} className="text-[#94A3B8] hover:text-[#DC2626]"><Trash2 size={16} /></button>
+                {showBusy && date && (
+                  <div className="mt-2">
+                    <BusyTimesPanel
+                      orgId={orgId}
+                      userIds={attendees}
+                      requiredIds={requiredIds}
+                      from={new Date(`${date}T00:00`).toISOString()}
+                      to={new Date(`${date}T23:59`).toISOString()}
+                      durationMin={minutesBetween(startTime, endTime)}
+                      onPick={(startIso) => {
+                        const d = new Date(startIso)
+                        const hh = String(d.getHours()).padStart(2, '0')
+                        const mm = String(d.getMinutes()).padStart(2, '0')
+                        setStartTime(`${hh}:${mm}`)
+                        const dur = minutesBetween(startTime, endTime)
+                        const end = new Date(d.getTime() + dur * 60000)
+                        setEndTime(`${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`)
+                      }}
+                    />
                   </div>
-                ))}
+                )}
+                {showBusy && !date && <p className="text-xs text-[#94A3B8] mt-2">Pick a date to see busy times for that day.</p>}
               </div>
-            </div>
-          </div>
+            )}
+          </>
         )}
 
         {callMode === 'log_past' && (

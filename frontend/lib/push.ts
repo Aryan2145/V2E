@@ -21,6 +21,43 @@ export function pushSupported(): boolean {
   )
 }
 
+/**
+ * Machine-readable reason why enabling push failed. Surfaced to the user so a
+ * failure explains itself instead of a generic "try again". `secure-context`
+ * is the common one: browsers only allow push on https:// or http://localhost,
+ * never on a LAN address like http://192.168.x.x.
+ */
+export type EnablePushResult =
+  | { ok: true }
+  | {
+      ok: false
+      reason:
+        | 'secure-context' // page not served over https/localhost
+        | 'unsupported' // browser lacks serviceWorker/PushManager/Notification
+        | 'denied' // user (or a prior choice) blocked notifications
+        | 'dismissed' // permission prompt closed without choosing
+        | 'no-vapid' // backend has no VAPID keys configured
+        | 'sw-failed' // service worker failed to register
+        | 'subscribe-failed' // pushManager.subscribe threw
+      detail?: string
+    }
+
+// Plain-English explanation for each way enabling device notifications can fail,
+// so the toast tells the user what to actually do instead of "try again".
+export const PUSH_ERROR_MESSAGES: Record<Extract<EnablePushResult, { ok: false }>['reason'], string> = {
+  'secure-context':
+    'Device notifications only work on a secure address. Open the app at http://localhost or an https:// address — not a numeric IP like 192.168.x.x.',
+  unsupported:
+    "This browser doesn't support device notifications. Try the latest Chrome, Edge, or Firefox on desktop.",
+  denied:
+    'Notifications are blocked for this site in your browser. Click the padlock in the address bar → Site settings → allow Notifications, then try again.',
+  dismissed: 'The permission prompt was closed. Click again and choose Allow to turn on device notifications.',
+  'no-vapid': 'Device notifications are not set up on the server yet. Please contact your administrator.',
+  'sw-failed': 'The browser could not start the notification service worker. Try a full refresh (Ctrl+Shift+R) and try again.',
+  'subscribe-failed':
+    "Windows or your browser refused the notification subscription. Check that notifications are enabled in Windows Settings → System → Notifications, and that Focus Assist isn't blocking them.",
+}
+
 async function getRegistration(): Promise<ServiceWorkerRegistration | null> {
   if (!pushSupported()) return null
   try {
@@ -45,23 +82,40 @@ export async function getPushStatus(): Promise<PushStatus> {
 }
 
 /** Ask permission, subscribe to push, and register with the backend. */
-export async function enablePush(orgId: string): Promise<boolean> {
-  if (!pushSupported()) return false
+export async function enablePush(orgId: string): Promise<EnablePushResult> {
+  // A page must be a "secure context" for the Push API to exist at all. https://
+  // and http://localhost qualify; a LAN address like http://192.168.x.x does not,
+  // which is the usual reason push silently isn't available in local testing.
+  if (typeof window !== 'undefined' && window.isSecureContext === false) {
+    return { ok: false, reason: 'secure-context' }
+  }
+  if (!pushSupported()) return { ok: false, reason: 'unsupported' }
 
-  const permission = await Notification.requestPermission()
-  if (permission !== 'granted') return false
+  let permission: NotificationPermission
+  try {
+    permission = await Notification.requestPermission()
+  } catch (e) {
+    return { ok: false, reason: 'dismissed', detail: String(e) }
+  }
+  if (permission === 'denied') return { ok: false, reason: 'denied' }
+  if (permission !== 'granted') return { ok: false, reason: 'dismissed' }
 
   const { key } = await notificationsApi.getVapidKey(orgId)
-  if (!key) return false // backend has no VAPID keys configured
+  if (!key) return { ok: false, reason: 'no-vapid' } // backend has no VAPID keys configured
 
   const reg = await getRegistration()
-  if (!reg) return false
+  if (!reg) return { ok: false, reason: 'sw-failed' }
   await navigator.serviceWorker.ready
 
-  const sub = await reg.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
-  })
+  let sub: PushSubscription
+  try {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(key) as BufferSource,
+    })
+  } catch (e) {
+    return { ok: false, reason: 'subscribe-failed', detail: String(e) }
+  }
 
   const json = sub.toJSON()
   await notificationsApi.subscribePush(orgId, {
@@ -69,7 +123,7 @@ export async function enablePush(orgId: string): Promise<boolean> {
     keys: { p256dh: json.keys?.p256dh ?? '', auth: json.keys?.auth ?? '' },
     userAgent: navigator.userAgent,
   })
-  return true
+  return { ok: true }
 }
 
 export async function disablePush(orgId: string): Promise<void> {

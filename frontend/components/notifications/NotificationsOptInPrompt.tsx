@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { Bell, X } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useToast } from '@/components/ui/Toast'
-import { enablePush, getPushStatus } from '@/lib/push'
+import { enablePush, getPushStatus, PUSH_ERROR_MESSAGES } from '@/lib/push'
 
 // One-time nudge to enable browser/device push, so users discover they can be
 // notified even when V2E is closed. The enable/disable control also lives
@@ -51,16 +51,12 @@ export default function NotificationsOptInPrompt() {
   async function turnOn() {
     setBusy(true)
     try {
-      const ok = await enablePush(orgId)
-      if (ok) {
+      const result = await enablePush(orgId)
+      if (result.ok) {
         addToast("Notifications are on — you'll get alerts even when V2E is closed", 'success')
       } else {
-        addToast(
-          typeof Notification !== 'undefined' && Notification.permission === 'denied'
-            ? 'Notifications are blocked in your browser settings. Allow them to continue.'
-            : 'Could not enable notifications. You can try again from the bell menu.',
-          'error',
-        )
+        addToast(PUSH_ERROR_MESSAGES[result.reason], 'error')
+        if (result.detail) console.warn('[push] enable failed:', result.reason, result.detail)
       }
     } catch {
       addToast('Something went wrong enabling notifications.', 'error')

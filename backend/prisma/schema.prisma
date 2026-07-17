@@ -3271,13 +3271,7 @@ enum MeetingType {
   hybrid
 }
 
-enum MeetingMode {
-  fixed
-  poll
-}
-
 enum MeetingStatus {
-  polling
   scheduled
   in_progress
   closed
@@ -3291,23 +3285,11 @@ enum MeetingLinkType {
   ticket
 }
 
+// Opt-out attendance: everyone added is `attending` by default; declining
+// (with a required reason) is the only opt-out. No pending, no accept step.
 enum MeetingAttendeeResponse {
-  pending
-  accepted
-  rejected
-  reschedule_requested
-}
-
-enum MeetingSlotSource {
-  caller
-  invitee
-  system
-}
-
-enum MeetingVote {
-  available
-  unavailable
-  maybe
+  attending
+  declined
 }
 
 model Meeting {
@@ -3318,7 +3300,6 @@ model Meeting {
   online_link        String?
   online_password    String?
   location           String? // free text (offline / hybrid)
-  mode               MeetingMode
   status             MeetingStatus    @default(scheduled)
   // linkage (single optional link; all null = ad-hoc)
   link_type          MeetingLinkType?
@@ -3326,16 +3307,21 @@ model Meeting {
   // shared record (layer 1) — markdown
   agenda             String?          @db.Text
   minutes            String?          @db.Text
-  // schedule
+  // schedule (fixed time — the organiser picks it; the system never decides)
   scheduled_start    DateTime?
   scheduled_end      DateTime?
   actual_start       DateTime?
   actual_end         DateTime?
   reminder_sent      Boolean          @default(false)
-  // poll window (mode = poll)
-  poll_window_start  DateTime?
-  poll_window_end    DateTime?
-  poll_duration_min  Int?
+  // Attendance ledger honesty: null = attendance was never taken (reads as
+  // "not recorded", NEVER as everyone no-showing). Set the first time the
+  // organiser records attendance for this meeting.
+  attendance_taken_at DateTime?
+  // Rhythm linkage: set on instances spawned from a MeetingRhythm. spawn_date is
+  // the date-only day the instance was spawned for; the unique pair blocks a
+  // second spawn of the same rhythm on the same day (mirrors Task recurrence).
+  rhythm_id          String?
+  rhythm_spawn_date  DateTime?        @db.Date
   created_by_user_id String // the caller / organizer
   is_deleted         Boolean          @default(false)
   deleted_at         DateTime?
@@ -3345,13 +3331,15 @@ model Meeting {
   updated_at         DateTime         @updatedAt
 
   organizer     User                 @relation("MeetingOrganizer", fields: [created_by_user_id], references: [id])
+  rhythm        MeetingRhythm?       @relation(fields: [rhythm_id], references: [id])
   attendees     MeetingAttendee[]
-  slots         MeetingSlot[]
   action_items  MeetingActionItem[]
   decisions     MeetingDecision[]
   private_notes MeetingPrivateNote[]
 
+  @@unique([rhythm_id, rhythm_spawn_date], map: "meetings_rhythm_day_unique")
   @@index([organization_id, status, scheduled_start])
+  @@index([rhythm_id])
   @@map("meetings")
 }
 
@@ -3361,10 +3349,13 @@ model MeetingAttendee {
   meeting_id      String
   user_id         String
   is_organizer    Boolean                 @default(false)
-  response        MeetingAttendeeResponse @default(pending)
-  reject_reason   String?                 @db.Text
-  reschedule_at   DateTime? // fixed-mode reschedule preference
-  reschedule_note String?                 @db.Text
+  // Attending by default (opt-out). Declining requires a reason (reject_reason).
+  response        MeetingAttendeeResponse @default(attending)
+  reject_reason   String?                 @db.Text // required when response=declined; never overwritten
+  // Organiser-set at creation. Required attendees drive busy-view slot ranking;
+  // an optional attendee's clash is a warning only. Also lets governance say
+  // "declined, but attendance was required". Does NOT reverse a decline.
+  is_required     Boolean                 @default(true)
   attended        Boolean                 @default(false)
   attended_in_at  DateTime?
   attended_out_at DateTime?
@@ -3376,41 +3367,6 @@ model MeetingAttendee {
 
   @@unique([meeting_id, user_id])
   @@map("meeting_attendees")
-}
-
-model MeetingSlot {
-  id                  String            @id @default(uuid())
-  organization_id     String
-  meeting_id          String
-  start_at            DateTime
-  end_at              DateTime
-  source              MeetingSlotSource
-  proposed_by_user_id String?
-  system_rank         Int? // lower = better (calendar-aware suggestion)
-  is_dismissed        Boolean           @default(false)
-  is_confirmed        Boolean           @default(false)
-  created_at          DateTime          @default(now())
-
-  meeting Meeting           @relation(fields: [meeting_id], references: [id], onDelete: Cascade)
-  votes   MeetingSlotVote[]
-
-  @@index([meeting_id])
-  @@map("meeting_slots")
-}
-
-model MeetingSlotVote {
-  id              String      @id @default(uuid())
-  organization_id String
-  slot_id         String
-  meeting_id      String
-  user_id         String
-  vote            MeetingVote
-  created_at      DateTime    @default(now())
-
-  slot MeetingSlot @relation(fields: [slot_id], references: [id], onDelete: Cascade)
-
-  @@unique([slot_id, user_id])
-  @@map("meeting_slot_votes")
 }
 
 model MeetingActionItem {
@@ -3462,6 +3418,67 @@ model MeetingPrivateNote {
 
   @@unique([meeting_id, user_id])
   @@map("meeting_private_notes")
+}
+
+// ─── Rhythms (recurring meetings) ────────────────────────────────────────────────
+// A rhythm is a meeting template on a recurrence. The nightly spawner materialises
+// a normal Meeting per due day (see SchedulerService), reusing shouldEntryFireToday
+// verbatim — the SAME evaluator the task and work-log engines use. Rhythms are
+// fixed-time only (no poll). Holiday policy DIVERGES from tasks: a due day that is
+// a holiday is SKIPPED, never slid forward (a Thursday review must not land on Sat).
+model MeetingRhythm {
+  id                 String           @id @default(uuid())
+  organization_id    String
+  title              String
+  type               MeetingType
+  online_link        String?
+  online_password    String?
+  location           String?
+  link_type          MeetingLinkType?
+  link_entity_id     String?
+  agenda             String?          @db.Text
+  duration_min       Int              @default(30)
+  // Attendee roster copied to every spawned instance. optional_user_ids is the
+  // subset spawned with is_required=false; everyone else is required.
+  attendee_user_ids  Json             @default("[]")
+  optional_user_ids  Json             @default("[]")
+  is_active          Boolean          @default(true)
+  created_by_user_id String
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
+
+  schedule_entries MeetingRhythmSchedule[]
+  meetings         Meeting[]
+
+  @@index([organization_id])
+  @@map("meeting_rhythms")
+}
+
+// Mirrors RecurringScheduleEntry's recurrence columns (per the WorkLogDemandSchedule
+// precedent) so shouldEntryFireToday can evaluate it unchanged.
+model MeetingRhythmSchedule {
+  id                String                @id @default(uuid())
+  organization_id   String
+  meeting_rhythm_id String
+  schedule_type     RecurringScheduleType
+  every             Int                   @default(1)
+  days              Json                  @default("[]")
+  month_days        Json                  @default("[]")
+  yearly_dates      Json                  @default("[]")
+  time              String                @default("09:00")
+  start_date        DateTime
+  end_condition     RecurringEndCondition @default(never)
+  end_date          DateTime?
+  end_after         Int?
+  occurrence_count  Int                   @default(0)
+  is_active         Boolean               @default(true)
+  created_at        DateTime              @default(now())
+  updated_at        DateTime              @updatedAt
+
+  rhythm MeetingRhythm @relation(fields: [meeting_rhythm_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, is_active])
+  @@map("meeting_rhythm_schedules")
 }
 
 // ─── Work Log (Governance) ──────────────────────────────────────────────────────

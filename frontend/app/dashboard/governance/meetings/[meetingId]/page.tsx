@@ -71,7 +71,7 @@ export default function MeetingDetailPage({ params }: { params: { meetingId: str
   async function copySummary() {
     const lines = [
       `# ${m.title}`,
-      `When: ${m.status === 'polling' ? 'Finding a slot' : fmtDateTime(m.scheduled_start)}`,
+      `When: ${fmtDateTime(m.scheduled_start)}`,
       `Organizer: ${m.organizer?.name ?? '—'}`,
       `Type: ${TYPE_LABEL[m.type]}${m.location ? ` · ${m.location}` : ''}`,
       '',
@@ -113,7 +113,7 @@ export default function MeetingDetailPage({ params }: { params: { meetingId: str
             </div>
             <h1 className="text-[24px] font-bold text-[#0F172A] leading-tight">{m.title}</h1>
             <div className="flex items-center gap-3 text-sm text-[#475569] mt-2 flex-wrap">
-              <span className="inline-flex items-center gap-1"><CalendarClock size={14} /> {m.status === 'polling' ? 'Finding a slot' : fmtDateTime(m.scheduled_start)}</span>
+              <span className="inline-flex items-center gap-1"><CalendarClock size={14} /> {fmtDateTime(m.scheduled_start)}</span>
               <span className="inline-flex items-center gap-1"><Users size={14} /> {m.organizer?.name}</span>
               {m.type !== 'offline' && m.online_link && <a href={m.online_link} target="_blank" rel="noreferrer" className="text-[#2563EB] hover:underline">Join link</a>}
               {m.location && <span className="inline-flex items-center gap-1"><MapPin size={14} /> {m.location}</span>}
@@ -170,7 +170,9 @@ function OverviewTab({ meeting, canManage, orgId, userId, onChanged, nameOf }: {
   const attendees = meeting.attendees ?? []
   const me = attendees.find((a) => a.user_id === userId)
   const canMarkAttendance = canManage && (meeting.status === 'in_progress' || meeting.status === 'closed')
-  const canRsvp = me && !me.is_organizer && meeting.status === 'scheduled' && me.response !== 'accepted'
+  const open = meeting.status === 'scheduled' || meeting.status === 'in_progress'
+  const iDeclined = !!me && me.response === 'declined'
+  const canDecline = !!me && !me.is_organizer && open
   const [showPw, setShowPw] = useState(false)
   const [declineReason, setDeclineReason] = useState('')
   const [declining, setDeclining] = useState(false)
@@ -179,8 +181,12 @@ function OverviewTab({ meeting, canManage, orgId, userId, onChanged, nameOf }: {
     try { onChanged(await meetingsApi.markAttendance(orgId, meeting.id, [{ user_id: uid, attended }])) }
     catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
   }
-  async function rsvp(action: 'accept' | 'reject', reason?: string) {
-    try { onChanged(await meetingsApi.respond(orgId, meeting.id, { action, reason })); addToast(action === 'accept' ? 'You accepted' : 'You declined', 'success'); setDeclining(false); setDeclineReason('') }
+  async function decline(reason: string) {
+    try { onChanged(await meetingsApi.decline(orgId, meeting.id, reason)); addToast('You declined', 'success'); setDeclining(false); setDeclineReason('') }
+    catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
+  }
+  async function undoDecline() {
+    try { onChanged(await meetingsApi.undoDecline(orgId, meeting.id)); addToast('You’re back on the meeting', 'success') }
     catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
   }
 
@@ -199,21 +205,26 @@ function OverviewTab({ meeting, canManage, orgId, userId, onChanged, nameOf }: {
         </div>
       )}
 
-      {/* RSVP */}
-      {canRsvp && (
+      {/* Attendance response — opt-out: you're on it unless you say otherwise */}
+      {canDecline && !iDeclined && (
         <div className="bg-[#EFF6FF] border border-[#BFDBFE] rounded-[12px] p-4">
-          <p className="text-sm font-medium text-[#1E293B] mb-2">You haven&apos;t responded to this invite.</p>
+          <p className="text-sm font-medium text-[#1E293B] mb-2">You’re on this meeting.</p>
           <div className="flex flex-wrap items-center gap-2">
-            <button onClick={() => rsvp('accept')} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-[#16A34A] rounded-[8px]"><Check size={15} /> Accept</button>
-            <button onClick={() => setDeclining((v) => !v)} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-white rounded-[8px]"><X size={15} /> Decline</button>
-            <span className="text-xs text-[#64748B]">Need a different time? Use the Schedule tab to request a reschedule.</span>
+            <button onClick={() => setDeclining((v) => !v)} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#DC2626] border border-[#FECACA] bg-white rounded-[8px]"><X size={15} /> Can’t make it</button>
+            <span className="text-xs text-[#64748B]">Only say something if you can’t attend — a reason is required.</span>
           </div>
           {declining && (
             <div className="flex gap-2 mt-2">
               <input className="flex-1 border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm" placeholder="Reason (required)" value={declineReason} onChange={(e) => setDeclineReason(e.target.value)} />
-              <Button variant="danger" disabled={!declineReason.trim()} onClick={() => rsvp('reject', declineReason)}>Submit</Button>
+              <Button variant="danger" disabled={!declineReason.trim()} onClick={() => decline(declineReason)}>Submit</Button>
             </div>
           )}
+        </div>
+      )}
+      {canDecline && iDeclined && (
+        <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[12px] p-4 flex items-center justify-between gap-3">
+          <p className="text-sm text-[#991B1B]">You said you can’t make it{me?.reject_reason ? `: “${me.reject_reason}”` : ''}.</p>
+          <Button variant="secondary" onClick={undoDecline}>I can make it after all</Button>
         </div>
       )}
 
@@ -228,11 +239,20 @@ function OverviewTab({ meeting, canManage, orgId, userId, onChanged, nameOf }: {
       <div className="flex flex-col gap-2">
         {attendees.map((a) => (
           <div key={a.id} className="flex items-center justify-between gap-3 border border-[#E2E8F0] rounded-[8px] px-3 py-2">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               {canMarkAttendance ? (
-                <button onClick={() => toggleAttended(a.user_id, !a.attended)} className="text-[#475569]">{a.attended ? <CheckCircle2 size={18} className="text-[#16A34A]" /> : <Circle size={18} className="text-[#CBD5E1]" />}</button>
-              ) : a.attended ? <CheckCircle2 size={18} className="text-[#16A34A]" /> : null}
-              <span className="text-[15px] text-[#0F172A]">{a.user?.name ?? nameOf.get(a.user_id) ?? 'Unknown'}{a.is_organizer && <span className="text-xs text-[#94A3B8] ml-1">(organizer)</span>}</span>
+                <button onClick={() => toggleAttended(a.user_id, !a.attended)} className="text-[#475569] shrink-0" aria-label="Toggle attended">{a.attended ? <CheckCircle2 size={18} className="text-[#16A34A]" /> : <Circle size={18} className="text-[#CBD5E1]" />}</button>
+              ) : a.attended ? <CheckCircle2 size={18} className="text-[#16A34A] shrink-0" /> : null}
+              <div className="min-w-0">
+                <span className="text-[15px] text-[#0F172A]">
+                  {a.user?.name ?? nameOf.get(a.user_id) ?? 'Unknown'}
+                  {a.is_organizer && <span className="text-xs text-[#94A3B8] ml-1">(organizer)</span>}
+                  {!a.is_organizer && !a.is_required && <span className="text-[11px] font-medium text-[#64748B] bg-[#F1F5F9] rounded-full px-2 py-0.5 ml-2">Optional</span>}
+                </span>
+                {a.response === 'declined' && a.reject_reason && (
+                  <p className="text-xs text-[#DC2626] mt-0.5 truncate">“{a.reject_reason}”{a.is_required ? <span className="text-[#B45309]"> · was required</span> : null}</p>
+                )}
+              </div>
             </div>
             <ResponseBadge response={a.response} />
           </div>
@@ -434,16 +454,28 @@ function AnalyticsTab({ orgId, meetingId }: { orgId: string; meetingId: string }
       <p className="text-sm text-[#475569] mt-1">{label}</p>
     </div>
   )
+  const att = data.attendance
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-      {stat('Planned (min)', data.planned_minutes ?? '—')}
-      {stat('Actual (min)', data.actual_minutes ?? '—', (data.overrun_minutes ?? 0) > 0 ? '#D97706' : '#16A34A')}
-      {stat('Attended', `${data.attendance.attended}/${data.attendance.invited}`)}
-      {stat('No-shows', data.attendance.no_show, data.attendance.no_show ? '#DC2626' : '#16A34A')}
-      {stat('Action items', data.action_items.created)}
-      {stat('Linked to tasks', data.action_items.linked)}
-      {stat('Done', data.action_items.done, '#16A34A')}
-      {stat('Decisions', data.decisions, data.decisions ? '#16A34A' : '#DC2626')}
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {stat('Planned (min)', data.planned_minutes ?? '—')}
+        {stat('Actual (min)', data.actual_minutes ?? '—', (data.overrun_minutes ?? 0) > 0 ? '#D97706' : '#16A34A')}
+        {stat('Expected', att.expected)}
+        {stat('Attended', att.attendance_recorded ? `${att.attended}/${att.expected}` : '—')}
+        {stat('No-shows', att.no_show === null ? '—' : att.no_show, att.no_show ? '#DC2626' : '#16A34A')}
+        {stat('Declined', att.declined, att.declined ? '#DC2626' : '#0F172A')}
+        {stat('Declined (required)', att.declined_required, att.declined_required ? '#DC2626' : '#16A34A')}
+        {stat('Action items', data.action_items.created)}
+        {stat('Linked to tasks', data.action_items.linked)}
+        {stat('Done', data.action_items.done, '#16A34A')}
+        {stat('Decisions', data.decisions, data.decisions ? '#16A34A' : '#DC2626')}
+      </div>
+      {!att.attendance_recorded && (
+        <div className="flex items-start gap-2 bg-[#F1F5F9] border border-[#E2E8F0] rounded-[8px] px-3 py-2 text-sm text-[#475569]">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0 text-[#94A3B8]" />
+          <span>Attendance hasn’t been recorded for this meeting, so no-shows aren’t counted. Mark attendance on the Overview tab.</span>
+        </div>
+      )}
     </div>
   )
 }
