@@ -53,6 +53,11 @@ export const NOTIF_EVENTS = {
   communication: [],
   system: [],
   leave: ['leave_requested', 'leave_decided', 'leave_overridden'],
+  process_hierarchy: [
+    'process_review_requested', // a contributor sent a node/sub-tree for review
+    'process_finalized', // an owner/admin marked a node final
+    'process_sent_back', // an owner/admin sent a node back to draft
+  ],
 } as const;
 
 export type NotifModule = keyof typeof NOTIF_EVENTS;

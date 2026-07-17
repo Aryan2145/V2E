@@ -1,0 +1,343 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Request,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { PermissionAction } from '@prisma/client';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { OrgScopeGuard } from '../common/guards/org-scope.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermission } from '../common/decorators/require-permission.decorator';
+import { principalFromUser } from '../access-rights/permissions.service';
+import {
+  MAX_ATTACHMENT_BYTES,
+  type UploadedFile as UploadedFileType,
+} from '../tasks/task-attachments.service';
+import { ProcessHierarchyService } from './process-hierarchy.service';
+import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
+import { BulkPositionDto, CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
+import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
+import { CreateArtifactDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
+import { AddAccessRuleDto } from './dto/access.dto';
+import { CreateSnapshotDto } from './dto/snapshot.dto';
+import { DecideStatusDto, RequestReviewDto } from './dto/status.dto';
+
+const LEAF = 'process_hierarchy.map.manage';
+
+@ApiTags('process-hierarchy')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, OrgScopeGuard, PermissionsGuard)
+@Controller('api/v1/org/:orgId/process-hierarchy')
+export class ProcessHierarchyController {
+  constructor(private readonly service: ProcessHierarchyService) {}
+
+  // ─── Maps ──────────────────────────────────────────────────────────────────
+  @Get('maps')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'List process maps visible to the caller' })
+  listMaps(@Param('orgId') orgId: string, @Request() req: any) {
+    return this.service.listMaps(orgId, principalFromUser(req.user));
+  }
+
+  @Post('maps')
+  @RequirePermission(LEAF, PermissionAction.write)
+  @ApiOperation({ summary: 'Create a process map (caller becomes owner)' })
+  createMap(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateMapDto) {
+    return this.service.createMap(orgId, req.user.id, dto);
+  }
+
+  @Get('maps/:mapId')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Process map detail' })
+  getMap(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any) {
+    return this.service.getMap(orgId, principalFromUser(req.user), mapId);
+  }
+
+  @Patch('maps/:mapId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Rename / re-describe a process map (owner or admin)' })
+  updateMap(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: UpdateMapDto) {
+    return this.service.updateMap(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Delete('maps/:mapId')
+  @RequirePermission(LEAF, PermissionAction.delete)
+  @ApiOperation({ summary: 'Delete a process map (admin only)' })
+  deleteMap(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any) {
+    return this.service.deleteMap(orgId, principalFromUser(req.user), mapId);
+  }
+
+  // ─── Flow (one drill level) ──────────────────────────────────────────────────
+  @Get('maps/:mapId/flow')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Nodes + connections at one level (omit parentNodeId for the map root)' })
+  getFlow(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Request() req: any,
+    @Query('parentNodeId') parentNodeId?: string,
+  ) {
+    return this.service.getFlow(orgId, principalFromUser(req.user), mapId, parentNodeId || null);
+  }
+
+  // ─── Nodes ───────────────────────────────────────────────────────────────────
+  @Post('maps/:mapId/nodes')
+  @RequirePermission(LEAF, PermissionAction.write)
+  @ApiOperation({ summary: 'Add a node to a flow' })
+  createNode(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateNodeDto) {
+    return this.service.createNode(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Get('maps/:mapId/nodes/:nodeId')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Full node detail (checklist, inputs/outputs, sharing)' })
+  getNode(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('nodeId') nodeId: string, @Request() req: any) {
+    return this.service.getNode(orgId, principalFromUser(req.user), mapId, nodeId);
+  }
+
+  @Patch('maps/:mapId/nodes/:nodeId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Update a node (details, status, responsible, checklist, position)' })
+  updateNode(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Request() req: any,
+    @Body() dto: UpdateNodeDto,
+  ) {
+    return this.service.updateNode(orgId, principalFromUser(req.user), mapId, nodeId, dto);
+  }
+
+  @Post('maps/:mapId/node-positions')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Bulk-save node positions after a canvas drag' })
+  bulkPosition(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: BulkPositionDto) {
+    return this.service.bulkPosition(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Delete('maps/:mapId/nodes/:nodeId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Delete a node and its sub-tree' })
+  deleteNode(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('nodeId') nodeId: string, @Request() req: any) {
+    return this.service.deleteNode(orgId, principalFromUser(req.user), mapId, nodeId);
+  }
+
+  // ─── Status workflow (draft → in_review → final) ─────────────────────────────
+  @Post('maps/:mapId/nodes/:nodeId/request-review')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Send a node (optionally its sub-tree) for review' })
+  requestReview(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Request() req: any,
+    @Body() dto: RequestReviewDto,
+  ) {
+    return this.service.requestReview(orgId, principalFromUser(req.user), mapId, nodeId, !!dto.cascade);
+  }
+
+  @Post('maps/:mapId/nodes/:nodeId/decide-status')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Approve (final) or send back (draft) a node — owner/admin' })
+  decideStatus(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Request() req: any,
+    @Body() dto: DecideStatusDto,
+  ) {
+    return this.service.decideStatus(orgId, principalFromUser(req.user), mapId, nodeId, dto.status, !!dto.cascade);
+  }
+
+  // ─── Connections ─────────────────────────────────────────────────────────────
+  @Post('maps/:mapId/connections')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Draw a connection between two steps in a flow' })
+  createConnection(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateConnectionDto) {
+    return this.service.createConnection(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Patch('maps/:mapId/connections/:connId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Update a connection label / branch' })
+  updateConnection(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('connId') connId: string,
+    @Request() req: any,
+    @Body() dto: UpdateConnectionDto,
+  ) {
+    return this.service.updateConnection(orgId, principalFromUser(req.user), mapId, connId, dto);
+  }
+
+  @Delete('maps/:mapId/connections/:connId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Delete a connection' })
+  deleteConnection(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('connId') connId: string, @Request() req: any) {
+    return this.service.deleteConnection(orgId, principalFromUser(req.user), mapId, connId);
+  }
+
+  // ─── Artifacts ────────────────────────────────────────────────────────────────
+  @Get('maps/:mapId/artifacts')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'List the map artifact library' })
+  listArtifacts(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any) {
+    return this.service.listArtifacts(orgId, principalFromUser(req.user), mapId);
+  }
+
+  @Post('maps/:mapId/artifacts')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Create a metadata-only artifact' })
+  createArtifact(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateArtifactDto) {
+    return this.service.createArtifact(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Post('maps/:mapId/artifacts/upload')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Create an artifact with a real uploaded file (R2)' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadArtifact(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Request() req: any,
+    @UploadedFile() file: UploadedFileType,
+    @Body() dto: CreateArtifactDto,
+  ) {
+    return this.service.uploadArtifact(orgId, principalFromUser(req.user), mapId, dto, file);
+  }
+
+  @Patch('maps/:mapId/artifacts/:artifactId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Update artifact metadata' })
+  updateArtifact(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('artifactId') artifactId: string,
+    @Request() req: any,
+    @Body() dto: UpdateArtifactDto,
+  ) {
+    return this.service.updateArtifact(orgId, principalFromUser(req.user), mapId, artifactId, dto);
+  }
+
+  @Delete('maps/:mapId/artifacts/:artifactId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Delete an artifact (and its file)' })
+  deleteArtifact(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('artifactId') artifactId: string, @Request() req: any) {
+    return this.service.deleteArtifact(orgId, principalFromUser(req.user), mapId, artifactId);
+  }
+
+  @Get('maps/:mapId/artifacts/:artifactId/download')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Short-lived signed download URL for an artifact file' })
+  downloadArtifact(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('artifactId') artifactId: string, @Request() req: any) {
+    return this.service.downloadArtifact(orgId, principalFromUser(req.user), mapId, artifactId);
+  }
+
+  @Post('maps/:mapId/nodes/:nodeId/artifacts')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Link an artifact to a node as input/output' })
+  linkArtifact(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Request() req: any,
+    @Body() dto: LinkArtifactDto,
+  ) {
+    return this.service.linkArtifact(orgId, principalFromUser(req.user), mapId, nodeId, dto);
+  }
+
+  @Delete('maps/:mapId/nodes/:nodeId/artifacts/:linkId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Remove an artifact input/output link from a node' })
+  unlinkArtifact(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Param('linkId') linkId: string,
+    @Request() req: any,
+  ) {
+    return this.service.unlinkArtifact(orgId, principalFromUser(req.user), mapId, nodeId, linkId);
+  }
+
+  // ─── Access / sharing ───────────────────────────────────────────────────────
+  @Get('maps/:mapId/nodes/:nodeId/access')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'List sharing/attachment rules on a node' })
+  listAccess(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('nodeId') nodeId: string, @Request() req: any) {
+    return this.service.listNodeAccess(orgId, principalFromUser(req.user), mapId, nodeId);
+  }
+
+  @Post('maps/:mapId/nodes/:nodeId/access')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Attach a department/role/person (or exclude a person) at a node' })
+  addAccess(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Request() req: any,
+    @Body() dto: AddAccessRuleDto,
+  ) {
+    return this.service.addAccessRule(orgId, principalFromUser(req.user), mapId, nodeId, dto);
+  }
+
+  @Delete('maps/:mapId/nodes/:nodeId/access/:ruleId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Remove a sharing/attachment rule' })
+  removeAccess(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('nodeId') nodeId: string,
+    @Param('ruleId') ruleId: string,
+    @Request() req: any,
+  ) {
+    return this.service.removeAccessRule(orgId, principalFromUser(req.user), mapId, nodeId, ruleId);
+  }
+
+  // ─── Snapshots (create + restore; diff is Phase 2) ───────────────────────────
+  @Get('maps/:mapId/snapshots')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'List saved versions (as-is / to-be) of a map' })
+  listSnapshots(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any) {
+    return this.service.listSnapshots(orgId, principalFromUser(req.user), mapId);
+  }
+
+  @Post('maps/:mapId/snapshots')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Freeze the current map into a named version' })
+  createSnapshot(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateSnapshotDto) {
+    return this.service.createSnapshot(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Post('maps/:mapId/snapshots/:snapshotId/restore')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Replace the working map from a saved version' })
+  restoreSnapshot(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('snapshotId') snapshotId: string, @Request() req: any) {
+    return this.service.restoreSnapshot(orgId, principalFromUser(req.user), mapId, snapshotId);
+  }
+
+  // ─── Diff (as-is vs to-be) ────────────────────────────────────────────────────
+  @Get('maps/:mapId/diff')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Structural + field-level diff between two versions (use "live" or a snapshot id)' })
+  diff(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Request() req: any,
+    @Query('base') base: string,
+    @Query('target') target: string,
+  ) {
+    return this.service.diff(orgId, principalFromUser(req.user), mapId, base || 'live', target || 'live');
+  }
+}

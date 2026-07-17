@@ -2822,6 +2822,7 @@ enum NotificationModule {
   meetings
   work_logs
   leave
+  process_hierarchy
 }
 
 model Notification {
@@ -3557,6 +3558,256 @@ model WorkLogSettings {
   updated_at            DateTime @updatedAt
 
   @@map("work_log_settings")
+}
+
+// ─── Process Hierarchy (BPMN-lite process explorer) ────────────────────────────
+// A visual, recursive drill-down map of "how we do things here" — primarily a
+// learning tool. EVERYTHING is a node; nodes nest infinitely (parent_node_id).
+// Some nodes are containers/sub-processes you drill into; the deepest hold a
+// process flow (Start → steps → End) wired by ProcessConnection edges. Row-level
+// visibility is NOT the standard participant scope — it is attachment-based and
+// enforced by ProcessAccessService (leaf `process_hierarchy.map.manage` is
+// registered `self_scoped`). See project memory `project_process_hierarchy`.
+
+enum ProcessNodeKind {
+  container    // holds other nodes; you drill in
+  task         // a normal step in a flow
+  decision     // a binary Yes/No branch (diamond)
+  subprocess   // a step that opens into its own deeper flow (the recursion)
+  start_event  // BPMN start marker (no detail panel)
+  end_event    // BPMN end marker (no detail panel)
+}
+
+enum ProcessNodeStatus {
+  draft
+  in_review
+  final
+}
+
+enum ProcessConditionKind {
+  none // normal sequence flow
+  yes  // the "Yes" branch out of a decision
+  no   // the "No" branch out of a decision
+}
+
+enum ProcessArtifactType {
+  form
+  report
+  document
+  data
+  other
+}
+
+enum ProcessArtifactDirection {
+  input  // a document the node needs
+  output // a document the node produces
+}
+
+// Mirrors ChecklistTemplateAccessRule: attach dept/role/person at a node, cascade
+// down. `exclude_user` = "attached but hidden" exception. Department attaches are
+// LIVE rules (joiners/leavers auto-reflect); add/remove of individuals stored as
+// extra user / exclude_user rows.
+enum ProcessAccessKind {
+  department
+  role
+  user
+  exclude_user
+}
+
+enum ProcessAccessLevel {
+  view // default — read only
+  edit // per-node edit grant; only meaningful for Contributors/Admins, never Viewers
+}
+
+enum ProcessSnapshotStatus {
+  draft
+  in_review
+  final
+}
+
+// A top-level explorer root. Versioning + all nodes/flows/artifacts hang off a map.
+model ProcessMap {
+  id                 String    @id @default(uuid())
+  organization_id    String
+  name               String
+  description        String?   @db.Text
+  is_deleted         Boolean   @default(false)
+  deleted_at         DateTime?
+  deleted_by_user_id String?
+  created_by_user_id String
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+
+  nodes       ProcessNode[]
+  connections ProcessConnection[]
+  artifacts   ProcessArtifact[]
+  snapshots   ProcessSnapshot[]
+
+  @@index([organization_id])
+  @@map("process_maps")
+}
+
+// EVERYTHING is a node. Nests infinitely via parent_node_id (null = top level of
+// the map). container/subprocess nodes are drilled into; their children form the
+// deeper flow. responsible_role_id / responsible_user_id are bare-scalar FKs (no
+// Prisma relation), matching the codebase convention for cross-entity references.
+model ProcessNode {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  map_id              String
+  parent_node_id      String? // null = top level of the map
+  kind                ProcessNodeKind   @default(task)
+  name                String
+  description         String?           @db.Text
+  status              ProcessNodeStatus @default(draft)
+  responsible_role_id String? // -> Role.id (bare scalar)
+  responsible_user_id String? // -> User.id (bare scalar)
+  position_x          Float             @default(0) // free-form ReactFlow placement
+  position_y          Float             @default(0)
+  sort_order          Int               @default(0)
+  is_deleted          Boolean           @default(false)
+  deleted_at          DateTime?
+  created_by_user_id  String
+  created_at          DateTime          @default(now())
+  updated_at          DateTime          @updatedAt
+
+  map            ProcessMap            @relation(fields: [map_id], references: [id], onDelete: Cascade)
+  parent_node    ProcessNode?          @relation("ProcessNodeTree", fields: [parent_node_id], references: [id])
+  child_nodes    ProcessNode[]         @relation("ProcessNodeTree")
+  checklist      ProcessChecklistItem[]
+  artifact_links ProcessNodeArtifact[]
+  access_rules   ProcessNodeAccess[]
+
+  @@index([organization_id])
+  @@index([map_id])
+  @@index([parent_node_id])
+  @@map("process_nodes")
+}
+
+// A directed edge in ONE flow: connects two sibling nodes under the same parent.
+// parent_node_id scopes the flow (null = the map's root flow). Node refs are bare
+// scalars; the service prunes edges when a node is removed.
+model ProcessConnection {
+  id              String               @id @default(uuid())
+  organization_id String
+  map_id          String
+  parent_node_id  String? // the flow (level) these edges live in; null = map root
+  source_node_id  String
+  target_node_id  String
+  label           String? // e.g. "Yes"/"No" off a decision
+  condition_kind  ProcessConditionKind @default(none)
+  created_at      DateTime             @default(now())
+
+  map ProcessMap @relation(fields: [map_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([map_id])
+  @@index([parent_node_id])
+  @@map("process_connections")
+}
+
+// A document that flows between steps. Metadata-only when the R2 file fields are
+// null; a real uploaded file (Cloudflare R2, reusing R2Service) when populated.
+// "Sits on the connection" is derived: an artifact that is an OUTPUT of the source
+// node and an INPUT of the target node renders on that edge.
+model ProcessArtifact {
+  id                 String              @id @default(uuid())
+  organization_id    String
+  map_id             String
+  name               String
+  description        String?             @db.Text
+  artifact_type      ProcessArtifactType @default(document)
+  // optional real file (all null = metadata-only)
+  file_name          String?
+  mime_type          String?
+  size_bytes         Int?
+  storage_key        String? // object key within the R2 bucket
+  created_by_user_id String
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
+
+  map        ProcessMap            @relation(fields: [map_id], references: [id], onDelete: Cascade)
+  node_links ProcessNodeArtifact[]
+
+  @@index([organization_id])
+  @@index([map_id])
+  @@map("process_artifacts")
+}
+
+// Links an artifact to a node as an input or an output (the detail panel's
+// Inputs / Outputs, and the source of edge-chip derivation).
+model ProcessNodeArtifact {
+  id          String                   @id @default(uuid())
+  node_id     String
+  artifact_id String
+  direction   ProcessArtifactDirection
+  created_at  DateTime                 @default(now())
+
+  node     ProcessNode     @relation(fields: [node_id], references: [id], onDelete: Cascade)
+  artifact ProcessArtifact @relation(fields: [artifact_id], references: [id], onDelete: Cascade)
+
+  @@unique([node_id, artifact_id, direction])
+  @@index([node_id])
+  @@index([artifact_id])
+  @@map("process_node_artifacts")
+}
+
+// Tick-off checklist items on a node's detail panel.
+model ProcessChecklistItem {
+  id         String   @id @default(uuid())
+  node_id    String
+  text       String
+  sort_order Int      @default(0)
+  created_at DateTime @default(now())
+
+  node ProcessNode @relation(fields: [node_id], references: [id], onDelete: Cascade)
+
+  @@index([node_id])
+  @@map("process_checklist_items")
+}
+
+// Attachment / sharing rule at a node — the access engine's raw material. Mirrors
+// ChecklistTemplateAccessRule. Rules cascade DOWN the node subtree by default;
+// a lower node can add more rules (union) or restrict (exclude_user). dept/role/
+// user are bare-scalar FKs.
+model ProcessNodeAccess {
+  id                      String             @id @default(uuid())
+  organization_id         String
+  node_id                 String
+  kind                    ProcessAccessKind
+  level                   ProcessAccessLevel @default(view)
+  department_id           String? // when kind = department
+  include_sub_departments Boolean            @default(true) // cascade to child depts
+  role_id                 String? // when kind = role (dept-scoped Role.id)
+  user_id                 String? // when kind = user / exclude_user
+  created_by_user_id      String
+  created_at              DateTime           @default(now())
+
+  node ProcessNode @relation(fields: [node_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, node_id])
+  @@index([node_id])
+  @@map("process_node_access")
+}
+
+// An immutable, named point-in-time copy of a WHOLE map (nodes + connections +
+// artifacts + checklists), serialized to tree_json. Powers as-is / to-be
+// versioning. Restore replaces the working tree from a snapshot; there is no
+// per-node history. (Snapshot DIFF is Phase 2.)
+model ProcessSnapshot {
+  id                 String                @id @default(uuid())
+  organization_id    String
+  map_id             String
+  label              String // e.g. "As-Is 2026", "To-Be v2"
+  status             ProcessSnapshotStatus @default(draft)
+  tree_json          Json
+  created_by_user_id String
+  created_at         DateTime              @default(now())
+
+  map ProcessMap @relation(fields: [map_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id, map_id])
+  @@map("process_snapshots")
 }
 
 
