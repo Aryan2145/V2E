@@ -217,6 +217,24 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
     ],
   },
   {
+    key: 'process_hierarchy',
+    label: 'Process Hierarchy',
+    entitlementControlled: true,
+    subModules: [
+      {
+        key: 'process_hierarchy.management',
+        label: 'Process maps',
+        features: [
+          // Single content leaf. Row-level visibility is attachment-based and enforced
+          // by ProcessAccessService, so this leaf is registered `self_scoped` in
+          // scope-registry.ts (NOT wired into ScopeService.listWhere). read = Viewer,
+          // read+write+edit = Contributor, delete reserved for admins.
+          feature('process_hierarchy.map.manage', 'Process hierarchy maps'),
+        ],
+      },
+    ],
+  },
+  {
     key: 'communication',
     label: 'Communication',
     entitlementControlled: true,

@@ -47,6 +47,7 @@ const WORK_CONTENT_GRANTS: RoleGrant[] = [
   { feature_key: 'tickets.ticket.manage', actions: RWE }, // scopable
   { feature_key: 'projects.project.manage', actions: RWE }, // scopable
   { feature_key: 'work_logs.log.manage', actions: RWE }, // self_scoped (module owns visibility)
+  { feature_key: 'process_hierarchy.map.manage', actions: RWE }, // self_scoped (attachment-based); everyone is a Contributor, delete stays admin-only
 ];
 
 /** Read-only access to broadcast / org-default content (scope is ignored on these). */

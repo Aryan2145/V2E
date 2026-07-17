@@ -17,6 +17,7 @@ const NAV_ITEMS: { label: string; href: string; module?: string }[] = [
   { label: 'Dashboard', href: '/dashboard' },
   { label: 'Goals', href: '/goals', module: 'goals' },
   { label: 'Learning', href: '/learning', module: 'learning' },
+  { label: 'Process Hierarchy', href: '/dashboard/process-hierarchy', module: 'process_hierarchy' },
   { label: 'Communication', href: '/communication', module: 'communication' },
   { label: 'Work', href: '/dashboard/tasks', module: 'work' },
   { label: 'ESS', href: '/dashboard/ecs', module: 'ecs' },

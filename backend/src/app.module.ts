@@ -37,6 +37,7 @@ import { AccessRightsModule } from './access-rights/access-rights.module';
 import { GoalsModule } from './goals/goals.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { WorkLogsModule } from './work-logs/work-logs.module';
+import { ProcessHierarchyModule } from './process-hierarchy/process-hierarchy.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { WorkLogsModule } from './work-logs/work-logs.module';
     HolidaysModule,
     ProjectsModule,
     EcsModule,
+    ProcessHierarchyModule,
   ],
 })
 export class AppModule {}

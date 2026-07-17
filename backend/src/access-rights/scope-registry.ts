@@ -90,6 +90,10 @@ export const CONTENT_LEAF_POLICY: Record<string, ContentLeafPolicy> = {
     rowScope: 'self_scoped',
     note: 'WorkLogReaderGrant + manager hierarchy + admin (readableWriterIds).',
   },
+  'process_hierarchy.map.manage': {
+    rowScope: 'self_scoped',
+    note: 'ProcessAccessService: map owner + admin + ProcessNodeAccess attachment cascade (dept/role/user) with per-node exclude/restriction.',
+  },
   // Broadcast / org-default content — everyone in the org is the audience.
   'learning.path.manage': {
     rowScope: 'org_default',
