@@ -12,10 +12,21 @@ import {
   type SnapshotSummary,
   type MapDiff,
 } from '@/lib/api/process-hierarchy'
-import ProcessCanvas from '@/components/process-hierarchy/ProcessCanvas'
+import dynamic from 'next/dynamic'
 import NodeDrawer from '@/components/process-hierarchy/NodeDrawer'
 import ArtifactLibrary from '@/components/process-hierarchy/ArtifactLibrary'
-import { KIND_META } from '@/components/process-hierarchy/nodes'
+import { KIND_META } from '@/components/process-hierarchy/kind-meta'
+
+// Client-only: keeps ReactFlow + html-to-image out of this route's server/SSR
+// bundle so the first on-demand compile of the [mapId] param route stays light.
+const ProcessCanvas = dynamic(() => import('@/components/process-hierarchy/ProcessCanvas'), {
+  ssr: false,
+  loading: () => (
+    <div className="h-full flex items-center justify-center">
+      <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+    </div>
+  ),
+})
 import {
   ChevronLeft, Eye, Pencil, Filter, History, Plus, Check, X, Loader2, RotateCcw,
   GitCompare, FolderOpen, Save,

@@ -15,7 +15,7 @@ import {
   type ProcessNodeStatus,
   type ProcessMapSummary,
 } from '@/lib/api/process-hierarchy'
-import { KIND_META } from './nodes'
+import { KIND_META } from './kind-meta'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import { getUsers } from '@/lib/api/users'

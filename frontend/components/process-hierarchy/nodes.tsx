@@ -2,8 +2,11 @@
 
 import React from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Folder, Square, GitBranch, Layers, Play, Flag, ExternalLink } from 'lucide-react'
+import { Play, Flag, ExternalLink } from 'lucide-react'
 import type { ProcessNodeKind, ProcessNodeStatus, DiffChangeKind } from '@/lib/api/process-hierarchy'
+import { KIND_META } from './kind-meta'
+
+export { KIND_META }
 
 export interface ProcessNodeData {
   name: string
@@ -27,15 +30,6 @@ export function borderColor(data: ProcessNodeData, accent: string): string {
   if (data.selected) return '#2563EB'
   if (data.diff && DIFF_COLOR[data.diff]) return DIFF_COLOR[data.diff]!
   return accent
-}
-
-export const KIND_META: Record<ProcessNodeKind, { label: string; icon: React.ReactNode; hint: string }> = {
-  container: { label: 'Container', icon: <Folder size={14} />, hint: 'Groups other nodes — drill in' },
-  task: { label: 'Task', icon: <Square size={14} />, hint: 'A single step in a flow' },
-  decision: { label: 'Decision', icon: <GitBranch size={14} />, hint: 'A yes / no branch' },
-  subprocess: { label: 'Sub-process', icon: <Layers size={14} />, hint: 'A step that opens a deeper flow' },
-  start_event: { label: 'Start', icon: <Play size={14} />, hint: 'Where the flow begins' },
-  end_event: { label: 'End', icon: <Flag size={14} />, hint: 'Where the flow ends' },
 }
 
 const STATUS_DOT: Record<ProcessNodeStatus, string> = {
