@@ -32,6 +32,7 @@ import { CreateArtifactDto, LinkArtifactDto, UpdateArtifactDto } from './dto/art
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto } from './dto/snapshot.dto';
 import { DecideStatusDto, RequestReviewDto } from './dto/status.dto';
+import { InstantiateTemplateDto, SaveAsTemplateDto } from './dto/template.dto';
 
 const LEAF = 'process_hierarchy.map.manage';
 
@@ -339,5 +340,34 @@ export class ProcessHierarchyController {
     @Query('target') target: string,
   ) {
     return this.service.diff(orgId, principalFromUser(req.user), mapId, base || 'live', target || 'live');
+  }
+
+  // ─── Templates (reusable blueprints) ──────────────────────────────────────────
+  @Get('templates')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'List reusable process templates' })
+  listTemplates(@Param('orgId') orgId: string) {
+    return this.service.listTemplates(orgId);
+  }
+
+  @Post('maps/:mapId/save-as-template')
+  @RequirePermission(LEAF, PermissionAction.write)
+  @ApiOperation({ summary: 'Save the current map as a reusable template' })
+  saveAsTemplate(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: SaveAsTemplateDto) {
+    return this.service.saveAsTemplate(orgId, principalFromUser(req.user), mapId, dto.name, dto.description);
+  }
+
+  @Post('templates/:templateId/instantiate')
+  @RequirePermission(LEAF, PermissionAction.write)
+  @ApiOperation({ summary: 'Create a new map from a template' })
+  instantiateTemplate(@Param('orgId') orgId: string, @Param('templateId') templateId: string, @Request() req: any, @Body() dto: InstantiateTemplateDto) {
+    return this.service.instantiateTemplate(orgId, principalFromUser(req.user), templateId, dto.name);
+  }
+
+  @Delete('templates/:templateId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Delete a template (creator or admin)' })
+  deleteTemplate(@Param('orgId') orgId: string, @Param('templateId') templateId: string, @Request() req: any) {
+    return this.service.deleteTemplate(orgId, principalFromUser(req.user), templateId);
   }
 }

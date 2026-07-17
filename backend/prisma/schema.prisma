@@ -3665,6 +3665,7 @@ model ProcessNode {
   position_x          Float             @default(0) // free-form ReactFlow placement
   position_y          Float             @default(0)
   sort_order          Int               @default(0)
+  linked_map_id       String? // cross-map link: drilling this node opens another ProcessMap
   is_deleted          Boolean           @default(false)
   deleted_at          DateTime?
   created_by_user_id  String
@@ -3808,6 +3809,23 @@ model ProcessSnapshot {
 
   @@index([organization_id, map_id])
   @@map("process_snapshots")
+}
+
+// A reusable process blueprint — a frozen map tree (same shape as a snapshot) that
+// can instantiate a brand-new map. Org-wide; instantiation clones with fresh ids.
+model ProcessTemplate {
+  id                 String   @id @default(uuid())
+  organization_id    String
+  name               String
+  description        String?  @db.Text
+  tree_json          Json
+  source_map_id      String? // the map it was created from (informational)
+  created_by_user_id String
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+
+  @@index([organization_id])
+  @@map("process_templates")
 }
 
 

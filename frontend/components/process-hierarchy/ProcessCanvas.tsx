@@ -1,12 +1,16 @@
 'use client'
 
-import { useEffect, useCallback, useMemo } from 'react'
+import { useEffect, useCallback, useMemo, useState } from 'react'
 import ReactFlow, {
   Background,
   Controls,
   MiniMap,
+  Panel,
   useNodesState,
   useEdgesState,
+  useReactFlow,
+  getRectOfNodes,
+  getTransformForBounds,
   ReactFlowProvider,
   BackgroundVariant,
   MarkerType,
@@ -16,6 +20,7 @@ import ReactFlow, {
   type NodeMouseHandler,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { Download } from 'lucide-react'
 import { nodeTypes, type ProcessNodeData } from './nodes'
 import type { FlowLevel, ProcessConditionKind, DiffChangeKind } from '@/lib/api/process-hierarchy'
 
@@ -53,6 +58,7 @@ function Inner({ flow, canEdit, selectedNodeId, visibleNodeIds, diffStatus, onSe
           drillable: DRILLABLE.has(n.kind),
           selected: n.id === selectedNodeId,
           diff: diffStatus?.[n.id],
+          linkedMapName: n.linked_map_name ?? null,
         },
       }))
   }, [flow.nodes, visibleNodeIds, canEdit, selectedNodeId, diffStatus])
@@ -92,13 +98,44 @@ function Inner({ flow, canEdit, selectedNodeId, visibleNodeIds, diffStatus, onSe
   useEffect(() => { setNodes(rfNodes) }, [rfNodes, setNodes])
   useEffect(() => { setEdges(rfEdges) }, [rfEdges, setEdges])
 
+  const { getNodes } = useReactFlow()
+  const [exporting, setExporting] = useState(false)
+
   const handleNodeClick: NodeMouseHandler = useCallback((_, node) => onSelectNode(node.id), [onSelectNode])
   const handleNodeDoubleClick: NodeMouseHandler = useCallback(
     (_, node) => {
-      if (DRILLABLE.has((node.data as ProcessNodeData).kind)) onDrill(node.id)
+      const d = node.data as ProcessNodeData
+      if (DRILLABLE.has(d.kind) || d.linkedMapName) onDrill(node.id)
     },
     [onDrill],
   )
+
+  const handleExport = useCallback(async () => {
+    const all = getNodes()
+    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement | null
+    if (!all.length || !viewport) return
+    setExporting(true)
+    try {
+      const PAD = 0.12
+      const bounds = getRectOfNodes(all)
+      const width = Math.min(4096, Math.max(320, Math.round(bounds.width * (1 + PAD * 2))))
+      const height = Math.min(4096, Math.max(320, Math.round(bounds.height * (1 + PAD * 2))))
+      const [tx, ty, scale] = getTransformForBounds(bounds, width, height, 0.2, 2, PAD)
+      const { toPng } = await import('html-to-image')
+      const dataUrl = await toPng(viewport, {
+        backgroundColor: '#ffffff', width, height, pixelRatio: 2, cacheBust: true,
+        style: { width: `${width}px`, height: `${height}px`, transform: `translate(${tx}px, ${ty}px) scale(${scale})` },
+      })
+      const link = document.createElement('a')
+      link.href = dataUrl
+      link.download = 'process-map.png'
+      link.click()
+    } catch {
+      /* ignore */
+    } finally {
+      setExporting(false)
+    }
+  }, [getNodes])
   const handleDragStop = useCallback(
     (_: React.MouseEvent, node: Node) => onNodeDragStop(node.id, node.position.x, node.position.y),
     [onNodeDragStop],
@@ -138,6 +175,12 @@ function Inner({ flow, canEdit, selectedNodeId, visibleNodeIds, diffStatus, onSe
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
       <Controls showInteractive={false} />
       <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable />
+      <Panel position="top-right">
+        <button onClick={handleExport} disabled={exporting}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-[8px] bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1] shadow-sm disabled:opacity-60">
+          <Download size={13} /> {exporting ? 'Exporting…' : 'PNG'}
+        </button>
+      </Panel>
     </ReactFlow>
   )
 }

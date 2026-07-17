@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, Trash2, Plus, Check, Download, ChevronRight, Loader2, FileText, UserCircle2, Shield,
+  X, Trash2, Plus, Check, Download, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink,
 } from 'lucide-react'
 import {
   processHierarchyApi,
@@ -13,6 +13,7 @@ import {
   type ProcessAccessKind,
   type ProcessAccessLevel,
   type ProcessNodeStatus,
+  type ProcessMapSummary,
 } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './nodes'
 import { getDepartments } from '@/lib/api/departments'
@@ -40,6 +41,7 @@ export default function NodeDrawer({
 }) {
   const [node, setNode] = useState<NodeDetail | null>(null)
   const [artifacts, setArtifacts] = useState<ProcessArtifact[]>([])
+  const [maps, setMaps] = useState<ProcessMapSummary[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [users, setUsers] = useState<User[]>([])
@@ -69,6 +71,7 @@ export default function NodeDrawer({
     setNode(null)
     reloadNode()
     processHierarchyApi.listArtifacts(orgId, mapId).then(setArtifacts).catch(() => {})
+    processHierarchyApi.listMaps(orgId).then(setMaps).catch(() => {})
     getDepartments(orgId).then(setDepartments).catch(() => {})
     getRoles(orgId).then(setRoles).catch(() => {})
     getUsers(orgId).then(setUsers).catch(() => {})
@@ -116,6 +119,11 @@ export default function NodeDrawer({
     setWfBusy(true)
     try { await processHierarchyApi.decideStatus(orgId, mapId, nodeId, s, wfCascade); await reloadNode(); onChanged() }
     finally { setWfBusy(false) }
+  }
+
+  async function setLinkedMap(id: string) {
+    await processHierarchyApi.updateNode(orgId, mapId, nodeId, { linked_map_id: id || null })
+    await reloadNode(); onChanged()
   }
 
   const touch = () => setDirty(true)
@@ -226,6 +234,27 @@ export default function NodeDrawer({
                     {roles.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
                   </select>
                 </div>
+              </div>
+            )}
+
+            {/* Cross-map link */}
+            {!isEvent(node.kind) && (
+              <div>
+                <label className="block text-xs font-medium text-[#64748B] mb-1">Opens another map (cross-link)</label>
+                <div className="flex items-center gap-2">
+                  <select className={`${selectCls} flex-1`} value={node.linked_map_id ?? ''} disabled={!canEdit}
+                    onChange={(e) => setLinkedMap(e.target.value)}>
+                    <option value="">— none —</option>
+                    {maps.filter((m) => m.id !== mapId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  {node.linked_map && (
+                    <button onClick={() => onDrill(nodeId)} title="Open linked map"
+                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF]">
+                      <ExternalLink size={13} /> Open
+                    </button>
+                  )}
+                </div>
+                {node.linked_map && <p className="text-[11px] text-[#94A3B8] mt-1">Double-clicking this node on the canvas jumps to “{node.linked_map.name}”.</p>}
               </div>
             )}
 

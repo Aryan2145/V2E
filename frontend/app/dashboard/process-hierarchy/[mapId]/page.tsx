@@ -18,7 +18,7 @@ import ArtifactLibrary from '@/components/process-hierarchy/ArtifactLibrary'
 import { KIND_META } from '@/components/process-hierarchy/nodes'
 import {
   ChevronLeft, Eye, Pencil, Filter, History, Plus, Check, X, Loader2, RotateCcw,
-  GitCompare, FolderOpen,
+  GitCompare, FolderOpen, Save,
 } from 'lucide-react'
 
 const ADD_KINDS: ProcessNodeKind[] = ['task', 'decision', 'subprocess', 'container', 'start_event', 'end_event']
@@ -40,6 +40,7 @@ export default function ProcessMapExplorerPage() {
   const [showFilter, setShowFilter] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
   const [showDocs, setShowDocs] = useState(false)
+  const [showSaveTpl, setShowSaveTpl] = useState(false)
   const [modeInitialized, setModeInitialized] = useState(false)
   const [diff, setDiff] = useState<MapDiff | null>(null)
   const [comparing, setComparing] = useState<{ base: string; target: string; baseLabel: string; targetLabel: string } | null>(null)
@@ -67,10 +68,12 @@ export default function ProcessMapExplorerPage() {
   }, [orgId, mapId])
 
   const drill = useCallback(async (nodeId: string) => {
+    const node = flow?.nodes.find((n) => n.id === nodeId)
+    if (node?.linked_map_id) { router.push(`/dashboard/process-hierarchy/${node.linked_map_id}`); return }
     setSelectedNodeId(null)
     setParentId(nodeId)
     await loadFlow(nodeId)
-  }, [loadFlow])
+  }, [flow, loadFlow, router])
 
   const goTo = useCallback(async (pid: string | null) => {
     setSelectedNodeId(null)
@@ -193,6 +196,12 @@ export default function ProcessMapExplorerPage() {
           </button>
         )}
 
+        {/* Save as template */}
+        <button onClick={() => setShowSaveTpl(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium rounded-[8px] border border-[#E2E8F0] text-[#475569] bg-white hover:bg-[#F1F5F9]">
+          <Save size={14} /> Save as template
+        </button>
+
         {/* Add-node palette */}
         {canEditHere && (
           <div className="flex items-center gap-1.5 ml-auto flex-wrap">
@@ -269,6 +278,52 @@ export default function ProcessMapExplorerPage() {
       {showDocs && (
         <ArtifactLibrary orgId={orgId} mapId={mapId} canEdit={map.can_edit} onClose={() => setShowDocs(false)} />
       )}
+
+      {showSaveTpl && (
+        <SaveTemplateModal orgId={orgId} mapId={mapId} mapName={map.name} onClose={() => setShowSaveTpl(false)} />
+      )}
+    </div>
+  )
+}
+
+// ─── Save-as-template modal ──────────────────────────────────────────────────
+function SaveTemplateModal({ orgId, mapId, mapName, onClose }: {
+  orgId: string; mapId: string; mapName: string; onClose: () => void
+}) {
+  const [name, setName] = useState(`${mapName} template`)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+  async function save() {
+    if (!name.trim() || busy) return
+    setBusy(true)
+    try { await processHierarchyApi.saveAsTemplate(orgId, mapId, { name: name.trim() }); setDone(true); setTimeout(onClose, 900) }
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-[12px] shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-[#0F172A]">Save as template</h3>
+          <button onClick={onClose} className="text-[#94A3B8] hover:text-[#0F172A]"><X size={18} /></button>
+        </div>
+        {done ? (
+          <p className="text-[#16A34A] text-sm inline-flex items-center gap-2 py-4"><Check size={16} /> Template saved.</p>
+        ) : (
+          <>
+            <label className="block text-sm font-medium text-[#374151] mb-1">Template name</label>
+            <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()}
+              className="w-full px-3 py-2.5 text-[15px] rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none" />
+            <p className="text-[12px] text-[#94A3B8] mt-1.5">Freezes this map’s current structure so you can spin up new maps from it later.</p>
+            <div className="flex justify-end mt-5">
+              <button onClick={save} disabled={!name.trim() || busy}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]">
+                {busy && <Loader2 size={15} className="animate-spin" />} Save template
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }

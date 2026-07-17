@@ -82,6 +82,11 @@ export class UpdateNodeDto {
   @IsNumber()
   position_y?: number;
 
+  // Cross-map link: drilling this node opens another map (null to unlink).
+  @IsOptional()
+  @IsUUID()
+  linked_map_id?: string | null;
+
   // Replace-all checklist (send the full desired list; omit to leave unchanged).
   @IsOptional()
   @IsArray()

@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Folder, Square, GitBranch, Layers, Play, Flag } from 'lucide-react'
+import { Folder, Square, GitBranch, Layers, Play, Flag, ExternalLink } from 'lucide-react'
 import type { ProcessNodeKind, ProcessNodeStatus, DiffChangeKind } from '@/lib/api/process-hierarchy'
 
 export interface ProcessNodeData {
@@ -13,6 +13,7 @@ export interface ProcessNodeData {
   drillable: boolean
   selected: boolean
   diff?: DiffChangeKind // when comparing versions — tints the node
+  linkedMapName?: string | null // cross-map link target
 }
 
 const DIFF_COLOR: Partial<Record<DiffChangeKind, string>> = {
@@ -82,6 +83,11 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <Frame border={borderColor(data, accent)}>
         <TitleRow data={data} />
+        {data.linkedMapName && (
+          <div className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#2563EB]">
+            <ExternalLink size={10} /> <span className="truncate">{data.linkedMapName}</span>
+          </div>
+        )}
         <DrillBadge count={data.drillable ? data.childCount : 0} />
       </Frame>
       <Handle type="source" position={Position.Right} style={handleStyle} />

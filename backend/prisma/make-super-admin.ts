@@ -10,7 +10,10 @@ const rawUrl =
 const needsSsl = rawUrl.includes('sslmode');
 const connectionString = needsSsl ? rawUrl.replace(/[?&]sslmode=[^&]*/g, '') : rawUrl;
 
-const EMAIL = 'aryan@rgbindia.com';
+// Pass the target email as a CLI arg, e.g.
+//   npx ts-node prisma/make-super-admin.ts superadmin@V2E.io
+// Falls back to the default account when no arg is given.
+const EMAIL = process.argv[2] ?? 'aryan@rgbindia.com';
 
 async function main() {
   const client = new Client({

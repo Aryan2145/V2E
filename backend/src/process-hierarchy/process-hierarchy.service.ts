@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -200,6 +201,16 @@ export class ProcessHierarchyService {
       linksByNode.set(l.node_id, entry);
     }
 
+    // Names of cross-linked maps referenced at this level (for the link badge).
+    const linkedIds = Array.from(new Set(visibleNodes.map((n) => n.linked_map_id).filter((x): x is string => !!x)));
+    const linkedMaps = linkedIds.length
+      ? await this.prisma.processMap.findMany({
+          where: { id: { in: linkedIds }, organization_id: orgId, is_deleted: false },
+          select: { id: true, name: true },
+        })
+      : [];
+    const linkedNameById = new Map(linkedMaps.map((m) => [m.id, m.name]));
+
     return {
       map_id: mapId,
       parent_node_id: parentNodeId ?? null,
@@ -208,6 +219,7 @@ export class ProcessHierarchyService {
       nodes: visibleNodes.map((n) => ({
         ...n,
         child_count: childCountBy.get(n.id) ?? 0,
+        linked_map_name: n.linked_map_id ? linkedNameById.get(n.linked_map_id) ?? null : null,
         inputs: linksByNode.get(n.id)?.input ?? [],
         outputs: linksByNode.get(n.id)?.output ?? [],
       })),
@@ -298,6 +310,13 @@ export class ProcessHierarchyService {
         : Promise.resolve(null),
     ]);
 
+    const linkedMap = node.linked_map_id
+      ? await this.prisma.processMap.findFirst({
+          where: { id: node.linked_map_id, organization_id: orgId, is_deleted: false },
+          select: { id: true, name: true },
+        })
+      : null;
+
     return {
       ...node,
       child_count: childCount,
@@ -305,6 +324,7 @@ export class ProcessHierarchyService {
       can_approve: await this.access.canEditMap(orgId, principal, mapId),
       responsible_user: responsibleUser,
       responsible_role: responsibleRole,
+      linked_map: linkedMap,
       checklist,
       inputs: artifactLinks.filter((l) => l.direction === 'input'),
       outputs: artifactLinks.filter((l) => l.direction === 'output'),
@@ -316,6 +336,12 @@ export class ProcessHierarchyService {
     await this.requireNode(orgId, mapId, nodeId);
     await this.access.assertCanEditNode(orgId, principal, nodeId);
 
+    // Cross-map link: only to a map the actor can see, never to this same map.
+    if (dto.linked_map_id) {
+      if (dto.linked_map_id === mapId) throw new BadRequestException('A node cannot link to its own map');
+      await this.access.assertCanViewMap(orgId, principal, dto.linked_map_id);
+    }
+
     await this.prisma.processNode.update({
       where: { id: nodeId },
       data: {
@@ -326,6 +352,7 @@ export class ProcessHierarchyService {
         ...(dto.responsible_user_id !== undefined ? { responsible_user_id: dto.responsible_user_id } : {}),
         ...(dto.position_x !== undefined ? { position_x: dto.position_x } : {}),
         ...(dto.position_y !== undefined ? { position_y: dto.position_y } : {}),
+        ...(dto.linked_map_id !== undefined ? { linked_map_id: dto.linked_map_id } : {}),
       },
     });
 
@@ -842,5 +869,167 @@ export class ProcessHierarchyService {
       });
     }
     return { updated: ids.length };
+  }
+
+  // ─── Templates (reusable process blueprints) ───────────────────────────────────
+
+  async saveAsTemplate(orgId: string, principal: Principal, mapId: string, name: string, description?: string) {
+    await this.access.assertCanViewMap(orgId, principal, mapId);
+    const tree = await this.serializeMap(orgId, mapId);
+    return this.prisma.processTemplate.create({
+      data: {
+        organization_id: orgId,
+        name: name.trim(),
+        description: description ?? null,
+        tree_json: tree,
+        source_map_id: mapId,
+        created_by_user_id: principal.userId,
+      },
+      select: { id: true, name: true, description: true, created_by_user_id: true, created_at: true },
+    });
+  }
+
+  async listTemplates(orgId: string) {
+    return this.prisma.processTemplate.findMany({
+      where: { organization_id: orgId },
+      orderBy: { created_at: 'desc' },
+      select: { id: true, name: true, description: true, created_by_user_id: true, created_at: true },
+    });
+  }
+
+  async deleteTemplate(orgId: string, principal: Principal, templateId: string) {
+    const tpl = await this.prisma.processTemplate.findFirst({
+      where: { id: templateId, organization_id: orgId },
+      select: { id: true, created_by_user_id: true },
+    });
+    if (!tpl) throw new NotFoundException('Template not found');
+    if (!principal.isAdmin && tpl.created_by_user_id !== principal.userId) {
+      throw new ForbiddenException('Only the template creator or an administrator can delete it');
+    }
+    await this.prisma.processTemplate.delete({ where: { id: templateId } });
+    return { success: true };
+  }
+
+  /** Create a brand-new map from a template, cloning the tree with fresh ids. */
+  async instantiateTemplate(orgId: string, principal: Principal, templateId: string, name: string) {
+    const tpl = await this.prisma.processTemplate.findFirst({
+      where: { id: templateId, organization_id: orgId },
+    });
+    if (!tpl) throw new NotFoundException('Template not found');
+    const tree = tpl.tree_json as any;
+
+    const map = await this.prisma.processMap.create({
+      data: {
+        organization_id: orgId,
+        name: name.trim(),
+        description: null,
+        created_by_user_id: principal.userId,
+      },
+    });
+
+    // Fresh-id maps so every internal reference is rewired to the new rows.
+    const nodeId = new Map<string, string>();
+    const artifactId = new Map<string, string>();
+    for (const n of tree.nodes ?? []) nodeId.set(n.id, randomUUID());
+    for (const a of tree.artifacts ?? []) artifactId.set(a.id, randomUUID());
+
+    // Copy any real files to new R2 keys so deleting one map never orphans another's bytes.
+    const artifactRows: any[] = [];
+    for (const a of tree.artifacts ?? []) {
+      const newId = artifactId.get(a.id)!;
+      let storageKey: string | null = a.storage_key ?? null;
+      if (a.storage_key) {
+        const destKey = `orgs/${orgId}/process-artifacts/${map.id}/${newId}.${extensionOf(a.file_name ?? '')}`;
+        try {
+          await this.r2.copyObject(a.storage_key, destKey);
+          storageKey = destKey;
+        } catch {
+          storageKey = a.storage_key; // fall back to sharing the object if copy is unavailable
+        }
+      }
+      artifactRows.push({
+        id: newId,
+        organization_id: orgId,
+        map_id: map.id,
+        name: a.name,
+        description: a.description ?? null,
+        artifact_type: a.artifact_type,
+        file_name: a.file_name ?? null,
+        mime_type: a.mime_type ?? null,
+        size_bytes: a.size_bytes ?? null,
+        storage_key: storageKey,
+        created_by_user_id: principal.userId,
+      });
+    }
+
+    const nodeRows = (tree.nodes ?? []).map((n: any) => ({
+      id: nodeId.get(n.id)!,
+      organization_id: orgId,
+      map_id: map.id,
+      parent_node_id: n.parent_node_id ? nodeId.get(n.parent_node_id) ?? null : null,
+      kind: n.kind,
+      name: n.name,
+      description: n.description ?? null,
+      status: n.status,
+      responsible_role_id: n.responsible_role_id ?? null,
+      responsible_user_id: n.responsible_user_id ?? null,
+      position_x: n.position_x ?? 0,
+      position_y: n.position_y ?? 0,
+      sort_order: n.sort_order ?? 0,
+      linked_map_id: n.linked_map_id ?? null, // cross-map links still point at real maps
+      created_by_user_id: principal.userId,
+    }));
+
+    const connectionRows = (tree.connections ?? [])
+      .filter((c: any) => nodeId.has(c.source_node_id) && nodeId.has(c.target_node_id))
+      .map((c: any) => ({
+        id: randomUUID(),
+        organization_id: orgId,
+        map_id: map.id,
+        parent_node_id: c.parent_node_id ? nodeId.get(c.parent_node_id) ?? null : null,
+        source_node_id: nodeId.get(c.source_node_id)!,
+        target_node_id: nodeId.get(c.target_node_id)!,
+        label: c.label ?? null,
+        condition_kind: c.condition_kind ?? 'none',
+      }));
+
+    const linkRows = (tree.links ?? [])
+      .filter((l: any) => nodeId.has(l.node_id) && artifactId.has(l.artifact_id))
+      .map((l: any) => ({
+        id: randomUUID(),
+        node_id: nodeId.get(l.node_id)!,
+        artifact_id: artifactId.get(l.artifact_id)!,
+        direction: l.direction,
+      }));
+
+    const checklistRows = (tree.checklist ?? [])
+      .filter((c: any) => nodeId.has(c.node_id))
+      .map((c: any) => ({ id: randomUUID(), node_id: nodeId.get(c.node_id)!, text: c.text, sort_order: c.sort_order ?? 0 }));
+
+    const accessRows = (tree.access ?? [])
+      .filter((a: any) => nodeId.has(a.node_id))
+      .map((a: any) => ({
+        id: randomUUID(),
+        organization_id: orgId,
+        node_id: nodeId.get(a.node_id)!,
+        kind: a.kind,
+        level: a.level,
+        department_id: a.department_id ?? null,
+        include_sub_departments: a.include_sub_departments ?? true,
+        role_id: a.role_id ?? null,
+        user_id: a.user_id ?? null,
+        created_by_user_id: principal.userId,
+      }));
+
+    await this.prisma.$transaction(async (tx) => {
+      if (artifactRows.length) await tx.processArtifact.createMany({ data: artifactRows });
+      if (nodeRows.length) await tx.processNode.createMany({ data: nodeRows });
+      if (connectionRows.length) await tx.processConnection.createMany({ data: connectionRows });
+      if (linkRows.length) await tx.processNodeArtifact.createMany({ data: linkRows });
+      if (checklistRows.length) await tx.processChecklistItem.createMany({ data: checklistRows });
+      if (accessRows.length) await tx.processNodeAccess.createMany({ data: accessRows });
+    });
+
+    return map;
   }
 }

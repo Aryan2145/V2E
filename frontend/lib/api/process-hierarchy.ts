@@ -55,6 +55,8 @@ export interface ProcessNode {
   position_y: number
   sort_order: number
   child_count?: number
+  linked_map_id?: string | null // cross-map link
+  linked_map_name?: string | null
   inputs?: ArtifactRef[] // light refs for edge chips (from the flow endpoint)
   outputs?: ArtifactRef[]
 }
@@ -122,10 +124,19 @@ export interface NodeDetail extends Omit<ProcessNode, 'inputs' | 'outputs'> {
   can_approve: boolean
   responsible_user: { id: string; name: string } | null
   responsible_role: { id: string; title: string } | null
+  linked_map: { id: string; name: string } | null
   checklist: ChecklistItem[]
   inputs: NodeArtifactLink[]
   outputs: NodeArtifactLink[]
   access_rules: AccessRule[]
+}
+
+export interface ProcessTemplateSummary {
+  id: string
+  name: string
+  description: string | null
+  created_by_user_id: string
+  created_at: string
 }
 
 // ─── Diff (as-is vs to-be) ─────────────────────────────────────────────────────
@@ -202,6 +213,7 @@ export const processHierarchyApi = {
       responsible_user_id: string | null
       position_x: number
       position_y: number
+      linked_map_id: string | null
       checklist: { id?: string; text: string }[]
     }>,
   ): Promise<NodeDetail> => unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/nodes/${nodeId}`, dto)),
@@ -296,4 +308,15 @@ export const processHierarchyApi = {
   // Diff
   diff: async (orgId: string, mapId: string, baseRef: string, targetRef: string): Promise<MapDiff> =>
     unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/diff?base=${baseRef}&target=${targetRef}`)),
+
+  // Templates
+  listTemplates: async (orgId: string): Promise<ProcessTemplateSummary[]> =>
+    unwrap(await apiClient.get(`${base(orgId)}/templates`)),
+  saveAsTemplate: async (orgId: string, mapId: string, dto: { name: string; description?: string }): Promise<ProcessTemplateSummary> =>
+    unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/save-as-template`, dto)),
+  instantiateTemplate: async (orgId: string, templateId: string, name: string): Promise<ProcessMapDetail> =>
+    unwrap(await apiClient.post(`${base(orgId)}/templates/${templateId}/instantiate`, { name })),
+  deleteTemplate: async (orgId: string, templateId: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/templates/${templateId}`)
+  },
 }
