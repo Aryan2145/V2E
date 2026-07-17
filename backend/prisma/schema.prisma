@@ -156,6 +156,7 @@ model Organization {
   employee_import_batches EmployeeImportBatch[]
   department_import_batches DepartmentImportBatch[]
   role_import_batches      RoleImportBatch[]
+  task_import_batches      TaskImportBatch[]
   learning_paths     LearningPath[]
   company_policies   CompanyPolicy[]
   announcements      Announcement[]
@@ -213,6 +214,7 @@ model User {
   employee_import_batches  EmployeeImportBatch[] @relation("EmployeeImportedBy")
   department_import_batches DepartmentImportBatch[] @relation("DepartmentImportedBy")
   role_import_batches      RoleImportBatch[] @relation("RoleImportedBy")
+  task_import_batches      TaskImportBatch[] @relation("TaskImportedBy")
   headed_departments       Department[]       @relation("DepartmentHead")
   reports_to_employees     EmployeeProfile[]  @relation("ReportingTo")
   announcements            Announcement[]
@@ -474,6 +476,51 @@ model RoleImportBatch {
 
   @@index([organization_id])
   @@map("role_import_batches")
+}
+
+// A bulk task-import run. Mirrors EmployeeImportBatch: records what was submitted,
+// how many tasks were created vs failed, and enough state for a guarded, window-
+// limited undo (see TaskImportService.undoImport).
+model TaskImportBatch {
+  id                  String            @id @default(uuid())
+  organization_id     String
+  imported_by_user_id String
+  file_name           String?
+  total_rows          Int // rows submitted for commit
+  created_count       Int // tasks actually created
+  failed_count        Int // rows rejected at commit time
+  status              ImportBatchStatus @default(committed)
+  undo_summary        Json? // { undone: number, kept: [{ title, reason }] }
+  created_at          DateTime          @default(now())
+  undone_at           DateTime?
+
+  organization Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  imported_by  User              @relation("TaskImportedBy", fields: [imported_by_user_id], references: [id])
+  tasks        Task[]
+  rows         TaskImportRow[]
+
+  @@index([organization_id])
+  @@map("task_import_batches")
+}
+
+// One submitted row of a bulk task import, retained so a past batch can be reopened
+// from Import History (detail view) and its failed / undo-removed rows re-exported
+// for correction. Cascade-deleted with its batch.
+model TaskImportRow {
+  id              String                @id @default(uuid())
+  batch_id        String
+  row_num         Int // 1-based sheet row (header = row 1, first data row = 2)
+  title           String?
+  status          ImportRowResultStatus
+  error           String? // failure reason at commit time (null when created)
+  payload         Json // original cell values (BulkTaskImportRowDto), for re-export
+  created_task_id String? // task created for this row; null when the row failed
+  created_at      DateTime              @default(now())
+
+  batch TaskImportBatch @relation(fields: [batch_id], references: [id], onDelete: Cascade)
+
+  @@index([batch_id])
+  @@map("task_import_rows")
 }
 
 model LearningPath {
@@ -1127,6 +1174,8 @@ model Task {
   recurring_spawn_date      DateTime? @db.Date
   workflow_instance_step_id String?
   goal_id              String?        // links a task to a QUARTERLY goal (initiative)
+  // Set when the task was created via bulk import; enables the guarded undo.
+  import_batch_id      String?
   created_at           DateTime       @default(now())
   updated_at           DateTime       @updatedAt
 
@@ -1134,6 +1183,7 @@ model Task {
   priority   TaskPriority?   @relation(fields: [priority_id], references: [id])
   status     TaskStatus      @relation(fields: [status_id], references: [id])
   goal       Goal?           @relation(fields: [goal_id], references: [id])
+  import_batch TaskImportBatch? @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
   assignees  TaskAssignee[]
   checklist  TaskChecklist[]
   reminders  TaskReminder[]
@@ -1148,6 +1198,7 @@ model Task {
   @@index([organization_id])
   @@index([created_by_user_id])
   @@index([department_id])
+  @@index([import_batch_id])
   @@map("tasks")
 }
 

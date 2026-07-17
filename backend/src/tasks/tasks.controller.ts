@@ -20,6 +20,8 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { TasksService } from './tasks.service';
+import { TaskImportService } from './task-import.service';
+import { BulkImportTasksDto } from './dto/bulk-import-task.dto';
 import { TaskAttachmentsService, MAX_ATTACHMENT_BYTES, type UploadedFile as UploadedFileType } from './task-attachments.service';
 import { principalFromUser } from '../access-rights/permissions.service';
 import { RecurringTasksService, type RecurringRelation } from '../recurring-tasks/recurring-tasks.service';
@@ -43,6 +45,7 @@ function toDataScope(raw?: string): DataScope | undefined {
 export class TasksController {
   constructor(
     private readonly service: TasksService,
+    private readonly importService: TaskImportService,
     private readonly attachments: TaskAttachmentsService,
     private readonly recurringService: RecurringTasksService,
     private readonly clock: ClockService,
@@ -336,6 +339,44 @@ export class TasksController {
       status_id: body.status_id,
       deadline: body.deadline,
     });
+  }
+
+  // ─── Bulk import (declared BEFORE /:id so "imports" isn't matched as an id) ──────
+
+  @Get('bulk-import/options')
+  @ApiOperation({ summary: 'Reference data for the import template (dropdowns, eligible assignees)' })
+  importOptions(@Param('orgId') orgId: string, @Request() req: any) {
+    return this.importService.getImportOptions(orgId, req.user.id);
+  }
+
+  @Post('bulk-import/validate')
+  @ApiOperation({ summary: 'Dry-run: validate task import rows, resolve references (no writes)' })
+  validateImport(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: BulkImportTasksDto) {
+    return this.importService.validateImport(orgId, req.user.id, dto.rows);
+  }
+
+  @Post('bulk-import/commit')
+  @ApiOperation({ summary: 'Commit a task import — creates ready rows and records an undoable batch' })
+  commitImport(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: BulkImportTasksDto) {
+    return this.importService.commitImport(orgId, req.user.id, dto.rows, dto.file_name);
+  }
+
+  @Get('imports')
+  @ApiOperation({ summary: 'Task import history — past batches with undo eligibility' })
+  listImports(@Param('orgId') orgId: string) {
+    return this.importService.listImportBatches(orgId);
+  }
+
+  @Get('imports/:batchId')
+  @ApiOperation({ summary: 'Full detail of one past task import batch' })
+  getImportDetail(@Param('orgId') orgId: string, @Param('batchId') batchId: string) {
+    return this.importService.getImportBatchDetail(orgId, batchId);
+  }
+
+  @Post('imports/:batchId/undo')
+  @ApiOperation({ summary: 'Guarded undo of a task import batch (window-limited, skips acted-on tasks)' })
+  undoImport(@Param('orgId') orgId: string, @Param('batchId') batchId: string) {
+    return this.importService.undoImport(orgId, batchId);
   }
 
   // ─── /:id routes ─────────────────────────────────────────────────────────────
