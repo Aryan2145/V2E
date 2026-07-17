@@ -46,6 +46,10 @@ interface Props {
   prefillSelf?: boolean
   onClose: () => void
   onCreated: () => void
+  /** A job role was created inline — bubble it up so the parent list stays fresh. */
+  onRoleCreated?: (role: Role) => void
+  /** A department was created inline — bubble it up so the parent list stays fresh. */
+  onDeptCreated?: (dept: Department) => void
 }
 
 const EMPLOYMENT_TYPES: { value: EmploymentType; label: string }[] = [
@@ -66,6 +70,8 @@ export default function AddEmployeeModal({
   prefillSelf = false,
   onClose,
   onCreated,
+  onRoleCreated,
+  onDeptCreated,
 }: Props) {
   const { addToast } = useToast()
   const { user } = useAuth()
@@ -500,6 +506,7 @@ export default function AddEmployeeModal({
           onClose={() => setCreatingDept(false)}
           onSaved={(saved) => {
             setLocalDepartments((ds) => [...ds, saved])
+            onDeptCreated?.(saved) // keep the parent page's list fresh for the next entry
             set('department_id', saved.id) // auto-select the new department
             set('role_id', '') // its role list is empty until one is added
             setCreatingRole(false)
@@ -523,6 +530,7 @@ export default function AddEmployeeModal({
           onClose={() => setCreatingRole(false)}
           onSaved={(saved) => {
             setLocalRoles((rs) => [...rs, saved])
+            onRoleCreated?.(saved) // keep the parent page's list fresh for the next entry
             set('role_id', saved.id) // auto-select the new role
             setCreatingRole(false)
             addToast(`Job role "${saved.title}" created`, 'success')

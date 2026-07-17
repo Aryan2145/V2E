@@ -263,6 +263,33 @@ export default function EmployeesPage() {
       .catch(() => null)
   }, [orgId])
 
+  // After an employee is created we refresh employees AND the catalog lists
+  // (departments/roles), because the Add-Employee flow lets the user create a
+  // department or job role inline — those need to persist into this page's state
+  // so the next open of the modal (and the filters) show them.
+  const reloadAfterCreate = useCallback(() => {
+    if (!orgId) return
+    Promise.all([
+      getEmployees(orgId).catch(() => null),
+      getDepartments(orgId).catch(() => null),
+      getRoles(orgId).catch(() => null),
+    ]).then(([emps, depts, rls]) => {
+      if (emps) setEmployees(emps)
+      if (depts) setDepartments(depts)
+      if (rls) setRoles(rls)
+    })
+  }, [orgId])
+
+  // A role/department created inline from the modal must land in the parent list
+  // immediately — even if the user then cancels the employee — so it's available
+  // on the next entry. De-dupe by id in case a refetch also brought it in.
+  const handleRoleCreated = useCallback((role: Role) => {
+    setRoles((rs) => (rs.some((r) => r.id === role.id) ? rs : [...rs, role]))
+  }, [])
+  const handleDeptCreated = useCallback((dept: Department) => {
+    setDepartments((ds) => (ds.some((d) => d.id === dept.id) ? ds : [...ds, dept]))
+  }, [])
+
   useEffect(() => {
     if (!orgId) {
       setLoading(false)
@@ -488,6 +515,8 @@ export default function EmployeesPage() {
           roles={roles}
           employees={employees}
           prefillSelf={prefillSelf}
+          onRoleCreated={handleRoleCreated}
+          onDeptCreated={handleDeptCreated}
           onClose={() => {
             setShowAdd(false)
             setPrefillSelf(false)
@@ -495,7 +524,7 @@ export default function EmployeesPage() {
           onCreated={() => {
             setShowAdd(false)
             setPrefillSelf(false)
-            reloadEmployees()
+            reloadAfterCreate()
           }}
         />
       )}
