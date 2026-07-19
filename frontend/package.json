@@ -16,6 +16,7 @@
     "html-to-image": "^1.11.13",
     "html2canvas": "^1.4.1",
     "lucide-react": "^1.16.0",
+    "mammoth": "^1.12.0",
     "next": "14.2.35",
     "pdfjs-dist": "^4.7.76",
     "react": "^18",
@@ -24,6 +25,7 @@
     "reactflow": "^11.11.4",
     "recharts": "^2.15.4",
     "socket.io-client": "^4.8.3",
+    "xlsx": "^0.18.5",
     "zod": "^4.4.3"
   },
   "devDependencies": {

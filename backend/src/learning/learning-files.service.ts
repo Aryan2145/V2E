@@ -19,8 +19,12 @@ import {
   type UploadedFile,
 } from '../tasks/task-attachments.service';
 
-/** How the frontend should render a material: which native element, or none. */
-export type PreviewKind = 'pdf' | 'image' | 'video' | 'audio' | 'none';
+/** How the frontend should render a material. Native browser elements, a client-side
+ *  renderer (docx/xlsx/csv/text), or nothing. */
+export type PreviewKind =
+  | 'pdf' | 'image' | 'video' | 'audio'
+  | 'docx' | 'xlsx' | 'csv' | 'text'
+  | 'none';
 
 function nativeKind(ext: string): PreviewKind {
   if (ext === 'pdf') return 'pdf';
@@ -28,6 +32,23 @@ function nativeKind(ext: string): PreviewKind {
   if (['mp4', 'webm', 'mov'].includes(ext)) return 'video';
   if (ext === 'mp3') return 'audio';
   return 'none';
+}
+
+/**
+ * Files rendered IN THE BROWSER from their raw bytes — Word via Mammoth, Excel/CSV
+ * via SheetJS, plain text directly. No server conversion needed, so these are
+ * previewable (and therefore allowed to be view-only).
+ */
+const CLIENT_RENDERABLE: Record<string, PreviewKind> = {
+  docx: 'docx',
+  xlsx: 'xlsx',
+  xls: 'xlsx',
+  csv: 'csv',
+  txt: 'text',
+};
+
+function clientKind(ext: string): PreviewKind {
+  return CLIENT_RENDERABLE[ext] ?? 'none';
 }
 
 @Injectable()
@@ -78,6 +99,8 @@ export class LearningFilesService {
     let previewKey: string | null = null;
     if (NATIVE_PREVIEW_EXTENSIONS.has(ext)) {
       previewStatus = 'ready'; // browser renders the original directly
+    } else if (CLIENT_RENDERABLE[ext]) {
+      previewStatus = 'ready'; // rendered in-browser (Mammoth/SheetJS/text) from the original
     } else if (CONVERTIBLE_EXTENSIONS.has(ext)) {
       // Office→PDF conversion is dormant by default (see DocumentConversionService /
       // LEARNING_DOC_PREVIEW.md). When off we don't spawn LibreOffice at all — the
@@ -127,8 +150,14 @@ export class LearningFilesService {
   }): { kind: PreviewKind; key: string | null } {
     if (item.content_type !== 'file' || !item.storage_key) return { kind: 'none', key: null };
     if (item.preview_storage_key) return { kind: 'pdf', key: item.preview_storage_key };
+    const ext = extensionOf(item.file_name ?? '');
+    // Word/Excel/CSV/text render in-browser from the raw bytes — always available,
+    // regardless of preview_status (so files uploaded before this feature still work).
+    const client = clientKind(ext);
+    if (client !== 'none') return { kind: client, key: item.storage_key };
     if (item.preview_status === 'ready') {
-      return { kind: nativeKind(extensionOf(item.file_name ?? '')), key: item.storage_key };
+      const native = nativeKind(ext);
+      return { kind: native, key: native === 'none' ? null : item.storage_key };
     }
     return { kind: 'none', key: null }; // pending / failed / none → nothing to render inline
   }

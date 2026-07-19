@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Download, Loader2, FileWarning, Lock } from 'lucide-react'
 import type { MaterialViewData } from '@/lib/types/learning'
+import OfficeViewer from './OfficeViewer'
 
 /**
  * In-app document viewer. Renders a material inline — PDF (incl. Office docs
@@ -62,14 +63,20 @@ export default function MaterialViewer({
       )}
 
       <div className="relative rounded-[10px] overflow-hidden border border-[#E2E8F0] bg-[#F8FAFC]">
-        <MaterialBody data={data} viewOnly={viewOnly} pdfLoader={pdfLoader} fullscreen={fullscreen} />
+        <MaterialBody data={data} viewOnly={viewOnly} pdfLoader={pdfLoader} fullscreen={fullscreen} onDownload={onDownload} />
         {viewOnly && watermark && <WatermarkOverlay text={watermark} />}
       </div>
     </div>
   )
 }
 
-function MaterialBody({ data, viewOnly, pdfLoader, fullscreen }: { data: MaterialViewData; viewOnly: boolean; pdfLoader?: () => Promise<ArrayBuffer>; fullscreen?: boolean }) {
+const OFFICE_KINDS = ['docx', 'xlsx', 'csv', 'text']
+
+function MaterialBody({ data, viewOnly, pdfLoader, fullscreen, onDownload }: { data: MaterialViewData; viewOnly: boolean; pdfLoader?: () => Promise<ArrayBuffer>; fullscreen?: boolean; onDownload?: () => void }) {
+  // Word/Excel/CSV/text are rendered in-browser from their bytes (not a URL).
+  if (OFFICE_KINDS.includes(data.kind) && pdfLoader) {
+    return <OfficeViewer kind={data.kind} loader={pdfLoader} fullscreen={fullscreen} onDownload={onDownload} />
+  }
   if (!data.url || data.kind === 'none') {
     const preparing = data.preview_status === 'pending'
     return (

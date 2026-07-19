@@ -4,7 +4,10 @@ export type AssignmentStatus = 'not_started' | 'in_progress' | 'completed';
 export type SequentialMode = 'sequential' | 'free_form';
 export type CompletionType = 'manual' | 'auto_opened';
 export type LearningPreviewStatus = 'none' | 'pending' | 'ready' | 'failed';
-export type PreviewKind = 'pdf' | 'image' | 'video' | 'audio' | 'none';
+export type PreviewKind =
+  | 'pdf' | 'image' | 'video' | 'audio'
+  | 'docx' | 'xlsx' | 'csv' | 'text'
+  | 'none';
 
 export interface LearningPath {
   id: string;
