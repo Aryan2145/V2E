@@ -4,13 +4,14 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FileText, Link2, Video, BookOpen, Trash2, Eye, RefreshCw,
-  Loader2, X, Download, Ban,
+  Loader2, X, Download, Ban, Globe, ExternalLink,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import {
   updateItem, deleteItem, uploadItemFile, getAdminItemViewUrl, getAdminItemFile,
 } from '@/lib/api/learning'
 import { ACCEPT_ATTR, validateFile, formatBytes, fileKindLabel } from '@/lib/attachments'
+import { toEmbeddablePageUrl } from '@/lib/learning/video-embed'
 import type { ContentType, LearningItem, MaterialViewData } from '@/lib/types/learning'
 import MaterialViewer from './MaterialViewer'
 
@@ -108,10 +109,37 @@ export default function MaterialRow({
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              onBlur={() => url !== (item.content_url ?? '') && save({ content_url: url })}
-              placeholder={item.content_type === 'video' ? 'Video embed URL (YouTube, Vimeo…)' : 'https://…'}
+              onBlur={() => {
+                if (url === (item.content_url ?? '')) return
+                const patch: Partial<LearningItem> = { content_url: url }
+                // A recognised embeddable provider (YouTube, Google Docs, Loom…) auto-turns on inline embed.
+                if (item.content_type === 'url' && url && !item.embed_inline && toEmbeddablePageUrl(url) !== url) {
+                  patch.embed_inline = true
+                }
+                save(patch)
+              }}
+              placeholder="https://… (paste a link, video, or doc)"
               className="w-full px-2.5 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
             />
+          )}
+          {item.content_type === 'url' && (
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-[#64748B]">Learners open this:</span>
+              <button
+                type="button"
+                title="Click to switch between showing the page inside the app or opening it in a new tab"
+                onClick={() => save({ embed_inline: !(item.embed_inline ?? false) })}
+                className={[
+                  'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors',
+                  item.embed_inline
+                    ? 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
+                    : 'bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]',
+                ].join(' ')}
+              >
+                {item.embed_inline ? <Globe size={12} /> : <ExternalLink size={12} />}
+                {item.embed_inline ? 'Inside the app' : 'In a new tab'}
+              </button>
+            </div>
           )}
           {item.content_type === 'article' && (
             <textarea

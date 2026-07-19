@@ -580,6 +580,9 @@ model LearningItem {
   // Course-decider's per-material choice. false = view-only (no download button,
   // watermarked, save/print/right-click suppressed).
   allow_download      Boolean               @default(true)
+  // For url items: render the linked page inline in an iframe (auto-embed known
+  // providers, fallback to open-in-new-tab if the site blocks framing) vs. a link button.
+  embed_inline        Boolean               @default(false)
 
   path     LearningPath           @relation(fields: [path_id], references: [id], onDelete: Cascade)
   progress LearningItemProgress[]

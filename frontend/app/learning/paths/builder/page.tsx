@@ -119,6 +119,13 @@ export default function CourseBuilderPage() {
 
   // ── Materials ──
   async function handleAddMaterial(type: ContentType, file?: File) {
+    // Don't let empty link/article rows stack up — make them fill the current one first.
+    if (type === 'url' && items.some((i) => i.content_type === 'url' && !i.content_url?.trim())) {
+      throw new Error('Finish the empty link before adding another.')
+    }
+    if (type === 'article' && items.some((i) => i.content_type === 'article' && !i.content_body?.trim())) {
+      throw new Error('Finish the empty article before adding another.')
+    }
     const pid = await ensurePath()
     // Sensible default title; file uploads inherit the filename server-side.
     const defaultTitle =

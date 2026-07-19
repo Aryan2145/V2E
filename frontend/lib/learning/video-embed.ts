@@ -76,6 +76,68 @@ export function toEmbeddableVideoUrl(raw: string): string {
   return raw
 }
 
+/**
+ * Turn a pasted link into an embeddable URL for showing a page inline in an iframe.
+ * Handles video hosts (via toEmbeddableVideoUrl) PLUS common document/embed providers
+ * that expose a dedicated frameable URL (Google Docs/Slides/Sheets/Forms, Loom, Canva,
+ * Figma). Anything else is returned unchanged and embedded as-is — if that site blocks
+ * framing the viewer falls back to an "open in new tab" affordance.
+ */
+export function toEmbeddablePageUrl(raw: string): string {
+  if (!raw) return raw
+
+  // Video hosts first (YouTube/Vimeo → player URL).
+  const asVideo = toEmbeddableVideoUrl(raw)
+  if (asVideo !== raw) return asVideo
+
+  let url: URL
+  try {
+    url = new URL(raw.trim())
+  } catch {
+    try { url = new URL(`https://${raw.trim()}`) } catch { return raw }
+  }
+  const host = url.hostname.replace(/^www\./, '').toLowerCase()
+  const path = url.pathname
+
+  // --- Google Docs / Slides / Sheets / Forms ---
+  if (host === 'docs.google.com') {
+    // Slides: /presentation/d/{id}/... → /embed
+    let m = path.match(/\/presentation\/d\/([^/]+)/)
+    if (m) return `https://docs.google.com/presentation/d/${m[1]}/embed`
+    // Docs: /document/d/{id}/... → /preview
+    m = path.match(/\/document\/d\/([^/]+)/)
+    if (m) return `https://docs.google.com/document/d/${m[1]}/preview`
+    // Sheets: /spreadsheets/d/{id}/... → /preview
+    m = path.match(/\/spreadsheets\/d\/([^/]+)/)
+    if (m) return `https://docs.google.com/spreadsheets/d/${m[1]}/preview`
+    // Forms: /forms/d/e/{id}/viewform → ?embedded=true
+    if (/\/forms\//.test(path)) {
+      url.searchParams.set('embedded', 'true')
+      return url.toString()
+    }
+  }
+
+  // --- Loom: /share/{id} → /embed/{id} ---
+  if (host === 'loom.com') {
+    const m = path.match(/\/share\/([^/]+)/)
+    if (m) return `https://www.loom.com/embed/${m[1]}`
+  }
+
+  // --- Canva: design view → ?embed ---
+  if (host === 'canva.com' && /\/design\//.test(path)) {
+    url.searchParams.set('embed', '')
+    return url.toString()
+  }
+
+  // --- Figma: wrap in the official embed player ---
+  if (host === 'figma.com' && /\/(file|design|proto)\//.test(path)) {
+    return `https://www.figma.com/embed?embed_host=share&url=${encodeURIComponent(raw)}`
+  }
+
+  // Unknown host: try to embed the URL directly (viewer falls back if it's blocked).
+  return raw
+}
+
 /** Turns a YouTube `t` value ("90", "1m30s", "90s") into a plain seconds string. */
 function parseTimeParam(t: string | null): string {
   if (!t) return ''

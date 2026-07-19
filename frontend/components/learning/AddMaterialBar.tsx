@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { Upload, Link2, Video, FileText, Loader2 } from 'lucide-react'
+import { Upload, Link2, FileText, Loader2 } from 'lucide-react'
 import { ACCEPT_ATTR, validateFile } from '@/lib/attachments'
 import type { ContentType } from '@/lib/types/learning'
 
@@ -31,7 +31,7 @@ export default function AddMaterialBar({
     try {
       await onAdd(type, file)
     } catch (e: any) {
-      setErr(e?.response?.data?.message ?? 'Something went wrong. Please try again.')
+      setErr(e?.response?.data?.message ?? e?.message ?? 'Something went wrong. Please try again.')
     } finally {
       setBusy(null)
     }
@@ -55,10 +55,6 @@ export default function AddMaterialBar({
         <button type="button" disabled={!!busy} onClick={() => run('url')}
           className={`${btn} text-[#475569] bg-white border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]`}>
           <Link2 size={15} /> Add link
-        </button>
-        <button type="button" disabled={!!busy} onClick={() => run('video')}
-          className={`${btn} text-[#475569] bg-white border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]`}>
-          <Video size={15} /> Embed video
         </button>
         <button type="button" disabled={!!busy} onClick={() => run('article')}
           className={`${btn} text-[#475569] bg-white border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]`}>

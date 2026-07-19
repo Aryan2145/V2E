@@ -12,7 +12,7 @@ import type { LearningItem, ContentType, MaterialViewData } from '@/lib/types/le
 import ProgressBar from './ProgressBar'
 import ItemTypeBadge from './ItemTypeBadge'
 import MaterialViewer from './MaterialViewer'
-import { toEmbeddableVideoUrl } from '@/lib/learning/video-embed'
+import { toEmbeddableVideoUrl, toEmbeddablePageUrl } from '@/lib/learning/video-embed'
 
 const TYPE_ICONS: Record<ContentType, any> = {
   video: Play, file: FileIcon, document: FileText, url: Link2, article: BookOpen,
@@ -319,7 +319,45 @@ export default function CourseViewer({
                 </div>
               )}
 
-              {['url', 'document'].includes(activeItem.content_type) && activeItem.content_url && (
+              {/* Link set to embed inline */}
+              {activeItem.content_type === 'url' && activeItem.content_url && activeItem.embed_inline && (
+                <div>
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <p className="text-xs text-[#64748B]">
+                      Not loading? Some sites block embedding — open it in a new tab.
+                    </p>
+                    <a
+                      href={activeItem.content_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open in a new tab"
+                      className="p-1.5 shrink-0 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
+                    >
+                      <ExternalLink size={16} />
+                    </a>
+                  </div>
+                  <div
+                    className={[
+                      'w-full rounded-[8px] overflow-hidden',
+                      toEmbeddableVideoUrl(activeItem.content_url) !== activeItem.content_url
+                        ? 'aspect-video bg-black'
+                        : 'border border-[#E2E8F0] bg-white',
+                    ].join(' ')}
+                    style={toEmbeddableVideoUrl(activeItem.content_url) !== activeItem.content_url ? undefined : { height: '70vh' }}
+                  >
+                    <iframe
+                      src={toEmbeddablePageUrl(activeItem.content_url)}
+                      className="w-full h-full"
+                      title={activeItem.title}
+                      referrerPolicy="no-referrer-when-downgrade"
+                      allowFullScreen
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Link/document set to open externally */}
+              {((activeItem.content_type === 'url' && !activeItem.embed_inline) || activeItem.content_type === 'document') && activeItem.content_url && (
                 <div className="flex flex-col items-center gap-4">
                   <a
                     href={activeItem.content_url}

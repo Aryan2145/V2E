@@ -48,4 +48,9 @@ export class CreateLearningItemDto {
   @IsOptional()
   @IsBoolean()
   allow_download?: boolean;
+
+  // For url items: embed the page inline (vs open in a new tab).
+  @IsOptional()
+  @IsBoolean()
+  embed_inline?: boolean;
 }

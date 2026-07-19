@@ -44,6 +44,7 @@ export interface LearningItem {
   file_size_bytes?: number | null;
   preview_status?: LearningPreviewStatus;
   allow_download?: boolean;
+  embed_inline?: boolean;
 }
 
 /** Signed inline-preview payload for a material (creator or learner). */
