@@ -1,0 +1,413 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import Link from 'next/link'
+import {
+  ArrowLeft, CheckCircle, Lock, Play, FileText, Link2, BookOpen,
+  ExternalLink, Clock, File as FileIcon, PanelLeftClose, PanelLeftOpen,
+  Maximize2, Minimize2, Download, Pencil,
+} from 'lucide-react'
+import type { LearningItem, ContentType, MaterialViewData } from '@/lib/types/learning'
+import ProgressBar from './ProgressBar'
+import ItemTypeBadge from './ItemTypeBadge'
+import MaterialViewer from './MaterialViewer'
+import { toEmbeddableVideoUrl } from '@/lib/learning/video-embed'
+
+const TYPE_ICONS: Record<ContentType, any> = {
+  video: Play, file: FileIcon, document: FileText, url: Link2, article: BookOpen,
+}
+
+/**
+ * The course consumption screen — the ONE component the learner sees AND the creator
+ * previews, so a preview can never drift from reality. Data comes in via loaders so
+ * the same UI works off a real assignment (learner) or straight off the path (preview).
+ *
+ * In `preview` mode: nothing is persisted (completion is local, no analytics view is
+ * recorded — the parent wires the no-tracking loaders), sequential locking is relaxed
+ * so the creator can roam freely, and an Edit button appears top-right.
+ */
+export default function CourseViewer({
+  title,
+  items,
+  sequential,
+  backHref,
+  backLabel,
+  watermark,
+  loadView,
+  loadFile,
+  onDownload,
+  persistComplete,
+  persistUncomplete,
+  preview = false,
+  editHref,
+}: {
+  title: string
+  items: LearningItem[]
+  sequential: boolean
+  backHref: string
+  backLabel: string
+  watermark: string
+  loadView: (itemId: string) => Promise<MaterialViewData>
+  loadFile: (itemId: string) => Promise<ArrayBuffer>
+  onDownload?: (itemId: string) => void
+  /** Persist completion (learner). Omit in preview — completion stays local. */
+  persistComplete?: (itemId: string, type: 'manual' | 'auto_opened') => Promise<void>
+  /** Persist an undo of completion (learner). Omit in preview. */
+  persistUncomplete?: (itemId: string) => Promise<void>
+  preview?: boolean
+  editHref?: string
+}) {
+  const [completedIds, setCompletedIds] = useState<Set<string>>(
+    () => new Set(items.filter((i) => i.progress?.status === 'completed').map((i) => i.id)),
+  )
+  const [activeItem, setActiveItem] = useState<LearningItem | null>(null)
+  const [completing, setCompleting] = useState<string | null>(null)
+  const [fileView, setFileView] = useState<MaterialViewData | null>(null)
+  const [fileLoading, setFileLoading] = useState(false)
+  const [navOpen, setNavOpen] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+
+  const percent = items.length ? Math.round((completedIds.size / items.length) * 100) : 0
+  const lockedAt = (idx: number) =>
+    sequential && !preview && idx > 0 && !completedIds.has(items[idx - 1].id)
+
+  // Open the first accessible, not-yet-done item on mount.
+  useEffect(() => {
+    const firstIdx = items.findIndex((i, idx) => !lockedAt(idx) && !completedIds.has(i.id))
+    const idx = firstIdx >= 0 ? firstIdx : (items.length ? 0 : -1)
+    if (idx >= 0) openItem(items[idx], idx)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Esc exits fullscreen
+  useEffect(() => {
+    if (!expanded) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setExpanded(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expanded])
+
+  async function openItem(item: LearningItem, idx: number) {
+    if (lockedAt(idx)) return
+    setActiveItem(item)
+
+    if (item.content_type === 'file') {
+      setFileView(null)
+      setFileLoading(true)
+      try { setFileView(await loadView(item.id)) } finally { setFileLoading(false) }
+    } else {
+      setFileView(null)
+    }
+    // No auto-complete on open — completion is always an explicit "Mark as Complete"
+    // click (you can't tell someone watched a video just because they opened it).
+  }
+
+  async function markComplete(item: LearningItem, type: 'manual' | 'auto_opened') {
+    if (completedIds.has(item.id)) return
+    setCompleting(item.id)
+    try {
+      setCompletedIds((prev) => new Set(prev).add(item.id))
+      if (persistComplete) await persistComplete(item.id, type)
+    } finally {
+      setCompleting(null)
+    }
+  }
+
+  /** Undo an accidental completion. */
+  async function unmarkComplete(item: LearningItem) {
+    if (!completedIds.has(item.id)) return
+    setCompleting(item.id)
+    try {
+      setCompletedIds((prev) => {
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+      if (persistUncomplete) await persistUncomplete(item.id)
+    } finally {
+      setCompleting(null)
+    }
+  }
+
+  const isDone = (id: string) => completedIds.has(id)
+
+  return (
+    <div className="flex h-[calc(100vh-56px)]">
+      {/* Sidebar: item list (collapsible, animated) */}
+      <div
+        className={[
+          'shrink-0 bg-white flex flex-col overflow-hidden transition-[width] duration-300 ease-in-out',
+          navOpen ? 'w-72 border-r border-[#E2E8F0]' : 'w-0 border-r-0',
+        ].join(' ')}
+      >
+        <div className="w-72 h-full flex flex-col">
+          <div className="p-4 border-b border-[#E2E8F0]">
+            <div className="flex items-center justify-between mb-3">
+              <Link
+                href={backHref}
+                className="inline-flex items-center gap-1.5 text-xs text-[#475569] hover:text-[#2563EB] transition-colors"
+              >
+                <ArrowLeft size={13} />
+                {backLabel}
+              </Link>
+              <button
+                onClick={() => setNavOpen(false)}
+                title="Collapse"
+                className="p-1 -mr-1 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            </div>
+            {preview && (
+              <div className="mb-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FEF9C3] text-[#CA8A04] text-[11px] font-semibold">
+                Preview
+              </div>
+            )}
+            <h2 className="text-sm font-bold text-[#0F172A] line-clamp-2 mb-2">{title}</h2>
+            <ProgressBar percent={percent} showLabel size="sm" />
+          </div>
+
+          <nav className="flex-1 overflow-y-auto py-2 px-2">
+            {items.map((item, idx) => {
+              const isActive = activeItem?.id === item.id
+              const done = isDone(item.id)
+              const locked = lockedAt(idx)
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => openItem(item, idx)}
+                  disabled={locked}
+                  className={[
+                    'w-full text-left flex items-start gap-3 px-3 py-2.5 rounded-[8px] mb-0.5 transition-colors',
+                    locked ? 'opacity-50 cursor-not-allowed'
+                      : isActive ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC] cursor-pointer',
+                  ].join(' ')}
+                >
+                  <div className="mt-0.5 shrink-0">
+                    {locked ? <Lock size={14} className="text-[#94A3B8]" />
+                      : done ? <CheckCircle size={14} className="text-[#16A34A]" />
+                      : <div className={`w-3.5 h-3.5 rounded-full border-2 ${isActive ? 'border-[#2563EB]' : 'border-[#CBD5E1]'}`} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-xs font-medium truncate ${isActive ? 'text-[#2563EB]' : done ? 'text-[#475569]' : 'text-[#0F172A]'}`}>
+                      {item.title}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <ItemTypeBadge type={item.content_type} />
+                      {item.estimated_minutes && <span className="text-[10px] text-[#94A3B8]">{item.estimated_minutes}m</span>}
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </nav>
+        </div>
+      </div>
+
+      {/* Main content area */}
+      <div className="flex-1 overflow-y-auto bg-[#F8FAFC]">
+        {(!navOpen || (preview && editHref)) && (
+          <div className="flex items-center justify-between max-w-6xl mx-auto px-4 sm:px-8 pt-4">
+            {!navOpen ? (
+              <div className="flex items-center gap-2">
+                <Link
+                  href={backHref}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] shadow-sm hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
+                >
+                  <ArrowLeft size={14} /> {backLabel}
+                </Link>
+                <button
+                  onClick={() => setNavOpen(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] shadow-sm hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
+                >
+                  <PanelLeftOpen size={14} /> Show list
+                </button>
+              </div>
+            ) : <span />}
+            {preview && editHref && (
+              <Link
+                href={editHref}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+              >
+                <Pencil size={14} /> Edit course
+              </Link>
+            )}
+          </div>
+        )}
+
+        {!activeItem ? (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <BookOpen size={40} className="text-[#CBD5E1] mx-auto mb-3" />
+              <p className="text-sm text-[#475569]">
+                {items.length ? 'Select a material from the list to begin' : 'This course has no materials yet'}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="max-w-6xl mx-auto px-4 sm:px-8 py-6">
+            {/* Item header */}
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-2">
+                <ItemTypeBadge type={activeItem.content_type} />
+                {activeItem.estimated_minutes && (
+                  <span className="flex items-center gap-1 text-xs text-[#64748B]">
+                    <Clock size={11} /> {activeItem.estimated_minutes} min
+                  </span>
+                )}
+              </div>
+              <h1 className="text-[22px] font-bold text-[#0F172A] mb-1">{activeItem.title}</h1>
+              {activeItem.description && <p className="text-sm text-[#475569]">{activeItem.description}</p>}
+            </div>
+
+            {/* Content */}
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 mb-6">
+              {activeItem.content_type === 'file' && (
+                fileLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-16 text-sm text-[#475569]">
+                    <div className="w-4 h-4 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+                    Loading material…
+                  </div>
+                ) : fileView ? (
+                  <>
+                    <div className="flex items-center justify-end mb-3">
+                      <button
+                        onClick={() => setExpanded(true)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
+                      >
+                        <Maximize2 size={14} /> Fullscreen
+                      </button>
+                    </div>
+                    <MaterialViewer
+                      key={activeItem.id}
+                      data={fileView}
+                      viewOnly={!fileView.allow_download}
+                      watermark={watermark}
+                      onDownload={fileView.allow_download && onDownload ? () => onDownload(activeItem.id) : undefined}
+                      pdfLoader={() => loadFile(activeItem.id)}
+                    />
+                  </>
+                ) : (
+                  <p className="text-sm text-[#94A3B8] text-center py-8">Couldn’t load this material.</p>
+                )
+              )}
+
+              {activeItem.content_type === 'article' && (
+                <div className="prose prose-sm max-w-none text-[#1E293B] whitespace-pre-wrap">
+                  {activeItem.content_body ?? 'No content available.'}
+                </div>
+              )}
+
+              {activeItem.content_type === 'video' && activeItem.content_url && (
+                <div>
+                  {/* Plays inline — just a small "open in new tab" logo, top-right */}
+                  <div className="flex items-center justify-end mb-3">
+                    <a
+                      href={activeItem.content_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="Open in a new tab"
+                      className="p-1.5 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
+                    >
+                      <ExternalLink size={16} />
+                    </a>
+                  </div>
+                  <div className="w-full aspect-video rounded-[8px] overflow-hidden bg-black">
+                    <iframe src={toEmbeddableVideoUrl(activeItem.content_url)} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen title={activeItem.title} />
+                  </div>
+                </div>
+              )}
+
+              {['url', 'document'].includes(activeItem.content_type) && activeItem.content_url && (
+                <div className="flex flex-col items-center gap-4">
+                  <a
+                    href={activeItem.content_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => { if (!isDone(activeItem.id)) markComplete(activeItem, 'auto_opened') }}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+                  >
+                    <ExternalLink size={15} />
+                    Open {activeItem.content_type === 'document' ? 'Document' : 'Link'}
+                  </a>
+                </div>
+              )}
+
+              {activeItem.content_type !== 'file' && !activeItem.content_url && !activeItem.content_body && (
+                <p className="text-sm text-[#94A3B8] text-center py-8">No content available for this item.</p>
+              )}
+            </div>
+
+            {/* Complete button */}
+            {!isDone(activeItem.id) ? (
+              <button
+                onClick={() => markComplete(activeItem, 'manual')}
+                disabled={completing === activeItem.id}
+                className="flex items-center gap-2 px-5 py-3 text-sm font-semibold text-white bg-[#16A34A] hover:bg-[#15803D] rounded-[8px] transition-colors disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
+              >
+                {completing === activeItem.id
+                  ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  : <CheckCircle size={16} />}
+                Mark as Complete
+              </button>
+            ) : (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[#16A34A]">
+                  <CheckCircle size={18} /> Completed
+                </div>
+                <button
+                  onClick={() => unmarkComplete(activeItem)}
+                  disabled={completing === activeItem.id}
+                  className="text-sm font-medium text-[#475569] hover:text-[#DC2626] underline-offset-2 hover:underline disabled:opacity-60 transition-colors"
+                >
+                  Undo
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Fullscreen material overlay */}
+      {expanded && activeItem?.content_type === 'file' && fileView && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[70] bg-white flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 border-b border-[#E2E8F0] shrink-0">
+            <div className="min-w-0 flex items-center gap-2">
+              <FileIcon size={16} className="text-[#2563EB] shrink-0" />
+              <h3 className="text-sm font-semibold text-[#0F172A] truncate">{activeItem.title}</h3>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {fileView.allow_download && onDownload && (
+                <button
+                  onClick={() => onDownload(activeItem.id)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+                >
+                  <Download size={15} /> Download
+                </button>
+              )}
+              <button
+                onClick={() => setExpanded(false)}
+                title="Exit fullscreen (Esc)"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
+              >
+                <Minimize2 size={15} /> Exit
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4">
+            <MaterialViewer
+              key={`${activeItem.id}-fs`}
+              data={fileView}
+              viewOnly={!fileView.allow_download}
+              watermark={watermark}
+              pdfLoader={() => loadFile(activeItem.id)}
+              fullscreen
+            />
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}

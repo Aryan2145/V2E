@@ -1,0 +1,220 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  FileText, Link2, Video, BookOpen, Trash2, Eye, RefreshCw,
+  Loader2, X, Download, Ban,
+} from 'lucide-react'
+import { useAuth } from '@/lib/auth/context'
+import {
+  updateItem, deleteItem, uploadItemFile, getAdminItemViewUrl, getAdminItemFile,
+} from '@/lib/api/learning'
+import { ACCEPT_ATTR, validateFile, formatBytes, fileKindLabel } from '@/lib/attachments'
+import type { ContentType, LearningItem, MaterialViewData } from '@/lib/types/learning'
+import MaterialViewer from './MaterialViewer'
+
+const TYPE_META: Record<ContentType, { icon: any; label: string }> = {
+  file: { icon: FileText, label: 'File' },
+  url: { icon: Link2, label: 'Link' },
+  video: { icon: Video, label: 'Video' },
+  document: { icon: FileText, label: 'Document' },
+  article: { icon: BookOpen, label: 'Article' },
+}
+
+export default function MaterialRow({
+  orgId, pathId, index, item, onChange, onRemove,
+}: {
+  orgId: string
+  pathId: string
+  index: number
+  item: LearningItem
+  onChange: (item: LearningItem) => void
+  onRemove: (id: string) => void
+}) {
+  const { user } = useAuth()
+  const [title, setTitle] = useState(item.title)
+  const [url, setUrl] = useState(item.content_url ?? '')
+  const [body, setBody] = useState(item.content_body ?? '')
+  const [saving, setSaving] = useState(false)
+  const [replacing, setReplacing] = useState(false)
+  const [preview, setPreview] = useState<MaterialViewData | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+
+  useEffect(() => { setTitle(item.title); setUrl(item.content_url ?? ''); setBody(item.content_body ?? '') },
+    [item.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const Meta = TYPE_META[item.content_type] ?? TYPE_META.file
+  const Icon = Meta.icon
+
+  async function save(patch: Partial<LearningItem>) {
+    setSaving(true)
+    try {
+      const updated = await updateItem(orgId, pathId, item.id, patch)
+      onChange(updated)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleReplace(file: File | undefined) {
+    if (!file) return
+    if (validateFile(file)) return
+    setReplacing(true)
+    try {
+      const updated = await uploadItemFile(orgId, pathId, item.id, file, item.allow_download ?? true)
+      onChange(updated)
+    } finally {
+      setReplacing(false)
+    }
+  }
+
+  async function handleDelete() {
+    await deleteItem(orgId, pathId, item.id)
+    onRemove(item.id)
+  }
+
+  async function openPreview() {
+    setPreviewLoading(true)
+    try {
+      const data = await getAdminItemViewUrl(orgId, pathId, item.id)
+      setPreview(data)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const watermark = [user?.name, user?.email].filter(Boolean).join(' · ')
+
+  return (
+    <div className="rounded-[10px] border border-[#E2E8F0] bg-white">
+      <div className="flex items-start gap-3 p-3.5">
+        <span className="text-xs text-[#94A3B8] w-5 text-center shrink-0 mt-2">{index + 1}</span>
+        <div className="w-8 h-8 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center shrink-0 mt-0.5">
+          <Icon size={15} className="text-[#2563EB]" />
+        </div>
+
+        <div className="flex-1 min-w-0 flex flex-col gap-2">
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => title.trim() && title !== item.title && save({ title: title.trim() })}
+            placeholder="Material title"
+            className="w-full px-2.5 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm font-medium text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+          />
+
+          {/* Type-specific editor */}
+          {(item.content_type === 'url' || item.content_type === 'video' || item.content_type === 'document') && (
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onBlur={() => url !== (item.content_url ?? '') && save({ content_url: url })}
+              placeholder={item.content_type === 'video' ? 'Video embed URL (YouTube, Vimeo…)' : 'https://…'}
+              className="w-full px-2.5 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+            />
+          )}
+          {item.content_type === 'article' && (
+            <textarea
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              onBlur={() => body !== (item.content_body ?? '') && save({ content_body: body })}
+              rows={3}
+              placeholder="Write the article content…"
+              className="w-full px-2.5 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] resize-y"
+            />
+          )}
+
+          {item.content_type === 'file' && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2 text-xs text-[#475569]">
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-[#F1F5F9] font-semibold text-[#475569] text-[10px]">
+                  {fileKindLabel(item.file_name ?? '')}
+                </span>
+                <span className="truncate max-w-[220px]">{item.file_name ?? 'No file'}</span>
+                {item.file_size_bytes ? <span className="text-[#94A3B8]">· {formatBytes(item.file_size_bytes)}</span> : null}
+                {item.preview_status === 'ready' && <span className="text-[#16A34A]">· plays in-app</span>}
+                {item.preview_status === 'failed' && <span className="text-[#D97706]">· preview unavailable</span>}
+              </div>
+
+              {/* Download toggle — the course-decider's one choice per material */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => save({ allow_download: !(item.allow_download ?? true) })}
+                  className={[
+                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors',
+                    item.allow_download ?? true
+                      ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]'
+                      : 'bg-[#FEF9C3] text-[#CA8A04] border border-[#FDE68A]',
+                  ].join(' ')}
+                >
+                  {item.allow_download ?? true ? <Download size={12} /> : <Ban size={12} />}
+                  {item.allow_download ?? true ? 'Download allowed' : 'View-only'}
+                </button>
+                <span className="text-[11px] text-[#64748B]">Tap to switch</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 shrink-0">
+          {saving && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
+          {item.content_type === 'file' && item.file_name && (
+            <>
+              <button
+                onClick={openPreview}
+                disabled={previewLoading}
+                title="Preview"
+                className="p-1.5 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors"
+              >
+                {previewLoading ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
+              </button>
+              <label
+                title="Replace file"
+                className="p-1.5 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors cursor-pointer"
+              >
+                {replacing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                <input type="file" accept={ACCEPT_ATTR} className="hidden"
+                  onChange={(e) => { handleReplace(e.target.files?.[0]); e.target.value = '' }} />
+              </label>
+            </>
+          )}
+          <button
+            onClick={handleDelete}
+            title="Remove"
+            className="p-1.5 text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[6px] transition-colors"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+
+      {/* Preview modal */}
+      {preview && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-4 bg-black/50" onClick={() => setPreview(null)}>
+          <div className="bg-white rounded-[14px] w-full max-w-4xl max-h-[88vh] overflow-hidden flex flex-col shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-3 border-b border-[#E2E8F0]">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-[#0F172A] truncate">{item.title}</h3>
+                <p className="text-xs text-[#64748B]">Preview — exactly what learners see</p>
+              </div>
+              <button onClick={() => setPreview(null)} className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[6px]">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 overflow-y-auto">
+              <MaterialViewer
+                data={preview}
+                viewOnly={!preview.allow_download}
+                watermark={watermark}
+                pdfLoader={() => getAdminItemFile(orgId, pathId, item.id)}
+              />
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
+  )
+}

@@ -39,7 +39,7 @@ export default function LearningPathsPage() {
           <p className="text-sm text-[#475569] mt-1">{paths.length} paths total</p>
         </div>
         <Link
-          href="/learning/paths/new"
+          href="/learning/paths/builder"
           className="flex items-center gap-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold px-4 py-2.5 rounded-[8px] transition-colors"
         >
           <Plus size={16} />
@@ -93,7 +93,7 @@ export default function LearningPathsPage() {
           </p>
           {!search && filter === 'all' && (
             <Link
-              href="/learning/paths/new"
+              href="/learning/paths/builder"
               className="flex items-center gap-2 bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold px-4 py-2.5 rounded-[8px] transition-colors"
             >
               <Plus size={16} />

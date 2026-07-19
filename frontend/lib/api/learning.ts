@@ -1,8 +1,11 @@
 import apiClient from './client';
 import type {
   LearningPath,
+  LearningItem,
   LearningPathAssignment,
+  MaterialViewData,
   OrgProgressSummary,
+  PathEngagement,
 } from '../types/learning';
 
 function orgBase(orgId: string) {
@@ -48,6 +51,11 @@ export async function archivePath(orgId: string, pathId: string): Promise<Learni
   return res.data.data;
 }
 
+export async function unarchivePath(orgId: string, pathId: string): Promise<LearningPath> {
+  const res = await apiClient.post(`${orgBase(orgId)}/paths/${pathId}/unarchive`);
+  return res.data.data;
+}
+
 export async function deletePath(orgId: string, pathId: string): Promise<void> {
   await apiClient.delete(`${orgBase(orgId)}/paths/${pathId}`);
 }
@@ -85,6 +93,81 @@ export async function reorderItems(
     `${orgBase(orgId)}/paths/${pathId}/items/reorder`,
     { items },
   );
+  return res.data.data;
+}
+
+// ─── Material files (upload + preview) ─────────────────────────────────────────
+
+/** Upload/replace the document backing a file item; returns the updated item. */
+export async function uploadItemFile(
+  orgId: string,
+  pathId: string,
+  itemId: string,
+  file: File,
+  allowDownload: boolean,
+  onProgress?: (percent: number) => void,
+): Promise<LearningItem> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('allow_download', String(allowDownload));
+  const res = await apiClient.post(
+    `${orgBase(orgId)}/paths/${pathId}/items/${itemId}/file`,
+    form,
+    {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e) => {
+        if (onProgress && e.total) onProgress(Math.round((e.loaded / e.total) * 100));
+      },
+    },
+  );
+  return res.data.data;
+}
+
+/** Creator/admin inline preview URL for a material (no view tracking). */
+export async function getAdminItemViewUrl(
+  orgId: string,
+  pathId: string,
+  itemId: string,
+): Promise<MaterialViewData> {
+  const res = await apiClient.get(
+    `${orgBase(orgId)}/paths/${pathId}/items/${itemId}/view-url`,
+  );
+  return res.data.data;
+}
+
+/** Creator/admin download of a material (for previewing the course) — opens a signed URL. */
+export async function downloadAdminItem(
+  orgId: string,
+  pathId: string,
+  itemId: string,
+): Promise<void> {
+  const res = await apiClient.get(
+    `${orgBase(orgId)}/paths/${pathId}/items/${itemId}/download-url`,
+  )
+  const { url } = res.data.data as { url: string; file_name: string }
+  if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener')
+}
+
+/** Raw preview bytes (same-origin, authenticated) for pdf.js rendering — creator/admin. */
+export async function getAdminItemFile(
+  orgId: string,
+  pathId: string,
+  itemId: string,
+): Promise<ArrayBuffer> {
+  const res = await apiClient.get(
+    `${orgBase(orgId)}/paths/${pathId}/items/${itemId}/view-file`,
+    { responseType: 'arraybuffer' },
+  )
+  return res.data as ArrayBuffer
+}
+
+// ─── Engagement analytics ──────────────────────────────────────────────────────
+
+export async function getEngagement(
+  orgId: string,
+  pathId: string,
+): Promise<PathEngagement> {
+  const res = await apiClient.get(`${orgBase(orgId)}/paths/${pathId}/engagement`);
   return res.data.data;
 }
 
@@ -146,4 +229,54 @@ export async function completeItem(
     { completion_type },
   );
   return res.data.data;
+}
+
+/** Undo an accidental completion of an assigned item. */
+export async function uncompleteItem(
+  orgId: string,
+  assignmentId: string,
+  itemId: string,
+) {
+  const res = await apiClient.post(
+    `${orgBase(orgId)}/my/${assignmentId}/items/${itemId}/uncomplete`,
+  )
+  return res.data.data
+}
+
+/** Learner inline preview URL for an assigned material (records the view). */
+export async function getMyItemViewUrl(
+  orgId: string,
+  assignmentId: string,
+  itemId: string,
+): Promise<MaterialViewData> {
+  const res = await apiClient.get(
+    `${orgBase(orgId)}/my/${assignmentId}/items/${itemId}/view-url`,
+  );
+  return res.data.data;
+}
+
+/** Raw preview bytes (same-origin, authenticated) for pdf.js rendering — learner. */
+export async function getMyItemFile(
+  orgId: string,
+  assignmentId: string,
+  itemId: string,
+): Promise<ArrayBuffer> {
+  const res = await apiClient.get(
+    `${orgBase(orgId)}/my/${assignmentId}/items/${itemId}/view-file`,
+    { responseType: 'arraybuffer' },
+  )
+  return res.data as ArrayBuffer
+}
+
+/** Learner download of a material — resolves a signed URL then triggers the download. */
+export async function downloadMyItem(
+  orgId: string,
+  assignmentId: string,
+  itemId: string,
+): Promise<void> {
+  const res = await apiClient.get(
+    `${orgBase(orgId)}/my/${assignmentId}/items/${itemId}/download-url`,
+  );
+  const { url } = res.data.data as { url: string; file_name: string };
+  if (typeof window !== 'undefined') window.open(url, '_blank', 'noopener');
 }

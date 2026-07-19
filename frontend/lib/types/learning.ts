@@ -1,8 +1,10 @@
-export type ContentType = 'video' | 'document' | 'url' | 'article';
+export type ContentType = 'video' | 'document' | 'url' | 'article' | 'file';
 export type LearningPathStatus = 'draft' | 'published' | 'archived';
 export type AssignmentStatus = 'not_started' | 'in_progress' | 'completed';
 export type SequentialMode = 'sequential' | 'free_form';
 export type CompletionType = 'manual' | 'auto_opened';
+export type LearningPreviewStatus = 'none' | 'pending' | 'ready' | 'failed';
+export type PreviewKind = 'pdf' | 'image' | 'video' | 'audio' | 'none';
 
 export interface LearningPath {
   id: string;
@@ -36,6 +38,21 @@ export interface LearningItem {
   updated_at: string;
   is_locked?: boolean;
   progress?: LearningItemProgress;
+  // Uploaded-file fields (content_type = 'file')
+  file_name?: string | null;
+  file_mime?: string | null;
+  file_size_bytes?: number | null;
+  preview_status?: LearningPreviewStatus;
+  allow_download?: boolean;
+}
+
+/** Signed inline-preview payload for a material (creator or learner). */
+export interface MaterialViewData {
+  kind: PreviewKind;
+  url: string | null;
+  allow_download: boolean;
+  file_name?: string | null;
+  preview_status?: LearningPreviewStatus;
 }
 
 export interface LearningPathAssignment {
@@ -93,4 +110,44 @@ export interface PathProgressSummary {
   in_progress: number;
   not_started: number;
   avg_percent: number;
+}
+
+// ─── Engagement analytics (who accessed what) ────────────────────────────────
+
+export interface EngagementItemStat {
+  item_id: string;
+  title: string;
+  content_type: ContentType;
+  assigned: number;
+  viewed: number;
+  total_opens: number;
+  completed: number;
+}
+
+export interface EngagementLearnerItem {
+  item_id: string;
+  viewed: boolean;
+  views: number;
+  last_viewed_at: string | null;
+  completed: boolean;
+}
+
+export interface EngagementLearner {
+  employee_profile_id: string;
+  name: string;
+  email: string | null;
+  role: string | null;
+  status: AssignmentStatus;
+  items: EngagementLearnerItem[];
+  opened_count: number;
+  completed_count: number;
+}
+
+export interface PathEngagement {
+  path_id: string;
+  title: string;
+  total_items: number;
+  total_assigned: number;
+  items: EngagementItemStat[];
+  learners: EngagementLearner[];
 }

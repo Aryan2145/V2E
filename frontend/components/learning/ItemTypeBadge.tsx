@@ -1,10 +1,15 @@
-import { Video, FileText, Link2, BookOpen } from 'lucide-react'
+import { Video, FileText, Link2, BookOpen, File as FileIcon } from 'lucide-react'
 import type { ContentType } from '@/lib/types/learning'
 
 const CONFIG: Record<ContentType, { label: string; Icon: any; classes: string }> = {
   video: {
     label: 'Video',
     Icon: Video,
+    classes: 'bg-[#EFF6FF] text-[#2563EB]',
+  },
+  file: {
+    label: 'File',
+    Icon: FileIcon,
     classes: 'bg-[#EFF6FF] text-[#2563EB]',
   },
   document: {

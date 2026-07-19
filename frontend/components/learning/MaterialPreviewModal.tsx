@@ -1,0 +1,207 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  X, Maximize2, Minimize2, Download, ExternalLink,
+  Play, FileText, Link2, BookOpen, File as FileIcon, Loader2,
+} from 'lucide-react'
+import {
+  getAdminItemViewUrl, getAdminItemFile, downloadAdminItem,
+} from '@/lib/api/learning'
+import { useAuth } from '@/lib/auth/context'
+import type { LearningItem, ContentType, MaterialViewData } from '@/lib/types/learning'
+import MaterialViewer from './MaterialViewer'
+import ItemTypeBadge from './ItemTypeBadge'
+import { toEmbeddableVideoUrl } from '@/lib/learning/video-embed'
+
+const TYPE_ICONS: Record<ContentType, any> = {
+  video: Play,
+  file: FileIcon,
+  document: FileText,
+  url: Link2,
+  article: BookOpen,
+}
+
+/**
+ * Click-to-open preview popup for a course material. Opens as a centered window
+ * (Windows-style) with a maximize/restore toggle and a close X. File materials
+ * render inline via MaterialViewer; article/video/url/document show their body
+ * or an open-in-new-tab affordance. Portals to <body> and closes on Esc.
+ */
+export default function MaterialPreviewModal({
+  orgId,
+  pathId,
+  item,
+  onClose,
+}: {
+  orgId: string
+  pathId: string
+  item: LearningItem
+  onClose: () => void
+}) {
+  const { user } = useAuth()
+  const [maximized, setMaximized] = useState(false)
+  const [fileView, setFileView] = useState<MaterialViewData | null>(null)
+  const [fileLoading, setFileLoading] = useState(item.content_type === 'file')
+
+  // File materials: fetch a signed inline-preview URL (creator/admin — no view tracking).
+  useEffect(() => {
+    if (item.content_type !== 'file') return
+    let cancelled = false
+    setFileLoading(true)
+    getAdminItemViewUrl(orgId, pathId, item.id)
+      .then((v) => { if (!cancelled) setFileView(v) })
+      .finally(() => { if (!cancelled) setFileLoading(false) })
+    return () => { cancelled = true }
+  }, [orgId, pathId, item.id, item.content_type])
+
+  // Esc closes the popup.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  if (typeof document === 'undefined') return null
+
+  const TypeIcon = TYPE_ICONS[item.content_type] ?? BookOpen
+  const canDownload = item.content_type === 'file' && !!fileView?.allow_download
+  const watermark = [user?.name, user?.email, new Date().toISOString().slice(0, 10)]
+    .filter(Boolean)
+    .join(' · ')
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[60] flex bg-black/50"
+      style={maximized ? undefined : { padding: '3vh 4vw' }}
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div
+        className={[
+          'bg-white flex flex-col overflow-hidden shadow-2xl mx-auto w-full',
+          maximized ? 'rounded-none max-w-none' : 'rounded-[14px] max-w-5xl',
+        ].join(' ')}
+      >
+        {/* Title bar */}
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#E2E8F0] shrink-0 bg-white">
+          <div className="min-w-0 flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-[8px] bg-[#F1F5F9] flex items-center justify-center shrink-0">
+              <TypeIcon size={15} className="text-[#2563EB]" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-[#0F172A] truncate">{item.title}</h3>
+                <ItemTypeBadge type={item.content_type} />
+              </div>
+              {item.file_name && (
+                <p className="text-xs text-[#64748B] truncate">{item.file_name}</p>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            {canDownload && (
+              <button
+                onClick={() => downloadAdminItem(orgId, pathId, item.id)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 mr-1 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+              >
+                <Download size={14} /> Download
+              </button>
+            )}
+            <button
+              onClick={() => setMaximized((m) => !m)}
+              title={maximized ? 'Restore' : 'Maximize'}
+              className="p-2 text-[#475569] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[8px] transition-colors"
+            >
+              {maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+            </button>
+            <button
+              onClick={onClose}
+              title="Close (Esc)"
+              className="p-2 text-[#475569] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px] transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#F8FAFC]">
+          {item.description && (
+            <p className="text-sm text-[#475569] mb-4">{item.description}</p>
+          )}
+
+          {/* File materials — inline document/media viewer */}
+          {item.content_type === 'file' && (
+            fileLoading ? (
+              <div className="flex items-center justify-center gap-2 py-20 text-sm text-[#475569]">
+                <Loader2 size={18} className="animate-spin text-[#2563EB]" /> Loading material…
+              </div>
+            ) : fileView ? (
+              <MaterialViewer
+                key={`${item.id}-${maximized ? 'fs' : 'win'}`}
+                data={fileView}
+                viewOnly={!fileView.allow_download}
+                watermark={watermark}
+                pdfLoader={() => getAdminItemFile(orgId, pathId, item.id)}
+                fullscreen={maximized}
+              />
+            ) : (
+              <p className="text-sm text-[#94A3B8] text-center py-16">Couldn’t load this material.</p>
+            )
+          )}
+
+          {/* Article — inline text body */}
+          {item.content_type === 'article' && (
+            <div className="bg-white border border-[#E2E8F0] rounded-[10px] p-5">
+              <div className="prose prose-sm max-w-none text-[#1E293B] whitespace-pre-wrap">
+                {item.content_body ?? 'No content available.'}
+              </div>
+            </div>
+          )}
+
+          {/* Video — embedded player */}
+          {item.content_type === 'video' && item.content_url && (
+            <div className="w-full aspect-video rounded-[10px] overflow-hidden bg-black">
+              <iframe
+                src={toEmbeddableVideoUrl(item.content_url)}
+                className="w-full h-full"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                allowFullScreen
+                title={item.title}
+              />
+            </div>
+          )}
+
+          {/* URL / document — open externally */}
+          {['url', 'document'].includes(item.content_type) && item.content_url && (
+            <div className="bg-white border border-[#E2E8F0] rounded-[10px] p-8 flex flex-col items-center text-center gap-4">
+              <div className="w-12 h-12 rounded-[12px] bg-[#EFF6FF] flex items-center justify-center">
+                <TypeIcon size={22} className="text-[#2563EB]" />
+              </div>
+              <p className="text-sm text-[#475569] break-all max-w-lg">{item.content_url}</p>
+              <a
+                href={item.content_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+              >
+                <ExternalLink size={15} />
+                Open {item.content_type === 'document' ? 'Document' : 'Link'}
+              </a>
+            </div>
+          )}
+
+          {/* Nothing to show */}
+          {item.content_type !== 'file'
+            && !item.content_body
+            && !item.content_url && (
+            <p className="text-sm text-[#94A3B8] text-center py-16">No content available for this material.</p>
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  )
+}
