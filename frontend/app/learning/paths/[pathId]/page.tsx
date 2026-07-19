@@ -95,6 +95,7 @@ export default function ManagePathPage() {
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [notAvailable, setNotAvailable] = useState(false)
 
   useEffect(() => {
     if (!orgId || !pathId) return
@@ -105,7 +106,7 @@ export default function ManagePathPage() {
         return
       }
       setPath(p)
-    }).finally(() => setLoading(false))
+    }).catch(() => setNotAvailable(true)).finally(() => setLoading(false))
   }, [orgId, pathId, router])
 
   useEffect(() => {
@@ -169,10 +170,30 @@ export default function ManagePathPage() {
     }
   }
 
-  if (loading || !path) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[calc(100vh-56px)]">
         <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  if (notAvailable || !path) {
+    return (
+      <div className="flex items-center justify-center min-h-[calc(100vh-56px)] px-4">
+        <div className="text-center max-w-sm">
+          <BookOpen size={40} className="text-[#CBD5E1] mx-auto mb-3" />
+          <h1 className="text-lg font-bold text-[#0F172A] mb-1">Course not found</h1>
+          <p className="text-sm text-[#475569] mb-5">
+            This course doesn’t exist, or you don’t have access to manage it.
+          </p>
+          <Link
+            href="/learning/paths"
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+          >
+            <ArrowLeft size={15} /> Back to Courses
+          </Link>
+        </div>
       </div>
     )
   }

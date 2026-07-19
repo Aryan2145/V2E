@@ -21,6 +21,7 @@ export default function LearningPathsPage() {
     if (!orgId) return
     getPaths(orgId)
       .then(setPaths)
+      .catch(() => setPaths([]))
       .finally(() => setLoading(false))
   }, [orgId])
 

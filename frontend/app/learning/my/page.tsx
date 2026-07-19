@@ -22,7 +22,7 @@ export default function MyLearningPage() {
 
   useEffect(() => {
     if (!orgId) return
-    getMyAssignments(orgId).then(setAssignments).finally(() => setLoading(false))
+    getMyAssignments(orgId).then(setAssignments).catch(() => setAssignments([])).finally(() => setLoading(false))
   }, [orgId])
 
   const inProgress = assignments.filter((a) => a.status === 'in_progress')

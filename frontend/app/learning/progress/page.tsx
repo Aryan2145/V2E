@@ -29,7 +29,7 @@ export default function ProgressPage() {
 
   useEffect(() => {
     if (!orgId) return
-    getOrgProgress(orgId).then(setSummary).finally(() => setLoading(false))
+    getOrgProgress(orgId).then(setSummary).catch(() => setSummary(null)).finally(() => setLoading(false))
   }, [orgId])
 
   if (loading) {
