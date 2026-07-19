@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import DOMPurify from 'dompurify'
 import { Loader2, FileWarning, Download } from 'lucide-react'
 import type { PreviewKind } from '@/lib/types/learning'
 
@@ -101,7 +102,9 @@ export default function OfficeViewer({
       <style>{OFFICE_CSS}</style>
       <div
         className={kind === 'docx' ? 'prose prose-sm max-w-none text-[#1E293B]' : ''}
-        dangerouslySetInnerHTML={{ __html: html }}
+        // Sanitize the library output (Mammoth/SheetJS) before injecting — strips any
+        // script/event-handler/javascript: URI that could ride in via a crafted file.
+        dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }}
       />
     </div>
   )

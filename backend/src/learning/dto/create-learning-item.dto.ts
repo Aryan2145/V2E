@@ -7,6 +7,7 @@ import {
   IsUrl,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { ContentType } from '@prisma/client';
 
@@ -17,17 +18,22 @@ export class CreateLearningItemDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   description?: string;
 
   @IsEnum(ContentType)
   content_type: ContentType;
 
+  // Only http(s) links — blocks javascript:/data: XSS vectors. Empty/omitted is fine
+  // (file/article items have no url). Non-empty values must be a valid http(s) URL.
+  @ValidateIf((o) => typeof o.content_url === 'string' && o.content_url.length > 0)
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true })
   @IsOptional()
-  @IsString()
   content_url?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(200000)
   content_body?: string;
 
   @IsOptional()

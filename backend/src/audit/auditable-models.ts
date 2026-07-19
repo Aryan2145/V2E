@@ -48,6 +48,11 @@ export const AUDIT_DENYLIST = new Set<string>([
   'KnowledgeReaction',
   'Message',
   'ConversationMember',
+  // Learning — per-open view tracking + recomputed progress counters (high churn).
+  // Meaningful learning events (assign/complete/publish/content edits) stay audited.
+  'LearningItemView',
+  'LearningItemProgress',
+  'LearningPathProgress',
   // Internal counters / join bookkeeping
   'WorkflowRoundRobinTracker',
   'TicketRoundRobinTracker',

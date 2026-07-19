@@ -138,6 +138,19 @@ export class LearningController {
     return this.learningService.addItem(pathId, orgId, dto);
   }
 
+  // NOTE: 'reorder' MUST be declared before ':itemId', otherwise Express binds
+  // PATCH …/items/reorder to :itemId="reorder" and this route is unreachable.
+  @Patch('paths/:pathId/items/reorder')
+  @RequirePermission('learning.path.manage', PermissionAction.edit)
+  @ApiOperation({ summary: 'Reorder items in a learning path' })
+  reorderItems(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+    @Body() dto: ReorderItemsDto,
+  ) {
+    return this.learningService.reorderItems(pathId, orgId, dto);
+  }
+
   @Patch('paths/:pathId/items/:itemId')
   @RequirePermission('learning.path.manage', PermissionAction.edit)
   @ApiOperation({ summary: 'Update a learning item' })
@@ -159,17 +172,6 @@ export class LearningController {
     @Param('itemId') itemId: string,
   ) {
     return this.learningService.deleteItem(pathId, itemId, orgId);
-  }
-
-  @Patch('paths/:pathId/items/reorder')
-  @RequirePermission('learning.path.manage', PermissionAction.edit)
-  @ApiOperation({ summary: 'Reorder items in a learning path' })
-  reorderItems(
-    @Param('orgId') orgId: string,
-    @Param('pathId') pathId: string,
-    @Body() dto: ReorderItemsDto,
-  ) {
-    return this.learningService.reorderItems(pathId, orgId, dto);
   }
 
   // ─── Material files (upload + preview) ───────────────────────────────────────
@@ -282,33 +284,36 @@ export class LearningController {
   @Get('my/:assignmentId')
   @ApiOperation({ summary: 'Get a specific assignment with items and progress' })
   getMyAssignment(
+    @Param('orgId') orgId: string,
     @Param('assignmentId') assignmentId: string,
     @Request() req: any,
   ) {
     const profileId = req.user.employee_profile_id;
-    return this.learningService.getMyAssignment(assignmentId, profileId);
+    return this.learningService.getMyAssignment(assignmentId, profileId, orgId);
   }
 
   @Post('my/:assignmentId/items/:itemId/complete')
   @ApiOperation({ summary: 'Mark a learning item as complete' })
   completeItem(
+    @Param('orgId') orgId: string,
     @Param('assignmentId') assignmentId: string,
     @Param('itemId') itemId: string,
     @Request() req: any,
     @Body() dto: CompleteItemDto,
   ) {
     const profileId = req.user.employee_profile_id;
-    return this.learningService.completeItem(assignmentId, itemId, profileId, dto);
+    return this.learningService.completeItem(assignmentId, itemId, profileId, orgId, dto);
   }
 
   @Post('my/:assignmentId/items/:itemId/uncomplete')
   @ApiOperation({ summary: 'Undo completion of a learning item (accidental click)' })
   uncompleteItem(
+    @Param('orgId') orgId: string,
     @Param('assignmentId') assignmentId: string,
     @Param('itemId') itemId: string,
     @Request() req: any,
   ) {
-    return this.learningService.uncompleteItem(assignmentId, itemId, req.user.employee_profile_id);
+    return this.learningService.uncompleteItem(assignmentId, itemId, req.user.employee_profile_id, orgId);
   }
 
   @Get('my/:assignmentId/items/:itemId/view-url')

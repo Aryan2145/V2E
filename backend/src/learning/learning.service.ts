@@ -165,10 +165,12 @@ export class LearningService {
 
   async reorderItems(pathId: string, orgId: string, dto: ReorderItemsDto) {
     await this.findOnePath(pathId, orgId);
+    // updateMany scoped to path_id — an id from another path/tenant simply matches
+    // nothing and is skipped (no cross-path order_index writes).
     await this.prisma.$transaction(
       dto.items.map((item) =>
-        this.prisma.learningItem.update({
-          where: { id: item.id },
+        this.prisma.learningItem.updateMany({
+          where: { id: item.id, path_id: pathId },
           data: { order_index: item.order_index },
         }),
       ),
@@ -186,66 +188,93 @@ export class LearningService {
   ) {
     await this.findOnePath(pathId, orgId);
     const dueDate = dto.due_date ? new Date(dto.due_date) : undefined;
-    await this.bulkAssign(
+    const assigned = await this.bulkAssign(
       pathId,
       orgId,
       actorUserId,
       dto.employee_profile_ids,
       dueDate,
     );
-    return { assigned: dto.employee_profile_ids.length };
+    return { assigned };
   }
 
+  /**
+   * Assign a path to employees. Returns how many NEW assignments were created.
+   * SECURITY: only real, active employees of `orgId` are ever assigned — any id that
+   * isn't an active member of this org (cross-tenant, deleted, or garbage) is silently
+   * dropped, so this can never bind another tenant's employee to our course.
+   */
   private async bulkAssign(
     pathId: string,
     orgId: string,
     actorUserId: string,
     employeeProfileIds: string[],
     dueDate?: Date,
-  ) {
+  ): Promise<number> {
+    const valid = await this.prisma.employeeProfile.findMany({
+      where: { id: { in: employeeProfileIds }, organization_id: orgId, status: 'active' },
+      select: { id: true },
+    });
+    const validIds = valid.map((e) => e.id);
+    if (validIds.length === 0) return 0;
+
+    // Drop anyone already assigned — one query, not a per-employee round-trip.
+    const existing = await this.prisma.learningPathAssignment.findMany({
+      where: { path_id: pathId, employee_profile_id: { in: validIds } },
+      select: { employee_profile_id: true },
+    });
+    const already = new Set(existing.map((e) => e.employee_profile_id));
+    const toAssign = validIds.filter((id) => !already.has(id));
+    if (toAssign.length === 0) return 0;
+
     const items = await this.prisma.learningItem.findMany({
       where: { path_id: pathId },
+      select: { id: true },
+    });
+    const itemIds = items.map((i) => i.id);
+
+    // Batched writes; skipDuplicates absorbs concurrent-assign races (M4).
+    await this.prisma.learningPathAssignment.createMany({
+      data: toAssign.map((empId) => ({
+        path_id: pathId,
+        employee_profile_id: empId,
+        assigned_by_user_id: actorUserId,
+        due_date: dueDate,
+      })),
+      skipDuplicates: true,
     });
 
-    for (const empId of employeeProfileIds) {
-      // Skip if already assigned
-      const existing = await this.prisma.learningPathAssignment.findUnique({
-        where: { path_id_employee_profile_id: { path_id: pathId, employee_profile_id: empId } },
-      });
-      if (existing) continue;
+    const created = await this.prisma.learningPathAssignment.findMany({
+      where: { path_id: pathId, employee_profile_id: { in: toAssign } },
+      select: { id: true, employee_profile_id: true },
+    });
 
-      await this.prisma.$transaction(async (tx) => {
-        const assignment = await tx.learningPathAssignment.create({
-          data: {
-            path_id: pathId,
-            employee_profile_id: empId,
-            assigned_by_user_id: actorUserId,
-            due_date: dueDate,
-          },
-        });
-
-        if (items.length > 0) {
-          await tx.learningItemProgress.createMany({
-            data: items.map((item) => ({
-              assignment_id: assignment.id,
-              item_id: item.id,
-              employee_profile_id: empId,
-            })),
-          });
-        }
-
-        await tx.learningPathProgress.create({
-          data: {
-            assignment_id: assignment.id,
-            employee_profile_id: empId,
-            path_id: pathId,
-            total_items: items.length,
-            completed_items: 0,
-            progress_percent: 0,
-          },
-        });
+    if (itemIds.length > 0) {
+      await this.prisma.learningItemProgress.createMany({
+        data: created.flatMap((a) =>
+          itemIds.map((itemId) => ({
+            assignment_id: a.id,
+            item_id: itemId,
+            employee_profile_id: a.employee_profile_id,
+          })),
+        ),
+        skipDuplicates: true,
       });
     }
+
+    await this.prisma.learningPathProgress.createMany({
+      data: created.map((a) => ({
+        assignment_id: a.id,
+        employee_profile_id: a.employee_profile_id,
+        path_id: pathId,
+        total_items: itemIds.length,
+        completed_items: 0,
+        progress_percent: 0,
+      })),
+      skipDuplicates: true,
+    });
+
+    return created.length;
   }
 
   async getAssignments(pathId: string, orgId: string) {
@@ -281,9 +310,11 @@ export class LearningService {
     });
   }
 
-  async getMyAssignment(assignmentId: string, employeeProfileId: string) {
+  async getMyAssignment(assignmentId: string, employeeProfileId: string, orgId: string) {
     const assignment = await this.prisma.learningPathAssignment.findFirst({
-      where: { id: assignmentId, employee_profile_id: employeeProfileId },
+      // SECURITY: scope by the path's org too — a cross-tenant assignment row must
+      // never resolve for a learner acting in another org.
+      where: { id: assignmentId, employee_profile_id: employeeProfileId, path: { organization_id: orgId } },
       include: {
         path: true,
         path_progress: true,
@@ -321,12 +352,34 @@ export class LearningService {
     assignmentId: string,
     itemId: string,
     employeeProfileId: string,
+    orgId: string,
     dto: CompleteItemDto,
   ) {
     const assignment = await this.prisma.learningPathAssignment.findFirst({
-      where: { id: assignmentId, employee_profile_id: employeeProfileId },
+      where: { id: assignmentId, employee_profile_id: employeeProfileId, path: { organization_id: orgId } },
+      include: { path: { select: { mode: true } } },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
+
+    // The item MUST belong to this assignment's path — never fabricate a progress row
+    // against an arbitrary (possibly cross-tenant) item id.
+    const pathItems = await this.prisma.learningItem.findMany({
+      where: { path_id: assignment.path_id },
+      orderBy: { order_index: 'asc' },
+      select: { id: true },
+    });
+    const idx = pathItems.findIndex((i) => i.id === itemId);
+    if (idx === -1) throw new NotFoundException('Item not found in this course');
+
+    // Sequential mode: can't complete an item until the previous one is completed (M5).
+    if (assignment.path.mode === 'sequential' && idx > 0) {
+      const prev = await this.prisma.learningItemProgress.findUnique({
+        where: { assignment_id_item_id: { assignment_id: assignmentId, item_id: pathItems[idx - 1].id } },
+      });
+      if (!prev || prev.status !== AssignmentStatus.completed) {
+        throw new BadRequestException('Complete the previous item first.');
+      }
+    }
 
     const now = new Date();
 
@@ -358,9 +411,10 @@ export class LearningService {
     assignmentId: string,
     itemId: string,
     employeeProfileId: string,
+    orgId: string,
   ) {
     const assignment = await this.prisma.learningPathAssignment.findFirst({
-      where: { id: assignmentId, employee_profile_id: employeeProfileId },
+      where: { id: assignmentId, employee_profile_id: employeeProfileId, path: { organization_id: orgId } },
     });
     if (!assignment) throw new NotFoundException('Assignment not found');
 

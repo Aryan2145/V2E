@@ -136,7 +136,15 @@ export default function MaterialRow({
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              onBlur={() => url !== (item.content_url ?? '') && save({ content_url: url })}
+              onBlur={() => {
+                const t = url.trim()
+                // Prepend https:// when the protocol is missing (backend requires http(s)).
+                const normalized = t && !/^https?:\/\//i.test(t) ? `https://${t}` : t
+                if (normalized !== (item.content_url ?? '')) {
+                  if (normalized !== url) setUrl(normalized)
+                  save({ content_url: normalized })
+                }
+              }}
               placeholder="https://… (paste a link, video, or doc)"
               className="w-full px-2.5 py-1.5 border border-[#CBD5E1] rounded-[7px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
             />

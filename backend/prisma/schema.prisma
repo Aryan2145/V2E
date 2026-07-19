@@ -553,6 +553,7 @@ model LearningPath {
   items        LearningItem[]
   assignments  LearningPathAssignment[]
 
+  @@index([organization_id, status, role_id])
   @@map("learning_paths")
 }
 
@@ -588,6 +589,7 @@ model LearningItem {
   progress LearningItemProgress[]
   views    LearningItemView[]
 
+  @@index([path_id, order_index])
   @@map("learning_items")
 }
 
