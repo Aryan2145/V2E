@@ -99,6 +99,15 @@ export function toEmbeddablePageUrl(raw: string): string {
   const host = url.hostname.replace(/^www\./, '').toLowerCase()
   const path = url.pathname
 
+  // --- Google Drive files (PDFs, images, any uploaded file) ---
+  // The normal /view page can't be framed; /preview is the embeddable one.
+  if (host === 'drive.google.com') {
+    const m = path.match(/\/file\/d\/([^/]+)/)
+    if (m) return `https://drive.google.com/file/d/${m[1]}/preview`
+    const id = url.searchParams.get('id') // .../open?id=… or .../uc?id=…
+    if (id) return `https://drive.google.com/file/d/${id}/preview`
+  }
+
   // --- Google Docs / Slides / Sheets / Forms ---
   if (host === 'docs.google.com') {
     // Slides: /presentation/d/{id}/... → /embed

@@ -12,7 +12,8 @@ import type { LearningItem, ContentType, MaterialViewData } from '@/lib/types/le
 import ProgressBar from './ProgressBar'
 import ItemTypeBadge from './ItemTypeBadge'
 import MaterialViewer from './MaterialViewer'
-import { toEmbeddableVideoUrl, toEmbeddablePageUrl } from '@/lib/learning/video-embed'
+import { toEmbeddableVideoUrl } from '@/lib/learning/video-embed'
+import LinkEmbed from './LinkEmbed'
 
 const TYPE_ICONS: Record<ContentType, any> = {
   video: Play, file: FileIcon, document: FileText, url: Link2, article: BookOpen,
@@ -319,45 +320,18 @@ export default function CourseViewer({
                 </div>
               )}
 
-              {/* Link set to embed inline */}
-              {activeItem.content_type === 'url' && activeItem.content_url && activeItem.embed_inline && (
-                <div>
-                  <div className="flex items-center justify-between gap-3 mb-2">
-                    <p className="text-xs text-[#64748B]">
-                      Not loading? Some sites block embedding — open it in a new tab.
-                    </p>
-                    <a
-                      href={activeItem.content_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open in a new tab"
-                      className="p-1.5 shrink-0 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
-                    >
-                      <ExternalLink size={16} />
-                    </a>
-                  </div>
-                  <div
-                    className={[
-                      'w-full rounded-[8px] overflow-hidden',
-                      toEmbeddableVideoUrl(activeItem.content_url) !== activeItem.content_url
-                        ? 'aspect-video bg-black'
-                        : 'border border-[#E2E8F0] bg-white',
-                    ].join(' ')}
-                    style={toEmbeddableVideoUrl(activeItem.content_url) !== activeItem.content_url ? undefined : { height: '70vh' }}
-                  >
-                    <iframe
-                      src={toEmbeddablePageUrl(activeItem.content_url)}
-                      className="w-full h-full"
-                      title={activeItem.title}
-                      referrerPolicy="no-referrer-when-downgrade"
-                      allowFullScreen
-                    />
-                  </div>
-                </div>
+              {/* Link — auto-embed if the page allows it, else auto-fallback to a button */}
+              {activeItem.content_type === 'url' && activeItem.content_url && (
+                <LinkEmbed
+                  key={activeItem.id}
+                  url={activeItem.content_url}
+                  title={activeItem.title}
+                  onOpen={() => { if (!isDone(activeItem.id)) markComplete(activeItem, 'auto_opened') }}
+                />
               )}
 
-              {/* Link/document set to open externally */}
-              {((activeItem.content_type === 'url' && !activeItem.embed_inline) || activeItem.content_type === 'document') && activeItem.content_url && (
+              {/* Document — external link button */}
+              {activeItem.content_type === 'document' && activeItem.content_url && (
                 <div className="flex flex-col items-center gap-4">
                   <a
                     href={activeItem.content_url}
@@ -367,7 +341,7 @@ export default function CourseViewer({
                     className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
                   >
                     <ExternalLink size={15} />
-                    Open {activeItem.content_type === 'document' ? 'Document' : 'Link'}
+                    Open Document
                   </a>
                 </div>
               )}
