@@ -107,6 +107,16 @@ export class LearningService {
     });
   }
 
+  /** Restore an archived path back to published (does not re-run role auto-assignment). */
+  async unarchivePath(pathId: string, orgId: string) {
+    await this.findOnePath(pathId, orgId);
+    return this.prisma.learningPath.update({
+      where: { id: pathId },
+      data: { status: LearningPathStatus.published },
+      include: PATH_INCLUDE,
+    });
+  }
+
   async deletePath(pathId: string, orgId: string) {
     await this.findOnePath(pathId, orgId);
     return this.prisma.learningPath.delete({ where: { id: pathId } });
@@ -343,6 +353,30 @@ export class LearningService {
     return progress;
   }
 
+  /** Revert a completed item back to not-started (undo an accidental completion). */
+  async uncompleteItem(
+    assignmentId: string,
+    itemId: string,
+    employeeProfileId: string,
+  ) {
+    const assignment = await this.prisma.learningPathAssignment.findFirst({
+      where: { id: assignmentId, employee_profile_id: employeeProfileId },
+    });
+    if (!assignment) throw new NotFoundException('Assignment not found');
+
+    await this.prisma.learningItemProgress.updateMany({
+      where: { assignment_id: assignmentId, item_id: itemId },
+      data: {
+        status: AssignmentStatus.not_started,
+        completion_type: null,
+        completed_at: null,
+      },
+    });
+
+    await this.recalculateProgress(assignmentId, employeeProfileId);
+    return { success: true };
+  }
+
   private async recalculateProgress(
     assignmentId: string,
     employeeProfileId: string,
@@ -374,10 +408,15 @@ export class LearningService {
           completed_at: new Date(),
         },
       });
-    } else if (completed > 0) {
+    } else {
+      // Below 100% — reflect in-progress (or not-started if nothing is done) and
+      // clear any prior completion timestamp so an undo properly re-opens the path.
       await this.prisma.learningPathAssignment.update({
         where: { id: assignmentId },
-        data: { status: AssignmentStatus.in_progress },
+        data: {
+          status: completed > 0 ? AssignmentStatus.in_progress : AssignmentStatus.not_started,
+          completed_at: null,
+        },
       });
     }
   }

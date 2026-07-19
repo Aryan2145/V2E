@@ -43,4 +43,9 @@ export class CreateLearningItemDto {
   @IsOptional()
   @IsBoolean()
   is_required?: boolean;
+
+  // Per-material download toggle for file items (course-decider's choice).
+  @IsOptional()
+  @IsBoolean()
+  allow_download?: boolean;
 }

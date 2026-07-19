@@ -90,6 +90,18 @@ enum ContentType {
   document
   url
   article
+  file // a document uploaded to R2 (pdf / office / image / video / audio)
+}
+
+// Preview state for an uploaded file. Native-viewable files (pdf/image/av) are
+// `ready` immediately; office docs are `pending` until LibreOffice converts them
+// to a preview PDF (→ `ready`), or `failed` if conversion isn't available.
+// `none` = nothing to preview (e.g. a zip) — download only.
+enum LearningPreviewStatus {
+  none
+  pending
+  ready
+  failed
 }
 
 enum LearningPathStatus {
@@ -558,10 +570,44 @@ model LearningItem {
   created_at        DateTime    @default(now())
   updated_at        DateTime    @updatedAt
 
+  // ── Uploaded file (content_type = file). Stored privately in R2. ──
+  file_name           String? // original filename, shown to learners + used on download
+  file_mime           String?
+  file_size_bytes     Int?
+  storage_key         String? // R2 object key of the original upload
+  preview_storage_key String? // R2 key of the converted preview PDF (office docs); null when the original is viewed directly
+  preview_status      LearningPreviewStatus @default(none)
+  // Course-decider's per-material choice. false = view-only (no download button,
+  // watermarked, save/print/right-click suppressed).
+  allow_download      Boolean               @default(true)
+
   path     LearningPath           @relation(fields: [path_id], references: [id], onDelete: Cascade)
   progress LearningItemProgress[]
+  views    LearningItemView[]
 
   @@map("learning_items")
+}
+
+// One row per (learner, item): who opened a lesson, how many times, and when.
+// Powers the "who accessed what" engagement analytics. Distinct from
+// LearningItemProgress (which tracks completion) — a view is just an open.
+model LearningItemView {
+  id                  String   @id @default(uuid())
+  organization_id     String
+  path_id             String
+  item_id             String
+  employee_profile_id String
+  user_id             String
+  view_count          Int      @default(1)
+  first_viewed_at     DateTime @default(now())
+  last_viewed_at      DateTime @default(now())
+
+  item LearningItem @relation(fields: [item_id], references: [id], onDelete: Cascade)
+
+  @@unique([item_id, employee_profile_id])
+  @@index([path_id])
+  @@index([organization_id])
+  @@map("learning_item_views")
 }
 
 model LearningPathAssignment {

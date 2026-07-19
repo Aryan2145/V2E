@@ -105,6 +105,39 @@ export class R2Service {
     return getSignedUrl(this.getClient(), command, { expiresIn: expiresInSeconds });
   }
 
+  /**
+   * A time-limited GET URL that renders the object INLINE (in-browser) rather than
+   * forcing a download. Used for in-app preview of PDFs/images/video/audio. The
+   * bucket stays private — only holders of this short-lived URL can fetch it.
+   */
+  async getSignedInlineUrl(
+    key: string,
+    displayName: string,
+    expiresInSeconds = 300,
+  ): Promise<string> {
+    const safe = displayName.replace(/"/g, '');
+    const command = new GetObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      ResponseContentDisposition: `inline; filename="${safe}"`,
+    });
+    return getSignedUrl(this.getClient(), command, { expiresIn: expiresInSeconds });
+  }
+
+  /** Fetch an object's bytes into memory (used to feed the doc→PDF converter). */
+  async getObjectBuffer(key: string): Promise<Buffer> {
+    const res = await this.getClient().send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key }),
+    );
+    const body = res.Body as unknown as {
+      transformToByteArray?: () => Promise<Uint8Array>;
+    };
+    if (!body?.transformToByteArray) {
+      throw new InternalServerErrorException('Failed to read file from storage.');
+    }
+    return Buffer.from(await body.transformToByteArray());
+  }
+
   /** Best-effort delete. Never throws — a failed purge must not block the DB soft-delete. */
   async deleteObject(key: string): Promise<void> {
     try {

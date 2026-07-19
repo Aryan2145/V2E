@@ -7,17 +7,26 @@ import {
   Patch,
   Post,
   Request,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
-import { RequireAdmin } from '../common/decorators/require-admin.decorator';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { LearningService } from './learning.service';
+import { LearningFilesService } from './learning-files.service';
+import {
+  MAX_ATTACHMENT_BYTES,
+  type UploadedFile as UploadedFileType,
+} from '../tasks/task-attachments.service';
 import { CreateLearningPathDto } from './dto/create-learning-path.dto';
 import { UpdateLearningPathDto } from './dto/update-learning-path.dto';
 import { CreateLearningItemDto } from './dto/create-learning-item.dto';
@@ -31,7 +40,10 @@ import { ReorderItemsDto } from './dto/reorder-items.dto';
 @UseGuards(JwtAuthGuard, RolesGuard, OrgScopeGuard, PermissionsGuard)
 @Controller('api/v1/org/:orgId/learning')
 export class LearningController {
-  constructor(private readonly learningService: LearningService) {}
+  constructor(
+    private readonly learningService: LearningService,
+    private readonly filesService: LearningFilesService,
+  ) {}
 
   // ─── Paths (HR/Admin) ───────────────────────────────────────────────────────
 
@@ -93,9 +105,19 @@ export class LearningController {
     return this.learningService.archivePath(pathId, orgId);
   }
 
+  @Post('paths/:pathId/unarchive')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Restore an archived learning path to published' })
+  unarchivePath(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+  ) {
+    return this.learningService.unarchivePath(pathId, orgId);
+  }
+
   @Delete('paths/:pathId')
-  @RequireAdmin()
-  @ApiOperation({ summary: 'Delete a learning path' })
+  @RequirePermission('learning.path.manage', PermissionAction.delete)
+  @ApiOperation({ summary: 'Delete a learning path (requires the learning delete permission)' })
   deletePath(
     @Param('orgId') orgId: string,
     @Param('pathId') pathId: string,
@@ -148,6 +170,70 @@ export class LearningController {
     @Body() dto: ReorderItemsDto,
   ) {
     return this.learningService.reorderItems(pathId, orgId, dto);
+  }
+
+  // ─── Material files (upload + preview) ───────────────────────────────────────
+
+  @Post('paths/:pathId/items/:itemId/file')
+  @RequirePermission('learning.path.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Upload/replace the document on a learning item (→ in-app preview)' })
+  @ApiConsumes('multipart/form-data')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_ATTACHMENT_BYTES } }))
+  uploadItemFile(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+    @Param('itemId') itemId: string,
+    @UploadedFile() file: UploadedFileType,
+    @Body('allow_download') allowDownload?: string,
+  ) {
+    // Multipart form fields arrive as strings; default to downloadable.
+    const allow = allowDownload === undefined ? true : allowDownload !== 'false';
+    return this.filesService.uploadItemFile(orgId, pathId, itemId, file, allow);
+  }
+
+  @Get('paths/:pathId/items/:itemId/view-url')
+  @RequirePermission('learning.path.manage', PermissionAction.read)
+  @ApiOperation({ summary: 'Signed inline preview URL for a material (creator/admin)' })
+  getAdminViewUrl(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+    @Param('itemId') itemId: string,
+  ) {
+    return this.filesService.getAdminViewUrl(orgId, pathId, itemId);
+  }
+
+  @Get('paths/:pathId/items/:itemId/download-url')
+  @RequirePermission('learning.path.manage', PermissionAction.read)
+  @ApiOperation({ summary: 'Signed download URL for a material (creator/admin preview)' })
+  getAdminDownloadUrl(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+    @Param('itemId') itemId: string,
+  ) {
+    return this.filesService.getAdminDownloadUrl(orgId, pathId, itemId);
+  }
+
+  @Get('paths/:pathId/items/:itemId/view-file')
+  @RequirePermission('learning.path.manage', PermissionAction.read)
+  @ApiOperation({ summary: 'Stream a material preview inline (creator/admin, same-origin for pdf.js)' })
+  async streamAdminPreview(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+    @Param('itemId') itemId: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, mime, fileName } = await this.filesService.getAdminPreviewFile(orgId, pathId, itemId);
+    sendInline(res, buffer, mime, fileName);
+  }
+
+  @Get('paths/:pathId/engagement')
+  @RequirePermission('learning.path.manage', PermissionAction.read)
+  @ApiOperation({ summary: 'Who-accessed-what engagement analytics for a path' })
+  getEngagement(
+    @Param('orgId') orgId: string,
+    @Param('pathId') pathId: string,
+  ) {
+    return this.filesService.getEngagement(orgId, pathId);
   }
 
   // ─── Assignments ─────────────────────────────────────────────────────────────
@@ -214,4 +300,74 @@ export class LearningController {
     const profileId = req.user.employee_profile_id;
     return this.learningService.completeItem(assignmentId, itemId, profileId, dto);
   }
+
+  @Post('my/:assignmentId/items/:itemId/uncomplete')
+  @ApiOperation({ summary: 'Undo completion of a learning item (accidental click)' })
+  uncompleteItem(
+    @Param('assignmentId') assignmentId: string,
+    @Param('itemId') itemId: string,
+    @Request() req: any,
+  ) {
+    return this.learningService.uncompleteItem(assignmentId, itemId, req.user.employee_profile_id);
+  }
+
+  @Get('my/:assignmentId/items/:itemId/view-url')
+  @ApiOperation({ summary: 'Inline preview URL for a material I was assigned (records the view)' })
+  getMyViewUrl(
+    @Param('orgId') orgId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Param('itemId') itemId: string,
+    @Request() req: any,
+  ) {
+    return this.filesService.getLearnerViewData(
+      orgId,
+      assignmentId,
+      itemId,
+      req.user.employee_profile_id,
+      req.user.id,
+    );
+  }
+
+  @Get('my/:assignmentId/items/:itemId/download-url')
+  @ApiOperation({ summary: 'Signed download URL for a material (blocked when view-only)' })
+  getMyDownloadUrl(
+    @Param('orgId') orgId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Param('itemId') itemId: string,
+    @Request() req: any,
+  ) {
+    return this.filesService.getLearnerDownloadUrl(
+      orgId,
+      assignmentId,
+      itemId,
+      req.user.employee_profile_id,
+    );
+  }
+
+  @Get('my/:assignmentId/items/:itemId/view-file')
+  @ApiOperation({ summary: 'Stream an assigned material inline (same-origin for pdf.js)' })
+  async streamMyPreview(
+    @Param('orgId') orgId: string,
+    @Param('assignmentId') assignmentId: string,
+    @Param('itemId') itemId: string,
+    @Request() req: any,
+    @Res() res: Response,
+  ) {
+    const { buffer, mime, fileName } = await this.filesService.getLearnerPreviewFile(
+      orgId,
+      assignmentId,
+      itemId,
+      req.user.employee_profile_id,
+    );
+    sendInline(res, buffer, mime, fileName);
+  }
+}
+
+/** Send a buffer inline, bypassing the JSON response wrapper. Never cached. */
+function sendInline(res: Response, buffer: Buffer, mime: string, fileName: string) {
+  const safe = fileName.replace(/"/g, '');
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition', `inline; filename="${safe}"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.end(buffer);
 }
