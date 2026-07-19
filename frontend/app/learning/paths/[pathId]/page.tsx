@@ -180,17 +180,19 @@ export default function ManagePathPage() {
   const items = path.items ?? []
 
   return (
-    <div className="px-4 sm:px-8 py-8 max-w-5xl mx-auto">
+    <div className="px-4 sm:px-8 pb-10 max-w-5xl mx-auto">
+      {/* Frozen: back link + course header + tabs. Only the tab content below scrolls. */}
+      <div className="sticky top-0 z-30 bg-white pt-6">
       <Link
         href="/learning/paths"
-        className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#2563EB] mb-6 transition-colors"
+        className="inline-flex items-center gap-1.5 text-sm text-[#475569] hover:text-[#2563EB] mb-4 transition-colors"
       >
         <ArrowLeft size={16} />
         Back to Courses
       </Link>
 
       {/* Header */}
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 mb-6">
+      <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-6 mb-4">
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1">
             <h1 className="text-[24px] font-bold text-[#0F172A] mb-2">{path.title}</h1>
@@ -300,7 +302,9 @@ export default function ManagePathPage() {
           </div>
         )}
       </div>
+      </div>{/* end frozen header + tabs */}
 
+      <div className="pt-4">
       {/* Materials Tab (read-only — edit in the builder) */}
       {tab === 'materials' && (
         <div>
@@ -372,6 +376,7 @@ export default function ManagePathPage() {
 
       {/* Engagement Tab */}
       {tab === 'engagement' && <EngagementPanel orgId={orgId} pathId={pathId} />}
+      </div>{/* end scrolling tab content */}
 
       {/* Material preview popup — windowed with maximize + close */}
       {previewItem && (

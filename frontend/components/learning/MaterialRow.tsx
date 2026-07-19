@@ -10,7 +10,7 @@ import { useAuth } from '@/lib/auth/context'
 import {
   updateItem, deleteItem, uploadItemFile, getAdminItemViewUrl, getAdminItemFile,
 } from '@/lib/api/learning'
-import { ACCEPT_ATTR, validateFile, formatBytes, fileKindLabel } from '@/lib/attachments'
+import { ACCEPT_ATTR, validateFile, formatBytes, fileKindLabel, extensionOf } from '@/lib/attachments'
 import type { ContentType, LearningItem, MaterialViewData } from '@/lib/types/learning'
 import MaterialViewer from './MaterialViewer'
 
@@ -20,6 +20,19 @@ const TYPE_META: Record<ContentType, { icon: any; label: string }> = {
   video: { icon: Video, label: 'Video' },
   document: { icon: FileText, label: 'Document' },
   article: { icon: BookOpen, label: 'Article' },
+}
+
+/** File types that render in-app (native + client-rendered). Only these may be view-only. */
+const PREVIEWABLE_EXT = new Set([
+  'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'mp4', 'webm', 'mov', 'mp3',
+  'docx', 'xlsx', 'xls', 'csv', 'txt',
+])
+
+/** A "convert to X so it can show in-app" nudge for the types we can't preview. */
+function conversionHint(ext: string): string | null {
+  if (ext === 'pptx' || ext === 'ppt') return 'PowerPoint can’t show inside the app — export it to PDF and upload that so learners can view it here.'
+  if (ext === 'doc') return 'Old Word format can’t show inside the app — save it as .docx and upload that so learners can view it here.'
+  return null
 }
 
 export default function MaterialRow({
@@ -41,8 +54,23 @@ export default function MaterialRow({
   const [preview, setPreview] = useState<MaterialViewData | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
 
+  // Re-seed local fields when the row changes identity OR is converted to another type.
   useEffect(() => { setTitle(item.title); setUrl(item.content_url ?? ''); setBody(item.content_body ?? '') },
-    [item.id]) // eslint-disable-line react-hooks/exhaustive-deps
+    [item.id, item.content_type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fileExt = extensionOf(item.file_name ?? '')
+  const canPreview = PREVIEWABLE_EXT.has(fileExt)
+  const convertHint = conversionHint(fileExt)
+
+  // Guardrail: a file we can't preview must be downloadable — never let it be a
+  // view-only material with no way to see or save it (a trapped learner). Auto-repair
+  // any such material to download-allowed.
+  useEffect(() => {
+    if (item.content_type === 'file' && item.file_name && !canPreview && item.allow_download === false) {
+      save({ allow_download: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.id, canPreview, item.allow_download, item.file_name])
 
   const Meta = TYPE_META[item.content_type] ?? TYPE_META.file
   const Icon = Meta.icon
@@ -137,27 +165,38 @@ export default function MaterialRow({
                 </span>
                 <span className="truncate max-w-[220px]">{item.file_name ?? 'No file'}</span>
                 {item.file_size_bytes ? <span className="text-[#94A3B8]">· {formatBytes(item.file_size_bytes)}</span> : null}
-                {item.preview_status === 'ready' && <span className="text-[#16A34A]">· plays in-app</span>}
-                {item.preview_status === 'failed' && <span className="text-[#D97706]">· preview unavailable</span>}
+                {item.file_name && (canPreview
+                  ? <span className="text-[#16A34A]">· plays in-app</span>
+                  : <span className="text-[#D97706]">· download to open</span>)}
               </div>
 
-              {/* Download toggle — the course-decider's one choice per material */}
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => save({ allow_download: !(item.allow_download ?? true) })}
-                  className={[
-                    'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors',
-                    item.allow_download ?? true
-                      ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]'
-                      : 'bg-[#FEF9C3] text-[#CA8A04] border border-[#FDE68A]',
-                  ].join(' ')}
-                >
-                  {item.allow_download ?? true ? <Download size={12} /> : <Ban size={12} />}
-                  {item.allow_download ?? true ? 'Download allowed' : 'View-only'}
-                </button>
-                <span className="text-[11px] text-[#64748B]">Tap to switch</span>
-              </div>
+              {/* Previewable → the creator chooses download vs view-only.
+                  Not previewable → forced download-only (can't trap learners), with a convert nudge. */}
+              {canPreview ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => save({ allow_download: !(item.allow_download ?? true) })}
+                    className={[
+                      'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-colors',
+                      item.allow_download ?? true
+                        ? 'bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]'
+                        : 'bg-[#FEF9C3] text-[#CA8A04] border border-[#FDE68A]',
+                    ].join(' ')}
+                  >
+                    {item.allow_download ?? true ? <Download size={12} /> : <Ban size={12} />}
+                    {item.allow_download ?? true ? 'Download allowed' : 'View-only'}
+                  </button>
+                  <span className="text-[11px] text-[#64748B]">Tap to switch</span>
+                </div>
+              ) : item.file_name ? (
+                <div className="flex flex-col gap-1">
+                  <span className="inline-flex w-fit items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-[#DCFCE7] text-[#16A34A] border border-[#BBF7D0]">
+                    <Download size={12} /> Download only
+                  </span>
+                  {convertHint && <span className="text-[11px] text-[#D97706]">{convertHint}</span>}
+                </div>
+              ) : null}
             </div>
           )}
         </div>

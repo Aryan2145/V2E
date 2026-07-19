@@ -16,7 +16,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import {
-  createPath, updatePath, getPath, addItem, publishPath, assignPath, uploadItemFile,
+  createPath, updatePath, getPath, addItem, updateItem, publishPath, assignPath, uploadItemFile,
 } from '@/lib/api/learning'
 import { getEmployees } from '@/lib/api/employees'
 import { getRoles } from '@/lib/api/roles'
@@ -55,6 +55,16 @@ export default function CourseBuilderPage() {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [publishing, setPublishing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Reveal a newly-added material by scrolling the materials LIST's own scroll area
+  // to the bottom — never the whole page (that caused a jump-down-then-back).
+  const listRef = useRef<HTMLDivElement>(null)
+  const [addedSignal, setAddedSignal] = useState(0)
+  useEffect(() => {
+    if (addedSignal === 0) return
+    const el = listRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [addedSignal])
 
   // ── Load existing draft (edit mode) + reference data ──
   useEffect(() => {
@@ -119,25 +129,47 @@ export default function CourseBuilderPage() {
 
   // ── Materials ──
   async function handleAddMaterial(type: ContentType, file?: File) {
-    // Don't let empty link/article rows stack up — make them fill the current one first.
-    if (type === 'url' && items.some((i) => i.content_type === 'url' && !i.content_url?.trim())) {
-      throw new Error('Finish the empty link before adding another.')
-    }
-    if (type === 'article' && items.some((i) => i.content_type === 'article' && !i.content_body?.trim())) {
-      throw new Error('Finish the empty article before adding another.')
-    }
     const pid = await ensurePath()
     // Sensible default title; file uploads inherit the filename server-side.
     const defaultTitle =
       type === 'file' ? (file?.name ?? 'New file') :
       type === 'url' ? 'New link' :
       type === 'video' ? 'New video' : 'New article'
+
+    // A leftover BLANK placeholder (empty link/article/video) is REUSED for whatever you
+    // add next — converted in place (same row) so there's no remove/re-add flicker.
+    const blank = items.find(
+      (i) =>
+        (i.content_type === 'url' && !i.content_url?.trim()) ||
+        (i.content_type === 'video' && !i.content_url?.trim()) ||
+        (i.content_type === 'article' && !i.content_body?.trim()),
+    )
+    if (blank) {
+      // Same-kind blank already there → nothing to change (repeat clicks are a no-op).
+      if (blank.content_type === type && type !== 'file') {
+        setAddedSignal((s) => s + 1)
+        return
+      }
+      const converted: LearningItem = await updateItem(orgId, pid, blank.id, {
+        title: defaultTitle,
+        content_type: type,
+      })
+      patchItem(converted)
+      setAddedSignal((s) => s + 1)
+      if (type === 'file' && file) {
+        const uploaded = await uploadItemFile(orgId, pid, blank.id, file, true)
+        patchItem(uploaded)
+      }
+      return
+    }
+
     const created: LearningItem = await addItem(orgId, pid, {
       title: defaultTitle,
       content_type: type,
       allow_download: true,
     })
     setItems((prev) => [...prev, created])
+    setAddedSignal((s) => s + 1)
     if (type === 'file' && file) {
       const uploaded = await uploadItemFile(orgId, pid, created.id, file, true)
       patchItem(uploaded)
@@ -286,7 +318,7 @@ export default function CourseBuilderPage() {
             <p className="text-xs text-[#64748B] mt-0.5">Upload a document, add a link, embed a video, or write an article.</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-3 mb-4 max-h-[520px] overflow-y-auto pr-1">
+          <div ref={listRef} className="flex flex-col gap-3 mb-4 max-h-[520px] overflow-y-auto pr-1">
             {items.map((item, idx) => (
               <MaterialRow
                 key={item.id}

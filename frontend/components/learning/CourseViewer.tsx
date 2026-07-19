@@ -272,7 +272,15 @@ export default function CourseViewer({
                   </div>
                 ) : fileView ? (
                   <>
-                    <div className="flex items-center justify-end mb-3">
+                    <div className="flex items-center justify-end gap-2 mb-3">
+                      {fileView.allow_download && onDownload && (
+                        <button
+                          onClick={() => onDownload(activeItem.id)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors"
+                        >
+                          <Download size={14} /> Download
+                        </button>
+                      )}
                       <button
                         onClick={() => setExpanded(true)}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
@@ -285,7 +293,6 @@ export default function CourseViewer({
                       data={fileView}
                       viewOnly={!fileView.allow_download}
                       watermark={watermark}
-                      onDownload={fileView.allow_download && onDownload ? () => onDownload(activeItem.id) : undefined}
                       pdfLoader={() => loadFile(activeItem.id)}
                     />
                   </>
