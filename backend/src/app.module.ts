@@ -38,6 +38,7 @@ import { GoalsModule } from './goals/goals.module';
 import { MeetingsModule } from './meetings/meetings.module';
 import { WorkLogsModule } from './work-logs/work-logs.module';
 import { ProcessHierarchyModule } from './process-hierarchy/process-hierarchy.module';
+import { DelegationModule } from './delegation/delegation.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { ProcessHierarchyModule } from './process-hierarchy/process-hierarchy.mo
     ProjectsModule,
     EcsModule,
     ProcessHierarchyModule,
+    DelegationModule,
   ],
 })
 export class AppModule {}
