@@ -199,15 +199,10 @@ export const tasksApi = {
 
   // ── Tasks ────────────────────────────────────────────────────────────────────
 
-  // Cursor-paginated (envelope matches notifications: { items, next_cursor, total }).
-  // Pass `cursor`/`limit` in filters to page; omit for the first page.
-  listTasks: async (
-    orgId: string,
-    filters?: Record<string, string>,
-  ): Promise<{ items: Task[]; next_cursor: string | null; total: number }> => {
+  listTasks: async (orgId: string, filters?: Record<string, string>): Promise<Task[]> => {
     const params = filters ? new URLSearchParams(filters).toString() : ''
     const res = await apiClient.get(`${base(orgId)}${params ? `?${params}` : ''}`)
-    return unwrap<{ items: Task[]; next_cursor: string | null; total: number }>(res)
+    return unwrap<Task[]>(res)
   },
 
   // ── Work dashboard (scope-aware canvas) ───────────────────────────────────────

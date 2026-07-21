@@ -990,34 +990,18 @@ export class TasksService {
     orgId: string,
     principal: Principal,
     filters: TaskListFilters,
-    cursor?: string,
-    limit = 25,
   ) {
     // Row-level data scope (own/team/department/org) at the actor's full entitlement.
     const scopeWhere = await this.scope.listWhere(orgId, principal, TasksService.TASK_LEAF);
     const where = this.buildTaskWhere(orgId, scopeWhere, filters, 'deadline');
 
-    // Cursor pagination (envelope matches notifications: { items, next_cursor, total }).
-    // Prior behaviour returned every matching task in one unbounded array.
-    const take = Math.min(Math.max(limit, 1), 100);
-    const [rows, total] = await Promise.all([
-      this.prisma.task.findMany({
-        where,
-        include: TASK_INCLUDE,
-        orderBy: { created_at: 'desc' },
-        take: take + 1,
-        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      }),
-      this.prisma.task.count({ where }),
-    ]);
+    const tasks = await this.prisma.task.findMany({
+      where,
+      include: TASK_INCLUDE,
+      orderBy: { created_at: 'desc' },
+    });
 
-    const hasMore = rows.length > take;
-    const page = hasMore ? rows.slice(0, take) : rows;
-    return {
-      items: await this.enrichTaskList(page),
-      next_cursor: hasMore ? page[page.length - 1].id : null,
-      total,
-    };
+    return this.enrichTaskList(tasks);
   }
 
   /**

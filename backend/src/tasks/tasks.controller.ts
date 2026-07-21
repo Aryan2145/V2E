@@ -78,13 +78,11 @@ export class TasksController {
     @Query('search') search?: string,
     @Query('from_date') from_date?: string,
     @Query('to_date') to_date?: string,
-    @Query('cursor') cursor?: string,
-    @Query('limit') limit?: string,
   ) {
     return this.service.listTasks(orgId, principalFromUser(req.user), {
       status_id, priority_id, category_id, quadrant, type,
       assignee_user_id, goal_id, search, from_date, to_date,
-    }, cursor, limit ? parseInt(limit, 10) : undefined);
+    });
   }
 
   // ─── Specific sub-routes (must be BEFORE /:id) ───────────────────────────────
