@@ -15,14 +15,19 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter());
   app.useGlobalInterceptors(new ResponseInterceptor());
 
-  const config = new DocumentBuilder()
-    .setTitle('V2E API')
-    .setDescription('Multi-tenant organizational workspace platform API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // Swagger scans every controller/DTO to build the OpenAPI document. That cost
+  // is pure startup overhead in production (the docs aren't served there), so
+  // only generate/mount it outside production.
+  if (process.env.NODE_ENV !== 'production') {
+    const config = new DocumentBuilder()
+      .setTitle('V2E API')
+      .setDescription('Multi-tenant organizational workspace platform API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // Drain in-flight requests on SIGTERM/SIGINT instead of severing them —
   // otherwise a restart can commit a write and still hand the client a 500.
