@@ -200,6 +200,7 @@ model OrganizationMember {
   user         User         @relation(fields: [user_id], references: [id])
 
   @@unique([organization_id, user_id])
+  @@index([organization_id, is_active])
   @@map("organization_members")
 }
 
@@ -1251,6 +1252,7 @@ model Task {
   @@index([department_id])
   @@index([import_batch_id])
   @@map("tasks")
+  @@index([organization_id, status_id])
 }
 
 // Per-user "last opened" marker for a task. Drives the unread-comment count on the
@@ -1302,6 +1304,7 @@ model TaskAssignee {
 }
 
 // A checklist item is the shared DEFINITION (title/group/order). HOW it is "done"
+  @@index([organization_id, user_id, is_completed])
 // depends on the task's completion mode, mirroring how the task itself tracks status:
 //   - any_can_complete / single assignee → ONE shared tick. `is_completed` +
 //     `completed_by_user_id`/`completed_at` carry it (first person to tick owns it;
@@ -2185,6 +2188,8 @@ model Ticket {
 }
 
 model TicketChecklist {
+  @@index([organization_id, status_id])
+  @@index([organization_id, sla_breached, sla_due_at])
   id              String   @id @default(uuid())
   organization_id String
   ticket_id       String
@@ -3257,6 +3262,7 @@ model Goal {
 }
 
 model GoalMeasure {
+  @@index([organization_id, owner_user_id])
   id              String   @id @default(uuid())
   organization_id String
   goal_id         String
@@ -3425,6 +3431,7 @@ model MeetingActionItem {
   organization_id String
   meeting_id      String
   text            String    @db.Text
+  @@index([organization_id, user_id])
   owner_user_id   String?
   due_date        DateTime?
   linked_task_id  String? // manual link/create; nothing auto-creates
