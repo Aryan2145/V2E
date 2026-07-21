@@ -171,7 +171,7 @@ export default function MeetingDetailPage({ params }: { params: { meetingId: str
       {/* Body: the record (main) + logistics (sidebar). One page, no tabs. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
         <div className="lg:col-span-2 order-2 lg:order-1 flex flex-col gap-5">
-          <MeetingRecordTab orgId={orgId} meeting={m} canEdit={true} onSaved={load} />
+          <MeetingRecordTab key={m.id} orgId={orgId} meeting={m} canEdit={true} onSaved={load} />
           <ActionItemsTab meeting={m} orgId={orgId} people={people} nameOf={nameOf} onChanged={onChanged} />
           <DecisionsTab meeting={m} orgId={orgId} people={people} nameOf={nameOf} onChanged={onChanged} />
         </div>
@@ -421,7 +421,7 @@ function ActionItemsTab({ meeting, orgId, people, nameOf, onChanged }: { meeting
   return (
     <div className={`${cardCls} p-6`}>
       <h3 className="text-[16px] font-semibold text-[#0F172A] mb-3 flex items-center gap-2"><span className="w-7 h-7 rounded-[8px] bg-[#EFF6FF] text-[#2563EB] flex items-center justify-center"><ListChecks size={16} /></span> Action items</h3>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-0.5">
         {items.length === 0 && <p className="text-sm text-[#64748B]">No action items yet.</p>}
         {items.map((it) => (
           <div key={it.id} className="border border-[#E2E8F0] rounded-[8px] px-3 py-2">
@@ -498,7 +498,7 @@ function DecisionsTab({ meeting, orgId, people, nameOf, onChanged }: { meeting: 
   return (
     <div className={`${cardCls} p-6`}>
       <h3 className="text-[16px] font-semibold text-[#0F172A] mb-3 flex items-center gap-2"><span className="w-7 h-7 rounded-[8px] bg-[#EEF2FF] text-[#4F46E5] flex items-center justify-center"><Gavel size={16} /></span> Decisions</h3>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-0.5">
         {decisions.length === 0 && <p className="text-sm text-[#64748B]">No decisions logged.</p>}
         {decisions.map((d) => (
           <div key={d.id} className="border border-[#E2E8F0] rounded-[8px] px-3 py-2 flex items-start justify-between gap-3">
