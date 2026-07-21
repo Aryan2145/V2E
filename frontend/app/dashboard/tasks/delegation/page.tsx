@@ -87,13 +87,20 @@ export default function DelegationPage() {
   // Because incoming is hidden, a pure recipient has nothing to see here, so the
   // whole Delegation area is limited to people who can delegate (see the nav gate in
   // TaskModuleSidebar.tsx, and the page gate below).
+  // ── Org-wide "All" tab (admin) hidden — 2026-07-22 ───────────────────────────
+  // With "incoming" already gone, "All" was a redundant second tab: for a small
+  // org it just mirrors "Delegated by me" (identical counts), leaving a two-tab
+  // strip that switches between the same thing. We collapse to the single "by me"
+  // view and drop the tab strip entirely (see the `tabs.length > 1` guard on the
+  // tab bar below). TO RESTORE the admin "All" view: re-add the isAdmin push here
+  // and add 'all' back into load()'s `views` — the strip reappears on its own.
   const tabs: DelegationView[] = useMemo(() => {
     const t: DelegationView[] = []
-    if (isAdmin) t.push('all')
+    // if (isAdmin) t.push('all') // ← hidden 2026-07-22 (see note above)
     t.push('mine')
-    // t.push('incoming') // ← hidden per the note above; re-add to restore the tab
+    // t.push('incoming') // ← hidden 2026-07-20; re-add to restore the tab
     return t
-  }, [isAdmin])
+  }, [])
 
   // Keep the active tab valid (admins may sit on "all"; delegators on "by me").
   useEffect(() => {
@@ -106,8 +113,9 @@ export default function DelegationPage() {
     if (!orgId || !enabled) return
     setLoading(true)
     try {
-      // 'incoming' omitted — the "Delegated to me" view is hidden (see note above).
-      const views: DelegationView[] = isAdmin ? ['all', 'mine'] : ['mine']
+      // 'incoming' and 'all' omitted — both those views are hidden (see notes
+      // above); only "Delegated by me" is surfaced now.
+      const views: DelegationView[] = ['mine']
       const results = await Promise.all(views.map((v) => delegationsApi.list(orgId, v).catch(() => [])))
       const next: Record<string, Delegation[]> = {}
       views.forEach((v, i) => (next[v] = results[i]))
@@ -115,7 +123,7 @@ export default function DelegationPage() {
     } finally {
       setLoading(false)
     }
-  }, [orgId, enabled, isAdmin])
+  }, [orgId, enabled])
 
   useEffect(() => {
     if (!orgId || !enabled) return
@@ -210,32 +218,35 @@ export default function DelegationPage() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-[#E2E8F0] mt-5 shrink-0">
-        {tabs.map((t) => {
-          const active = view === t
-          const count = (lists[t] ?? []).length
-          return (
-            <button
-              key={t}
-              type="button"
-              onClick={() => setView(t)}
-              className={[
-                'relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors',
-                active ? 'text-[#2563EB]' : 'text-[#64748B] hover:text-[#0F172A]',
-              ].join(' ')}
-            >
-              {TAB_META[t].label}
-              {count > 0 && (
-                <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-[999px] bg-[#2563EB] text-white text-[11px] font-semibold">
-                  {count}
-                </span>
-              )}
-              {active && <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-[#2563EB] rounded-t-full" />}
-            </button>
-          )
-        })}
-      </div>
+      {/* View tabs — only rendered when there's more than one view to switch
+          between. With a single view the strip is noise, so it's hidden. */}
+      {tabs.length > 1 && (
+        <div className="flex items-center gap-1 border-b border-[#E2E8F0] mt-5 shrink-0">
+          {tabs.map((t) => {
+            const active = view === t
+            const count = (lists[t] ?? []).length
+            return (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setView(t)}
+                className={[
+                  'relative flex items-center gap-2 px-4 py-2.5 text-sm font-medium transition-colors',
+                  active ? 'text-[#2563EB]' : 'text-[#64748B] hover:text-[#0F172A]',
+                ].join(' ')}
+              >
+                {TAB_META[t].label}
+                {count > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-[999px] bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {count}
+                  </span>
+                )}
+                {active && <span className="absolute bottom-0 left-2 right-2 h-[2px] bg-[#2563EB] rounded-t-full" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {/* Content */}
       <div className="flex-1 min-h-0 overflow-y-auto py-5">
