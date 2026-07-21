@@ -373,6 +373,8 @@ export class MeetingsService {
     });
     // Remove the organiser's Google mirror for the now-deleted meeting.
     await this.gsync.syncDelete(meeting.created_by_user_id, (meeting as any).google_event_id);
+    // Rhythm occurrence: cancel its Google instance (no individual event exists).
+    await this.gsync.syncUpsert(orgId, id);
     await this.audit.record({
       orgId, actorId: actor.id, action: 'delete', resource: 'meeting',
       entityId: id, entityLabel: meeting.title,
@@ -491,6 +493,8 @@ export class MeetingsService {
     });
     // Pull the mirror off the organiser's Google Calendar (notifies attendees).
     await this.gsync.syncDelete(meeting.created_by_user_id, (meeting as any).google_event_id);
+    // A rhythm occurrence has no individual event — cancel just its Google instance.
+    await this.gsync.syncUpsert(orgId, id);
     await this.audit.record({ orgId, actorId: actor.id, action: 'update', resource: 'meeting', entityId: id, entityLabel: meeting.title, changes: { status: { before: meeting.status, after: 'cancelled' } } });
     const attendees = await this.prisma.meetingAttendee.findMany({ where: { meeting_id: id } });
     await this.notifications.emit({

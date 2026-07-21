@@ -17,6 +17,54 @@ export class MeetingGoogleSyncService {
     private readonly accounts: GoogleAccountService,
   ) {}
 
+  private pad(n: number): string { return String(n).padStart(2, '0'); }
+
+  // An absolute instant → its Asia/Kolkata wall clock "YYYY-MM-DDTHH:MM:00".
+  private wall(d: Date): string {
+    const ist = new Date(d.getTime() + 330 * 60_000);
+    return `${ist.getUTCFullYear()}-${this.pad(ist.getUTCMonth() + 1)}-${this.pad(ist.getUTCDate())}T${this.pad(ist.getUTCHours())}:${this.pad(ist.getUTCMinutes())}:00`;
+  }
+
+  // The recurrence-generated slot for a spawned instance: its spawn day (stored as
+  // UTC-noon of the local day) at the rhythm's time, in IST. Stable across edits, so
+  // it always addresses the right Google instance.
+  private recurrenceSlot(spawnDate: Date | null, time: string): Date | null {
+    if (!spawnDate) return null;
+    const y = spawnDate.getUTCFullYear();
+    const mo = spawnDate.getUTCMonth() + 1;
+    const d = spawnDate.getUTCDate();
+    const [h, mi] = String(time || '09:00').split(':').map(Number);
+    return new Date(`${y}-${this.pad(mo)}-${this.pad(d)}T${this.pad(h || 0)}:${this.pad(mi || 0)}:00+05:30`);
+  }
+
+  // A rhythm occurrence is one instance of the series recurring event. Edits map to
+  // a Google "exception" (patch that instance); cancel/delete removes just that day.
+  private async syncOccurrence(meeting: any): Promise<void> {
+    const rhythm = meeting.rhythm;
+    if (!rhythm?.google_event_id) return; // series not on Google (organiser not connected)
+    try {
+      const token = await this.accounts.getRefreshToken(rhythm.created_by_user_id);
+      if (!token) return;
+      const time = rhythm.schedule_entries?.[0]?.time ?? '09:00';
+      const originalStart = this.recurrenceSlot(meeting.rhythm_spawn_date, time);
+      if (!originalStart) return;
+      if (meeting.is_deleted || meeting.status === 'cancelled' || !meeting.scheduled_start || !meeting.scheduled_end) {
+        await this.api.cancelRecurringInstance(token, rhythm.google_event_id, originalStart);
+        return;
+      }
+      await this.api.patchRecurringInstance(token, rhythm.google_event_id, originalStart, {
+        startWall: this.wall(meeting.scheduled_start),
+        endWall: this.wall(meeting.scheduled_end),
+        timeZone: 'Asia/Kolkata',
+        title: meeting.title,
+        description: meeting.agenda ?? null,
+        location: meeting.location || meeting.online_link || null,
+      });
+    } catch (err) {
+      this.logger.warn(`syncOccurrence failed for meeting ${meeting.id}: ${(err)?.message ?? err}`);
+    }
+  }
+
   // Create or update the organiser's mirror for a meeting. Called after a meeting
   // is created or edited. Reads the meeting fresh (with organiser + attendee
   // emails) so callers needn't assemble the payload.
@@ -28,9 +76,14 @@ export class MeetingGoogleSyncService {
         include: {
           organizer: { select: { id: true, email: true } },
           attendees: { include: { user: { select: { email: true } } } },
+          rhythm: { select: { google_event_id: true, created_by_user_id: true, schedule_entries: { select: { time: true }, orderBy: { created_at: 'asc' }, take: 1 } } },
         },
       });
       if (!meeting) return;
+
+      // A rhythm occurrence is owned by the series recurring event (Path A) — never
+      // give it its own event; edit/cancel it as a Google instance exception.
+      if (meeting.rhythm_id) return this.syncOccurrence(meeting);
 
       // Not mirror-able (cancelled / deleted / no fixed time): tear down any
       // existing mirror so a cancelled meeting doesn't linger on the calendar.

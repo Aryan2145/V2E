@@ -165,6 +165,37 @@ export class GcalApiService {
     return { id: res.data.id!, iCalUID: res.data.iCalUID ?? '' };
   }
 
+  private utcBasic(d: Date): string {
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z`;
+  }
+
+  // A single occurrence of a recurring event is addressed by `{masterId}_{originalStartUTC}`.
+  // Patching it creates a Google "exception" (this-occurrence-only edit); deleting it
+  // cancels just that day. originalStart is the recurrence-generated slot, not any edited time.
+  async patchRecurringInstance(refreshToken: string, recurringEventId: string, originalStart: Date, p: { startWall: string; endWall: string; timeZone: string; title: string; description?: string | null; location?: string | null }): Promise<void> {
+    const calendar = google.calendar({ version: 'v3', auth: this.makeClient(refreshToken) });
+    const instanceId = `${recurringEventId}_${this.utcBasic(originalStart)}`;
+    await calendar.events.patch({
+      calendarId: 'primary',
+      eventId: instanceId,
+      sendUpdates: 'all',
+      requestBody: {
+        summary: p.title,
+        description: p.description ?? undefined,
+        location: p.location ?? undefined,
+        start: { dateTime: p.startWall, timeZone: p.timeZone },
+        end: { dateTime: p.endWall, timeZone: p.timeZone },
+      },
+    });
+  }
+
+  async cancelRecurringInstance(refreshToken: string, recurringEventId: string, originalStart: Date): Promise<void> {
+    const calendar = google.calendar({ version: 'v3', auth: this.makeClient(refreshToken) });
+    const instanceId = `${recurringEventId}_${this.utcBasic(originalStart)}`;
+    await calendar.events.delete({ calendarId: 'primary', eventId: instanceId, sendUpdates: 'all' });
+  }
+
   // Pull a bounded window from the user's primary calendar. singleEvents expands
   // recurrences into instances so a month stays small. Cancelled instances are
   // dropped. Used by the reverse view to show the user's other commitments.
