@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Play, Square, Lock, Unlock, Trash2, Video, MapPin, Users, CalendarClock,
   Plus, CheckCircle2, Circle, Link2, AlertTriangle, Gavel, Copy, Check, X, Eye, EyeOff,
-  CalendarSearch, History, BarChart3, RotateCcw, ChevronDown, Clock, ListChecks, KeyRound,
+  CalendarSearch, History, BarChart3, RotateCcw, ChevronDown, Clock, ListChecks, KeyRound, Pencil,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { meetingsApi } from '@/lib/api/meetings'
@@ -16,10 +16,12 @@ import DatePicker from '@/components/ui/DatePicker'
 import StyledSelect from '@/components/ui/StyledSelect'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
-import { LINK_TYPE_LABEL, TYPE_LABEL, type Meeting, type MeetingAnalytics } from '@/lib/types/meetings'
+import { LINK_TYPE_LABEL, TYPE_LABEL, type Meeting, type MeetingAnalytics, type MeetingRhythm } from '@/lib/types/meetings'
 import { StatusBadge, ResponseBadge, fmtDate, fmtDateTime, fmtTime, useMeetingPermissions } from '@/components/meetings/shared'
 import MeetingRecordTab from '@/components/meetings/MeetingRecordTab'
 import BusyTimesPanel from '@/components/meetings/BusyTimesPanel'
+import EditMeetingModal from '@/components/meetings/EditMeetingModal'
+import CreateRhythmModal from '@/components/meetings/CreateRhythmModal'
 
 const inputClass = 'border border-[#CBD5E1] rounded-[8px] px-3 py-2.5 text-[15px] text-[#0F172A] focus:outline-none focus:border-[#2563EB]'
 const cardCls = 'bg-white border border-[#E2E8F0] rounded-[12px]'
@@ -52,6 +54,10 @@ export default function MeetingDetailPage({ params }: { params: { meetingId: str
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [logOpen, setLogOpen] = useState(false)
   const [insightsOpen, setInsightsOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [choiceOpen, setChoiceOpen] = useState(false)
+  const [seriesOpen, setSeriesOpen] = useState(false)
+  const [seriesRhythm, setSeriesRhythm] = useState<MeetingRhythm | null>(null)
 
   const nameOf = useMemo(() => new Map(people.map((p) => [p.user_id, p.name])), [people])
 
@@ -138,6 +144,7 @@ export default function MeetingDetailPage({ params }: { params: { meetingId: str
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+            {canManage && (m.status === 'scheduled' || m.status === 'in_progress') && <button onClick={() => { if (m.rhythm_id) setChoiceOpen(true); else setEditOpen(true) }} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]"><Pencil size={14} /> Edit</button>}
             {canManage && m.status === 'scheduled' && <button onClick={() => act(() => meetingsApi.start(orgId, m.id), 'Meeting started')} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-[#16A34A] rounded-[8px]"><Play size={14} /> Start</button>}
             {canManage && m.status === 'in_progress' && <button onClick={() => act(() => meetingsApi.end(orgId, m.id), 'Marked ended')} className={ghostBtn}><Square size={14} /> End</button>}
             {canManage && (m.status === 'in_progress' || m.status === 'scheduled') && <button onClick={() => act(() => meetingsApi.close(orgId, m.id), 'Meeting closed')} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-white bg-[#2563EB] rounded-[8px]"><Lock size={14} /> Close</button>}
@@ -183,6 +190,24 @@ export default function MeetingDetailPage({ params }: { params: { meetingId: str
         <div className="flex justify-end gap-2 mt-5">
           <Button variant="secondary" onClick={() => setDeleteOpen(false)}>Cancel</Button>
           <Button variant="danger" onClick={async () => { await meetingsApi.remove(orgId, m.id); addToast('Meeting deleted', 'success'); router.push('/dashboard/governance/meetings') }}>Delete</Button>
+        </div>
+      </Modal>
+
+      <EditMeetingModal isOpen={editOpen} onClose={() => setEditOpen(false)} orgId={orgId} meeting={m} people={people} isOccurrence={!!m.rhythm_id} onSaved={() => load()} />
+
+      <CreateRhythmModal isOpen={seriesOpen} onClose={() => setSeriesOpen(false)} orgId={orgId} people={people} rhythm={seriesRhythm} onCreated={() => { setSeriesOpen(false); load() }} />
+
+      <Modal isOpen={choiceOpen} onClose={() => setChoiceOpen(false)} title="Edit recurring meeting" size="sm">
+        <p className="text-sm text-[#475569] mb-3">This meeting repeats. What do you want to change?</p>
+        <div className="flex flex-col gap-2">
+          <button onClick={() => { setChoiceOpen(false); setEditOpen(true) }} className="text-left border border-[#E2E8F0] rounded-[10px] px-4 py-3 hover:border-[#2563EB] hover:bg-[#F8FAFC]">
+            <div className="text-[15px] font-semibold text-[#0F172A]">This occurrence only</div>
+            <div className="text-xs text-[#64748B] mt-0.5">Change just this one meeting. The rest of the series stays the same.</div>
+          </button>
+          <button onClick={async () => { setChoiceOpen(false); try { const r = await meetingsApi.getRhythm(orgId, m.rhythm_id!); setSeriesRhythm(r); setSeriesOpen(true) } catch { addToast('Could not load the series', 'error') } }} className="text-left border border-[#E2E8F0] rounded-[10px] px-4 py-3 hover:border-[#2563EB] hover:bg-[#F8FAFC]">
+            <div className="text-[15px] font-semibold text-[#0F172A]">Whole series</div>
+            <div className="text-xs text-[#64748B] mt-0.5">Change the recurring pattern or details for all future occurrences.</div>
+          </button>
         </div>
       </Modal>
 
