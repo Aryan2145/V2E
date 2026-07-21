@@ -1,4 +1,4 @@
-import { ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Logger, NotFoundException, forwardRef } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { EmploymentType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -23,6 +23,11 @@ const DEFAULT_IMPORT_PASSWORD = 'Welcome@123';
 /** Combined dropdown values in the template read "Value · Context" with this glue. */
 export const VALUE_SEPARATOR = ' · ';
 const UNDO_WINDOW_MINUTES = 30;
+// Welcome emails are throttled so a large import doesn't burst past the SMTP
+// provider's per-connection / per-minute limits (Gmail throttles bursts and
+// silently drops the overflow). We send in small chunks with a pause between.
+const WELCOME_MAIL_CHUNK_SIZE = 10;
+const WELCOME_MAIL_CHUNK_DELAY_MS = 1500;
 const EMPLOYMENT_TYPES = ['full_time', 'part_time', 'contract'];
 const MIN_AGE_YEARS = 15;
 const MAX_AGE_YEARS = 100;
@@ -63,6 +68,8 @@ interface ImportContext {
 
 @Injectable()
 export class EmployeeImportService {
+  private readonly logger = new Logger(EmployeeImportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => LearningService))
@@ -247,16 +254,49 @@ export class EmployeeImportService {
         select: { name: true },
       });
       const firmName = org?.name ?? 'your organisation';
-      await Promise.allSettled(
-        welcomeQueue.map((w) =>
+      await this.sendWelcomeQueueThrottled(welcomeQueue, firmName);
+    }
+
+    return { batch_id: batch.id, created, failed, results: this.sortResults(results) };
+  }
+
+  /**
+   * Send the queued welcome / added-to-firm emails in small chunks with a pause
+   * between each chunk, so a large import never bursts past the SMTP provider's
+   * rate limits. Best-effort: failures are logged, never thrown — the import
+   * result the admin sees is unaffected either way.
+   */
+  private async sendWelcomeQueueThrottled(
+    queue: { email: string; name: string; password: string | null }[],
+    firmName: string,
+  ): Promise<void> {
+    let sent = 0;
+    let failed = 0;
+    for (let i = 0; i < queue.length; i += WELCOME_MAIL_CHUNK_SIZE) {
+      const chunk = queue.slice(i, i + WELCOME_MAIL_CHUNK_SIZE);
+      const outcomes = await Promise.allSettled(
+        chunk.map((w) =>
           w.password
             ? this.mail.sendWelcomeCredentials({ to: w.email, name: w.name, firmName, password: w.password })
             : this.mail.sendAddedToFirm({ to: w.email, name: w.name, firmName }),
         ),
       );
+      outcomes.forEach((o, idx) => {
+        if (o.status === 'fulfilled') {
+          sent++;
+        } else {
+          failed++;
+          this.logger.warn(`Welcome email failed for ${chunk[idx].email}: ${o.reason}`);
+        }
+      });
+      // Pause before the next chunk (skip after the final chunk).
+      if (i + WELCOME_MAIL_CHUNK_SIZE < queue.length) {
+        await new Promise((resolve) => setTimeout(resolve, WELCOME_MAIL_CHUNK_DELAY_MS));
+      }
     }
-
-    return { batch_id: batch.id, created, failed, results: this.sortResults(results) };
+    this.logger.log(
+      `Import welcome emails: ${sent} sent, ${failed} failed of ${queue.length} (chunks of ${WELCOME_MAIL_CHUNK_SIZE}).`,
+    );
   }
 
   /** Import History — every batch, newest first, with how many rows still exist + undo eligibility. */
