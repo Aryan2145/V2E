@@ -136,9 +136,20 @@ function EntitlementsCard({ orgId }: { orgId: string }) {
         <div className="h-32 rounded-[8px] bg-[#F1F5F9] animate-pulse" />
       ) : (
         <div className="flex flex-col gap-2">
-          {modules.map((m) => (
-            <div key={m.module_key} className="flex items-center justify-between gap-4 py-2 border-b border-[#F1F5F9] last:border-0">
-              <span className="text-[15px] font-medium text-[#0F172A]">{m.label}</span>
+          {modules.map((m, i) => (
+            <div key={m.module_key}>
+              {m.group && m.group !== modules[i - 1]?.group && (
+                <p className="text-[11px] font-semibold uppercase tracking-widest text-[#94A3B8] pt-3 pb-1">
+                  {m.group}
+                </p>
+              )}
+              <div
+                className={[
+                  'flex items-center justify-between gap-4 py-2 border-b border-[#F1F5F9] last:border-0',
+                  m.group ? 'pl-3' : '',
+                ].join(' ')}
+              >
+                <span className="text-[15px] font-medium text-[#0F172A]">{m.label}</span>
               <div className="inline-flex rounded-[8px] overflow-hidden border border-[#E2E8F0]">
                 {ENT_OPTIONS.map((opt) => {
                   const active = edits[m.module_key] === opt.value
@@ -155,6 +166,7 @@ function EntitlementsCard({ orgId }: { orgId: string }) {
                     </button>
                   )
                 })}
+                </div>
               </div>
             </div>
           ))}

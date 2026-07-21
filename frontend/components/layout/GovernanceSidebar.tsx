@@ -3,28 +3,20 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import {
-  CalendarDays,
-  Gavel,
-  BarChart2,
-  ClipboardList,
-  FileText,
-  ChevronLeft,
-  ChevronRight,
-} from 'lucide-react'
-
-const NAV_ITEMS = [
-  { label: 'Meetings', href: '/dashboard/governance/meetings', Icon: CalendarDays },
-  { label: 'Decision Log', href: '/dashboard/governance/decisions', Icon: Gavel },
-  { label: 'Reports', href: '/dashboard/governance/reports', Icon: BarChart2 },
-  { label: 'Daily Update', href: '/dashboard/governance/daily-update', Icon: ClipboardList },
-  { label: 'Work Log', href: '/dashboard/governance/work-log', Icon: FileText },
-]
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useEntitlements } from '@/lib/auth/use-entitlements'
+import { GOVERNANCE_NAV } from '@/lib/governance-nav'
 
 const COLLAPSE_KEY = 'governance-sidebar-collapsed'
 
 export default function GovernanceSidebar() {
   const pathname = usePathname()
+  const { entitlements } = useEntitlements()
+  // Show every item until entitlements load (avoids a flash of missing links),
+  // then hide any line item the org isn't entitled to. Mirrors the Work sidebar.
+  const navItems = GOVERNANCE_NAV.filter(
+    (item) => !entitlements || entitlements[item.entitlement] !== 'off',
+  )
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'
@@ -71,7 +63,7 @@ export default function GovernanceSidebar() {
       </div>
 
       <nav className="sidebar-scroll flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
-        {NAV_ITEMS.map(({ label, href, Icon }) => {
+        {navItems.map(({ label, href, Icon }) => {
           const active = isActive(href)
           return (
             <Link

@@ -14,7 +14,8 @@ const ROUTE_MODULES: { prefix: string; module: string; label: string }[] = [
   { prefix: '/dashboard/projects', module: 'projects', label: 'Projects' },
   { prefix: '/dashboard/tasks', module: 'tasks', label: 'Tasks' },
   { prefix: '/dashboard/ecs', module: 'ecs', label: 'ESS' },
-  { prefix: '/dashboard/governance', module: 'governance', label: 'Governance' },
+  // Governance is gated per line item inside its own layout (governance/layout.tsx),
+  // not at the module level — so it's intentionally absent here.
   { prefix: '/dashboard/performance', module: 'performance', label: 'Performance' },
   { prefix: '/goals', module: 'goals', label: 'Goals' },
   { prefix: '/learning', module: 'learning', label: 'Learning' },

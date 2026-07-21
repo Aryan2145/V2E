@@ -11,13 +11,22 @@ import { MailService } from '../mail/mail.service';
 import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
-import { PERMISSION_REGISTRY, ENTITLEMENT_MODULE_KEYS, ENTITLEMENT_DEFAULT_BY_KEY } from '../access-rights/permission-registry';
+import {
+  ENTITLEMENT_UNITS,
+  ENTITLEMENT_MODULE_KEYS,
+  ENTITLEMENT_DEFAULT_BY_KEY,
+  GOVERNANCE_ENTITLEMENT_KEYS,
+  LEGACY_GOVERNANCE_KEY,
+} from '../access-rights/permission-registry';
 import { seedDefaultSystemRoles } from '../access-rights/default-system-roles';
 import { seedTaskMasters } from '../task-masters/seed-task-masters';
 
-const ENTITLEMENT_MODULES = PERMISSION_REGISTRY.filter((m) => m.entitlementControlled).map((m) => ({
-  key: m.key,
-  label: m.label,
+// Every sellable entitlement unit for the super-admin portal. Governance is
+// expanded into its per-line-item units (each with a `group` for the portal).
+const ENTITLEMENT_MODULES = ENTITLEMENT_UNITS.map((u) => ({
+  key: u.key,
+  label: u.label,
+  group: u.group,
 }));
 
 @Injectable()
@@ -102,11 +111,18 @@ export class OrganizationsService {
       where: { organization_id: orgId },
     });
     const byKey = new Map(rows.map((r) => [r.module_key, r.state]));
+    // Governance line items inherit the legacy `governance` state until saved.
+    const govFallback = byKey.get(LEGACY_GOVERNANCE_KEY);
+    const resolve = (key: string): EntitlementState =>
+      byKey.get(key) ??
+      (GOVERNANCE_ENTITLEMENT_KEYS.includes(key) ? govFallback : undefined) ??
+      EntitlementState.off;
     return {
       modules: ENTITLEMENT_MODULES.map((m) => ({
         module_key: m.key,
         label: m.label,
-        state: byKey.get(m.key) ?? EntitlementState.off,
+        group: m.group,
+        state: resolve(m.key),
       })),
     };
   }
@@ -119,6 +135,16 @@ export class OrganizationsService {
     const map: Record<string, EntitlementState> = {};
     for (const key of ENTITLEMENT_MODULE_KEYS) map[key] = EntitlementState.off;
     for (const r of rows) map[r.module_key] = r.state;
+    // Governance split into per-line-item keys; existing orgs only stored the
+    // legacy `governance` row. Inherit it for any line item without an explicit
+    // row so nav/feature gating works before the first super-admin save.
+    const govFallback = map[LEGACY_GOVERNANCE_KEY];
+    if (govFallback) {
+      const explicit = new Set(rows.map((r) => r.module_key));
+      for (const key of GOVERNANCE_ENTITLEMENT_KEYS) {
+        if (!explicit.has(key)) map[key] = govFallback;
+      }
+    }
     return map;
   }
 

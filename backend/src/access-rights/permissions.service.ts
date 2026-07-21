@@ -5,8 +5,11 @@ import {
   ALL_ADMIN_LEAVES,
   ALL_FEATURE_LEAVES,
   actionsFor,
+  entitlementKeyOf,
   isEntitlementControlled,
+  isGovernanceEntitlementKey,
   kindOf,
+  LEGACY_GOVERNANCE_KEY,
   moduleOf,
 } from './permission-registry';
 import { DEFAULT_SCOPE, SCOPABLE_LEAVES, rowScopeOf } from './scope-registry';
@@ -81,7 +84,35 @@ export class PermissionsService {
     const row = await this.prisma.orgModuleEntitlement.findUnique({
       where: { organization_id_module_key: { organization_id: orgId, module_key: moduleKey } },
     });
-    return row?.state ?? 'off';
+    if (row) return row.state;
+    // Governance split into per-line-item keys after some orgs were already seeded
+    // with the single legacy `governance` key. Inherit it until a super admin saves
+    // the finer switches (which then create explicit rows).
+    if (isGovernanceEntitlementKey(moduleKey)) {
+      const legacy = await this.prisma.orgModuleEntitlement.findUnique({
+        where: {
+          organization_id_module_key: {
+            organization_id: orgId,
+            module_key: LEGACY_GOVERNANCE_KEY,
+          },
+        },
+      });
+      return legacy?.state ?? 'off';
+    }
+    return 'off';
+  }
+
+  /** Bulk-map lookup with the same Governance legacy fallback as `entitlementState`. */
+  private ceilingFromMap(
+    entByModule: Map<string, EntitlementState>,
+    entitlementKey: string,
+  ): EntitlementState {
+    const direct = entByModule.get(entitlementKey);
+    if (direct) return direct;
+    if (isGovernanceEntitlementKey(entitlementKey)) {
+      return entByModule.get(LEGACY_GOVERNANCE_KEY) ?? 'off';
+    }
+    return 'off';
   }
 
   /** Effective allow for one actor leaf + action. */
@@ -98,10 +129,10 @@ export class PermissionsService {
     // stays inside the org. (Metadata leaves, when they exist, are allowed above/here.)
     if (principal.isSuperAdmin) return false;
 
-    // Layer 1 — entitlement ceiling (only for entitlement-controlled modules).
+    // Layer 1 — entitlement ceiling (module key, or a sub-module's finer key).
     if (isEntitlementControlled(leafKey)) {
-      const mod = moduleOf(leafKey)!;
-      const state = await this.entitlementState(orgId, mod);
+      const entKey = entitlementKeyOf(leafKey)!;
+      const state = await this.entitlementState(orgId, entKey);
       if (!this.ceilingAllows(state, action)) return false;
     }
 
@@ -177,7 +208,7 @@ export class PermissionsService {
 
     for (const leaf of ALL_FEATURE_LEAVES) {
       const state = isEntitlementControlled(leaf.key)
-        ? entByModule.get(moduleOf(leaf.key)!) ?? 'off'
+        ? this.ceilingFromMap(entByModule, entitlementKeyOf(leaf.key)!)
         : 'full';
       result[leaf.key] = this.permsFromActions(leaf.actions, (action) => {
         if (principal.isSuperAdmin) return false; // metadata-only: no content/feature
@@ -308,7 +339,9 @@ export class PermissionsService {
     const defaultScope = role?.default_scope ?? DEFAULT_SCOPE;
 
     for (const leaf of SCOPABLE_LEAVES) {
-      const state = isEntitlementControlled(leaf) ? entByModule.get(moduleOf(leaf)!) ?? 'off' : 'full';
+      const state = isEntitlementControlled(leaf)
+        ? this.ceilingFromMap(entByModule, entitlementKeyOf(leaf)!)
+        : 'full';
       // Resolved cascade fallback for this leaf's module (line tier handled per-row below).
       const cascadeScope = moduleScopeByModule.get(moduleOf(leaf)!) ?? defaultScope;
       const perAction: Partial<Record<PermissionAction, DataScope>> = {};

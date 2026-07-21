@@ -65,6 +65,8 @@ export type EntitlementState = 'full' | 'preview' | 'off';
 export interface ModuleEntitlement {
   module_key: string;
   label: string;
+  /** Optional grouping heading for the portal (e.g. Governance line items). */
+  group?: string;
   state: EntitlementState;
 }
 

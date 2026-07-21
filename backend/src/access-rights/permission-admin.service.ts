@@ -13,7 +13,9 @@ import {
   axisOf,
   kindOf,
   isEntitlementControlled,
-  moduleOf,
+  isGovernanceEntitlementKey,
+  entitlementKeyOf,
+  LEGACY_GOVERNANCE_KEY,
 } from './permission-registry';
 import { isContentLeaf, rowScopeOf } from './scope-registry';
 
@@ -384,7 +386,13 @@ export class PermissionAdminService {
     return {
       policies: ALL_SUBJECT_LEAVES.filter((leaf) => {
         if (!isEntitlementControlled(leaf.key)) return true;
-        return entitlementByModule.get(moduleOf(leaf.key)!) === 'full';
+        const entKey = entitlementKeyOf(leaf.key)!;
+        const state =
+          entitlementByModule.get(entKey) ??
+          (isGovernanceEntitlementKey(entKey)
+            ? entitlementByModule.get(LEGACY_GOVERNANCE_KEY)
+            : undefined);
+        return state === 'full';
       }).map((leaf) => ({
           subject_key: leaf.key,
           label: leaf.label,

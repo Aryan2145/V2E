@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { LogOut, ChevronDown, Building2, Check, Menu, X, Settings } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useEntitlements } from '@/lib/auth/use-entitlements'
+import { GOVERNANCE_NAV } from '@/lib/governance-nav'
 import { getMyOrgs } from '@/lib/api/auth'
 import type { OrgMembership } from '@/lib/types'
 import NotificationBell from './NotificationBell'
@@ -84,17 +85,27 @@ export default function TopNav() {
     tickets: '/dashboard/tasks/tickets',
     delegation: '/dashboard/tasks/delegation',
   }
+  // Governance is sold per line item; the tab shows when ANY item is enabled and
+  // deep-links to the first enabled one.
+  const firstEnabledGovernance = GOVERNANCE_NAV.find(
+    (i) => entitlements?.[i.entitlement] !== 'off',
+  )
   const visibleNav = NAV_ITEMS
     .filter((item) => {
       if (!item.module || !entitlements) return true
       if (item.module === 'work') return !!firstEnabledWorkModule
+      if (item.module === 'governance') return !!firstEnabledGovernance
       return entitlements[item.module] !== 'off'
     })
-    .map((item) =>
-      item.module === 'work' && firstEnabledWorkModule
-        ? { ...item, href: workHref[firstEnabledWorkModule] }
-        : item,
-    )
+    .map((item) => {
+      if (item.module === 'work' && firstEnabledWorkModule) {
+        return { ...item, href: workHref[firstEnabledWorkModule] }
+      }
+      if (item.module === 'governance' && firstEnabledGovernance) {
+        return { ...item, href: firstEnabledGovernance.href }
+      }
+      return item
+    })
   const isPreview = (module?: string) => !!module && entitlements?.[module] === 'preview'
 
   // Close on outside click

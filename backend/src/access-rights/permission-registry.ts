@@ -38,6 +38,12 @@ export interface PermissionLeaf {
 export interface PermissionSubModule {
   key: string;
   label: string;
+  /**
+   * When set, THIS sub-module carries its own per-org entitlement ceiling (finer
+   * than the module) so the vendor can sell/enable individual line items. Its
+   * leaves are then gated by this key instead of the module key. See Governance.
+   */
+  entitlement?: { key: string; label: string; default?: EntitlementDefault };
   features: PermissionLeaf[];
 }
 
@@ -154,11 +160,18 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
   {
     key: 'governance',
     label: 'Governance',
-    entitlementControlled: true,
+    // Governance is sold PER LINE ITEM: each sidebar entry (Meetings, Decision Log,
+    // Reports, Daily Update, Work Log) has its own entitlement so the vendor can
+    // enable them independently from the super-admin portal. The module itself is
+    // therefore NOT entitlement-controlled; the ceiling lives on the sub-modules
+    // below (meetings, work_logs) and — for the nav-only line items that have no
+    // permission leaf — in GOVERNANCE_NAV_ONLY_ENTITLEMENTS. See ENTITLEMENT_UNITS.
+    entitlementControlled: false,
     subModules: [
       {
         key: 'governance.meetings',
         label: 'Meetings',
+        entitlement: { key: 'governance.meetings', label: 'Meetings' },
         features: [
           // Legacy umbrella leaf — keep the exact key `meetings`.
           feature('meetings', 'Meetings', A_ALL, 'Meetings, agendas, action items and decisions'),
@@ -168,6 +181,7 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
       {
         key: 'governance.work_logs',
         label: 'Work logs',
+        entitlement: { key: 'governance.work_logs', label: 'Work Log' },
         features: [
           feature('work_logs.log.manage', 'Work logs'),
           subject('work_logs.subject.demandable', 'Can be asked for a work log'),
@@ -394,12 +408,19 @@ interface LeafIndexEntry {
   leaf: PermissionLeaf;
   moduleKey: string;
   subModuleKey: string;
-  entitlementControlled: boolean;
+  /**
+   * Entitlement key gating this leaf: the sub-module's own key when it declares
+   * one (finer control), else the module key when the module is entitlement-
+   * controlled, else undefined (not under any ceiling).
+   */
+  entitlementKey?: string;
 }
 
 const LEAF_INDEX = new Map<string, LeafIndexEntry>();
 for (const mod of PERMISSION_REGISTRY) {
   for (const sub of mod.subModules) {
+    const entitlementKey =
+      sub.entitlement?.key ?? (mod.entitlementControlled ? mod.key : undefined);
     for (const leaf of sub.features) {
       if (LEAF_INDEX.has(leaf.key)) {
         throw new Error(`Duplicate permission leaf key in registry: "${leaf.key}"`);
@@ -408,7 +429,7 @@ for (const mod of PERMISSION_REGISTRY) {
         leaf,
         moduleKey: mod.key,
         subModuleKey: sub.key,
-        entitlementControlled: mod.entitlementControlled,
+        entitlementKey,
       });
     }
   }
@@ -429,7 +450,15 @@ export const moduleLabelOf = (key: string): string | undefined => {
 };
 
 export const isEntitlementControlled = (key: string): boolean =>
-  LEAF_INDEX.get(key)?.entitlementControlled ?? false;
+  LEAF_INDEX.get(key)?.entitlementKey != null;
+
+/**
+ * The entitlement ceiling key that gates a leaf. Usually the module key, but a
+ * sub-module can override it for finer (per-line-item) control — e.g. Governance
+ * leaves resolve to `governance.meetings` / `governance.work_logs`.
+ */
+export const entitlementKeyOf = (key: string): string | undefined =>
+  LEAF_INDEX.get(key)?.entitlementKey;
 
 export const kindOf = (key: string): LeafKind | undefined => LEAF_INDEX.get(key)?.leaf.kind;
 
@@ -450,20 +479,58 @@ export const ALL_SUBJECT_LEAVES: PermissionLeaf[] = allLeaves().filter((l) => l.
 
 /** All top-level module keys (for entitlement seeding / nav). */
 export const ALL_MODULE_KEYS: string[] = PERMISSION_REGISTRY.map((m) => m.key);
-export const ENTITLEMENT_MODULE_KEYS: string[] = PERMISSION_REGISTRY.filter(
-  (m) => m.entitlementControlled,
-).map((m) => m.key);
 
 /**
- * Per-module seed state for a NEW org. Most modules default to `full`; a module
- * can opt into `off` (e.g. Delegation) so it stays dark until the vendor hands it
- * over per-org. Existing orgs are unaffected — a module with no stored row already
- * reads as `off` via `entitlementMap`.
+ * A sellable entitlement — the unit the super-admin portal toggles and the DB
+ * stores by `module_key`. Usually one per entitlement-controlled module, but
+ * Governance expands into one unit per line item (see GOVERNANCE_UNITS). `group`
+ * lets the portal cluster the line items under a heading.
+ */
+export interface EntitlementUnit {
+  key: string;
+  label: string;
+  group?: string;
+  default: EntitlementDefault;
+}
+
+/** Legacy single Governance entitlement key (pre per-line-item split). Kept only
+ *  as the fallback source so existing orgs inherit their old state until a super
+ *  admin saves the finer switches. */
+export const LEGACY_GOVERNANCE_KEY = 'governance';
+
+/** Governance's per-line-item entitlement units, in sidebar order. Two are backed
+ *  by permission leaves (meetings, work_logs); three are nav/route-gated only. */
+const GOVERNANCE_UNITS: EntitlementUnit[] = [
+  { key: 'governance.meetings', label: 'Meetings', group: 'Governance', default: 'full' },
+  { key: 'governance.decisions', label: 'Decision Log', group: 'Governance', default: 'full' },
+  { key: 'governance.reports', label: 'Reports', group: 'Governance', default: 'full' },
+  { key: 'governance.daily_update', label: 'Daily Update', group: 'Governance', default: 'full' },
+  { key: 'governance.work_logs', label: 'Work Log', group: 'Governance', default: 'full' },
+];
+
+export const GOVERNANCE_ENTITLEMENT_KEYS: string[] = GOVERNANCE_UNITS.map((u) => u.key);
+export const isGovernanceEntitlementKey = (key: string): boolean =>
+  key.startsWith('governance.');
+
+/**
+ * Every entitlement unit the vendor sells / seeds. Top-level entitlement-controlled
+ * modules contribute one unit each; Governance is expanded into its line items.
+ */
+export const ENTITLEMENT_UNITS: EntitlementUnit[] = PERMISSION_REGISTRY.flatMap((m) => {
+  if (m.entitlementControlled) {
+    return [{ key: m.key, label: m.label, default: m.defaultEntitlement ?? 'full' }];
+  }
+  if (m.key === 'governance') return GOVERNANCE_UNITS;
+  return [];
+});
+
+export const ENTITLEMENT_MODULE_KEYS: string[] = ENTITLEMENT_UNITS.map((u) => u.key);
+
+/**
+ * Per-key seed state for a NEW org. Most default to `full`; a unit can opt into
+ * `off` (e.g. Delegation) so it stays dark until the vendor hands it over per-org.
+ * Existing orgs are unaffected — a key with no stored row reads as `off` via
+ * `entitlementMap` (Governance line items additionally inherit the legacy key).
  */
 export const ENTITLEMENT_DEFAULT_BY_KEY: Record<string, EntitlementDefault> =
-  Object.fromEntries(
-    PERMISSION_REGISTRY.filter((m) => m.entitlementControlled).map((m) => [
-      m.key,
-      m.defaultEntitlement ?? 'full',
-    ]),
-  );
+  Object.fromEntries(ENTITLEMENT_UNITS.map((u) => [u.key, u.default]));
