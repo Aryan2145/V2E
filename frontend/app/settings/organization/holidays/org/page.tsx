@@ -18,7 +18,7 @@ export default function OrgCalendarPage() {
   const isAdmin = !!user?.is_admin
 
   const [workingDays, setWorkingDays] = useState<OrgWorkingDays | null>(null)
-  const [localDays, setLocalDays] = useState<number[]>([1, 2, 3, 4, 5])
+  const [localDays, setLocalDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
   const [holidays, setHolidays] = useState<OrgHoliday[]>([])
   const [loading, setLoading] = useState(true)

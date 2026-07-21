@@ -31,6 +31,7 @@ import {
   BusyQueryDto,
   CreateRhythmDto,
   UpdateRhythmDto,
+  RhythmScheduleDto,
 } from './dto/meeting-actions.dto';
 import {
   CreateActionItemDto,
@@ -75,8 +76,22 @@ export class MeetingsController {
   @Get('decisions')
   @RequirePermission(MEETINGS, PermissionAction.read)
   @ApiOperation({ summary: 'Org-wide decision log' })
-  decisionLog(@Param('orgId') orgId: string, @Query() query: Record<string, string>) {
-    return this.service.listDecisions(orgId, query);
+  decisionLog(@Param('orgId') orgId: string, @Request() req: any, @Query() query: Record<string, string>) {
+    return this.service.listDecisions(orgId, actorOf(req), query);
+  }
+
+  // ─── Google Calendar reverse view (the caller's OWN external events) ───────────
+  // Declared before ':id' so "google" isn't captured as a meeting id.
+  @Get('google/events')
+  @RequirePermission(MEETINGS, PermissionAction.read)
+  @ApiOperation({ summary: "The caller's external Google Calendar events in a window (deduped)" })
+  googleEvents(
+    @Param('orgId') orgId: string,
+    @Request() req: any,
+    @Query('from') from: string,
+    @Query('to') to: string,
+  ) {
+    return this.service.googleExternalEvents(orgId, actorOf(req), from, to);
   }
 
   // ─── Busy view (organiser sees busy times before picking a slot) ──────────────
@@ -98,6 +113,13 @@ export class MeetingsController {
   @RequirePermission(MEETINGS, PermissionAction.write)
   createRhythm(@Param('orgId') orgId: string, @Request() req: any, @Body() dto: CreateRhythmDto) {
     return this.rhythms.create(orgId, actorOf(req), dto);
+  }
+
+  // Preview which upcoming occurrences land on a company holiday (would be skipped).
+  @Post('rhythms/holiday-preview')
+  @RequirePermission(MEETINGS, PermissionAction.write)
+  rhythmHolidayPreview(@Param('orgId') orgId: string, @Body() dto: RhythmScheduleDto) {
+    return this.rhythms.holidayPreview(orgId, dto);
   }
 
   @Get('rhythms/:rhythmId')

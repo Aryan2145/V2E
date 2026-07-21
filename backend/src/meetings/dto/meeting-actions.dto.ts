@@ -98,6 +98,7 @@ export class RhythmScheduleDto {
   @IsOptional() @IsEnum(RecurringEndCondition) end_condition?: RecurringEndCondition;
   @IsOptional() @IsDateString() end_date?: string;
   @IsOptional() @IsInt() @Min(1) end_after?: number;
+  @IsOptional() @IsBoolean() skip_holidays?: boolean;
 }
 
 export class CreateRhythmDto {

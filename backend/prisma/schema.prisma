@@ -219,6 +219,10 @@ model User {
   refresh_token          String?
   refresh_token_prev     String?
   refresh_token_prev_exp DateTime?
+  // Google Calendar OAuth refresh token for THIS user's own calendar. Stored
+  // ENCRYPTED at rest (AES-256-GCM), never raw. null = not connected. Each user
+  // connects their own calendar; the token is global to the user (not per-org).
+  google_refresh_token   String?
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
@@ -247,6 +251,7 @@ model User {
   audit_logs               AuditLog[]
   organized_meetings       Meeting[]          @relation("MeetingOrganizer")
   meeting_attendances      MeetingAttendee[]  @relation("MeetingAttendeeUser")
+  time_blocks              TimeBlock[]        @relation("UserTimeBlocks")
   permission_overrides     UserPermissionOverride[]
   subject_overrides        UserSubjectOverride[]
 
@@ -1248,11 +1253,11 @@ model Task {
   @@unique([recurring_template_id, recurring_spawn_date], map: "tasks_recurring_template_day_unique")
   @@index([goal_id])
   @@index([organization_id])
+  @@index([organization_id, status_id])
   @@index([created_by_user_id])
   @@index([department_id])
   @@index([import_batch_id])
   @@map("tasks")
-  @@index([organization_id, status_id])
 }
 
 // Per-user "last opened" marker for a task. Drives the unread-comment count on the
@@ -1300,11 +1305,11 @@ model TaskAssignee {
   @@unique([task_id, user_id])
   @@index([user_id])
   @@index([organization_id])
+  @@index([organization_id, user_id, is_completed])
   @@map("task_assignees")
 }
 
 // A checklist item is the shared DEFINITION (title/group/order). HOW it is "done"
-  @@index([organization_id, user_id, is_completed])
 // depends on the task's completion mode, mirroring how the task itself tracks status:
 //   - any_can_complete / single assignee → ONE shared tick. `is_completed` +
 //     `completed_by_user_id`/`completed_at` carry it (first person to tick owns it;
@@ -2184,12 +2189,12 @@ model Ticket {
   comments      TicketComment[]
 
   @@unique([organization_id, ticket_number])
+  @@index([organization_id, status_id])
+  @@index([organization_id, sla_breached, sla_due_at])
   @@map("tickets")
 }
 
 model TicketChecklist {
-  @@index([organization_id, status_id])
-  @@index([organization_id, sla_breached, sla_due_at])
   id              String   @id @default(uuid())
   organization_id String
   ticket_id       String
@@ -2401,7 +2406,7 @@ model HolidayMaster {
 model OrgWorkingDays {
   id              String   @id @default(uuid())
   organization_id String   @unique
-  working_days    Json     @default("[1,2,3,4,5]")
+  working_days    Json     @default("[0,1,2,3,4,5,6]")
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
@@ -2458,7 +2463,7 @@ model DepartmentWorkingDays {
   id              String   @id @default(uuid())
   organization_id String
   department_id   String
-  working_days    Json     @default("[1,2,3,4,5]")
+  working_days    Json     @default("[0,1,2,3,4,5,6]")
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 
@@ -2536,7 +2541,7 @@ model IndividualWorkingDays {
   id              String    @id @default(uuid())
   organization_id String
   user_id         String
-  working_days    Json      @default("[1,2,3,4,5]")
+  working_days    Json      @default("[0,1,2,3,4,5,6]")
   effective_from  DateTime  @db.Date
   effective_to    DateTime? @db.Date
   created_at      DateTime  @default(now())
@@ -3258,11 +3263,11 @@ model Goal {
   @@index([organization_id, level])
   @@index([parent_goal_id])
   @@index([organization_id, next_review_date])
+  @@index([organization_id, owner_user_id])
   @@map("goals")
 }
 
 model GoalMeasure {
-  @@index([organization_id, owner_user_id])
   id              String   @id @default(uuid())
   organization_id String
   goal_id         String
@@ -3349,6 +3354,45 @@ enum MeetingAttendeeResponse {
   declined
 }
 
+// A personal calendar "Time-Block" — the user's own availability, named like an
+// event (e.g. "Dentist", "Focus time"). A block is NOT a meeting: it has no
+// attendees/agenda/governance and never appears in the org meeting list. It only
+// says "this time is taken", so nobody (incl. the owner) double-books it. Blocks
+// are the user's regardless of org (availability is universal), so they are keyed
+// by user, not org-scoped. To colleagues a block shows only as "Busy" (no title).
+enum TimeBlockSource {
+  native // created inside v2e
+  google // imported from the user's Google Calendar
+}
+
+model TimeBlock {
+  id              String          @id @default(uuid())
+  user_id         String
+  // The org the block was created in (native) — informational only; availability
+  // queries match by user across orgs. null for Google-imported blocks.
+  organization_id String?
+  title           String          // user-named; private to the owner
+  note            String?         @db.Text
+  start_at        DateTime
+  end_at          DateTime
+  all_day         Boolean         @default(false)
+  source          TimeBlockSource @default(native)
+  // Google mirror (two-way). google_event_id updates/deletes the mirrored event;
+  // google_ical_uid dedupes an imported block against a meeting already on Google;
+  // google_updated_at breaks the echo loop (skip our own push coming back).
+  google_event_id   String?
+  google_ical_uid   String?
+  google_updated_at String?
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+
+  user User @relation("UserTimeBlocks", fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, start_at])
+  @@index([user_id, google_ical_uid])
+  @@map("time_blocks")
+}
+
 model Meeting {
   id                 String           @id @default(uuid())
   organization_id    String
@@ -3384,6 +3428,10 @@ model Meeting {
   deleted_at         DateTime?
   deleted_by_user_id String?
   deletion_reason    String?          @db.Text
+  // Google Calendar mirror (forward sync). google_event_id updates/deletes the
+  // mirrored event; google_ical_uid is the stable dedupe key for the reverse view.
+  google_event_id    String?
+  google_ical_uid    String?
   created_at         DateTime         @default(now())
   updated_at         DateTime         @updatedAt
 
@@ -3423,6 +3471,7 @@ model MeetingAttendee {
   user    User    @relation("MeetingAttendeeUser", fields: [user_id], references: [id])
 
   @@unique([meeting_id, user_id])
+  @@index([organization_id, user_id])
   @@map("meeting_attendees")
 }
 
@@ -3431,7 +3480,6 @@ model MeetingActionItem {
   organization_id String
   meeting_id      String
   text            String    @db.Text
-  @@index([organization_id, user_id])
   owner_user_id   String?
   due_date        DateTime?
   linked_task_id  String? // manual link/create; nothing auto-creates
@@ -3502,6 +3550,11 @@ model MeetingRhythm {
   optional_user_ids  Json             @default("[]")
   is_active          Boolean          @default(true)
   created_by_user_id String
+  // Google Calendar: the SINGLE recurring event representing this whole series
+  // (Zoom-style). The rhythm owns the series; spawned instances are NOT mirrored
+  // separately. Editing the rhythm updates it (all occurrences); deleting removes it.
+  google_event_id    String?
+  google_ical_uid    String?
   created_at         DateTime         @default(now())
   updated_at         DateTime         @updatedAt
 
@@ -3528,6 +3581,9 @@ model MeetingRhythmSchedule {
   end_condition     RecurringEndCondition @default(never)
   end_date          DateTime?
   end_after         Int?
+  // When true (default), a due day that is a company holiday is SKIPPED (never slid).
+  // The meeting setter can turn this off to run the occurrence on the holiday anyway.
+  skip_holidays     Boolean               @default(true)
   occurrence_count  Int                   @default(0)
   is_active         Boolean               @default(true)
   created_at        DateTime              @default(now())

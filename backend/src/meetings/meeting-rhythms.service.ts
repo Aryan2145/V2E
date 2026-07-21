@@ -13,8 +13,10 @@ import { ScopeService } from '../access-rights/scope.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { principalFromUser } from '../access-rights/permissions.service';
 import { shouldEntryFireToday, type RecurrenceEntry } from '../common/recurrence/should-fire-today';
+import { HolidaysService } from '../holidays/holidays.service';
 import { Actor } from './meetings.service';
 import { CreateRhythmDto, UpdateRhythmDto, RhythmScheduleDto } from './dto/meeting-actions.dto';
+import { RhythmGoogleSyncService } from '../gcal/rhythm-google-sync.service';
 
 const MEETING_LEAF = 'meetings';
 const LINK = '/dashboard/governance/meetings/rhythms';
@@ -30,7 +32,56 @@ export class MeetingRhythmsService {
     private readonly scheduler: SchedulerService,
     private readonly scope: ScopeService,
     private readonly subjects: SubjectEligibilityService,
+    private readonly holidays: HolidaysService,
+    private readonly rgsync: RhythmGoogleSyncService,
   ) {}
+
+  // Preview which upcoming occurrences of a (draft) schedule land on a company
+  // holiday — i.e. exactly the days the spawner would SKIP when skip_holidays is on.
+  // Mirrors the spawner's date + holiday matching so the list is authoritative.
+  async holidayPreview(orgId: string, s: RhythmScheduleDto): Promise<{ date: string; name: string }[]> {
+    const now = await this.clock.now();
+    const today = new Date(now); today.setHours(0, 0, 0, 0);
+    const start = new Date(s.start_date); start.setHours(0, 0, 0, 0);
+    const from = start > today ? start : today;
+    const to =
+      s.end_condition === 'on_date' && s.end_date
+        ? (() => { const d = new Date(s.end_date); d.setHours(0, 0, 0, 0); return d; })()
+        : (() => { const d = new Date(from); d.setDate(from.getDate() + 180); return d; })();
+    if (to < from) return [];
+
+    const holidays = await this.holidays.getHolidaysInRange(orgId, from, to).catch(() => []);
+    const holMap = new Map(holidays.map((h) => [h.date, h.name]));
+    if (holMap.size === 0) return [];
+
+    const entry: RecurrenceEntry = {
+      start_date: start,
+      schedule_type: s.schedule_type,
+      every: s.every ?? 1,
+      days: s.days ?? [],
+      month_days: s.month_days ?? [],
+      yearly_dates: s.yearly_dates ?? [],
+      end_condition: s.end_condition ?? 'never',
+      end_date: s.end_date ? new Date(s.end_date) : null,
+      end_after: s.end_after ?? null,
+      occurrence_count: 0,
+    };
+
+    const out: { date: string; name: string }[] = [];
+    let realCount = 0; // non-holiday occurrences (mirror after_n: holidays don't consume)
+    const d = new Date(from);
+    while (d <= to && out.length < 30) {
+      if (shouldEntryFireToday({ ...entry, occurrence_count: realCount }, d)) {
+        const key = d.toISOString().slice(0, 10);
+        const name = holMap.get(key);
+        if (name) out.push({ date: key, name });
+        else realCount++;
+        if (s.end_condition === 'after_n' && s.end_after && realCount >= s.end_after) break;
+      }
+      d.setDate(d.getDate() + 1);
+    }
+    return out;
+  }
 
   private jsonIds(v: unknown): string[] {
     return (Array.isArray(v) ? v : []) as string[];
@@ -50,7 +101,29 @@ export class MeetingRhythmsService {
       end_condition: s.end_condition ?? 'never',
       end_date: s.end_date ? new Date(s.end_date) : null,
       end_after: s.end_after ?? null,
+      skip_holidays: s.skip_holidays ?? true,
     };
+  }
+
+  // Company holidays in the series window → EXDATEs on the recurring Google event.
+  private async holidayDatesFor(orgId: string, entry: { start_date: Date; end_condition: string; end_date: Date | null }): Promise<string[]> {
+    const start = new Date(entry.start_date); start.setHours(0, 0, 0, 0);
+    const end = entry.end_condition === 'on_date' && entry.end_date
+      ? new Date(entry.end_date)
+      : (() => { const d = new Date(start); d.setFullYear(d.getFullYear() + 1); return d; })();
+    const hols = await this.holidays.getHolidaysInRange(orgId, start, end).catch(() => []);
+    return (hols as any[]).map((h) => h.date);
+  }
+
+  // Mirror the rhythm to its single recurring Google event (Zoom-style). Reads
+  // the current schedule so it reflects the latest edit; is_active=false tears
+  // the series down. Best-effort — never blocks the rhythm mutation.
+  private async syncRhythmToGoogle(orgId: string, rhythmId: string): Promise<void> {
+    if (!this.rgsync.isConfigured) return;
+    const entry = await this.prisma.meetingRhythmSchedule.findFirst({ where: { meeting_rhythm_id: rhythmId }, orderBy: { created_at: 'asc' } });
+    const skip = (entry as any)?.skip_holidays ?? true;
+    const holidayDates = entry && skip ? await this.holidayDatesFor(orgId, entry as any) : [];
+    await this.rgsync.syncUpsert(orgId, rhythmId, holidayDates);
   }
 
   // ─── Create ─────────────────────────────────────────────────────────────────
@@ -95,6 +168,7 @@ export class MeetingRhythmsService {
       }).catch(() => {});
     }
 
+    await this.syncRhythmToGoogle(orgId, rhythm.id);
     return this.getOne(orgId, actor, rhythm.id);
   }
 
@@ -199,9 +273,10 @@ export class MeetingRhythmsService {
     const updated = await this.prisma.meetingRhythm.update({ where: { id }, data });
 
     // Update the schedule entry IN PLACE (preserve occurrence_count → never restarts after_n).
+    let newEntry = oldEntry;
     if (dto.schedule !== undefined && oldEntry) {
       const s = dto.schedule;
-      await this.prisma.meetingRhythmSchedule.update({
+      newEntry = await this.prisma.meetingRhythmSchedule.update({
         where: { id: oldEntry.id },
         data: {
           schedule_type: s.schedule_type,
@@ -214,6 +289,7 @@ export class MeetingRhythmsService {
           end_condition: s.end_condition ?? 'never',
           end_date: s.end_date ? new Date(s.end_date) : null,
           end_after: s.end_after ?? null,
+          skip_holidays: s.skip_holidays ?? true,
           // occurrence_count intentionally untouched.
         },
       });
@@ -221,16 +297,31 @@ export class MeetingRhythmsService {
 
     const now = await this.clock.now(orgId);
     const newTime = dto.schedule?.time ?? oldTime;
-    await this.propagateToFutureInstances(orgId, updated, oldTime, newTime, now);
+    // Pass the new schedule ONLY when the cadence changed, so propagate can retire
+    // future instances that no longer fire under the new pattern (e.g. daily→weekly).
+    await this.propagateToFutureInstances(
+      orgId, updated, oldTime, newTime, now, actor,
+      dto.schedule !== undefined ? newEntry : null,
+    );
 
     // Materialise any newly-due days under the (possibly changed) schedule.
     await this.scheduler.spawnForMeetingRhythm(orgId, id, now, HORIZON).catch(() => null);
 
+    // Update the single recurring Google event → Google applies to all occurrences.
+    await this.syncRhythmToGoogle(orgId, id);
     return this.getOne(orgId, actor, id);
   }
 
   // Push the edit into future, still-scheduled, UNTOUCHED instances only.
-  private async propagateToFutureInstances(orgId: string, rhythm: any, oldTime: string | null, newTime: string | null, now: Date) {
+  private async propagateToFutureInstances(
+    orgId: string,
+    rhythm: any,
+    oldTime: string | null,
+    newTime: string | null,
+    now: Date,
+    actor: Actor,
+    newEntry: any | null,
+  ) {
     const future = await this.prisma.meeting.findMany({
       where: {
         organization_id: orgId,
@@ -252,6 +343,23 @@ export class MeetingRhythmsService {
       if (oldTime && m.scheduled_start) {
         const hhmm = `${pad(m.scheduled_start.getHours())}:${pad(m.scheduled_start.getMinutes())}`;
         if (hhmm !== oldTime) continue; // manually moved → frozen
+      }
+
+      // If the cadence changed, an untouched instance whose day no longer fires under
+      // the NEW pattern is an orphan (e.g. daily→weekly leaves stray weekday meetings).
+      // Retire it so it doesn't linger on calendars. occurrence_count is neutralised in
+      // the probe so an after_n cap can't mislabel a genuinely-matching day as invalid;
+      // start_date/end_date filtering stays active (narrowing the window legitimately
+      // removes out-of-range instances). Re-spawn (below, in update) refills valid days.
+      if (newEntry && m.scheduled_start) {
+        const probe = { ...(newEntry as RecurrenceEntry), occurrence_count: 0 };
+        if (!shouldEntryFireToday(probe, m.scheduled_start)) {
+          await this.prisma.meeting.update({
+            where: { id: m.id },
+            data: { is_deleted: true, deleted_at: now, deleted_by_user_id: actor.id, deletion_reason: 'Rhythm cadence changed' },
+          });
+          continue;
+        }
       }
 
       const data: Prisma.MeetingUpdateInput = {
@@ -310,6 +418,7 @@ export class MeetingRhythmsService {
     const rhythm = await this.findOrFail(orgId, id);
     this.requireManage(actor, rhythm);
     await this.prisma.meetingRhythm.update({ where: { id }, data: { is_active: false } });
+    await this.syncRhythmToGoogle(orgId, id);
     return this.getOne(orgId, actor, id);
   }
 
@@ -319,6 +428,7 @@ export class MeetingRhythmsService {
     await this.prisma.meetingRhythm.update({ where: { id }, data: { is_active: true } });
     const now = await this.clock.now(orgId);
     await this.scheduler.spawnForMeetingRhythm(orgId, id, now, HORIZON).catch(() => null);
+    await this.syncRhythmToGoogle(orgId, id);
     return this.getOne(orgId, actor, id);
   }
 
@@ -336,6 +446,7 @@ export class MeetingRhythmsService {
       });
     }
     await this.prisma.meetingRhythm.update({ where: { id }, data: { is_active: false } });
+    await this.syncRhythmToGoogle(orgId, id);
     return { message: mode === 'delete-future' ? 'Rhythm stopped and future meetings removed' : 'Rhythm stopped' };
   }
 

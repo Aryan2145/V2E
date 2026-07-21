@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { SchedulerModule } from './scheduler/scheduler.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { EncryptionModule } from './common/encryption/encryption.module';
 import { StorageModule } from './storage/storage.module';
 import { MailModule } from './mail/mail.module';
 import { AuthModule } from './auth/auth.module';
@@ -39,6 +40,7 @@ import { MeetingsModule } from './meetings/meetings.module';
 import { WorkLogsModule } from './work-logs/work-logs.module';
 import { ProcessHierarchyModule } from './process-hierarchy/process-hierarchy.module';
 import { DelegationModule } from './delegation/delegation.module';
+import { TimeBlocksModule } from './time-blocks/time-blocks.module';
 
 @Module({
   imports: [
@@ -46,6 +48,7 @@ import { DelegationModule } from './delegation/delegation.module';
     ScheduleModule.forRoot(),
     AuditClsModule,
     PrismaModule,
+    EncryptionModule,
     StorageModule,
     MailModule,
     SchedulerModule,
@@ -82,6 +85,7 @@ import { DelegationModule } from './delegation/delegation.module';
     EcsModule,
     ProcessHierarchyModule,
     DelegationModule,
+    TimeBlocksModule,
   ],
 })
 export class AppModule {}

@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PermissionAction, Prisma } from '@prisma/client';
+import { DataScope, PermissionAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -16,6 +16,8 @@ import { PermissionsService, principalFromUser } from '../access-rights/permissi
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
 import { ScopeService } from '../access-rights/scope.service';
 import { AccessVisibilityService } from '../access-rights/access-visibility.service';
+import { MeetingGoogleSyncService } from '../gcal/meeting-google-sync.service';
+import { TimeBlocksService } from '../time-blocks/time-blocks.service';
 import { CreateMeetingDto } from './dto/create-meeting.dto';
 import {
   UpdateMeetingDto,
@@ -76,6 +78,8 @@ export class MeetingsService {
     private readonly subjects: SubjectEligibilityService,
     private readonly scope: ScopeService,
     private readonly visibility: AccessVisibilityService,
+    private readonly gsync: MeetingGoogleSyncService,
+    private readonly timeBlocks: TimeBlocksService,
   ) {
     this.scope.registerWiredList(MEETING);
     this.visibility.registerCounter(MEETING, (orgId, userId) =>
@@ -187,6 +191,9 @@ export class MeetingsService {
       });
     }
 
+    // Mirror to the organiser's Google Calendar (best-effort; never blocks).
+    await this.gsync.syncUpsert(orgId, meeting.id);
+
     return this.getOne(orgId, actor, meeting.id);
   }
 
@@ -216,9 +223,23 @@ export class MeetingsService {
       orderBy: [{ scheduled_start: 'asc' }, { created_at: 'desc' }],
       include: {
         organizer: { select: { id: true, name: true } },
+        // Light attendee roster for calendar avatars (name + host flag). These are
+        // meetings the actor can already see, so no new visibility surface.
+        attendees: {
+          select: { user_id: true, is_organizer: true, response: true, user: { select: { id: true, name: true } } },
+        },
         _count: { select: { attendees: true, action_items: true, decisions: true } },
       },
     });
+  }
+
+  // Reverse view: the caller's own external Google events in [from, to], deduped
+  // against meetings already mirrored to them. Fail-soft (empty on any problem).
+  async googleExternalEvents(orgId: string, actor: Actor, from?: string, to?: string) {
+    if (!from || !to || isNaN(Date.parse(from)) || isNaN(Date.parse(to))) {
+      return { connected: false, configured: true, events: [] };
+    }
+    return this.gsync.listExternalForUser(orgId, actor.id, from, to);
   }
 
   async getOne(orgId: string, actor: Actor, id: string) {
@@ -284,6 +305,14 @@ export class MeetingsService {
       return b !== a;
     });
 
+    // If the start time actually moved, un-latch the 15-minute reminder so the
+    // (possibly much later) new time gets its own day-of heads-up. Without this,
+    // `reminder_sent` is a one-way latch: a meeting rescheduled after its reminder
+    // already fired would strand every attendee with no reminder for the new time.
+    if (notifyKeys.includes('scheduled_start')) {
+      (data as any).reminder_sent = false;
+    }
+
     const updated = await this.prisma.meeting.update({ where: { id }, data });
 
     if (dto.attendee_user_ids) {
@@ -329,6 +358,9 @@ export class MeetingsService {
       }
     }
 
+    // Re-mirror the edited meeting (time/title/attendees) to Google.
+    await this.gsync.syncUpsert(orgId, id);
+
     return this.getOne(orgId, actor, id);
   }
 
@@ -339,6 +371,8 @@ export class MeetingsService {
       where: { id },
       data: { is_deleted: true, deleted_at: new Date(), deleted_by_user_id: actor.id, deletion_reason: reason ?? null },
     });
+    // Remove the organiser's Google mirror for the now-deleted meeting.
+    await this.gsync.syncDelete(meeting.created_by_user_id, (meeting as any).google_event_id);
     await this.audit.record({
       orgId, actorId: actor.id, action: 'delete', resource: 'meeting',
       entityId: id, entityLabel: meeting.title,
@@ -451,7 +485,12 @@ export class MeetingsService {
   async cancel(orgId: string, actor: Actor, id: string, reason?: string) {
     const meeting = await this.findOrFail(orgId, id);
     await this.requireManage(orgId, meeting, actor);
-    await this.prisma.meeting.update({ where: { id }, data: { status: 'cancelled' } });
+    await this.prisma.meeting.update({
+      where: { id },
+      data: { status: 'cancelled', google_event_id: null, google_ical_uid: null },
+    });
+    // Pull the mirror off the organiser's Google Calendar (notifies attendees).
+    await this.gsync.syncDelete(meeting.created_by_user_id, (meeting as any).google_event_id);
     await this.audit.record({ orgId, actorId: actor.id, action: 'update', resource: 'meeting', entityId: id, entityLabel: meeting.title, changes: { status: { before: meeting.status, after: 'cancelled' } } });
     const attendees = await this.prisma.meetingAttendee.findMany({ where: { meeting_id: id } });
     await this.notifications.emit({
@@ -477,8 +516,10 @@ export class MeetingsService {
       });
     }
     // Stamp the ledger the first time attendance is recorded, so governance can tell
-    // "attendance not recorded" from "everyone no-showed". Never un-stamp.
-    if (!meeting.attendance_taken_at) {
+    // "attendance not recorded" from "everyone no-showed". Never un-stamp. Guard on a
+    // non-empty submission: an empty rows[] must NOT stamp "recorded", or every
+    // non-declined attendee would silently read as a no-show.
+    if (!meeting.attendance_taken_at && dto.rows.length > 0) {
       await this.prisma.meeting.update({
         where: { id },
         data: { attendance_taken_at: await this.clock.now(orgId) },
@@ -600,11 +641,18 @@ export class MeetingsService {
     return this.getOne(orgId, actor, id);
   }
 
-  /** Org-wide decision log across meetings. */
-  async listDecisions(orgId: string, filters: Record<string, string | undefined>) {
+  /**
+   * Decision log across meetings — SCOPED to the caller. A decision is a
+   * sub-resource of a meeting, so it inherits the meeting's row-level visibility:
+   * the caller sees only decisions from meetings within their read scope (created
+   * by / attended per the meeting scope policy), never every decision in the org.
+   * Fails closed (listWhere returns a match-nothing fragment when denied).
+   */
+  async listDecisions(orgId: string, actor: Actor, filters: Record<string, string | undefined>) {
+    const scopeWhere = await this.scope.listWhere(orgId, principalFromUser(actor), MEETING);
     const where: Prisma.MeetingDecisionWhereInput = {
       organization_id: orgId,
-      meeting: { is_deleted: false },
+      meeting: { is_deleted: false, ...(scopeWhere as Prisma.MeetingWhereInput) },
     };
     if (filters.owner_user_id) where.owner_user_id = filters.owner_user_id;
     if (filters.from_date || filters.to_date) {
@@ -632,7 +680,24 @@ export class MeetingsService {
   // the system only suggests). HONEST FLOOR: this reflects only what THIS app knows —
   // in-app meetings, leave and holidays. It is never a guarantee someone is free.
   async busyView(orgId: string, actor: Actor, dto: BusyQueryDto) {
-    const userIds = [...new Set(dto.user_ids.filter(Boolean))];
+    const requestedIds = [...new Set(dto.user_ids.filter(Boolean))];
+    // ROW-LEVEL GATE (AUTHORIZATION.md): the busy view returns people's meetings,
+    // leave (incl. leave state) and holidays. Holding `meetings.read` at org level
+    // is NOT permission to enumerate an arbitrary colleague's calendar/leave. Clamp
+    // the requested users to those inside the caller's read scope over meetings
+    // (their own row always qualifies via `own`). Out-of-scope ids are dropped
+    // silently — fail closed, no leak — rather than 403-ing the whole request.
+    const { effective } = await this.scope.resolveListScope(orgId, principalFromUser(actor), MEETING, null);
+    let userIds = requestedIds;
+    if (effective === null) {
+      userIds = []; // no read scope at all → nothing
+    } else if (effective !== DataScope.org) {
+      const visible = await this.scope.visibleUserIds(orgId, actor.id, effective);
+      if (visible !== 'ALL') {
+        const allowed = new Set(visible);
+        userIds = requestedIds.filter((id) => allowed.has(id));
+      }
+    }
     if (userIds.length === 0) {
       return { from: dto.from, to: dto.to, people: [], suggestions: [], caveat: BUSY_CAVEAT };
     }
@@ -673,8 +738,18 @@ export class MeetingsService {
     const nameOf = new Map(users.map((u) => [u.id, u.name]));
     const leaveByUser = new Map(leave.results.map((r) => [r.user_id, r.windows]));
 
+    // Personal Time-Blocks (native + imported Google) make a person busy in every
+    // org. Shown to others as label-less "Busy" — never the block's real title.
+    const blocks = await this.timeBlocks.busyForUsers(userIds, from, to);
+    const blocksByUser = new Map<string, { start_at: Date; end_at: Date }[]>();
+    for (const bl of blocks) {
+      const arr = blocksByUser.get(bl.user_id) ?? [];
+      arr.push(bl);
+      blocksByUser.set(bl.user_id, arr);
+    }
+
     const people = userIds.map((uid) => {
-      const busy: { start: string; end: string; kind: 'meeting' | 'leave' | 'holiday'; label: string }[] = [];
+      const busy: { start: string; end: string; kind: 'meeting' | 'leave' | 'holiday' | 'block'; label: string }[] = [];
       for (const m of meetings) {
         if (m.attendees.some((a) => a.user_id === uid) && m.scheduled_start && m.scheduled_end) {
           busy.push({ start: m.scheduled_start.toISOString(), end: m.scheduled_end.toISOString(), kind: 'meeting', label: m.title });
@@ -686,6 +761,9 @@ export class MeetingsService {
       for (const h of holidays) {
         busy.push({ start: h.date, end: h.date, kind: 'holiday', label: h.name });
       }
+      for (const bl of blocksByUser.get(uid) ?? []) {
+        busy.push({ start: bl.start_at.toISOString(), end: bl.end_at.toISOString(), kind: 'block', label: 'Busy' });
+      }
       busy.sort((a, b) => a.start.localeCompare(b.start));
       return { user_id: uid, name: nameOf.get(uid) ?? 'Unknown', required: required.has(uid), busy };
     });
@@ -694,7 +772,7 @@ export class MeetingsService {
     // are HARD (drive ranking); optional-attendee clashes are soft warnings.
     let suggestions: any[] = [];
     if (dto.duration_min && dto.duration_min > 0) {
-      suggestions = this.rankSuggestions(meetings, from, to, dto.duration_min, required);
+      suggestions = this.rankSuggestions(meetings, blocks, from, to, dto.duration_min, required);
     }
 
     return { from: dto.from, to: dto.to, people, suggestions, caveat: BUSY_CAVEAT };
@@ -702,6 +780,7 @@ export class MeetingsService {
 
   private rankSuggestions(
     meetings: { scheduled_start: Date | null; scheduled_end: Date | null; attendees: { user_id: string }[] }[],
+    blocks: { user_id: string; start_at: Date; end_at: Date }[],
     from: Date,
     to: Date,
     durationMin: number,
@@ -732,6 +811,10 @@ export class MeetingsService {
           if (m.scheduled_start && m.scheduled_end && m.scheduled_start < c.end && m.scheduled_end > c.start) {
             for (const a of m.attendees) (required.has(a.user_id) ? hard : soft).add(a.user_id);
           }
+        }
+        // Personal Time-Blocks make that person unavailable in this candidate too.
+        for (const bl of blocks) {
+          if (bl.start_at < c.end && bl.end_at > c.start) (required.has(bl.user_id) ? hard : soft).add(bl.user_id);
         }
         return { start: c.start.toISOString(), end: c.end.toISOString(), hard_conflicts: [...hard], soft_conflicts: [...soft] };
       })

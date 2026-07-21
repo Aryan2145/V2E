@@ -35,7 +35,7 @@ export default function IndividualsPage() {
   const [loading, setLoading] = useState(true)
 
   // Working days: the employee follows their department (or org) until they override.
-  const [orgDays, setOrgDays] = useState<number[]>([1, 2, 3, 4, 5])
+  const [orgDays, setOrgDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
   const [deptDays, setDeptDays] = useState<number[] | null>(null)
   const [records, setRecords] = useState<IndividualWorkingDays[]>([])
   const [wdStatus, setWdStatus] = useState<'idle' | 'saving' | 'saved'>('idle')

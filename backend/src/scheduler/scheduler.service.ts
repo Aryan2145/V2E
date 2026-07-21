@@ -495,8 +495,9 @@ export class SchedulerService {
       const probe = { ...entry, occurrence_count: spawnedCount };
       if (!shouldEntryFireToday(probe, day)) continue;
 
-      // Holiday = SKIP (never slide), and do NOT consume an after_n count.
-      if (nonWorking.has(day.toISOString().slice(0, 10))) continue;
+      // Holiday = SKIP (never slide), and do NOT consume an after_n count — but only
+      // when the setter left "skip holidays" on (default). Off → run it on the holiday.
+      if (entry.skip_holidays !== false && nonWorking.has(day.toISOString().slice(0, 10))) continue;
 
       const didCreate = await this.materialiseRhythmMeeting(rhythm, entry, day, now);
       if (didCreate) { created++; spawnedCount++; }
@@ -525,7 +526,11 @@ export class SchedulerService {
     const [h, m] = String(entry.time).split(':').map(Number);
     const start = new Date(day); start.setHours(h || 0, m || 0, 0, 0);
     const end = new Date(start.getTime() + (rhythm.duration_min ?? 30) * 60_000);
-    const spawnDate = new Date(day); spawnDate.setHours(0, 0, 0, 0);
+    // @db.Date stores the UTC calendar date. Anchor the spawn-day at UTC-noon of the
+    // instance's LOCAL calendar day so the stored date matches scheduled_start's day
+    // in any timezone (local-midnight would roll back a day in +UTC offsets like IST,
+    // desyncing the dedupe key from the meeting's actual date).
+    const spawnDate = new Date(Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), 12, 0, 0));
 
     let meeting;
     try {

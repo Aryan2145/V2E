@@ -64,7 +64,8 @@ export class HolidaysService {
       }),
       this.prisma.orgWorkingDays.upsert({
         where: { organization_id: orgId },
-        create: { organization_id: orgId },
+        // New orgs default to all 7 days working (no assumed weekend off).
+        create: { organization_id: orgId, working_days: [0, 1, 2, 3, 4, 5, 6] },
         update: {},
       }),
     ])
@@ -126,7 +127,9 @@ export class HolidaysService {
       if (wd) return wd.working_days as number[]
     }
     const org = await this.prisma.orgWorkingDays.findUnique({ where: { organization_id: orgId } })
-    return (org?.working_days as number[]) ?? [1, 2, 3, 4, 5]
+    // Default = ALL 7 days working. Many SMEs (esp. in India) run 7 days, so we
+    // never assume a weekend off; an org marks days off explicitly if it wants.
+    return (org?.working_days as number[]) ?? [0, 1, 2, 3, 4, 5, 6]
   }
 
   /**

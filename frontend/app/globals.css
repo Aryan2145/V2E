@@ -71,3 +71,24 @@ input[type='number'] {
   background: #2563EB;
   animation: boot-bar-slide 1.15s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
+
+/* Overlay / panel entrances — modals fade+lift, side drawers glide in from the right.
+   Used via Tailwind arbitrary utilities e.g. animate-[fadeIn_.15s_ease-out]. */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .boot-bar { animation-duration: 2.3s; }
+  [class*="animate-[fadeIn"],
+  [class*="animate-[slideInRight"],
+  [class*="animate-[popIn"] { animation: none !important; }
+}

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, Trash2, Plus, Check, Download, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink,
+  X, Trash2, Plus, Check, Download, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink, FolderInput,
 } from 'lucide-react'
 import {
   processHierarchyApi,
@@ -14,31 +14,39 @@ import {
   type ProcessAccessLevel,
   type ProcessNodeStatus,
   type ProcessMapSummary,
+  type TreeNode,
 } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import { getUsers } from '@/lib/api/users'
 import type { Department, Role, User } from '@/lib/types'
+import StyledSelect from '@/components/ui/StyledSelect'
+import EmployeePicker from '@/components/ui/EmployeePicker'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import { useToast } from '@/components/ui/Toast'
 
 const STATUS_LABEL: Record<ProcessNodeStatus, string> = { draft: 'Draft', in_review: 'In review', final: 'Final' }
+const STATUS_COLOR: Record<ProcessNodeStatus, string> = { draft: '#94A3B8', in_review: '#D97706', final: '#16A34A' }
+const STATUS_OPTIONS = (['draft', 'in_review', 'final'] as ProcessNodeStatus[]).map((s) => ({ value: s, label: STATUS_LABEL[s], color: STATUS_COLOR[s] }))
 const DRILLABLE = new Set(['container', 'subprocess'])
+const CONTAINER_KINDS = new Set(['container', 'subprocess'])
 
 const inputCls =
   'w-full px-3 py-2 text-[14px] rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A] placeholder:text-[#94A3B8]'
-const selectCls =
-  'px-2.5 py-2 text-[13px] rounded-[8px] border border-[#CBD5E1] bg-[#F8FAFC] text-[#0F172A] focus:border-[#2563EB] focus:outline-none'
 
 export default function NodeDrawer({
-  orgId, mapId, nodeId, onClose, onChanged, onDrill,
+  orgId, mapId, nodeId, tree = [], onClose, onChanged, onDrill,
 }: {
   orgId: string
   mapId: string
   nodeId: string
+  tree?: TreeNode[]
   onClose: () => void
   onChanged: () => void
   onDrill: (nodeId: string) => void
 }) {
+  const { addToast } = useToast()
   const [node, setNode] = useState<NodeDetail | null>(null)
   const [artifacts, setArtifacts] = useState<ProcessArtifact[]>([])
   const [maps, setMaps] = useState<ProcessMapSummary[]>([])
@@ -47,6 +55,8 @@ export default function NodeDrawer({
   const [users, setUsers] = useState<User[]>([])
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // editable local copy
   const [name, setName] = useState('')
@@ -69,7 +79,7 @@ export default function NodeDrawer({
 
   useEffect(() => {
     setNode(null)
-    reloadNode()
+    reloadNode().catch(() => addToast('Could not load this step.', 'error'))
     processHierarchyApi.listArtifacts(orgId, mapId).then(setArtifacts).catch(() => {})
     processHierarchyApi.listMaps(orgId).then(setMaps).catch(() => {})
     getDepartments(orgId).then(setDepartments).catch(() => {})
@@ -78,8 +88,29 @@ export default function NodeDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, orgId, mapId])
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
   const canEdit = !!node?.can_edit
   const drillable = node ? DRILLABLE.has(node.kind) : false
+
+  // Descendants of this node (from the map tree) — used for the delete blast radius
+  // and to keep the node out of its own "move to" targets.
+  const descendantIds = useMemo(() => {
+    if (!tree.length) return new Set<string>()
+    const childrenBy = new Map<string | null, string[]>()
+    tree.forEach((n) => {
+      const list = childrenBy.get(n.parent_node_id) ?? []
+      list.push(n.id); childrenBy.set(n.parent_node_id, list)
+    })
+    const out = new Set<string>()
+    const stack = [...(childrenBy.get(nodeId) ?? [])]
+    while (stack.length) { const id = stack.pop()!; if (out.has(id)) continue; out.add(id); for (const c of childrenBy.get(id) ?? []) stack.push(c) }
+    return out
+  }, [tree, nodeId])
 
   async function saveCore() {
     if (!node || saving) return
@@ -95,6 +126,9 @@ export default function NodeDrawer({
       })
       await reloadNode()
       onChanged()
+      addToast('Changes saved.', 'success')
+    } catch {
+      addToast('Could not save your changes. Please try again.', 'error')
     } finally {
       setSaving(false)
     }
@@ -102,37 +136,72 @@ export default function NodeDrawer({
 
   async function removeNode() {
     if (!node) return
-    if (!confirm('Delete this node and everything inside it?')) return
-    await processHierarchyApi.deleteNode(orgId, mapId, nodeId)
-    onChanged()
-    onClose()
+    setDeleting(true)
+    try {
+      await processHierarchyApi.deleteNode(orgId, mapId, nodeId)
+      setConfirmDel(false)
+      onChanged()
+      onClose()
+    } catch {
+      addToast('Could not delete this step. Please try again.', 'error')
+      setDeleting(false)
+    }
   }
 
   async function requestReview() {
     if (!node || wfBusy) return
     setWfBusy(true)
     try { await processHierarchyApi.requestReview(orgId, mapId, nodeId, wfCascade); await reloadNode(); onChanged() }
+    catch { addToast('Could not request review.', 'error') }
     finally { setWfBusy(false) }
   }
   async function decide(s: ProcessNodeStatus) {
     if (!node || wfBusy) return
     setWfBusy(true)
     try { await processHierarchyApi.decideStatus(orgId, mapId, nodeId, s, wfCascade); await reloadNode(); onChanged() }
+    catch { addToast('Could not update the review status.', 'error') }
     finally { setWfBusy(false) }
   }
 
   async function setLinkedMap(id: string) {
-    await processHierarchyApi.updateNode(orgId, mapId, nodeId, { linked_map_id: id || null })
-    await reloadNode(); onChanged()
+    try { await processHierarchyApi.updateNode(orgId, mapId, nodeId, { linked_map_id: id || null }); await reloadNode(); onChanged() }
+    catch { addToast('Could not update the cross-link.', 'error') }
+  }
+
+  async function moveTo(parentId: string) {
+    if (!node) return
+    try {
+      await processHierarchyApi.updateNode(orgId, mapId, nodeId, { parent_node_id: parentId === '__root__' ? null : parentId })
+      onChanged()
+      addToast('Step moved.', 'success')
+      onClose()
+    } catch {
+      addToast('Could not move this step there.', 'error')
+    }
   }
 
   const touch = () => setDirty(true)
   const isEvent = (k: string) => k === 'start_event' || k === 'end_event'
 
+  const moveOptions = useMemo(() => {
+    const opts = [{ value: '__root__', label: 'Top level (map root)' }]
+    tree
+      .filter((n) => CONTAINER_KINDS.has(n.kind) && n.id !== nodeId && !descendantIds.has(n.id) && n.id !== node?.parent_node_id)
+      .forEach((n) => opts.push({ value: n.id, label: n.name }))
+    return opts
+  }, [tree, nodeId, descendantIds, node?.parent_node_id])
+
+  const roleOptions = useMemo(() => [{ value: '', label: '— None —' }, ...roles.map((r) => ({ value: r.id, label: r.title }))], [roles])
+  const mapOptions = useMemo(
+    () => [{ value: '', label: '— None —' }, ...maps.filter((m) => m.id !== mapId).map((m) => ({ value: m.id, label: m.name }))],
+    [maps, mapId],
+  )
+
   const body = (
-    <div className="fixed inset-0 z-[60]">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="absolute right-0 top-0 h-full w-full max-w-[440px] bg-white shadow-xl flex flex-col">
+    // Non-modal: no dimming backdrop, so the canvas stays visible and the selected
+    // node keeps its context while you edit it (Part B7). The panel slides in.
+    <div className="fixed inset-0 z-[60] pointer-events-none">
+      <div className="absolute right-0 top-0 h-full w-full max-w-[440px] bg-white shadow-2xl border-l border-[#E2E8F0] flex flex-col pointer-events-auto animate-[slideInRight_.22s_ease-out]">
         {/* Header */}
         <div className="flex items-center gap-2 px-5 py-4 border-b border-[#E2E8F0]">
           <span className="text-[#2563EB]">{node ? KIND_META[node.kind].icon : <FileText size={14} />}</span>
@@ -148,7 +217,7 @@ export default function NodeDrawer({
                 Open <ChevronRight size={14} />
               </button>
             )}
-            <button onClick={onClose} className="text-[#94A3B8] hover:text-[#0F172A] transition-colors p-1"><X size={18} /></button>
+            <button onClick={onClose} aria-label="Close panel" className="text-[#94A3B8] hover:text-[#0F172A] transition-colors p-1"><X size={18} /></button>
           </div>
         </div>
 
@@ -160,20 +229,16 @@ export default function NodeDrawer({
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
             {/* Name + status */}
             <div>
-              <label className="block text-xs font-medium text-[#64748B] mb-1">Name</label>
+              <label className="block text-xs font-medium text-[#475569] mb-1">Name</label>
               <input className={inputCls} value={name} disabled={!canEdit}
                 onChange={(e) => { setName(e.target.value); touch() }} />
             </div>
 
-            <div className="flex items-center gap-3">
-              <div>
-                <label className="block text-xs font-medium text-[#64748B] mb-1">Status</label>
-                <select className={selectCls} value={status} disabled={!canEdit}
-                  onChange={(e) => { setStatus(e.target.value as ProcessNodeStatus); touch() }}>
-                  {(['draft', 'in_review', 'final'] as ProcessNodeStatus[]).map((s) => (
-                    <option key={s} value={s}>{STATUS_LABEL[s]}</option>
-                  ))}
-                </select>
+            <div>
+              <label className="block text-xs font-medium text-[#475569] mb-1">Status</label>
+              <div className="w-40">
+                <StyledSelect value={status} onChange={(v) => { setStatus(v as ProcessNodeStatus); touch() }}
+                  options={STATUS_OPTIONS} disabled={!canEdit} />
               </div>
             </div>
 
@@ -200,7 +265,7 @@ export default function NodeDrawer({
                     </button>
                   )}
                 </div>
-                <label className="flex items-center gap-1.5 text-[12px] text-[#64748B]">
+                <label className="flex items-center gap-1.5 text-[12px] text-[#475569]">
                   <input type="checkbox" checked={wfCascade} onChange={(e) => setWfCascade(e.target.checked)} className="accent-[#2563EB]" />
                   Apply to everything inside this node
                 </label>
@@ -209,44 +274,53 @@ export default function NodeDrawer({
 
             {/* Description */}
             <div>
-              <label className="block text-xs font-medium text-[#64748B] mb-1">Description</label>
+              <label className="block text-xs font-medium text-[#475569] mb-1">Description</label>
               <textarea className={`${inputCls} resize-none`} rows={3} value={description} disabled={!canEdit}
                 placeholder={canEdit ? 'What happens in this step?' : '—'}
                 onChange={(e) => { setDescription(e.target.value); touch() }} />
             </div>
 
             {/* Responsible */}
-            {node.kind !== 'start_event' && node.kind !== 'end_event' && (
+            {!isEvent(node.kind) && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#64748B] mb-1"><UserCircle2 size={12} className="inline mr-1" />Person</label>
-                  <select className={`${selectCls} w-full`} value={respUser} disabled={!canEdit}
-                    onChange={(e) => { setRespUser(e.target.value); touch() }}>
-                    <option value="">—</option>
-                    {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+                  <label className="block text-xs font-medium text-[#475569] mb-1"><UserCircle2 size={12} className="inline mr-1" />Person</label>
+                  <EmployeePicker
+                    value={respUser}
+                    onChange={(id) => { setRespUser(id); touch() }}
+                    employees={users.map((u) => ({ user_id: u.id, name: u.name }))}
+                    title="Responsible person"
+                    placeholder="— None —"
+                    allowClear
+                    disabled={!canEdit}
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#64748B] mb-1">Role</label>
-                  <select className={`${selectCls} w-full`} value={respRole} disabled={!canEdit}
-                    onChange={(e) => { setRespRole(e.target.value); touch() }}>
-                    <option value="">—</option>
-                    {roles.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
-                  </select>
+                  <label className="block text-xs font-medium text-[#475569] mb-1">Role</label>
+                  <StyledSelect value={respRole} onChange={(v) => { setRespRole(v); touch() }}
+                    options={roleOptions} disabled={!canEdit} placeholder="— None —" />
                 </div>
+              </div>
+            )}
+
+            {/* Move to (re-parent) */}
+            {canEdit && !isEvent(node.kind) && moveOptions.length > 1 && (
+              <div>
+                <label className="block text-xs font-medium text-[#475569] mb-1"><FolderInput size={12} className="inline mr-1" />Move to another area</label>
+                <StyledSelect value="" onChange={(v) => v && moveTo(v)} options={moveOptions} placeholder="Choose a destination…" />
+                <p className="text-[11px] text-[#64748B] mt-1">Moves this step (and anything inside it) into another container. Its connections here are cleared.</p>
               </div>
             )}
 
             {/* Cross-map link */}
             {!isEvent(node.kind) && (
               <div>
-                <label className="block text-xs font-medium text-[#64748B] mb-1">Opens another map (cross-link)</label>
+                <label className="block text-xs font-medium text-[#475569] mb-1">Opens another map (cross-link)</label>
                 <div className="flex items-center gap-2">
-                  <select className={`${selectCls} flex-1`} value={node.linked_map_id ?? ''} disabled={!canEdit}
-                    onChange={(e) => setLinkedMap(e.target.value)}>
-                    <option value="">— none —</option>
-                    {maps.filter((m) => m.id !== mapId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
+                  <div className="flex-1 min-w-0">
+                    <StyledSelect value={node.linked_map_id ?? ''} onChange={(v) => setLinkedMap(v)}
+                      options={mapOptions} disabled={!canEdit} placeholder="— None —" />
+                  </div>
                   {node.linked_map && (
                     <button onClick={() => onDrill(nodeId)} title="Open linked map"
                       className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF]">
@@ -254,12 +328,12 @@ export default function NodeDrawer({
                     </button>
                   )}
                 </div>
-                {node.linked_map && <p className="text-[11px] text-[#94A3B8] mt-1">Double-clicking this node on the canvas jumps to “{node.linked_map.name}”.</p>}
+                {node.linked_map && <p className="text-[11px] text-[#64748B] mt-1">Opening this node jumps to “{node.linked_map.name}”.</p>}
               </div>
             )}
 
             {/* Checklist */}
-            {node.kind !== 'start_event' && node.kind !== 'end_event' && (
+            {!isEvent(node.kind) && (
               <ChecklistEditor items={checklist} canEdit={canEdit} onChange={(next) => { setChecklist(next); touch() }} />
             )}
 
@@ -272,7 +346,7 @@ export default function NodeDrawer({
             )}
 
             {/* Artifacts (inputs/outputs) */}
-            {node.kind !== 'start_event' && node.kind !== 'end_event' && (
+            {!isEvent(node.kind) && (
               <ArtifactsSection
                 orgId={orgId} mapId={mapId} nodeId={nodeId} node={node} artifacts={artifacts}
                 canEdit={canEdit}
@@ -292,7 +366,7 @@ export default function NodeDrawer({
 
             {/* Delete */}
             {canEdit && (
-              <button onClick={removeNode}
+              <button onClick={() => setConfirmDel(true)}
                 className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-[#DC2626] border border-[#FECACA] hover:bg-[#FEF2F2] transition-colors">
                 <Trash2 size={15} /> Delete node
               </button>
@@ -300,6 +374,21 @@ export default function NodeDrawer({
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={confirmDel}
+        danger
+        title="Delete this step?"
+        message={
+          descendantIds.size > 0
+            ? `This also permanently deletes the ${descendantIds.size} item${descendantIds.size !== 1 ? 's' : ''} nested inside it. This cannot be undone.`
+            : 'This permanently deletes the step. This cannot be undone.'
+        }
+        confirmLabel="Delete"
+        loading={deleting}
+        onConfirm={removeNode}
+        onCancel={() => { if (!deleting) setConfirmDel(false) }}
+      />
     </div>
   )
 
@@ -316,7 +405,7 @@ function ChecklistEditor({ items, canEdit, onChange }: {
   if (!canEdit && items.length === 0) return null
   return (
     <div>
-      <label className="block text-xs font-medium text-[#64748B] mb-1.5">Checklist</label>
+      <label className="block text-xs font-medium text-[#475569] mb-1.5">Checklist</label>
       <div className="space-y-1.5">
         {items.map((it, i) => (
           <div key={it.id ?? i} className="flex items-center gap-2">
@@ -324,7 +413,7 @@ function ChecklistEditor({ items, canEdit, onChange }: {
             <input className={`${inputCls} py-1.5 text-[13px]`} value={it.text} disabled={!canEdit}
               onChange={(e) => onChange(items.map((x, j) => (j === i ? { ...x, text: e.target.value } : x)))} />
             {canEdit && (
-              <button onClick={() => onChange(items.filter((_, j) => j !== i))}
+              <button onClick={() => onChange(items.filter((_, j) => j !== i))} aria-label="Remove item"
                 className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><X size={14} /></button>
             )}
           </div>
@@ -335,7 +424,7 @@ function ChecklistEditor({ items, canEdit, onChange }: {
           <input className={`${inputCls} py-1.5 text-[13px]`} value={draft} placeholder="Add checklist item…"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && draft.trim()) { onChange([...items, { text: draft.trim() }]); setDraft('') } }} />
-          <button onClick={() => { if (draft.trim()) { onChange([...items, { text: draft.trim() }]); setDraft('') } }}
+          <button onClick={() => { if (draft.trim()) { onChange([...items, { text: draft.trim() }]); setDraft('') } }} aria-label="Add checklist item"
             className="shrink-0 w-8 h-8 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8]"><Plus size={15} /></button>
         </div>
       )}
@@ -348,6 +437,7 @@ function ArtifactsSection({ orgId, mapId, nodeId, node, artifacts, canEdit, onAr
   orgId: string; mapId: string; nodeId: string; node: NodeDetail; artifacts: ProcessArtifact[]
   canEdit: boolean; onArtifactsChanged: () => void; onLinksChanged: () => void
 }) {
+  const { addToast } = useToast()
   const [dir, setDir] = useState<ProcessArtifactDirection>('input')
   const [artifactId, setArtifactId] = useState('')
   const [busy, setBusy] = useState(false)
@@ -357,6 +447,7 @@ function ArtifactsSection({ orgId, mapId, nodeId, node, artifacts, canEdit, onAr
     if (!artifactId || busy) return
     setBusy(true)
     try { await processHierarchyApi.linkArtifact(orgId, mapId, nodeId, { artifact_id: artifactId, direction: dir }); setArtifactId(''); onLinksChanged() }
+    catch { addToast('Could not attach the document.', 'error') }
     finally { setBusy(false) }
   }
 
@@ -370,32 +461,33 @@ function ArtifactsSection({ orgId, mapId, nodeId, node, artifacts, canEdit, onAr
       onArtifactsChanged()
       await processHierarchyApi.linkArtifact(orgId, mapId, nodeId, { artifact_id: created.id, direction: dir })
       onLinksChanged()
-    } finally { setBusy(false) }
+    } catch { addToast('Upload failed. Please try again.', 'error') }
+    finally { setBusy(false) }
   }
 
   async function download(id: string) {
-    const { url } = await processHierarchyApi.downloadArtifact(orgId, mapId, id)
-    window.open(url, '_blank')
+    try { const { url } = await processHierarchyApi.downloadArtifact(orgId, mapId, id); window.open(url, '_blank') }
+    catch { addToast('Could not open the file.', 'error') }
   }
 
   async function unlink(linkId: string) {
-    await processHierarchyApi.unlinkArtifact(orgId, mapId, nodeId, linkId)
-    onLinksChanged()
+    try { await processHierarchyApi.unlinkArtifact(orgId, mapId, nodeId, linkId); onLinksChanged() }
+    catch { addToast('Could not remove the document.', 'error') }
   }
 
   const Row = ({ links, title }: { links: NodeDetail['inputs']; title: string }) => (
     <div>
       <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide mb-1">{title}</p>
-      {links.length === 0 ? <p className="text-[13px] text-[#94A3B8]">None</p> : (
+      {links.length === 0 ? <p className="text-[13px] text-[#64748B]">None</p> : (
         <div className="space-y-1">
           {links.map((l) => (
             <div key={l.id} className="flex items-center gap-2 text-[13px] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[6px] px-2 py-1.5">
               <FileText size={13} className="text-[#2563EB] shrink-0" />
               <span className="flex-1 truncate text-[#0F172A]">{l.artifact.name}</span>
               {l.artifact.storage_key && (
-                <button onClick={() => download(l.artifact.id)} className="text-[#64748B] hover:text-[#2563EB] shrink-0"><Download size={13} /></button>
+                <button onClick={() => download(l.artifact.id)} aria-label="Download" className="text-[#475569] hover:text-[#2563EB] shrink-0"><Download size={13} /></button>
               )}
-              {canEdit && <button onClick={() => unlink(l.id)} className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><X size={13} /></button>}
+              {canEdit && <button onClick={() => unlink(l.id)} aria-label="Remove" className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><X size={13} /></button>}
             </div>
           ))}
         </div>
@@ -405,21 +497,21 @@ function ArtifactsSection({ orgId, mapId, nodeId, node, artifacts, canEdit, onAr
 
   return (
     <div className="space-y-3 border-t border-[#E2E8F0] pt-4">
-      <p className="text-xs font-medium text-[#64748B]">Documents</p>
+      <p className="text-xs font-medium text-[#475569]">Documents</p>
       <Row links={node.inputs} title="Inputs (needed)" />
       <Row links={node.outputs} title="Outputs (produced)" />
       {canEdit && (
         <div className="space-y-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-2.5">
           <div className="flex items-center gap-2">
-            <select className={`${selectCls} bg-white`} value={dir} onChange={(e) => setDir(e.target.value as ProcessArtifactDirection)}>
-              <option value="input">Input</option>
-              <option value="output">Output</option>
-            </select>
-            <select className={`${selectCls} bg-white flex-1`} value={artifactId} onChange={(e) => setArtifactId(e.target.value)}>
-              <option value="">Select a document…</option>
-              {artifacts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-            <button onClick={link} disabled={!artifactId || busy}
+            <div className="w-28 shrink-0">
+              <StyledSelect value={dir} onChange={(v) => setDir(v as ProcessArtifactDirection)}
+                options={[{ value: 'input', label: 'Input' }, { value: 'output', label: 'Output' }]} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <StyledSelect value={artifactId} onChange={setArtifactId}
+                options={artifacts.map((a) => ({ value: a.id, label: a.name }))} placeholder="Select a document…" />
+            </div>
+            <button onClick={link} disabled={!artifactId || busy} aria-label="Attach document"
               className="shrink-0 w-8 h-8 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"><Plus size={15} /></button>
           </div>
           <div className="flex items-center gap-2">
@@ -440,15 +532,16 @@ function SharingSection({ orgId, mapId, nodeId, node, departments, roles, users,
   orgId: string; mapId: string; nodeId: string; node: NodeDetail
   departments: Department[]; roles: Role[]; users: User[]; onChanged: () => void
 }) {
+  const { addToast } = useToast()
   const [kind, setKind] = useState<ProcessAccessKind>('department')
   const [level, setLevel] = useState<ProcessAccessLevel>('view')
   const [entityId, setEntityId] = useState('')
   const [busy, setBusy] = useState(false)
 
   const options = useMemo(() => {
-    if (kind === 'department') return departments.map((d) => ({ id: d.id, label: d.name }))
-    if (kind === 'role') return roles.map((r) => ({ id: r.id, label: r.title }))
-    return users.map((u) => ({ id: u.id, label: u.name }))
+    if (kind === 'department') return departments.map((d) => ({ value: d.id, label: d.name }))
+    if (kind === 'role') return roles.map((r) => ({ value: r.id, label: r.title }))
+    return users.map((u) => ({ value: u.id, label: u.name }))
   }, [kind, departments, roles, users])
 
   async function add() {
@@ -464,19 +557,20 @@ function SharingSection({ orgId, mapId, nodeId, node, departments, roles, users,
       })
       setEntityId('')
       onChanged()
-    } finally { setBusy(false) }
+    } catch { addToast('Could not update sharing.', 'error') }
+    finally { setBusy(false) }
   }
 
   async function remove(id: string) {
-    await processHierarchyApi.removeAccess(orgId, mapId, nodeId, id)
-    onChanged()
+    try { await processHierarchyApi.removeAccess(orgId, mapId, nodeId, id); onChanged() }
+    catch { addToast('Could not remove that rule.', 'error') }
   }
 
   return (
     <div className="space-y-3 border-t border-[#E2E8F0] pt-4">
-      <p className="text-xs font-medium text-[#64748B] flex items-center gap-1.5"><Shield size={12} /> Who can see / edit this (cascades to everything inside)</p>
+      <p className="text-xs font-medium text-[#475569] flex items-center gap-1.5"><Shield size={12} /> Who can see / edit this (cascades to everything inside)</p>
       {node.access_rules.length === 0 ? (
-        <p className="text-[13px] text-[#94A3B8]">No one attached here yet — this node inherits access from above.</p>
+        <p className="text-[13px] text-[#64748B]">No one attached here yet — this node inherits access from above.</p>
       ) : (
         <div className="space-y-1">
           {node.access_rules.map((r) => (
@@ -486,33 +580,35 @@ function SharingSection({ orgId, mapId, nodeId, node, departments, roles, users,
                 {r.kind === 'exclude_user' ? 'hidden' : r.level}
               </span>
               <span className="flex-1 truncate text-[#0F172A]">{r.label}</span>
-              <span className="text-[11px] text-[#94A3B8] capitalize shrink-0">{r.kind === 'exclude_user' ? 'person' : r.kind}</span>
-              <button onClick={() => remove(r.id)} className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><X size={13} /></button>
+              <span className="text-[11px] text-[#64748B] capitalize shrink-0">{r.kind === 'exclude_user' ? 'person' : r.kind}</span>
+              <button onClick={() => remove(r.id)} aria-label="Remove rule" className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><X size={13} /></button>
             </div>
           ))}
         </div>
       )}
       <div className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-2.5 flex-wrap">
-        <select className={`${selectCls} bg-white`} value={kind} onChange={(e) => { setKind(e.target.value as ProcessAccessKind); setEntityId('') }}>
-          <option value="department">Department</option>
-          <option value="role">Role</option>
-          <option value="user">Person</option>
-          <option value="exclude_user">Hide from person</option>
-        </select>
+        <div className="w-40">
+          <StyledSelect value={kind} onChange={(v) => { setKind(v as ProcessAccessKind); setEntityId('') }}
+            options={[
+              { value: 'department', label: 'Department' },
+              { value: 'role', label: 'Role' },
+              { value: 'user', label: 'Person' },
+              { value: 'exclude_user', label: 'Hide from person' },
+            ]} />
+        </div>
         {kind !== 'exclude_user' && (
-          <select className={`${selectCls} bg-white`} value={level} onChange={(e) => setLevel(e.target.value as ProcessAccessLevel)}>
-            <option value="view">Can view</option>
-            <option value="edit">Can edit</option>
-          </select>
+          <div className="w-28">
+            <StyledSelect value={level} onChange={(v) => setLevel(v as ProcessAccessLevel)}
+              options={[{ value: 'view', label: 'Can view' }, { value: 'edit', label: 'Can edit' }]} />
+          </div>
         )}
-        <select className={`${selectCls} bg-white flex-1 min-w-[120px]`} value={entityId} onChange={(e) => setEntityId(e.target.value)}>
-          <option value="">Select…</option>
-          {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-        </select>
-        <button onClick={add} disabled={!entityId || busy}
+        <div className="flex-1 min-w-[120px]">
+          <StyledSelect value={entityId} onChange={setEntityId} options={options} placeholder="Select…" />
+        </div>
+        <button onClick={add} disabled={!entityId || busy} aria-label="Add sharing rule"
           className="shrink-0 w-8 h-8 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"><Plus size={15} /></button>
       </div>
-      <p className="text-[11px] text-[#94A3B8]">Attaching a department automatically covers its roles and people. Use “Hide from person” to remove someone who’s otherwise included.</p>
+      <p className="text-[11px] text-[#64748B]">Attaching a department automatically covers its roles and people. Use “Hide from person” to remove someone who’s otherwise included.</p>
     </div>
   )
 }

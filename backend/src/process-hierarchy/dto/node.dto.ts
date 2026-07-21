@@ -8,6 +8,7 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { ProcessNodeKind, ProcessNodeStatus } from '@prisma/client';
@@ -86,6 +87,13 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsUUID()
   linked_map_id?: string | null;
+
+  // Re-parent (move) the node to a different container/level within the same map.
+  // null = move to the map's top level. Validated for cycles in the service.
+  @IsOptional()
+  @ValidateIf((o) => o.parent_node_id !== null)
+  @IsUUID()
+  parent_node_id?: string | null;
 
   // Replace-all checklist (send the full desired list; omit to leave unchanged).
   @IsOptional()

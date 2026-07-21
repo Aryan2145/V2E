@@ -59,6 +59,7 @@ export interface RhythmScheduleInput {
   end_condition?: RecurringEndCondition
   end_date?: string
   end_after?: number
+  skip_holidays?: boolean
 }
 
 export interface CreateRhythmInput {
@@ -82,6 +83,25 @@ export interface BusyInput {
   from: string
   to: string
   duration_min?: number
+}
+
+// A read-only Google Calendar event for the reverse view (the user's own external
+// commitments). Times are absolute instants (or YYYY-MM-DD if all-day).
+export interface ExternalGEvent {
+  googleEventId: string
+  iCalUID: string
+  title: string
+  description: string | null
+  location: string | null
+  start: string
+  end: string
+  allDay: boolean
+  htmlLink: string | null
+}
+
+export interface GoogleSyncStatus {
+  connected: boolean
+  configured: boolean
 }
 
 export const meetingsApi = {
@@ -172,6 +192,9 @@ export const meetingsApi = {
     unwrap(await apiClient.get(`${base(orgId)}/rhythms/${id}`)),
   createRhythm: async (orgId: string, dto: CreateRhythmInput): Promise<MeetingRhythm> =>
     unwrap(await apiClient.post(`${base(orgId)}/rhythms`, dto)),
+  // Which upcoming occurrences of a (draft) schedule land on a company holiday.
+  rhythmHolidayPreview: async (orgId: string, schedule: RhythmScheduleInput): Promise<{ date: string; name: string }[]> =>
+    unwrap(await apiClient.post(`${base(orgId)}/rhythms/holiday-preview`, schedule)),
   updateRhythm: async (orgId: string, id: string, dto: Partial<CreateRhythmInput>): Promise<MeetingRhythm> =>
     unwrap(await apiClient.patch(`${base(orgId)}/rhythms/${id}`, dto)),
   pauseRhythm: async (orgId: string, id: string): Promise<MeetingRhythm> =>
@@ -180,4 +203,22 @@ export const meetingsApi = {
     unwrap(await apiClient.post(`${base(orgId)}/rhythms/${id}/resume`)),
   removeRhythm: async (orgId: string, id: string, mode: 'stop' | 'delete-future' = 'stop'): Promise<{ message: string }> =>
     unwrap(await apiClient.delete(`${base(orgId)}/rhythms/${id}?mode=${mode}`)),
+
+  // ─── Google Calendar sync (per-user, own calendar) ──────────────────────────
+  googleStatus: async (): Promise<GoogleSyncStatus> =>
+    unwrap(await apiClient.get(`/api/v1/auth/google/status`)),
+  googleAuthUrl: async (): Promise<{ url: string }> =>
+    unwrap(await apiClient.get(`/api/v1/auth/google/url`)),
+  googleDisconnect: async (): Promise<{ success: boolean }> =>
+    unwrap(await apiClient.delete(`/api/v1/auth/google`)),
+  googleEvents: async (
+    orgId: string,
+    from: string,
+    to: string,
+  ): Promise<{ connected: boolean; configured: boolean; events: ExternalGEvent[] }> =>
+    unwrap(
+      await apiClient.get(
+        `${base(orgId)}/google/events?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      ),
+    ),
 }

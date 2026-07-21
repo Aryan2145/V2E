@@ -196,7 +196,7 @@ export interface MeetingRhythm {
 export interface BusyBlock {
   start: string
   end: string
-  kind: 'meeting' | 'leave' | 'holiday'
+  kind: 'meeting' | 'leave' | 'holiday' | 'block'
   label: string
 }
 export interface BusyPerson {

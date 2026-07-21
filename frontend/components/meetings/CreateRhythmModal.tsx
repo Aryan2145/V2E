@@ -3,18 +3,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
-import DatePicker from '@/components/ui/DatePicker'
-import TimeField from '@/components/ui/TimeField'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi, type CreateRhythmInput } from '@/lib/api/meetings'
-import type { MeetingRhythm, MeetingType, RecurringScheduleType, RecurringEndCondition } from '@/lib/types/meetings'
+import type { MeetingRhythm, MeetingType } from '@/lib/types/meetings'
+import StyledSelect from '@/components/ui/StyledSelect'
+import ScheduleEntryRow, { type ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
+import SkipHolidaysField from './SkipHolidaysField'
 import MeetingAttendeeSelector, { type PersonOption } from './MeetingAttendeeSelector'
 
 const inputClass =
   'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
 const labelClass = 'block text-sm font-medium text-[#374151] mb-1'
-const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const todayStr = () => new Date().toISOString().slice(0, 10)
+const freshSched = (): ScheduleEntryDraft => ({
+  schedule_type: 'weekly', every: 1, days: [new Date().getDay()], month_days: [], yearly_dates: [],
+  time: '10:00', start_date: todayStr(), end_condition: 'never', end_date: '', end_after: 10,
+})
 
 interface Props {
   isOpen: boolean
@@ -22,9 +26,76 @@ interface Props {
   orgId: string
   people: PersonOption[]
   onCreated: (r: MeetingRhythm) => void
+  rhythm?: MeetingRhythm | null // present ⇒ edit mode
 }
 
-export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCreated }: Props) {
+const WEEKDAY_FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+function ordinal(n: number): string {
+  const a = Math.abs(n)
+  if (a % 100 >= 11 && a % 100 <= 13) return `${a}th`
+  return `${a}${['th', 'st', 'nd', 'rd'][a % 10] ?? 'th'}`
+}
+
+// Day-of-month, honouring the "from the end" convention (negative = counted back
+// from the last day; -1 = the last day).
+function monthDayLabel(d: number): string {
+  if (d > 0) return `the ${ordinal(d)}`
+  if (d === -1) return 'the last day'
+  return `the ${ordinal(-d)}-to-last day`
+}
+
+function joinList(parts: string[]): string {
+  if (parts.length <= 1) return parts.join('')
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+// A plain-English description of the recurrence, e.g.
+// "Your event will occur every 2 months on the 21st at 17:30, for 10 occurrences."
+function recurrenceSummary(sched: ScheduleEntryDraft): string {
+  const every = Math.max(1, sched.every || 1)
+  const time = sched.time || ''
+  let core = ''
+
+  switch (sched.schedule_type) {
+    case 'daily':
+      core = every === 1 ? 'every day' : `every ${every} days`
+      break
+    case 'weekly': {
+      const base = every === 1 ? 'every week' : `every ${every} weeks`
+      const dayNames = (sched.days ?? []).slice().sort((a, b) => a - b).map((d) => WEEKDAY_FULL[d])
+      core = dayNames.length ? `${base} on ${joinList(dayNames)}` : base
+      break
+    }
+    case 'monthly': {
+      const base = every === 1 ? 'every month' : `every ${every} months`
+      const days = (sched.month_days ?? []).slice().sort((a, b) => a - b).map(monthDayLabel)
+      core = days.length ? `${base} on ${joinList(days)}` : base
+      break
+    }
+    case 'yearly': {
+      const dates = (sched.yearly_dates ?? []).map((yd) => `${MONTH_FULL[(yd.month ?? 1) - 1]} ${ordinal(yd.day ?? 1)}`)
+      core = dates.length ? `every year on ${joinList(dates)}` : 'every year'
+      break
+    }
+    default:
+      core = 'on a schedule'
+  }
+
+  let end = ''
+  if (sched.end_condition === 'after_n' && sched.end_after) end = `, for ${sched.end_after} occurrence${sched.end_after === 1 ? '' : 's'}`
+  else if (sched.end_condition === 'on_date' && sched.end_date) {
+    const d = new Date(`${sched.end_date}T00:00`)
+    end = `, until ${d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}`
+  }
+
+  return `Your event will occur ${core}${time ? ` at ${time}` : ''}${end}.`
+}
+
+export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCreated, rhythm }: Props) {
+  const isEditing = !!rhythm
   const { addToast } = useToast()
   const [title, setTitle] = useState('')
   const [type, setType] = useState<MeetingType>('online')
@@ -35,38 +106,55 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
   const [agenda, setAgenda] = useState('')
   const [durationMin, setDurationMin] = useState(30)
 
-  const [scheduleType, setScheduleType] = useState<RecurringScheduleType>('weekly')
-  const [every, setEvery] = useState(1)
-  const [days, setDays] = useState<number[]>([new Date().getDay()])
-  const [monthDay, setMonthDay] = useState(1)
-  const [yearlyMonth, setYearlyMonth] = useState(1)
-  const [yearlyDay, setYearlyDay] = useState(1)
-  const [time, setTime] = useState('10:00')
-  const [startDate, setStartDate] = useState(todayStr())
-  const [endCondition, setEndCondition] = useState<RecurringEndCondition>('never')
-  const [endDate, setEndDate] = useState('')
-  const [endAfter, setEndAfter] = useState(10)
+  const [sched, setSched] = useState<ScheduleEntryDraft>(freshSched)
+  const [skipHolidays, setSkipHolidays] = useState(true)
 
   const [saving, setSaving] = useState(false)
   const nameOf = useMemo(() => new Map(people.map((p) => [p.user_id, p.name])), [people])
 
   useEffect(() => {
     if (!isOpen) return
+    if (rhythm) {
+      // Edit mode — hydrate every field from the existing rhythm + its schedule.
+      setTitle(rhythm.title); setType(rhythm.type)
+      setOnlineLink(rhythm.online_link ?? ''); setLocation(rhythm.location ?? '')
+      setAttendees(rhythm.attendee_user_ids ?? []); setOptional(rhythm.optional_user_ids ?? [])
+      setAgenda(rhythm.agenda ?? ''); setDurationMin(rhythm.duration_min ?? 30)
+      const e = rhythm.schedule_entries?.[0]
+      if (e) {
+        setSched({
+          schedule_type: e.schedule_type,
+          every: e.every ?? 1,
+          days: e.days ?? [],
+          month_days: e.month_days ?? [],
+          yearly_dates: e.yearly_dates ?? [],
+          time: e.time ?? '10:00',
+          start_date: e.start_date ? e.start_date.slice(0, 10) : todayStr(),
+          end_condition: e.end_condition,
+          end_date: e.end_date ? e.end_date.slice(0, 10) : '',
+          end_after: e.end_after ?? 10,
+        })
+        setSkipHolidays((e as any).skip_holidays ?? true)
+      } else {
+        setSched(freshSched()); setSkipHolidays(true)
+      }
+      return
+    }
     setTitle(''); setType('online'); setOnlineLink(''); setLocation(''); setAttendees([]); setOptional([]); setAgenda(''); setDurationMin(30)
-    setScheduleType('weekly'); setEvery(1); setDays([new Date().getDay()]); setMonthDay(1); setYearlyMonth(1); setYearlyDay(1)
-    setTime('10:00'); setStartDate(todayStr()); setEndCondition('never'); setEndDate(''); setEndAfter(10)
-  }, [isOpen])
+    setSched(freshSched()); setSkipHolidays(true)
+  }, [isOpen, rhythm])
 
   useEffect(() => { setOptional((opt) => opt.filter((id) => attendees.includes(id))) }, [attendees])
 
-  function toggleDay(d: number) { setDays((v) => (v.includes(d) ? v.filter((x) => x !== d) : [...v, d])) }
   function toggleOptional(id: string) { setOptional((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id])) }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) return addToast('Title is required', 'error')
-    if (scheduleType === 'weekly' && days.length === 0) return addToast('Pick at least one weekday', 'error')
-    if (!startDate) return addToast('Pick a start date', 'error')
+    if (sched.schedule_type === 'weekly' && sched.days.length === 0) return addToast('Pick at least one weekday', 'error')
+    if (sched.schedule_type === 'monthly' && sched.month_days.length === 0) return addToast('Pick at least one day of the month', 'error')
+    if (sched.schedule_type === 'yearly' && sched.yearly_dates.length === 0) return addToast('Pick at least one date', 'error')
+    if (!sched.start_date) return addToast('Pick a start date', 'error')
 
     const dto: CreateRhythmInput = {
       title: title.trim(),
@@ -75,16 +163,17 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
       attendee_user_ids: attendees,
       optional_user_ids: optional,
       schedule: {
-        schedule_type: scheduleType,
-        every: scheduleType === 'daily' || scheduleType === 'weekly' ? every : 1,
-        days: scheduleType === 'weekly' ? days : [],
-        month_days: scheduleType === 'monthly' ? [monthDay] : [],
-        yearly_dates: scheduleType === 'yearly' ? [{ month: yearlyMonth, day: yearlyDay }] : [],
-        time,
-        start_date: new Date(`${startDate}T00:00`).toISOString(),
-        end_condition: endCondition,
-        end_date: endCondition === 'on_date' && endDate ? new Date(`${endDate}T23:59`).toISOString() : undefined,
-        end_after: endCondition === 'after_n' ? endAfter : undefined,
+        schedule_type: sched.schedule_type,
+        every: sched.schedule_type === 'daily' || sched.schedule_type === 'weekly' ? sched.every : 1,
+        days: sched.schedule_type === 'weekly' ? sched.days : [],
+        month_days: sched.schedule_type === 'monthly' ? sched.month_days : [],
+        yearly_dates: sched.schedule_type === 'yearly' ? sched.yearly_dates : [],
+        time: sched.time,
+        start_date: new Date(`${sched.start_date}T00:00`).toISOString(),
+        end_condition: sched.end_condition,
+        end_date: sched.end_condition === 'on_date' && sched.end_date ? new Date(`${sched.end_date}T23:59`).toISOString() : undefined,
+        end_after: sched.end_condition === 'after_n' ? sched.end_after : undefined,
+        skip_holidays: skipHolidays,
       },
     }
     if (type !== 'offline' && onlineLink) dto.online_link = onlineLink
@@ -93,19 +182,21 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
 
     setSaving(true)
     try {
-      const r = await meetingsApi.createRhythm(orgId, dto)
-      addToast('Rhythm created', 'success')
+      const r = rhythm
+        ? await meetingsApi.updateRhythm(orgId, rhythm.id, dto)
+        : await meetingsApi.createRhythm(orgId, dto)
+      addToast(rhythm ? 'Rhythm updated' : 'Rhythm created', 'success')
       onCreated(r)
       onClose()
     } catch (err: any) {
-      addToast(err?.response?.data?.message ?? 'Failed to create rhythm', 'error')
+      addToast(err?.response?.data?.message ?? (rhythm ? 'Failed to update rhythm' : 'Failed to create rhythm'), 'error')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="New Rhythm" size="lg" closeOnEscape={false}>
+    <Modal isOpen={isOpen} onClose={onClose} title={isEditing ? 'Edit Rhythm' : 'New Rhythm'} size="lg" closeOnEscape={false}>
       <form onSubmit={submit} className="flex flex-col gap-4">
         <div>
           <label className={labelClass}>Title *</label>
@@ -115,11 +206,15 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className={labelClass}>Type</label>
-            <select className={inputClass} value={type} onChange={(e) => setType(e.target.value as MeetingType)}>
-              <option value="online">Online</option>
-              <option value="offline">Offline</option>
-              <option value="hybrid">Hybrid</option>
-            </select>
+            <StyledSelect
+              value={type}
+              onChange={(v) => setType(v as MeetingType)}
+              options={[
+                { value: 'online', label: 'Online' },
+                { value: 'offline', label: 'Offline' },
+                { value: 'hybrid', label: 'Hybrid' },
+              ]}
+            />
           </div>
           <div>
             <label className={labelClass}>Duration (min)</label>
@@ -142,102 +237,27 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
         {/* Attendees */}
         <div>
           <label className={labelClass}>Attendees</label>
-          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} />
+          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} optional={optional} onToggleOptional={toggleOptional} />
           <p className="text-xs text-[#64748B] mt-1">Everyone is on every occurrence by default. Toggle who is optional.</p>
-          {attendees.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {attendees.map((id) => {
-                const isOpt = optional.includes(id)
-                return (
-                  <button key={id} type="button" onClick={() => toggleOptional(id)} className="inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border"
-                    style={isOpt ? { backgroundColor: '#F1F5F9', color: '#475569', borderColor: '#E2E8F0' } : { backgroundColor: '#EFF6FF', color: '#2563EB', borderColor: '#BFDBFE' }}>
-                    {nameOf.get(id) ?? 'Unknown'} · {isOpt ? 'Optional' : 'Required'}
-                  </button>
-                )
-              })}
-            </div>
-          )}
         </div>
 
-        {/* Recurrence */}
-        <div className="border border-[#E2E8F0] rounded-[12px] p-4 flex flex-col gap-3">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {(['daily', 'weekly', 'monthly', 'yearly'] as RecurringScheduleType[]).map((t) => (
-              <button key={t} type="button" onClick={() => setScheduleType(t)}
-                className={['px-3 py-1.5 text-sm font-medium rounded-[8px] border capitalize', scheduleType === t ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#E2E8F0]'].join(' ')}>
-                {t}
-              </button>
-            ))}
+        {/* Recurrence — the SAME shared editor as recurring tasks and meetings */}
+        <div>
+          <label className={labelClass}>Recurrence <span className="text-[#DC2626]">*</span></label>
+          <div className="border border-[#E2E8F0] rounded-[12px] p-4">
+            <ScheduleEntryRow
+              entry={sched}
+              index={0}
+              onUpdate={(patch) => setSched((s) => ({ ...s, ...patch }))}
+              onDelete={() => {}}
+              canDelete={false}
+            />
+            <SkipHolidaysField orgId={orgId} sched={sched} value={skipHolidays} onChange={setSkipHolidays} />
           </div>
-
-          {(scheduleType === 'daily' || scheduleType === 'weekly') && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-[#475569]">Every</span>
-              <input type="number" min={1} className={`${inputClass} w-20`} value={every} onChange={(e) => setEvery(Math.max(1, Number(e.target.value)))} />
-              <span className="text-sm text-[#475569]">{scheduleType === 'daily' ? 'day(s)' : 'week(s)'}</span>
-            </div>
-          )}
-
-          {scheduleType === 'weekly' && (
-            <div className="flex flex-wrap gap-1.5">
-              {DOW.map((d, i) => (
-                <button key={i} type="button" onClick={() => toggleDay(i)}
-                  className={['w-11 h-9 text-sm font-medium rounded-[8px] border', days.includes(i) ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#E2E8F0]'].join(' ')}>
-                  {d}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {scheduleType === 'monthly' && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-[#475569]">On day</span>
-              <input type="number" min={1} max={31} className={`${inputClass} w-20`} value={monthDay} onChange={(e) => setMonthDay(Math.min(31, Math.max(1, Number(e.target.value))))} />
-              <span className="text-sm text-[#475569]">of the month</span>
-            </div>
-          )}
-
-          {scheduleType === 'yearly' && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-[#475569]">On</span>
-              <select className={`${inputClass} w-32`} value={yearlyMonth} onChange={(e) => setYearlyMonth(Number(e.target.value))}>
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
-                  <option key={mo} value={mo}>{new Date(2000, mo - 1, 1).toLocaleString(undefined, { month: 'long' })}</option>
-                ))}
-              </select>
-              <input type="number" min={1} max={31} className={`${inputClass} w-20`} value={yearlyDay} onChange={(e) => setYearlyDay(Math.min(31, Math.max(1, Number(e.target.value))))} />
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Time</label>
-              <TimeField value={time} onChange={setTime} />
-            </div>
-            <div>
-              <label className={labelClass}>Starts</label>
-              <DatePicker value={startDate} onChange={setStartDate} min={todayStr()} placeholder="Start date" />
-            </div>
-          </div>
-
-          <div>
-            <label className={labelClass}>Ends</label>
-            <div className="flex flex-wrap items-center gap-2">
-              <select className={`${inputClass} w-40`} value={endCondition} onChange={(e) => setEndCondition(e.target.value as RecurringEndCondition)}>
-                <option value="never">Never</option>
-                <option value="on_date">On a date</option>
-                <option value="after_n">After N times</option>
-              </select>
-              {endCondition === 'on_date' && <div className="w-44"><DatePicker value={endDate} onChange={setEndDate} min={startDate} placeholder="End date" /></div>}
-              {endCondition === 'after_n' && (
-                <div className="flex items-center gap-2">
-                  <input type="number" min={1} className={`${inputClass} w-24`} value={endAfter} onChange={(e) => setEndAfter(Math.max(1, Number(e.target.value)))} />
-                  <span className="text-sm text-[#475569]">occurrences</span>
-                </div>
-              )}
-            </div>
-            <p className="text-xs text-[#94A3B8] mt-1">Occurrences on a holiday are skipped (never moved to a working day) and don’t count toward the limit.</p>
-          </div>
+          <p className="mt-2 flex items-start gap-2 text-sm text-[#1D4ED8] font-medium bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] px-3 py-2">
+            <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-[#2563EB] shrink-0" />
+            <span>{recurrenceSummary(sched)}</span>
+          </p>
         </div>
 
         <div>

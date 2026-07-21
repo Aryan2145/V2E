@@ -80,6 +80,23 @@ export interface FlowLevel {
   connections: ProcessConnection[]
 }
 
+export interface TreeNode {
+  id: string
+  parent_node_id: string | null
+  kind: ProcessNodeKind
+  name: string
+  status: ProcessNodeStatus
+  sort_order: number
+  linked_map_id: string | null
+  linked_map_name: string | null
+}
+
+export interface MapTree {
+  map_id: string
+  can_edit: boolean
+  nodes: TreeNode[]
+}
+
 export interface ProcessArtifact {
   id: string
   map_id: string
@@ -194,6 +211,8 @@ export const processHierarchyApi = {
     const qs = parentNodeId ? `?parentNodeId=${parentNodeId}` : ''
     return unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/flow${qs}`))
   },
+  getTree: async (orgId: string, mapId: string): Promise<MapTree> =>
+    unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/tree`)),
   createNode: async (
     orgId: string,
     mapId: string,
@@ -214,6 +233,7 @@ export const processHierarchyApi = {
       position_x: number
       position_y: number
       linked_map_id: string | null
+      parent_node_id: string | null
       checklist: { id?: string; text: string }[]
     }>,
   ): Promise<NodeDetail> => unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/nodes/${nodeId}`, dto)),

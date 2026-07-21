@@ -227,6 +227,86 @@ export class ProcessHierarchyService {
     };
   }
 
+  /**
+   * Flat list of every node in the map — powers the outline tree and search on the
+   * client (which builds the hierarchy from parent_node_id). Applies the same
+   * exclude-user visibility as getFlow, and additionally hides the descendants of
+   * any excluded node so a hidden branch never leaks names through the tree.
+   */
+  async getTree(orgId: string, principal: Principal, mapId: string) {
+    await this.access.assertCanViewMap(orgId, principal, mapId);
+    const nodes = await this.prisma.processNode.findMany({
+      where: { organization_id: orgId, map_id: mapId, is_deleted: false },
+      orderBy: [{ sort_order: 'asc' }],
+      select: {
+        id: true,
+        parent_node_id: true,
+        kind: true,
+        name: true,
+        status: true,
+        sort_order: true,
+        linked_map_id: true,
+      },
+    });
+
+    let visible = nodes;
+    if (!principal.isAdmin && nodes.length) {
+      const owner = await this.prisma.processMap.findFirst({
+        where: { id: mapId },
+        select: { created_by_user_id: true },
+      });
+      if (owner?.created_by_user_id !== principal.userId) {
+        const excluded = await this.prisma.processNodeAccess.findMany({
+          where: {
+            organization_id: orgId,
+            node_id: { in: nodes.map((n) => n.id) },
+            kind: ProcessAccessKind.exclude_user,
+            user_id: principal.userId,
+          },
+          select: { node_id: true },
+        });
+        if (excluded.length) {
+          const childrenBy = new Map<string | null, string[]>();
+          for (const n of nodes) {
+            const list = childrenBy.get(n.parent_node_id) ?? [];
+            list.push(n.id);
+            childrenBy.set(n.parent_node_id, list);
+          }
+          const hidden = new Set<string>();
+          const stack = excluded.map((e) => e.node_id);
+          while (stack.length) {
+            const id = stack.pop()!;
+            if (hidden.has(id)) continue;
+            hidden.add(id);
+            for (const c of childrenBy.get(id) ?? []) stack.push(c);
+          }
+          visible = nodes.filter((n) => !hidden.has(n.id));
+        }
+      }
+    }
+
+    // Names of cross-linked maps (so the tree can show a link badge).
+    const linkedIds = Array.from(
+      new Set(visible.map((n) => n.linked_map_id).filter((x): x is string => !!x)),
+    );
+    const linkedMaps = linkedIds.length
+      ? await this.prisma.processMap.findMany({
+          where: { id: { in: linkedIds }, organization_id: orgId, is_deleted: false },
+          select: { id: true, name: true },
+        })
+      : [];
+    const linkedNameById = new Map(linkedMaps.map((m) => [m.id, m.name]));
+
+    return {
+      map_id: mapId,
+      can_edit: await this.access.canEditMap(orgId, principal, mapId),
+      nodes: visible.map((n) => ({
+        ...n,
+        linked_map_name: n.linked_map_id ? linkedNameById.get(n.linked_map_id) ?? null : null,
+      })),
+    };
+  }
+
   private async breadcrumb(orgId: string, mapId: string, parentNodeId: string | null) {
     const crumbs: { id: string | null; name: string }[] = [];
     if (parentNodeId) {
@@ -342,6 +422,46 @@ export class ProcessHierarchyService {
       await this.access.assertCanViewMap(orgId, principal, dto.linked_map_id);
     }
 
+    // Re-parent (move to another container/level). Validate same-map, permission on
+    // the destination, and no cycle (can't move a node inside itself/its own subtree).
+    let reparent: { parent_node_id: string | null; sort_order: number } | null = null;
+    if (dto.parent_node_id !== undefined) {
+      const newParent = dto.parent_node_id ?? null;
+      if (newParent === nodeId) throw new BadRequestException('A node cannot be its own parent');
+      const all = await this.prisma.processNode.findMany({
+        where: { organization_id: orgId, map_id: mapId, is_deleted: false },
+        select: { id: true, parent_node_id: true },
+      });
+      const byId = new Map(all.map((n) => [n.id, n]));
+      if (newParent) {
+        if (!byId.has(newParent)) throw new BadRequestException('Target location is not in this map');
+        // Walk up from the destination — if we reach this node, the move is a cycle.
+        let cur: string | null = newParent;
+        const seen = new Set<string>();
+        while (cur && !seen.has(cur)) {
+          if (cur === nodeId) throw new BadRequestException('Cannot move a node inside itself');
+          seen.add(cur);
+          cur = byId.get(cur)?.parent_node_id ?? null;
+        }
+        await this.access.assertCanEditNode(orgId, principal, newParent);
+      } else {
+        await this.access.assertCanEditMap(orgId, principal, mapId);
+      }
+      const maxSort = await this.prisma.processNode.aggregate({
+        where: { organization_id: orgId, map_id: mapId, parent_node_id: newParent, is_deleted: false },
+        _max: { sort_order: true },
+      });
+      reparent = { parent_node_id: newParent, sort_order: (maxSort._max.sort_order ?? -1) + 1 };
+      // Moving levels invalidates this node's connections (edges live at one level).
+      await this.prisma.processConnection.deleteMany({
+        where: {
+          organization_id: orgId,
+          map_id: mapId,
+          OR: [{ source_node_id: nodeId }, { target_node_id: nodeId }],
+        },
+      });
+    }
+
     await this.prisma.processNode.update({
       where: { id: nodeId },
       data: {
@@ -353,6 +473,7 @@ export class ProcessHierarchyService {
         ...(dto.position_x !== undefined ? { position_x: dto.position_x } : {}),
         ...(dto.position_y !== undefined ? { position_y: dto.position_y } : {}),
         ...(dto.linked_map_id !== undefined ? { linked_map_id: dto.linked_map_id } : {}),
+        ...(reparent ? reparent : {}),
       },
     });
 

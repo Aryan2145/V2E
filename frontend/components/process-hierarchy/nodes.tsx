@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Play, Flag, ExternalLink } from 'lucide-react'
+import { Play, Flag, ExternalLink, ChevronRight } from 'lucide-react'
 import type { ProcessNodeKind, ProcessNodeStatus, DiffChangeKind } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 
@@ -17,6 +17,7 @@ export interface ProcessNodeData {
   selected: boolean
   diff?: DiffChangeKind // when comparing versions — tints the node
   linkedMapName?: string | null // cross-map link target
+  onOpen?: () => void // drill into this node (container/sub-process/linked map)
 }
 
 const DIFF_COLOR: Partial<Record<DiffChangeKind, string>> = {
@@ -32,10 +33,24 @@ export function borderColor(data: ProcessNodeData, accent: string): string {
   return accent
 }
 
-const STATUS_DOT: Record<ProcessNodeStatus, string> = {
-  draft: '#94A3B8',
-  in_review: '#D97706',
-  final: '#16A34A',
+// Status pill styling per DESIGN_RULES status badges (readable label, not colour-only).
+const STATUS_META: Record<ProcessNodeStatus, { label: string; dot: string; bg: string; text: string }> = {
+  draft: { label: 'Draft', dot: '#94A3B8', bg: '#F1F5F9', text: '#475569' },
+  in_review: { label: 'In review', dot: '#D97706', bg: '#FEF9C3', text: '#CA8A04' },
+  final: { label: 'Final', dot: '#16A34A', bg: '#DCFCE7', text: '#16A34A' },
+}
+
+function StatusPill({ status }: { status: ProcessNodeStatus }) {
+  const s = STATUS_META[status]
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold shrink-0"
+      style={{ background: s.bg, color: s.text }}
+    >
+      <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />
+      {s.label}
+    </span>
+  )
 }
 
 const handleStyle: React.CSSProperties = { width: 8, height: 8, background: '#2563EB', border: '2px solid #fff' }
@@ -44,7 +59,7 @@ function Frame({ children, border }: { children: React.ReactNode; border: string
   return (
     <div
       className="relative bg-white rounded-[10px] px-3 py-2 text-[13px] font-medium text-[#0F172A] shadow-sm"
-      style={{ border: `2px solid ${border}`, minWidth: 150, maxWidth: 220 }}
+      style={{ border: `2px solid ${border}`, minWidth: 160, maxWidth: 230 }}
     >
       {children}
     </div>
@@ -56,22 +71,30 @@ function TitleRow({ data }: { data: ProcessNodeData }) {
     <div className="flex items-center gap-2">
       <span style={{ color: '#2563EB' }} className="shrink-0">{KIND_META[data.kind].icon}</span>
       <span className="truncate flex-1">{data.name}</span>
-      <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS_DOT[data.status] }} title={data.status} />
+      <StatusPill status={data.status} />
     </div>
   )
 }
 
-function DrillBadge({ count }: { count: number }) {
-  if (!count) return null
+/** Explicit, discoverable drill affordance (replaces the hidden double-click). */
+function OpenButton({ data }: { data: ProcessNodeData }) {
+  if (!data.onOpen) return null
   return (
-    <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-[#2563EB] text-white shadow">
-      {count} inside
-    </span>
+    <button
+      type="button"
+      onClick={(e) => { e.stopPropagation(); data.onOpen!() }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onOpen!() } }}
+      className="nodrag mt-1.5 w-full inline-flex items-center justify-center gap-1 rounded-[6px] bg-[#EFF6FF] text-[#2563EB] hover:bg-[#2563EB] hover:text-white text-[11px] font-semibold py-1 transition-colors"
+      aria-label={`Open ${data.name}${data.childCount ? ` (${data.childCount} inside)` : ''}`}
+    >
+      Open{data.childCount ? ` · ${data.childCount} inside` : ''} <ChevronRight size={12} />
+    </button>
   )
 }
 
 function StepNode({ data }: NodeProps<ProcessNodeData>) {
   const accent = data.kind === 'container' || data.kind === 'subprocess' ? '#3B82F6' : '#CBD5E1'
+  const canOpen = data.drillable || !!data.linkedMapName
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -82,7 +105,7 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
             <ExternalLink size={10} /> <span className="truncate">{data.linkedMapName}</span>
           </div>
         )}
-        <DrillBadge count={data.drillable ? data.childCount : 0} />
+        {canOpen && <OpenButton data={data} />}
       </Frame>
       <Handle type="source" position={Position.Right} style={handleStyle} />
     </>
@@ -105,8 +128,9 @@ function DecisionNode({ data }: NodeProps<ProcessNodeData>) {
           borderRadius: 8,
         }}
       />
-      <div className="absolute inset-0 flex items-center justify-center px-4 text-center text-[12px] font-medium text-[#0F172A]">
+      <div className="absolute inset-0 flex flex-col items-center justify-center px-4 text-center text-[12px] font-medium text-[#0F172A] gap-1">
         <span className="line-clamp-3">{data.name}</span>
+        <StatusPill status={data.status} />
       </div>
       <Handle type="source" position={Position.Right} style={handleStyle} id="yes" />
       <Handle type="source" position={Position.Bottom} style={handleStyle} id="no" />

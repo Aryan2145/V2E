@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { X, Search, Plus } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { X, Search, Plus, Check } from 'lucide-react'
 
 export interface PersonOption {
   user_id: string
@@ -13,104 +14,227 @@ interface Props {
   options: PersonOption[]
   value: string[]
   onChange: (ids: string[]) => void
+  /** When provided, each chip shows a Required/Optional toggle (like the task CC badge). */
+  optional?: string[]
+  onToggleOptional?: (id: string) => void
   excludeIds?: string[]
   placeholder?: string
 }
 
-export default function MeetingAttendeeSelector({ options, value, onChange, excludeIds = [], placeholder = 'Add attendees…' }: Props) {
+// ── avatar helpers (shared look with the task Assignees & CC picker) ────────────
+const AVATAR_COLORS = ['bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]', 'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]']
+function avatarColor(name: string): string {
+  let h = 0
+  for (let i = 0; i < name.length; i++) h += name.charCodeAt(i)
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]
+}
+function initials(name: string): string {
+  return name.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2) || '?'
+}
+
+function AttendeeChip({
+  person, isOptional, showToggle, onToggleOptional, onRemove,
+}: {
+  person: PersonOption
+  isOptional: boolean
+  showToggle: boolean
+  onToggleOptional: () => void
+  onRemove: () => void
+}) {
+  return (
+    <div className="inline-flex items-center gap-1.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] pl-1.5 pr-1 py-1 max-w-[200px]">
+      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0 ${avatarColor(person.name)}`}>
+        {initials(person.name)}
+      </div>
+      <span className="text-xs font-medium text-[#0F172A] truncate">{person.name.split(' ')[0]}</span>
+      {showToggle && (
+        <button
+          type="button"
+          onClick={onToggleOptional}
+          title={isOptional ? 'Click to make Required' : 'Click to make Optional'}
+          className={`text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 transition-colors shrink-0 border ${
+            isOptional ? 'bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]' : 'bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]'
+          }`}
+        >
+          {isOptional ? 'Optional' : 'Required'}
+        </button>
+      )}
+      <button type="button" onClick={onRemove} className="w-4 h-4 flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0" aria-label={`Remove ${person.name}`}>
+        <X size={11} />
+      </button>
+    </div>
+  )
+}
+
+export default function MeetingAttendeeSelector({
+  options, value, onChange, optional = [], onToggleOptional, excludeIds = [], placeholder = 'Add attendees',
+}: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
-  }, [])
+  const searchRef = useRef<HTMLInputElement>(null)
 
   const byId = useMemo(() => new Map(options.map((o) => [o.user_id, o])), [options])
-  const available = useMemo(
+  const selectedSet = useMemo(() => new Set(value), [value])
+  const showToggle = !!onToggleOptional
+
+  const list = useMemo(
     () =>
       options.filter(
         (o) =>
-          !value.includes(o.user_id) &&
           !excludeIds.includes(o.user_id) &&
-          o.name.toLowerCase().includes(query.toLowerCase()),
+          (o.name.toLowerCase().includes(query.toLowerCase()) || (o.email ?? '').toLowerCase().includes(query.toLowerCase())),
       ),
-    [options, value, excludeIds, query],
+    [options, excludeIds, query],
   )
 
-  function add(id: string) {
-    onChange([...value, id])
-    setQuery('')
-  }
-  function remove(id: string) {
-    onChange(value.filter((v) => v !== id))
+  useEffect(() => {
+    if (!open) { setQuery(''); return }
+    const t = setTimeout(() => searchRef.current?.focus(), 50)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); setOpen(false) } }
+    window.addEventListener('keydown', onKey)
+    return () => { clearTimeout(t); window.removeEventListener('keydown', onKey) }
+  }, [open])
+
+  function toggle(id: string) {
+    onChange(selectedSet.has(id) ? value.filter((v) => v !== id) : [...value, id])
   }
 
   return (
-    <div ref={ref} className="relative">
+    <div className="relative">
+      {/* Trigger: selected chips + Add */}
       <div className="flex flex-wrap gap-1.5 items-center min-h-[42px] p-1.5 border border-[#CBD5E1] rounded-[8px] bg-white">
         {value.map((id) => {
-          const o = byId.get(id)
+          const p = byId.get(id)
+          if (!p) return null
           return (
-            <span key={id} className="inline-flex items-center gap-1 bg-[#EFF6FF] text-[#1E293B] text-sm rounded-full pl-2.5 pr-1 py-0.5">
-              {o?.name ?? 'Unknown'}
-              <button type="button" onClick={() => remove(id)} className="text-[#94A3B8] hover:text-[#DC2626]" aria-label="Remove">
-                <X size={13} />
-              </button>
-            </span>
+            <AttendeeChip
+              key={id}
+              person={p}
+              isOptional={optional.includes(id)}
+              showToggle={showToggle}
+              onToggleOptional={() => onToggleOptional?.(id)}
+              onRemove={() => toggle(id)}
+            />
           )
         })}
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="inline-flex items-center gap-1 text-sm text-[#2563EB] hover:text-[#1D4ED8] px-2 py-0.5"
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
         >
-          <Plus size={14} /> {value.length === 0 ? placeholder : 'Add'}
+          <Plus size={12} /> {value.length === 0 ? placeholder : 'Add'}
         </button>
       </div>
 
-      {open && (
-        <div className="absolute z-20 mt-1 w-full max-h-64 overflow-auto bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg">
-          <div className="sticky top-0 bg-white p-2 border-b border-[#F1F5F9]">
-            <div className="relative">
-              <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  // Escape closes only this dropdown — never the parent modal/form.
-                  if (e.key === 'Escape') {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setOpen(false)
-                  }
-                }}
-                placeholder="Search people…"
-                className="w-full pl-8 pr-2 py-1.5 text-sm border border-[#CBD5E1] rounded-[6px] focus:outline-none focus:border-[#2563EB]"
-              />
+      {/* Picker — centered dialog over the page (own backdrop), matching Assignees & CC */}
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40"
+          onMouseDown={(e) => { if (e.target === e.currentTarget) setOpen(false) }}
+        >
+          <div className="w-[440px] max-w-full max-h-[80vh] rounded-[12px] bg-white border border-[#E2E8F0] shadow-[0_12px_40px_rgba(0,0,0,0.20)] flex flex-col overflow-hidden">
+            {/* Title */}
+            <div className="flex items-center justify-between px-4 pt-3.5 pb-2.5 border-b border-[#F1F5F9] shrink-0">
+              <h3 className="text-sm font-semibold text-[#0F172A]">Attendees</h3>
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors">
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Search */}
+            <div className="px-4 pt-3 pb-2 shrink-0">
+              <div className="relative">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+                <input
+                  ref={searchRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search by name or email…"
+                  className="w-full pl-8 pr-3 py-[7px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] border border-[#E2E8F0] rounded-[8px] focus:border-[#2563EB] focus:outline-none bg-white"
+                />
+              </div>
+            </div>
+
+            {/* Selected chips inside the dialog */}
+            {value.length > 0 && (
+              <div className="px-4 py-2.5 border-b border-[#F1F5F9] shrink-0 flex flex-wrap gap-1.5 max-h-[104px] overflow-y-auto">
+                {value.map((id) => {
+                  const p = byId.get(id)
+                  if (!p) return null
+                  return (
+                    <AttendeeChip
+                      key={id}
+                      person={p}
+                      isOptional={optional.includes(id)}
+                      showToggle={showToggle}
+                      onToggleOptional={() => onToggleOptional?.(id)}
+                      onRemove={() => toggle(id)}
+                    />
+                  )
+                })}
+              </div>
+            )}
+
+            {/* People list */}
+            <div className="overflow-y-auto flex-1">
+              {list.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-10 text-center px-4">
+                  <div className="w-10 h-10 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-3"><Search size={16} className="text-[#94A3B8]" /></div>
+                  <p className="text-sm font-medium text-[#0F172A]">{query ? 'No people found' : 'No one to add'}</p>
+                  {query && <p className="text-xs text-[#475569] mt-1">Try a different search term.</p>}
+                </div>
+              ) : (
+                list.map((p) => {
+                  const selected = selectedSet.has(p.user_id)
+                  return (
+                    <button
+                      key={p.user_id}
+                      type="button"
+                      onClick={() => toggle(p.user_id)}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${selected ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'}`}
+                    >
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${avatarColor(p.name)}`}>
+                        {initials(p.name)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-[#0F172A] truncate">{p.name}</p>
+                        {p.email && <p className="text-xs text-[#64748B] truncate">{p.email}</p>}
+                      </div>
+                      {selected && (
+                        <span className="w-4 h-4 flex items-center justify-center bg-[#2563EB] rounded-full shrink-0">
+                          <Check size={10} className="text-white" strokeWidth={3} />
+                        </span>
+                      )}
+                    </button>
+                  )
+                })
+              )}
+            </div>
+
+            {/* Footer: count + Done */}
+            <div className="px-4 py-2.5 border-t border-[#F1F5F9] bg-[#F8FAFC] shrink-0 flex items-center justify-between gap-3">
+              <p className="text-xs text-[#475569] min-w-0 truncate">
+                {value.length > 0 ? (
+                  <>
+                    <span className="font-semibold text-[#0F172A]">{value.length}</span> attendee{value.length !== 1 ? 's' : ''}
+                    {showToggle && <span className="text-[#64748B]"> · click a badge to toggle Optional</span>}
+                  </>
+                ) : (
+                  <span className="text-[#64748B]">Search and select people, then confirm</span>
+                )}
+              </p>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors shrink-0"
+              >
+                <Check size={15} strokeWidth={3} /> Done
+              </button>
             </div>
           </div>
-          {available.length === 0 ? (
-            <p className="px-3 py-3 text-sm text-[#94A3B8]">No one to add.</p>
-          ) : (
-            available.map((o) => (
-              <button
-                key={o.user_id}
-                type="button"
-                onClick={() => add(o.user_id)}
-                className="w-full text-left px-3 py-2 text-sm text-[#0F172A] hover:bg-[#F8FAFC]"
-              >
-                {o.name}
-                {o.email && <span className="text-[#94A3B8] ml-2 text-xs">{o.email}</span>}
-              </button>
-            ))
-          )}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

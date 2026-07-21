@@ -18,6 +18,10 @@ interface DatePickerProps {
   markedHint?: string
   /** Tighter vertical padding + smaller font for dense inline rows. */
   compact?: boolean
+  /** Hide the inline clear (✕) button even when a date is selected. */
+  hideClear?: boolean
+  /** Borderless toolbar-style trigger (no box/fill) — just calendar icon + date text. */
+  bare?: boolean
 }
 
 const MONTHS = [
@@ -69,6 +73,8 @@ export default function DatePicker({
   markedDates,
   markedHint,
   compact = false,
+  hideClear = false,
+  bare = false,
 }: DatePickerProps) {
   const [open, setOpen] = useState(false)
   const markedSet = useMemo(() => new Set(markedDates ?? []), [markedDates])
@@ -131,11 +137,15 @@ export default function DatePicker({
 
   const vpad = compact ? 'py-1.5' : 'py-2.5'
   const fsize = compact ? 'text-[13px]' : 'text-[15px]'
-  const triggerCls = `w-full flex items-center gap-0 rounded-[8px] border bg-[#F8FAFC] text-left ${fsize} transition-colors ${
-    disabled
-      ? 'border-[#E2E8F0] cursor-not-allowed opacity-70'
-      : 'border-[#CBD5E1] cursor-pointer hover:bg-white hover:border-[#94A3B8]'
-  } ${open ? '!bg-white !border-[#2563EB] ring-1 ring-[#2563EB]' : ''}`
+  const triggerCls = bare
+    ? `inline-flex items-center gap-1.5 rounded-[6px] px-2 py-1 ${fsize} font-semibold transition-colors ${
+        disabled ? 'cursor-not-allowed opacity-70' : 'cursor-pointer hover:bg-[#F1F5F9]'
+      }`
+    : `w-full flex items-center gap-0 rounded-[8px] border bg-[#F8FAFC] text-left ${fsize} transition-colors ${
+        disabled
+          ? 'border-[#E2E8F0] cursor-not-allowed opacity-70'
+          : 'border-[#CBD5E1] cursor-pointer hover:bg-white hover:border-[#94A3B8]'
+      } ${open ? '!bg-white !border-[#2563EB] ring-1 ring-[#2563EB]' : ''}`
 
   return (
     <div ref={wrapRef}>
@@ -146,25 +156,36 @@ export default function DatePicker({
         onClick={() => setOpen((o) => !o)}
         className={triggerCls}
       >
-        <span className={`flex items-center px-2.5 ${vpad} border-r border-[#E2E8F0] rounded-l-[8px] text-[#64748B]`}>
-          <Calendar size={15} />
-        </span>
-        <span className={`flex-1 px-3 ${vpad} truncate ${selected ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
-          {selected ? formatDisplay(value) : placeholder}
-        </span>
-        {selected && !disabled && (
-          <span
-            role="button"
-            tabIndex={-1}
-            aria-label="Clear date"
-            onClick={(e) => {
-              e.stopPropagation()
-              onChange('')
-            }}
-            className="flex items-center px-2.5 text-[#94A3B8] hover:text-[#DC2626]"
-          >
-            <X size={14} />
-          </span>
+        {bare ? (
+          <>
+            <Calendar size={15} className="text-[#64748B]" />
+            <span className={`truncate ${selected ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
+              {selected ? formatDisplay(value) : placeholder}
+            </span>
+          </>
+        ) : (
+          <>
+            <span className={`flex items-center px-2.5 ${vpad} border-r border-[#E2E8F0] rounded-l-[8px] text-[#64748B]`}>
+              <Calendar size={15} />
+            </span>
+            <span className={`flex-1 px-3 ${vpad} truncate ${selected ? 'text-[#0F172A]' : 'text-[#94A3B8]'}`}>
+              {selected ? formatDisplay(value) : placeholder}
+            </span>
+            {selected && !disabled && !hideClear && (
+              <span
+                role="button"
+                tabIndex={-1}
+                aria-label="Clear date"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onChange('')
+                }}
+                className="flex items-center px-2.5 text-[#94A3B8] hover:text-[#DC2626]"
+              >
+                <X size={14} />
+              </span>
+            )}
+          </>
         )}
       </button>
 

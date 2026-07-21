@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Plus, Repeat, Pause, Play, Square, Clock, Users, CalendarClock } from 'lucide-react'
+import { ArrowLeft, Plus, Repeat, Pause, Play, Square, Clock, Users, CalendarClock, Pencil } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { meetingsApi } from '@/lib/api/meetings'
 import { getEmployees } from '@/lib/api/employees'
@@ -45,6 +45,7 @@ export default function RhythmsPage() {
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
   const [stopping, setStopping] = useState<MeetingRhythm | null>(null)
+  const [editing, setEditing] = useState<MeetingRhythm | null>(null)
 
   const load = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -125,6 +126,7 @@ export default function RhythmsPage() {
                 <Link href={`/dashboard/governance/meetings?rhythm_id=${r.id}`} className="text-sm font-medium text-[#2563EB] hover:underline">View meetings</Link>
                 {r.can_manage && (
                   <div className="ml-auto flex items-center gap-1">
+                    <button onClick={() => setEditing(r)} title="Edit" className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]"><Pencil size={16} /></button>
                     <button onClick={() => toggle(r)} title={r.is_active ? 'Pause' : 'Resume'} className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]">
                       {r.is_active ? <Pause size={16} /> : <Play size={16} />}
                     </button>
@@ -138,6 +140,7 @@ export default function RhythmsPage() {
       )}
 
       <CreateRhythmModal isOpen={createOpen} onClose={() => setCreateOpen(false)} orgId={orgId} people={people} onCreated={() => load()} />
+      <CreateRhythmModal isOpen={!!editing} onClose={() => setEditing(null)} orgId={orgId} people={people} rhythm={editing} onCreated={() => { setEditing(null); load() }} />
 
       <Modal isOpen={!!stopping} onClose={() => setStopping(null)} title="Stop rhythm" size="sm">
         <p className="text-sm text-[#1E293B]">Stop “{stopping?.title}”? No new occurrences will be created. Past meetings are kept.</p>

@@ -1,57 +1,77 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Eye, EyeOff, CalendarSearch } from 'lucide-react'
+import { Sparkles, AlertTriangle, Video, MapPin, Bell, Link2 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import { useToast } from '@/components/ui/Toast'
-import { meetingsApi, type CreateMeetingInput } from '@/lib/api/meetings'
+import { meetingsApi, type CreateMeetingInput, type CreateRhythmInput, type RhythmScheduleInput } from '@/lib/api/meetings'
 import { goalsApi } from '@/lib/api/goals'
-import type { Meeting, MeetingLinkType, MeetingType } from '@/lib/types/meetings'
+import type { BusyView, Meeting, MeetingLinkType, MeetingType } from '@/lib/types/meetings'
+import StyledSelect from '@/components/ui/StyledSelect'
+import ScheduleEntryRow, { type ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
+import SkipHolidaysField from './SkipHolidaysField'
 import MeetingAttendeeSelector, { type PersonOption } from './MeetingAttendeeSelector'
-import BusyTimesPanel from './BusyTimesPanel'
+import FindTimeDialog from './FindTimeDialog'
 
 const inputClass =
   'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
 const labelClass = 'block text-sm font-medium text-[#374151] mb-1'
+const sectionLabel = 'text-[13px] font-semibold text-[#475569]'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   orgId: string
   people: PersonOption[]
+  initialStart?: string // ISO — prefill when created from a calendar slot click
   onCreated: (m: Meeting) => void
 }
 
 type CallMode = 'fixed' | 'log_past'
+type RecurMode = 'one_time' | 'recurring'
 
+const DURATIONS = [15, 30, 45, 60, 90, 120]
+const EMPTY_SCHED: ScheduleEntryDraft = {
+  schedule_type: 'weekly', every: 1, days: [], month_days: [], yearly_dates: [],
+  time: '10:00', start_date: '', end_condition: 'never', end_date: '', end_after: 12,
+}
+const pad = (n: number) => String(n).padStart(2, '0')
 const todayStr = () => new Date().toISOString().slice(0, 10)
 function toISO(date: string, time: string): string | undefined {
   if (!date) return undefined
   return new Date(`${date}T${time || '09:00'}`).toISOString()
 }
-function minutesBetween(start: string, end: string): number {
-  const [sh, sm] = start.split(':').map(Number)
-  const [eh, em] = end.split(':').map(Number)
-  return Math.max(15, (eh * 60 + em) - (sh * 60 + sm))
+function addMinutes(time: string, mins: number): string {
+  const [h, m] = time.split(':').map(Number)
+  const t = h * 60 + m + mins
+  return `${pad(Math.floor(t / 60) % 24)}:${pad(((t % 60) + 60) % 60)}`
+}
+function timeToMin(time: string): number {
+  const [h, m] = time.split(':').map(Number)
+  return h * 60 + m
 }
 
-export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onCreated }: Props) {
+export default function CreateMeetingModal({ isOpen, onClose, orgId, people, initialStart, onCreated }: Props) {
   const { addToast } = useToast()
   const [title, setTitle] = useState('')
-  const [type, setType] = useState<MeetingType>('online')
+  const [type, setType] = useState<MeetingType>('online') // 'online' | 'offline' (In person)
   const [onlineLink, setOnlineLink] = useState('')
-  const [onlinePassword, setOnlinePassword] = useState('')
   const [location, setLocation] = useState('')
   const [callMode, setCallMode] = useState<CallMode>('fixed')
   const [attendees, setAttendees] = useState<string[]>([])
   const [optional, setOptional] = useState<string[]>([]) // subset of attendees marked optional
   const [agenda, setAgenda] = useState('')
   const [minutes, setMinutes] = useState('')
-  const [showPassword, setShowPassword] = useState(false)
-  const [showBusy, setShowBusy] = useState(false)
+  const [durationMin, setDurationMin] = useState(30)
+  const [recurMode, setRecurMode] = useState<RecurMode>('one_time')
+  const [sched, setSched] = useState<ScheduleEntryDraft>(EMPTY_SCHED) // used when recurring → creates a rhythm
+  const [skipHolidays, setSkipHolidays] = useState(true)
+  const [remind, setRemind] = useState(true) // UI-only for now — see backend flag below
+  const [showFinder, setShowFinder] = useState(false)
+  const [showLinker, setShowLinker] = useState(false)
 
   const [linkType, setLinkType] = useState<'' | MeetingLinkType>('')
   const [linkEntityId, setLinkEntityId] = useState('')
@@ -59,7 +79,7 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
 
   const [date, setDate] = useState('')
   const [startTime, setStartTime] = useState('10:00')
-  const [endTime, setEndTime] = useState('11:00')
+  const [endTime, setEndTime] = useState('10:30')
   const [actualDate, setActualDate] = useState('')
   const [actualStart, setActualStart] = useState('10:00')
   const [actualEnd, setActualEnd] = useState('11:00')
@@ -71,12 +91,20 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
 
   useEffect(() => {
     if (!isOpen) return
-    setTitle(''); setType('online'); setOnlineLink(''); setOnlinePassword(''); setLocation('')
-    setCallMode('fixed'); setAttendees([]); setOptional([]); setAgenda(''); setMinutes(''); setShowPassword(false); setShowBusy(false)
-    setLinkType(''); setLinkEntityId('')
-    setDate(''); setStartTime('10:00'); setEndTime('11:00')
+    setTitle(''); setType('online'); setOnlineLink(''); setLocation('')
+    setCallMode('fixed'); setAttendees([]); setOptional([]); setAgenda(''); setMinutes('')
+    setLinkType(''); setLinkEntityId(''); setShowLinker(false)
+    setDurationMin(30); setRecurMode('one_time'); setSched(EMPTY_SCHED); setSkipHolidays(true); setRemind(true); setShowFinder(false)
+    if (initialStart) {
+      const d = new Date(initialStart)
+      setDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)
+      const st = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+      setStartTime(st); setEndTime(addMinutes(st, 30))
+    } else {
+      setDate(''); setStartTime('10:00'); setEndTime('10:30')
+    }
     setActualDate(''); setActualStart('10:00'); setActualEnd('11:00')
-  }, [isOpen])
+  }, [isOpen, initialStart])
 
   useEffect(() => {
     if (linkType === 'goal' && goals.length === 0) {
@@ -90,10 +118,81 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
   function toggleOptional(id: string) {
     setOptional((opt) => (opt.includes(id) ? opt.filter((x) => x !== id) : [...opt, id]))
   }
+  function applyDuration(dur: number) {
+    setDurationMin(dur)
+    setEndTime(addMinutes(startTime, dur))
+  }
+  function openFinder() {
+    if (!date) setDate(todayStr())
+    setShowFinder(true)
+  }
+  function setRecurring(mode: RecurMode) {
+    setRecurMode(mode)
+    if (mode === 'recurring') {
+      // Seed the recurrence from what's already picked in the one-time fields.
+      const d = date ? new Date(`${date}T00:00`) : null
+      setSched((s) => ({
+        ...s,
+        time: startTime,
+        start_date: date || s.start_date,
+        days: s.schedule_type === 'weekly' && s.days.length === 0 && d ? [d.getDay()] : s.days,
+        month_days: s.schedule_type === 'monthly' && s.month_days.length === 0 && d ? [d.getDate()] : s.month_days,
+      }))
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!title.trim()) return addToast('Title is required', 'error')
+
+    // NOTE (backend flag): `remind` (Remind 15 min before) has no create-DTO field
+    // yet, so it is intentionally NOT sent. See the summary for what the backend needs.
+
+    // Recurring → create a rhythm (the existing rhythm engine), not a single meeting.
+    if (callMode === 'fixed' && recurMode === 'recurring') {
+      if (!sched.start_date) return addToast('Pick a start date for the recurrence', 'error')
+      if (sched.schedule_type === 'weekly' && sched.days.length === 0) return addToast('Pick at least one weekday', 'error')
+      if (sched.schedule_type === 'monthly' && sched.month_days.length === 0) return addToast('Pick at least one day of the month', 'error')
+      if (sched.schedule_type === 'yearly' && sched.yearly_dates.length === 0) return addToast('Pick at least one date', 'error')
+      const schedule: RhythmScheduleInput = {
+        schedule_type: sched.schedule_type,
+        every: sched.every,
+        days: sched.schedule_type === 'weekly' ? sched.days : undefined,
+        month_days: sched.schedule_type === 'monthly' ? sched.month_days : undefined,
+        yearly_dates: sched.schedule_type === 'yearly' ? sched.yearly_dates : undefined,
+        time: sched.time,
+        start_date: new Date(`${sched.start_date}T00:00`).toISOString(),
+        end_condition: sched.end_condition,
+        end_date: sched.end_condition === 'on_date' && sched.end_date ? new Date(`${sched.end_date}T23:59`).toISOString() : undefined,
+        end_after: sched.end_condition === 'after_n' ? sched.end_after : undefined,
+        skip_holidays: skipHolidays,
+      }
+      const rhythmDto: CreateRhythmInput = {
+        title: title.trim(),
+        type,
+        duration_min: durationMin,
+        attendee_user_ids: attendees,
+        optional_user_ids: optional,
+        schedule,
+      }
+      if (type === 'online' && onlineLink) rhythmDto.online_link = onlineLink
+      if (type === 'offline') rhythmDto.location = location
+      if (agenda.trim()) rhythmDto.agenda = agenda.trim()
+      if (linkType) { rhythmDto.link_type = linkType; rhythmDto.link_entity_id = linkEntityId || undefined }
+
+      setSaving(true)
+      try {
+        const rhythm = await meetingsApi.createRhythm(orgId, rhythmDto)
+        addToast('Rhythm created — occurrences will appear on the calendar', 'success')
+        onCreated(rhythm as unknown as Meeting)
+        onClose()
+      } catch (err: any) {
+        addToast(err?.response?.data?.message ?? 'Failed to create rhythm', 'error')
+      } finally {
+        setSaving(false)
+      }
+      return
+    }
 
     const dto: CreateMeetingInput = {
       title: title.trim(),
@@ -101,8 +200,8 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
       attendee_user_ids: attendees,
       optional_user_ids: optional,
     }
-    if (type !== 'offline') { if (onlineLink) dto.online_link = onlineLink; if (onlinePassword) dto.online_password = onlinePassword }
-    if (type !== 'online') dto.location = location
+    if (type === 'online' && onlineLink) dto.online_link = onlineLink
+    if (type === 'offline') dto.location = location
     if (agenda.trim()) dto.agenda = agenda.trim()
     if (linkType) { dto.link_type = linkType; dto.link_entity_id = linkEntityId || undefined }
 
@@ -131,219 +230,292 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, onC
     }
   }
 
-  const modeTab = (m: CallMode, label: string) => (
-    <button
-      type="button"
-      onClick={() => setCallMode(m)}
-      className={[
-        'px-3 py-1.5 text-sm font-medium rounded-[8px] border transition-colors',
-        callMode === m ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]',
-      ].join(' ')}
-    >
-      {label}
-    </button>
-  )
+  // Segmented control button
+  const seg = (active: boolean) =>
+    ['px-3.5 py-1.5 text-sm font-medium inline-flex items-center gap-1.5 transition-colors',
+      active ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F8FAFC]'].join(' ')
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="New Meeting" size="lg" closeOnEscape={false}>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <Modal isOpen={isOpen} onClose={onClose} title="New meeting" size="lg" closeOnEscape={false}>
+      <form onSubmit={handleSubmit} className="flex flex-col gap-[18px]">
+        {/* Title */}
         <div>
-          <label className={labelClass}>Title *</label>
+          <label className={labelClass}>Title <span className="text-[#DC2626]">*</span></label>
           <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Meeting title" autoFocus />
         </div>
 
-        {/* Type */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Type</label>
-            <select className={inputClass} value={type} onChange={(e) => setType(e.target.value as MeetingType)}>
-              <option value="online">Online</option>
-              <option value="offline">Offline</option>
-              <option value="hybrid">Hybrid</option>
-            </select>
-          </div>
-          {type !== 'offline' && (
-            <div>
-              <label className={labelClass}>Meeting link</label>
-              <input className={inputClass} value={onlineLink} onChange={(e) => setOnlineLink(e.target.value)} placeholder="https://…" />
-            </div>
+        {/* Attendees */}
+        <div>
+          <label className={labelClass}>Attendees</label>
+          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} optional={optional} onToggleOptional={toggleOptional} placeholder="Add attendees" />
+          <p className="text-xs text-[#64748B] mt-1.5">Everyone added is attending. They can mark “can’t make it” with a reason. Toggle who’s optional.</p>
+          {callMode === 'fixed' && recurMode === 'one_time' && attendees.length > 0 && (
+            <button
+              type="button"
+              onClick={openFinder}
+              className="mt-2.5 inline-flex items-center gap-1.5 text-sm font-semibold text-[#2563EB] hover:text-[#1D4ED8]"
+            >
+              <Sparkles size={15} /> Find a time that works for everyone →
+            </button>
           )}
-          {type !== 'offline' && (
-            <div>
-              <label className={labelClass}>Password (optional)</label>
-              <div className="relative">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  className={`${inputClass} pr-10`}
-                  value={onlinePassword}
-                  onChange={(e) => setOnlinePassword(e.target.value)}
-                />
-                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]" aria-label={showPassword ? 'Hide password' : 'Show password'}>
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+        </div>
+
+        {/* Schedule */}
+        <div className="border-t border-[#E2E8F0] pt-4 flex flex-col gap-3">
+          <span className={sectionLabel}>Schedule</span>
+
+          <div className="inline-flex w-fit rounded-[8px] border border-[#CBD5E1] overflow-hidden">
+            <button type="button" onClick={() => setCallMode('fixed')} className={seg(callMode === 'fixed')}>Pick a time</button>
+            <button type="button" onClick={() => setCallMode('log_past')} className={seg(callMode === 'log_past')}>Log a past meeting</button>
+          </div>
+
+          {callMode === 'fixed' && (
+            <>
+              <div>
+                <label className="block text-xs text-[#64748B] mb-1.5">Length</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {DURATIONS.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => applyDuration(d)}
+                      className={['px-2.5 py-1 text-sm rounded-[8px] border', durationMin === d ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]'].join(' ')}
+                    >
+                      {d < 60 ? `${d}m` : d === 60 ? '1h' : `${d / 60}h`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* One-time vs recurring — recurring reuses the SAME editor as recurring tasks */}
+              <div className="inline-flex w-fit rounded-[8px] border border-[#CBD5E1] overflow-hidden">
+                <button type="button" onClick={() => setRecurring('one_time')} className={seg(recurMode === 'one_time')}>One-time</button>
+                <button type="button" onClick={() => setRecurring('recurring')} className={seg(recurMode === 'recurring')}>Recurring</button>
+              </div>
+
+              {recurMode === 'one_time' ? (
+                <>
+                  <div className="grid grid-cols-[1.4fr_1fr_1fr] gap-3">
+                    <div>
+                      <label className={labelClass}>Date <span className="text-[#DC2626]">*</span></label>
+                      <DatePicker value={date} onChange={setDate} min={todayStr()} placeholder="Select date" />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Start</label>
+                      <TimeField value={startTime} onChange={(t) => { setStartTime(t); setEndTime(addMinutes(t, durationMin)) }} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>End</label>
+                      <TimeField value={endTime} onChange={setEndTime} />
+                    </div>
+                  </div>
+                  {attendees.length > 0 && date && (
+                    <ClashNudge orgId={orgId} attendees={attendees} requiredIds={requiredIds} date={date} startTime={startTime} endTime={endTime} />
+                  )}
+                </>
+              ) : (
+                <div className="border border-[#E2E8F0] rounded-[10px] p-4 bg-[#FBFCFE]">
+                  <ScheduleEntryRow
+                    entry={sched}
+                    index={0}
+                    onUpdate={(patch) => setSched((s) => ({ ...s, ...patch }))}
+                    onDelete={() => {}}
+                    canDelete={false}
+                  />
+                  <SkipHolidaysField orgId={orgId} sched={sched} value={skipHolidays} onChange={setSkipHolidays} />
+                  <p className="text-[11px] text-[#64748B] mt-3">Creates a rhythm — occurrences spawn automatically.</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {callMode === 'log_past' && (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className={labelClass}>Date <span className="text-[#DC2626]">*</span></label>
+                <DatePicker value={actualDate} onChange={setActualDate} max={todayStr()} placeholder="Select date" />
+              </div>
+              <div>
+                <label className={labelClass}>Started</label>
+                <TimeField value={actualStart} onChange={setActualStart} />
+              </div>
+              <div>
+                <label className={labelClass}>Ended</label>
+                <TimeField value={actualEnd} onChange={setActualEnd} />
+              </div>
+              <div className="col-span-3">
+                <label className={labelClass}>Minutes (what happened)</label>
+                <textarea className={`${inputClass} resize-none`} rows={4} value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="Notes / decisions (markdown supported). The meeting will be filed as Closed — use Reopen to amend." />
               </div>
             </div>
           )}
-          {type !== 'online' && (
+        </div>
+
+        {/* Format */}
+        <div className="border-t border-[#E2E8F0] pt-4 flex flex-col gap-3">
+          <span className={sectionLabel}>Format</span>
+          <div className="inline-flex w-fit rounded-[8px] border border-[#CBD5E1] overflow-hidden">
+            <button type="button" onClick={() => setType('online')} className={seg(type === 'online')}><Video size={14} /> Online</button>
+            <button type="button" onClick={() => setType('offline')} className={seg(type === 'offline')}><MapPin size={14} /> In person</button>
+          </div>
+          {type === 'online' ? (
             <div>
-              <label className={labelClass}>Location</label>
+              <input className={inputClass} value={onlineLink} onChange={(e) => setOnlineLink(e.target.value)} placeholder="https://…" />
+              <p className="text-[11px] text-[#64748B] mt-1.5">Leave blank to auto-generate a link.</p>
+            </div>
+          ) : (
+            <div>
               <input className={inputClass} value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Room / address" />
             </div>
           )}
         </div>
 
-        {/* Linkage */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Link to</label>
-            <select className={inputClass} value={linkType} onChange={(e) => { setLinkType(e.target.value as any); setLinkEntityId('') }}>
-              <option value="">Ad-hoc (nothing)</option>
-              <option value="goal">Goal</option>
-              <option value="project">Project</option>
-              <option value="task">Task</option>
-              <option value="ticket">Ticket</option>
-            </select>
-          </div>
-          {linkType === 'goal' && (
-            <div>
-              <label className={labelClass}>Goal</label>
-              <select className={inputClass} value={linkEntityId} onChange={(e) => setLinkEntityId(e.target.value)}>
-                <option value="">Select goal…</option>
-                {goals.map((g) => (
-                  <option key={g.id} value={g.id}>{g.title}</option>
-                ))}
-              </select>
-            </div>
-          )}
-          {linkType && linkType !== 'goal' && (
-            <div>
-              <label className={labelClass}>{linkType[0].toUpperCase() + linkType.slice(1)} ID</label>
-              <input className={inputClass} value={linkEntityId} onChange={(e) => setLinkEntityId(e.target.value)} placeholder="Entity ID" />
-            </div>
-          )}
-        </div>
-
-        {/* Attendees — opt-out: everyone added is attending by default */}
-        <div>
-          <label className={labelClass}>Attendees</label>
-          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} />
-          <p className="text-xs text-[#64748B] mt-1">Everyone added is on the meeting. They can mark “can’t make it” with a reason. Toggle who is optional.</p>
-          {attendees.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {attendees.map((id) => {
-                const isOptional = optional.includes(id)
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => toggleOptional(id)}
-                    className="inline-flex items-center gap-1.5 text-xs rounded-full px-2.5 py-1 border"
-                    style={isOptional
-                      ? { backgroundColor: '#F1F5F9', color: '#475569', borderColor: '#E2E8F0' }
-                      : { backgroundColor: '#EFF6FF', color: '#2563EB', borderColor: '#BFDBFE' }}
-                    title="Toggle required / optional"
-                  >
-                    {nameOf.get(id) ?? 'Unknown'} · {isOptional ? 'Optional' : 'Required'}
-                  </button>
-                )
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Call mode */}
-        <div>
-          <label className={labelClass}>How to schedule</label>
-          <div className="flex flex-wrap gap-2">
-            {modeTab('fixed', 'Pick a time')}
-            {modeTab('log_past', 'Log a past meeting')}
-          </div>
-        </div>
-
-        {callMode === 'fixed' && (
-          <>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className={labelClass}>Date *</label>
-                <DatePicker value={date} onChange={setDate} min={todayStr()} placeholder="Select date" />
-              </div>
-              <div>
-                <label className={labelClass}>Start</label>
-                <TimeField value={startTime} onChange={setStartTime} />
-              </div>
-              <div>
-                <label className={labelClass}>End</label>
-                <TimeField value={endTime} onChange={setEndTime} />
-              </div>
-            </div>
-            {/* Busy-times peek: the organiser picks the time; the system only shows/ranks. */}
-            {attendees.length > 0 && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowBusy((v) => !v)}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2563EB]"
-                >
-                  <CalendarSearch size={15} /> {showBusy ? 'Hide' : 'Check'} people’s busy times
-                </button>
-                {showBusy && date && (
-                  <div className="mt-2">
-                    <BusyTimesPanel
-                      orgId={orgId}
-                      userIds={attendees}
-                      requiredIds={requiredIds}
-                      from={new Date(`${date}T00:00`).toISOString()}
-                      to={new Date(`${date}T23:59`).toISOString()}
-                      durationMin={minutesBetween(startTime, endTime)}
-                      onPick={(startIso) => {
-                        const d = new Date(startIso)
-                        const hh = String(d.getHours()).padStart(2, '0')
-                        const mm = String(d.getMinutes()).padStart(2, '0')
-                        setStartTime(`${hh}:${mm}`)
-                        const dur = minutesBetween(startTime, endTime)
-                        const end = new Date(d.getTime() + dur * 60000)
-                        setEndTime(`${String(end.getHours()).padStart(2, '0')}:${String(end.getMinutes()).padStart(2, '0')}`)
-                      }}
-                    />
-                  </div>
-                )}
-                {showBusy && !date && <p className="text-xs text-[#94A3B8] mt-2">Pick a date to see busy times for that day.</p>}
-              </div>
-            )}
-          </>
-        )}
-
-        {callMode === 'log_past' && (
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className={labelClass}>Date *</label>
-              <DatePicker value={actualDate} onChange={setActualDate} max={todayStr()} placeholder="Select date" />
-            </div>
-            <div>
-              <label className={labelClass}>Started</label>
-              <TimeField value={actualStart} onChange={setActualStart} />
-            </div>
-            <div>
-              <label className={labelClass}>Ended</label>
-              <TimeField value={actualEnd} onChange={setActualEnd} />
-            </div>
-            <div className="col-span-3">
-              <label className={labelClass}>Minutes (what happened)</label>
-              <textarea className={`${inputClass} resize-none`} rows={4} value={minutes} onChange={(e) => setMinutes(e.target.value)} placeholder="Notes / decisions (markdown supported). The meeting will be filed as Closed — use Reopen to amend." />
-            </div>
-          </div>
-        )}
-
-        <div>
+        {/* Agenda */}
+        <div className="border-t border-[#E2E8F0] pt-4">
           <label className={labelClass}>{callMode === 'log_past' ? 'Agenda (what was planned)' : 'Agenda'}</label>
           <textarea className={`${inputClass} resize-none`} rows={3} value={agenda} onChange={(e) => setAgenda(e.target.value)} placeholder="Agenda (markdown supported)" />
         </div>
 
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
+        {/* Quiet actions: link (left) · reminder (right) */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <button type="button" onClick={() => setShowLinker((v) => !v)} className="inline-flex items-center gap-1.5 text-xs text-[#475569] hover:text-[#0F172A]">
+            <Link2 size={14} /> Link to a goal, task, or ticket
+          </button>
+          <label className="inline-flex items-center gap-2 text-xs text-[#475569] cursor-pointer select-none">
+            <input type="checkbox" checked={remind} onChange={(e) => setRemind(e.target.checked)} className="w-4 h-4 accent-[#2563EB]" />
+            <Bell size={14} /> Remind 15 min before
+          </label>
+        </div>
+
+        {showLinker && (
+          <div className="border border-[#E2E8F0] rounded-[8px] p-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className={labelClass}>Link to</label>
+              <StyledSelect
+                value={linkType}
+                onChange={(v) => { setLinkType(v as any); setLinkEntityId('') }}
+                options={[
+                  { value: '', label: 'Nothing' },
+                  { value: 'goal', label: 'Goal' },
+                  { value: 'project', label: 'Project' },
+                  { value: 'task', label: 'Task' },
+                  { value: 'ticket', label: 'Ticket' },
+                ]}
+              />
+            </div>
+            {linkType === 'goal' && (
+              <div>
+                <label className={labelClass}>Goal</label>
+                <StyledSelect
+                  value={linkEntityId}
+                  onChange={setLinkEntityId}
+                  placeholder="Select goal…"
+                  options={goals.map((g) => ({ value: g.id, label: g.title }))}
+                />
+              </div>
+            )}
+            {linkType && linkType !== 'goal' && (
+              <div>
+                <label className={labelClass}>{linkType[0].toUpperCase() + linkType.slice(1)} ID</label>
+                <input className={inputClass} value={linkEntityId} onChange={(e) => setLinkEntityId(e.target.value)} placeholder="Entity ID" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-[#E2E8F0]">
           <Button variant="secondary" type="button" onClick={onClose}>Cancel</Button>
           <Button variant="primary" type="submit" isLoading={saving} disabled={saving}>Create meeting</Button>
         </div>
       </form>
+
+      {showFinder && (
+        <FindTimeDialog
+          orgId={orgId}
+          people={people}
+          attendees={attendees}
+          optional={optional}
+          date={date || todayStr()}
+          durationMin={durationMin}
+          initialStartMin={timeToMin(startTime)}
+          onChangeAttendees={setAttendees}
+          onChangeOptional={setOptional}
+          onChangeDate={setDate}
+          onChangeDuration={setDurationMin}
+          onConfirm={(startIso, endIso) => {
+            const s = new Date(startIso), e = new Date(endIso)
+            setDate(`${s.getFullYear()}-${pad(s.getMonth() + 1)}-${pad(s.getDate())}`)
+            setStartTime(`${pad(s.getHours())}:${pad(s.getMinutes())}`)
+            setEndTime(`${pad(e.getHours())}:${pad(e.getMinutes())}`)
+            setDurationMin(Math.max(15, Math.round((e.getTime() - s.getTime()) / 60000)))
+            setShowFinder(false)
+          }}
+          onClose={() => setShowFinder(false)}
+        />
+      )}
     </Modal>
+  )
+}
+
+// Live, non-blocking clash nudge for the "confident" path. Names who + severity;
+// never the other meeting's title (busy/free privacy). Booking is never blocked.
+function ClashNudge({
+  orgId, attendees, requiredIds, date, startTime, endTime,
+}: {
+  orgId: string
+  attendees: string[]
+  requiredIds: string[]
+  date: string
+  startTime: string
+  endTime: string
+}) {
+  const [data, setData] = useState<BusyView | null>(null)
+  useEffect(() => {
+    if (!orgId || attendees.length === 0 || !date) { setData(null); return }
+    let active = true
+    meetingsApi
+      .busy(orgId, {
+        user_ids: attendees,
+        required_user_ids: requiredIds,
+        from: new Date(`${date}T00:00`).toISOString(),
+        to: new Date(`${date}T23:59`).toISOString(),
+      })
+      .then((r) => { if (active) setData(r) })
+      .catch(() => { if (active) setData(null) })
+    return () => { active = false }
+  }, [orgId, attendees.join(','), requiredIds.join(','), date])
+
+  if (!data) return null
+  const dayStartMs = new Date(`${date}T00:00`).getTime()
+  const candS = timeToMin(startTime)
+  const candE = Math.max(candS + 1, timeToMin(endTime))
+  const hard: string[] = [], soft: string[] = []
+  for (const p of data.people) {
+    const conflict = p.busy.some((b) => {
+      const s = Math.round((new Date(b.start).getTime() - dayStartMs) / 60000)
+      const e = Math.round((new Date(b.end).getTime() - dayStartMs) / 60000)
+      return candS < e && s < candE
+    })
+    if (conflict) (p.required ? hard : soft).push(p.name)
+  }
+
+  if (hard.length === 0 && soft.length === 0) {
+    return (
+      <p className="inline-flex items-center gap-1.5 text-xs text-[#16A34A]">
+        <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A]" /> Everyone looks free at this time.
+      </p>
+    )
+  }
+  return (
+    <div className="flex items-start gap-1.5 text-xs bg-[#FFFBEB] border border-[#FDE68A] rounded-[8px] px-3 py-2">
+      <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[#D97706]" />
+      <span className="text-[#475569]">
+        {hard.length > 0 && <span className="text-[#B45309] font-medium">{hard.join(', ')} {hard.length === 1 ? 'is' : 'are'} busy then.</span>}
+        {hard.length > 0 && soft.length > 0 ? ' ' : ''}
+        {soft.length > 0 && <span className="text-[#64748B]">{soft.join(', ')} (optional) busy.</span>}
+        {' '}You can still book — they’ll be notified.
+      </span>
+    </div>
   )
 }

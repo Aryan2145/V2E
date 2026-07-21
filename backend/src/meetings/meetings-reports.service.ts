@@ -45,9 +45,13 @@ export class MeetingsReportsService {
     const roster = m.attendees.filter((a) => !a.is_organizer);
     const declined = roster.filter((a) => a.response === 'declined');
     const declinedRequired = declined.filter((a) => a.is_required);
-    const expected = m.attendees.filter((a) => a.response !== 'declined'); // includes organizer
-    const attended = m.attendees.filter((a) => a.attended);
-    const late = m.attendees.filter((a) => a.attended && a.attended_in_at && m.scheduled_start && a.attended_in_at > m.scheduled_start);
+    // Attendance metrics are computed over the ROSTER (excludes the organiser). The
+    // organiser runs the meeting and is the one taking attendance; counting them as a
+    // no-show unless they explicitly tick their own row would silently distort the
+    // rate. This also keeps `expected`/`no_show` consistent with the by-person report.
+    const expected = roster.filter((a) => a.response !== 'declined');
+    const attended = roster.filter((a) => a.attended);
+    const late = roster.filter((a) => a.attended && a.attended_in_at && m.scheduled_start && a.attended_in_at > m.scheduled_start);
     const noShow = recorded ? expected.filter((a) => !a.attended).length : null;
 
     const linkedTaskIds = m.action_items.map((a) => a.linked_task_id).filter(Boolean) as string[];
@@ -149,12 +153,14 @@ export class MeetingsReportsService {
           if (!a.is_organizer) { bump(a.user_id, nm, 'declined'); if (a.is_required) bump(a.user_id, nm, 'declined_required'); }
           continue;
         }
-        // expected (non-declined)
+        // expected (non-declined). Attendance rates are computed over the ROSTER only
+        // (skip the organiser): they take attendance, so counting them absent unless
+        // they tick their own row would silently drag the rate down as a false no-show.
         if (!a.is_organizer) bump(a.user_id, nm, 'expected');
-        if (recorded) {
+        if (recorded && !a.is_organizer) {
           expectedRecorded++;
-          if (a.attended) { attendedRecorded++; if (!a.is_organizer) bump(a.user_id, nm, 'attended'); }
-          else { noShowRecorded++; if (!a.is_organizer) bump(a.user_id, nm, 'no_show'); }
+          if (a.attended) { attendedRecorded++; bump(a.user_id, nm, 'attended'); }
+          else { noShowRecorded++; bump(a.user_id, nm, 'no_show'); }
         }
       }
 

@@ -41,6 +41,10 @@ interface ResponsiveTableProps<T> {
   maxBodyHeight?: number | string
   /** Ref to the desktop scroll container — lets callers persist/restore its scroll position. */
   scrollContainerRef?: React.Ref<HTMLDivElement>
+  /** Override the header row (thead) styling — e.g. a coloured header band. Defaults to the light-gray strip. */
+  headerRowClassName?: string
+  /** Override each header cell (th) bg + text — e.g. white-on-blue. Defaults to gray-on-light. */
+  headerCellClassName?: string
 }
 
 const alignClass = {
@@ -69,6 +73,8 @@ export default function ResponsiveTable<T>({
   renderExpanded,
   maxBodyHeight,
   scrollContainerRef,
+  headerRowClassName = 'bg-[#F8FAFC] border-b border-[#E2E8F0]',
+  headerCellClassName = 'text-[#475569] bg-[#F8FAFC]',
 }: ResponsiveTableProps<T>) {
   const primaryIdx = Math.max(0, columns.findIndex((c) => c.primary))
   const primary = columns[primaryIdx]
@@ -101,13 +107,14 @@ export default function ResponsiveTable<T>({
         style={bodyMaxHeight ? { maxHeight: bodyMaxHeight } : undefined}
       >
         <table className="w-full text-sm">
-          <thead className={`bg-[#F8FAFC] border-b border-[#E2E8F0] ${bodyMaxHeight ? 'sticky top-0 z-10' : ''}`}>
+          <thead className={`${headerRowClassName} ${bodyMaxHeight ? 'sticky top-0 z-10' : ''}`}>
             <tr>
               {columns.map((col) => (
                 <th
                   key={col.key}
                   className={[
-                    'px-4 py-3 text-xs font-semibold text-[#475569] uppercase tracking-wider whitespace-nowrap bg-[#F8FAFC]',
+                    'px-4 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap',
+                    headerCellClassName,
                     alignClass[col.align ?? 'left'],
                     col.desktopHiddenBelow ? desktopHideClass[col.desktopHiddenBelow] : '',
                     col.headerClassName ?? '',

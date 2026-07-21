@@ -1,12 +1,13 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { CalendarDays, List, Plus, Search, Video, MapPin, Users, Repeat, BarChart3 } from 'lucide-react'
+import { CalendarDays, Plus, Search, Video, MapPin, Users, Repeat, BarChart3, ChevronLeft, ChevronRight, Columns3, CalendarClock, MoreHorizontal, Calendar } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
-import { meetingsApi } from '@/lib/api/meetings'
+import { meetingsApi, type GoogleSyncStatus } from '@/lib/api/meetings'
 import { getEmployees } from '@/lib/api/employees'
+import GoogleCalendarConnect from '@/components/meetings/GoogleCalendarConnect'
 import {
   TYPE_LABEL,
   type Meeting,
@@ -15,13 +16,49 @@ import {
 } from '@/lib/types/meetings'
 import { StatusBadge, fmtDateTime, useMeetingPermissions } from '@/components/meetings/shared'
 import MeetingCalendarView from '@/components/meetings/MeetingCalendarView'
+import WeekGrid from '@/components/meetings/WeekGrid'
 import CreateMeetingModal from '@/components/meetings/CreateMeetingModal'
+import CreateTimeBlockModal from '@/components/meetings/CreateTimeBlockModal'
+import { timeBlocksApi, type TimeBlock } from '@/lib/api/time-blocks'
+import { getNow, isSimActive } from '@/lib/clock'
 import type { PersonOption } from '@/components/meetings/MeetingAttendeeSelector'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import StyledSelect from '@/components/ui/StyledSelect'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
 
 const selectClass =
   'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
+
+type View = 'day' | 'week' | 'month' | 'list'
+const VIEWS: { key: View; label: string }[] = [
+  { key: 'day', label: 'Day' },
+  { key: 'week', label: 'Week' },
+  { key: 'month', label: 'Month' },
+  { key: 'list', label: 'List' },
+]
+
+// ── date helpers ─────────────────────────────────────────────────────────────
+function startOfDay(d: Date) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x }
+function addDays(d: Date, n: number) { const x = new Date(d); x.setDate(x.getDate() + n); return x }
+function mondayOf(d: Date) { const x = startOfDay(d); return addDays(x, -((x.getDay() + 6) % 7)) }
+
+function rangeFor(anchor: Date, view: View, weekDays: 5 | 7): { start: Date; end: Date } | null {
+  if (view === 'day') return { start: startOfDay(anchor), end: addDays(startOfDay(anchor), 1) }
+  if (view === 'week') { const s = mondayOf(anchor); return { start: s, end: addDays(s, weekDays) } }
+  return null // month/list scope to everything loaded
+}
+
+function rangeLabel(anchor: Date, view: View, weekDays: 5 | 7): string {
+  if (view === 'month') return anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })
+  if (view === 'day') return anchor.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+  const s = mondayOf(anchor)
+  const e = addDays(s, weekDays - 1)
+  const sameMonth = s.getMonth() === e.getMonth()
+  const sameYear = s.getFullYear() === e.getFullYear()
+  const sTxt = s.toLocaleDateString(undefined, { day: 'numeric', month: sameMonth ? undefined : 'short' })
+  const eTxt = e.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  return sameYear ? `${sTxt} – ${eTxt}` : `${s.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })} – ${eTxt}`
+}
 
 const meetingColumns: ResponsiveColumn<Meeting>[] = [
   {
@@ -46,20 +83,17 @@ const meetingColumns: ResponsiveColumn<Meeting>[] = [
     key: 'when',
     header: 'When',
     desktopHiddenBelow: 'md',
-    render: (m) => (
-      <span className="text-sm text-[#475569]">{fmtDateTime(m.scheduled_start)}</span>
-    ),
+    render: (m) => <span className="text-sm text-[#475569]">{fmtDateTime(m.scheduled_start)}</span>,
   },
-  {
-    key: 'organizer',
-    header: 'Organizer',
-    render: (m) => <span className="text-sm text-[#1E293B]">{m.organizer?.name ?? '—'}</span>,
-  },
-  {
-    key: 'status',
-    header: 'Status',
-    render: (m) => <StatusBadge status={m.status} />,
-  },
+  { key: 'organizer', header: 'Organizer', render: (m) => <span className="text-sm text-[#1E293B]">{m.organizer?.name ?? '—'}</span> },
+  { key: 'status', header: 'Status', render: (m) => <StatusBadge status={m.status} /> },
+]
+
+const LEGEND: { label: string; fill: string; stripe: string }[] = [
+  { label: 'Meeting', fill: '#EFF6FF', stripe: '#2563EB' },
+  { label: 'Rhythm', fill: '#F5F3FF', stripe: '#7C3AED' },
+  { label: 'Live', fill: '#DCFCE7', stripe: '#16A34A' },
+  { label: 'Closed', fill: '#F1F5F9', stripe: '#94A3B8' },
 ]
 
 export default function MeetingsPage() {
@@ -73,16 +107,69 @@ export default function MeetingsPage() {
   const [people, setPeople] = useState<PersonOption[]>([])
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
+  const [createStart, setCreateStart] = useState<string | undefined>(undefined)
+  const [blocks, setBlocks] = useState<TimeBlock[]>([])
+  const [tbOpen, setTbOpen] = useState(false)
+  const [tbStart, setTbStart] = useState<string | undefined>(undefined)
+  const [editBlock, setEditBlock] = useState<TimeBlock | null>(null)
+  // Header overflow menu (Governance, Google Calendar) + the Google modal it opens.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [gcalOpen, setGcalOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const h = (e: MouseEvent) => { if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [menuOpen])
 
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<MeetingStatus | ''>('')
   const [type, setType] = useState<MeetingType | ''>('')
-  const [mine, setMine] = useState(false)
+  const [who, setWho] = useState<'all' | 'organizing' | 'attending'>('all')
 
-  const view = searchParams.get('view') === 'calendar' ? 'calendar' : 'list'
-  function setView(v: 'list' | 'calendar') {
+  // Google Calendar connection (per-user). Owned here so the header button reflects status.
+  const [gcal, setGcal] = useState<GoogleSyncStatus | null>(null)
+  const refreshGcal = useCallback(() => {
+    meetingsApi.googleStatus().then(setGcal).catch(() => setGcal({ connected: false, configured: false }))
+  }, [])
+  useEffect(() => { refreshGcal() }, [refreshGcal])
+  // Handle the OAuth return (?gcal=connected|error): refresh status and clean the URL.
+  useEffect(() => {
+    const p = searchParams.get('gcal')
+    if (!p) return
+    if (p === 'connected') refreshGcal()
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('gcal')
+    const qs = params.toString()
+    router.replace('/dashboard/governance/meetings' + (qs ? '?' + qs : ''))
+  }, [searchParams, refreshGcal, router])
+
+  const [anchor, setAnchor] = useState<Date>(() => getNow())
+  // The global sim clock (TimeTravelBar) syncs a beat AFTER first render, so the
+  // calendar can briefly open on real time. Snap the anchor to the sim clock once
+  // it becomes known — unless the user has already navigated (userMovedRef).
+  const userMovedRef = useRef(false)
+  useEffect(() => {
+    if (userMovedRef.current) return
+    const id = setInterval(() => {
+      if (isSimActive()) { if (!userMovedRef.current) setAnchor(getNow()); clearInterval(id) }
+    }, 200)
+    const stop = setTimeout(() => clearInterval(id), 3000) // real-time orgs never activate
+    return () => { clearInterval(id); clearTimeout(stop) }
+  }, [])
+  const [weekDays, setWeekDays] = useState<5 | 7>(5)
+  useEffect(() => {
+    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('meetings.weekDays') : null
+    if (saved === '7') setWeekDays(7)
+  }, [])
+  function setWeekDaysPersist(v: 5 | 7) { setWeekDays(v); try { window.localStorage.setItem('meetings.weekDays', String(v)) } catch {} }
+
+  const viewParam = searchParams.get('view')
+  const view: View = (['day', 'week', 'month', 'list'] as View[]).includes(viewParam as View) ? (viewParam as View) : 'week'
+  function setView(v: View) {
     const p = new URLSearchParams(searchParams.toString())
-    if (v === 'list') p.delete('view')
+    if (v === 'week') p.delete('view')
     else p.set('view', v)
     router.replace(`/dashboard/governance/meetings?${p.toString()}`)
   }
@@ -100,100 +187,233 @@ export default function MeetingsPage() {
 
   useEffect(() => { load() }, [load])
 
+  // Time-blocks for a generous window around the anchor (covers any view). The
+  // backend also imports fresh Google events into blocks on this call.
+  const loadBlocks = useCallback(() => {
+    if (!orgId) return
+    const from = startOfDay(addDays(anchor, -7))
+    const to = addDays(startOfDay(anchor), 45)
+    timeBlocksApi.list(orgId, from.toISOString(), to.toISOString()).then(setBlocks).catch(() => setBlocks([]))
+  }, [orgId, anchor])
+  useEffect(() => { loadBlocks() }, [loadBlocks])
+
   const filtered = useMemo(() => meetings.filter((m) => {
     if (search && !m.title.toLowerCase().includes(search.toLowerCase())) return false
     if (status && m.status !== status) return false
     if (type && m.type !== type) return false
-    if (mine && m.created_by_user_id !== user?.id && !(m.attendees ?? []).some((a) => a.user_id === user?.id)) return false
+    if (who === 'organizing' && m.created_by_user_id !== user?.id) return false
+    if (who === 'attending' && !(m.attendees ?? []).some((a) => a.user_id === user?.id)) return false
     return true
-  }), [meetings, search, status, type, mine, user?.id])
+  }), [meetings, search, status, type, who, user?.id])
+
+  // meetings within the visible calendar range (day/week); month & list see everything
+  const rangeMeetings = useMemo(() => {
+    const r = rangeFor(anchor, view, weekDays)
+    if (!r) return filtered
+    return filtered.filter((m) => {
+      if (!m.scheduled_start) return false
+      const t = new Date(m.scheduled_start).getTime()
+      return t >= r.start.getTime() && t < r.end.getTime()
+    })
+  }, [filtered, anchor, view, weekDays])
 
   const stats = useMemo(() => {
-    const s = { total: meetings.length, scheduled: 0, in_progress: 0, closed: 0 }
-    for (const m of meetings) {
+    const src = view === 'month' || view === 'list' ? filtered : rangeMeetings
+    const s = { total: src.length, scheduled: 0, live: 0, closed: 0 }
+    for (const m of src) {
       if (m.status === 'scheduled') s.scheduled++
-      else if (m.status === 'in_progress') s.in_progress++
+      else if (m.status === 'in_progress') s.live++
       else if (m.status === 'closed') s.closed++
     }
     return s
-  }, [meetings])
+  }, [filtered, rangeMeetings, view])
+
+  function navShift(dir: -1 | 1) {
+    userMovedRef.current = true
+    setAnchor((a) => {
+      if (view === 'day') return addDays(a, dir)
+      if (view === 'week') return addDays(a, dir * 7)
+      const x = new Date(a); x.setMonth(x.getMonth() + dir); return x
+    })
+  }
+
+  function openCreate(startIso?: string) { setCreateStart(startIso); setCreateOpen(true) }
+
+  const showNav = view !== 'list'
 
   return (
     <div>
-      <div className="flex items-start justify-between gap-4 mb-5">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4 mb-4">
         <div>
           <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">Meetings</h1>
           <p className="text-sm text-[#475569] mt-1">Schedule, run and record meetings — with action items and decisions.</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Link href="/dashboard/governance/meetings/rhythms" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]">
-            <Repeat size={16} /> Rhythms
-          </Link>
-          <Link href="/dashboard/governance/meetings/reports" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]">
-            <BarChart3 size={16} /> Governance
-          </Link>
+          {/* Frequent actions grouped as a segmented control; occasional ones live under "More". */}
+          <div className="relative" ref={menuRef}>
+            <div className="inline-flex items-center border border-[#E2E8F0] rounded-[8px] overflow-hidden">
+              <Link href="/dashboard/governance/meetings/rhythms" className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] hover:bg-[#F8FAFC]">
+                <Repeat size={16} /> Rhythms
+              </Link>
+              <span className="w-px self-stretch bg-[#E2E8F0]" aria-hidden />
+              <button onClick={() => { setEditBlock(null); setTbStart(undefined); setTbOpen(true) }} className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] hover:bg-[#F8FAFC]" title="Block your time (only you see the name; colleagues see Busy)">
+                <CalendarClock size={16} /> Time-Block
+              </button>
+              <span className="w-px self-stretch bg-[#E2E8F0]" aria-hidden />
+              <button onClick={() => setMenuOpen((o) => !o)} aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} className={`px-2.5 py-2.5 text-[#475569] hover:bg-[#F8FAFC] ${menuOpen ? 'bg-[#F1F5F9]' : ''}`}>
+                <MoreHorizontal size={18} />
+              </button>
+            </div>
+            {menuOpen && (
+              <div role="menu" className="absolute right-0 top-full mt-2 w-56 bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 z-50">
+                <Link href="/dashboard/governance/meetings/reports" onClick={() => setMenuOpen(false)} role="menuitem" className="w-full flex items-center gap-2.5 px-2.5 py-2 text-sm text-[#334155] rounded-[6px] hover:bg-[#F1F5F9]">
+                  <BarChart3 size={16} className="text-[#64748B]" /> Governance
+                </Link>
+                {gcal?.configured && (
+                  <button onClick={() => { setMenuOpen(false); setGcalOpen(true) }} role="menuitem" className="w-full flex items-center gap-2.5 px-2.5 py-2 text-sm text-[#334155] rounded-[6px] hover:bg-[#F1F5F9]">
+                    <Calendar size={16} className="text-[#64748B]" />
+                    <span className="flex-1 text-left">Google Calendar</span>
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: gcal.connected ? '#22C55E' : '#CBD5E1' }} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           {perms.write && (
-            <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]">
+            <button onClick={() => openCreate()} className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]">
               <Plus size={16} /> New Meeting
             </button>
           )}
+          {/* Google Calendar modal — trigger is the "More" menu item; this only renders the dialog. */}
+          <GoogleCalendarConnect status={gcal} onChanged={refreshGcal} renderTrigger={false} open={gcalOpen} onOpenChange={setGcalOpen} />
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        {[
-          { label: 'Total', value: stats.total, color: '#2563EB' },
-          { label: 'Scheduled', value: stats.scheduled, color: '#0369A1' },
-          { label: 'In progress', value: stats.in_progress, color: '#2563EB' },
-          { label: 'Closed', value: stats.closed, color: '#16A34A' },
-        ].map((s) => (
-          <div key={s.label} className="bg-white border border-[#E2E8F0] rounded-[12px] p-4">
-            <p className="text-[28px] font-bold leading-none" style={{ color: s.color }}>{s.value}</p>
-            <p className="text-sm text-[#475569] mt-1">{s.label}</p>
+      {/* Toolbar: nav + range label (left) · view toggle (right) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-2">
+          {showNav && (
+            <>
+              <button aria-label="Previous" onClick={() => navShift(-1)} className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9]"><ChevronLeft size={20} /></button>
+              <button onClick={() => setAnchor(new Date())} className="px-1.5 text-[16px] font-semibold text-[#0F172A] hover:text-[#2563EB] transition-colors">Today</button>
+              <button aria-label="Next" onClick={() => navShift(1)} className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9]"><ChevronRight size={20} /></button>
+              <span className="text-[16px] font-semibold text-[#0F172A] ml-1.5">{rangeLabel(anchor, view, weekDays)}</span>
+            </>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {view === 'week' && (
+            <button
+              onClick={() => setWeekDaysPersist(weekDays === 5 ? 7 : 5)}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]"
+              title="Toggle work week / full week"
+            >
+              <Columns3 size={15} /> {weekDays === 5 ? '5-day' : '7-day'}
+            </button>
+          )}
+          <div className="flex rounded-[8px] border border-[#E2E8F0] overflow-hidden">
+            {VIEWS.map((v) => (
+              <button
+                key={v.key}
+                onClick={() => setView(v.key)}
+                aria-pressed={view === v.key}
+                className={['px-3 py-2 text-sm font-medium', view === v.key ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F8FAFC]'].join(' ')}
+              >
+                {v.label}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
-
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-          <input className={`${selectClass} w-full pl-9`} placeholder="Search meetings…" value={search} onChange={(e) => setSearch(e.target.value)} />
-        </div>
-        <select className={selectClass} value={status} onChange={(e) => setStatus(e.target.value as any)}>
-          <option value="">All statuses</option>
-          {['scheduled', 'in_progress', 'closed', 'cancelled'].map((s) => <option key={s} value={s}>{s.replace('_', ' ')}</option>)}
-        </select>
-        <select className={selectClass} value={type} onChange={(e) => setType(e.target.value as any)}>
-          <option value="">All types</option>
-          <option value="online">Online</option>
-          <option value="offline">Offline</option>
-          <option value="hybrid">Hybrid</option>
-        </select>
-        <button onClick={() => setMine((v) => !v)} className={['px-3 py-2 text-sm font-medium rounded-[8px] border', mine ? 'bg-[#EFF6FF] text-[#2563EB] border-[#2563EB]' : 'bg-white text-[#475569] border-[#E2E8F0]'].join(' ')}>
-          My meetings
-        </button>
-        <div className="flex rounded-[8px] border border-[#E2E8F0] overflow-hidden">
-          <button aria-label="List view" aria-pressed={view === 'list'} title="List view" onClick={() => setView('list')} className={['px-3 py-2', view === 'list' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569]'].join(' ')}><List size={16} /></button>
-          <button aria-label="Calendar view" aria-pressed={view === 'calendar'} title="Calendar view" onClick={() => setView('calendar')} className={['px-3 py-2', view === 'calendar' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569]'].join(' ')}><CalendarDays size={16} /></button>
         </div>
       </div>
 
+      {/* Thin stat strip + filter chips (no card wrapper) */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <div className="flex items-center gap-4 text-sm">
+          <span className="text-[#0F172A] font-semibold">{stats.total} <span className="font-normal text-[#64748B]">{view === 'month' || view === 'list' ? 'total' : 'this ' + view}</span></span>
+          <span className="inline-flex items-center gap-1.5 text-[#475569]"><span className="w-2 h-2 rounded-full bg-[#16A34A]" /> {stats.live} live</span>
+          <span className="inline-flex items-center gap-1.5 text-[#475569]"><span className="w-2 h-2 rounded-full bg-[#2563EB]" /> {stats.scheduled} scheduled</span>
+          <span className="inline-flex items-center gap-1.5 text-[#475569]"><span className="w-2 h-2 rounded-full bg-[#94A3B8]" /> {stats.closed} closed</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+            <input className={`${selectClass} pl-8 py-1.5 w-[180px]`} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <StyledSelect
+            wrapperClassName="w-40" triggerClassName="!py-1.5"
+            value={status} onChange={(v) => setStatus(v as any)}
+            options={[
+              { value: '', label: 'All statuses' },
+              { value: 'scheduled', label: 'Scheduled' },
+              { value: 'in_progress', label: 'In progress' },
+              { value: 'closed', label: 'Closed' },
+              { value: 'cancelled', label: 'Cancelled' },
+            ]}
+          />
+          <StyledSelect
+            wrapperClassName="w-36" triggerClassName="!py-1.5"
+            value={type} onChange={(v) => setType(v as any)}
+            options={[
+              { value: '', label: 'All types' },
+              { value: 'online', label: 'Online' },
+              { value: 'offline', label: 'Offline' },
+              { value: 'hybrid', label: 'Hybrid' },
+            ]}
+          />
+          <StyledSelect
+            wrapperClassName="w-44" triggerClassName="!py-1.5"
+            value={who} onChange={(v) => setWho(v as any)}
+            options={[
+              { value: 'all', label: 'All meetings' },
+              { value: 'organizing', label: 'Organized by me' },
+              { value: 'attending', label: "I'm attending" },
+            ]}
+          />
+        </div>
+      </div>
+
+      {/* Content */}
       {!permsLoading && !perms.read ? (
         <AccessHiddenState orgId={orgId} leaf="meetings" moduleLabel="Meetings" />
-      ) : view === 'calendar' ? (
-        loading ? (
-          <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
-        ) : (
-          <MeetingCalendarView meetings={filtered} onSelect={(id) => router.push(`/dashboard/governance/meetings/${id}`)} />
-        )
+      ) : loading && (view === 'day' || view === 'week') ? (
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-10 text-center text-sm text-[#475569]">Loading…</div>
+      ) : view === 'day' || view === 'week' ? (
+        <>
+          <WeekGrid
+            meetings={rangeMeetings}
+            blocks={blocks}
+            anchor={anchor}
+            view={view}
+            weekDays={weekDays}
+            onSelect={(id) => router.push(`/dashboard/governance/meetings/${id}`)}
+            onCreateAt={perms.write ? openCreate : undefined}
+            onSelectDay={(d) => { setAnchor(d); setView('day') }}
+            onBlockSelect={(b) => { setEditBlock(b); setTbStart(undefined); setTbOpen(true) }}
+          />
+          {/* legend */}
+          <div className="flex flex-wrap items-center gap-4 mt-3 px-1 text-xs text-[#64748B]">
+            {LEGEND.map((l) => (
+              <span key={l.label} className="inline-flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-[3px] border-l-[3px]" style={{ background: l.fill, borderLeftColor: l.stripe }} />
+                {l.label}
+              </span>
+            ))}
+            <span className="inline-flex items-center gap-1.5"><span className="w-3 h-3 rounded-[3px] border-l-[3px] border-dashed border-[#94A3B8] bg-[#F1F5F9]" /> Your time-blocks</span>
+            <span className="text-[#94A3B8]">Click an empty slot to schedule</span>
+          </div>
+        </>
+      ) : view === 'month' ? (
+        <MeetingCalendarView anchor={anchor} meetings={filtered} blocks={blocks} onSelect={(id) => router.push(`/dashboard/governance/meetings/${id}`)} onCreate={perms.write ? openCreate : undefined} onBlockSelect={(b) => { setEditBlock(b); setTbStart(undefined); setTbOpen(true) }} />
       ) : (
         <ResponsiveTable
           columns={meetingColumns}
           rows={filtered}
           rowKey={(m) => m.id}
           loading={loading}
+          headerRowClassName="bg-[#2563EB] border-b border-[#1D4ED8]"
+          headerCellClassName="text-white bg-[#2563EB]"
+          maxBodyHeight="calc(100vh - 320px)"
           onRowClick={(m) => router.push(`/dashboard/governance/meetings/${m.id}`)}
           emptyState={
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-12 text-center">
@@ -205,7 +425,8 @@ export default function MeetingsPage() {
         />
       )}
 
-      <CreateMeetingModal isOpen={createOpen} onClose={() => setCreateOpen(false)} orgId={orgId} people={people} onCreated={() => load()} />
+      <CreateMeetingModal isOpen={createOpen} onClose={() => setCreateOpen(false)} orgId={orgId} people={people} initialStart={createStart} onCreated={() => load()} />
+      <CreateTimeBlockModal isOpen={tbOpen} onClose={() => { setTbOpen(false); setEditBlock(null) }} orgId={orgId} initialStart={tbStart} block={editBlock} onSaved={() => loadBlocks()} onDeleted={() => loadBlocks()} />
     </div>
   )
 }

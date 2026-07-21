@@ -27,9 +27,9 @@ export default function DepartmentCalendarPanel({ orgId, deptId, deptName }: Pro
   const { user } = useAuth()
   const isAdmin = !!user?.is_admin
 
-  const [orgWorkingDays, setOrgWorkingDays] = useState<number[]>([1, 2, 3, 4, 5])
+  const [orgWorkingDays, setOrgWorkingDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
   const [override, setOverride] = useState(false)
-  const [deptDays, setDeptDays] = useState<number[]>([1, 2, 3, 4, 5])
+  const [deptDays, setDeptDays] = useState<number[]>([0, 1, 2, 3, 4, 5, 6])
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const [holidays, setHolidays] = useState<CalendarHoliday[]>([])

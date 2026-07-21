@@ -92,6 +92,13 @@ export class ProcessHierarchyController {
     return this.service.getFlow(orgId, principalFromUser(req.user), mapId, parentNodeId || null);
   }
 
+  @Get('maps/:mapId/tree')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Flat list of every node in the map (for the outline tree + search)' })
+  getTree(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any) {
+    return this.service.getTree(orgId, principalFromUser(req.user), mapId);
+  }
+
   // ─── Nodes ───────────────────────────────────────────────────────────────────
   @Post('maps/:mapId/nodes')
   @RequirePermission(LEAF, PermissionAction.write)
