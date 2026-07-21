@@ -121,6 +121,7 @@ export default function ForgotPasswordPage() {
   }
 
   return (
+    <div className="min-h-screen flex items-center justify-center p-4">
     <div className="w-full max-w-[420px]">
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-8">
         {/* Brand */}
@@ -271,6 +272,7 @@ export default function ForgotPasswordPage() {
           </div>
         )}
       </div>
+    </div>
     </div>
   )
 }

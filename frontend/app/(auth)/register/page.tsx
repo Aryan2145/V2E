@@ -196,8 +196,10 @@ function RegisterForm() {
 
 export default function RegisterPage() {
   return (
-    <Suspense fallback={<div className="w-full max-w-[420px] h-[600px] bg-white border border-[#E2E8F0] rounded-[12px] animate-pulse" />}>
-      <RegisterForm />
-    </Suspense>
+    <div className="min-h-screen flex items-center justify-center p-4">
+      <Suspense fallback={<div className="w-full max-w-[420px] h-[600px] bg-white border border-[#E2E8F0] rounded-[12px] animate-pulse" />}>
+        <RegisterForm />
+      </Suspense>
+    </div>
   )
 }

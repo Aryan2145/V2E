@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
+import BrandMark, { BrandGlyph } from '@/components/ui/BrandMark'
 
 export default function LoginPage() {
   const { login, user } = useAuth()
@@ -47,59 +48,128 @@ export default function LoginPage() {
   // never the login form, so it doesn't flash before the redirect lands.
   if (user) {
     return (
-      <div className="w-full max-w-[420px] flex items-center justify-center py-24">
+      <div className="min-h-screen flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" />
       </div>
     )
   }
 
   return (
-    <div className="w-full max-w-[420px]">
-      <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-8">
-        <div className="mb-8 text-center">
-          <span className="text-[28px] font-bold text-[#0F172A] tracking-tight">
-            V2E
+    <div className="min-h-screen w-full grid lg:grid-cols-[1.05fr_1fr]">
+      {/* Brand panel — hidden on small screens, condensed to a bar on mobile */}
+      <aside className="relative hidden lg:flex flex-col justify-between overflow-hidden bg-[#0B1220] px-16 py-14 text-white">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            background:
+              'radial-gradient(120% 120% at 0% 0%, #1E293B 0%, transparent 55%), radial-gradient(130% 130% at 100% 100%, #172554 0%, transparent 50%)',
+          }}
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundImage:
+              'linear-gradient(to right, rgba(255,255,255,0.045) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.045) 1px, transparent 1px)',
+            backgroundSize: '46px 46px',
+            maskImage:
+              'radial-gradient(120% 90% at 30% 20%, #000 40%, transparent 90%)',
+            WebkitMaskImage:
+              'radial-gradient(120% 90% at 30% 20%, #000 40%, transparent 90%)',
+          }}
+        />
+
+        <div className="relative z-[1] flex items-center gap-2.5">
+          <BrandGlyph size={30} radius={8} tone="dark" />
+          <span className="text-[20px] font-bold tracking-tight text-white">
+            V2E: Vision to Execution
           </span>
-          <p className="mt-1 text-sm text-[#475569]">
-            Sign in to your workspace
+        </div>
+
+        <div className="relative z-[1] max-w-[30rem]">
+          <h2 className="text-[34px] font-semibold leading-[1.18] tracking-tight text-white whitespace-nowrap">
+            The&nbsp;<span className="text-[#93C5FD]">operating system</span>
+            <br />
+            for your organisation.
+          </h2>
+          <p className="mt-4 text-[15px] leading-relaxed text-[#CBD5E1]">
+            One platform to keep your whole team
+            <br />
+            aligned, accountable, and moving forward.
           </p>
         </div>
 
-        {error && (
-          <div
-            role="alert"
-            className="mb-5 rounded-[8px] border border-[#FCA5A5] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]"
-          >
-            {error}
+        <div className="relative z-[1] text-[13px] text-[#94A3B8]">
+          © 2026 V2E · Secure workspace access
+        </div>
+      </aside>
+
+      {/* Form column */}
+      <main className="flex items-center justify-center bg-white px-6 py-12 sm:px-10">
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          className="w-full max-w-[380px] motion-safe:animate-fade-rise"
+        >
+          {/* Mobile wordmark — the brand panel is hidden below lg */}
+          <div className="mb-8 lg:hidden">
+            <BrandMark size="sm" tone="light" />
           </div>
-        )}
 
-        <form onSubmit={handleSubmit} noValidate className="flex flex-col gap-5">
-          <Input
-            id="email"
-            name="email"
-            label="Email address"
-            type="email"
-            placeholder="you@company.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            disabled={isLoading}
-            autoComplete="email"
-          />
+          <h1 className="text-[24px] font-semibold tracking-tight text-[#0F172A]">
+            Sign in to your workspace
+          </h1>
+          <p className="mt-1.5 text-sm text-[#475569]">
+            Use your work email to continue.
+          </p>
 
-          <Input
-            id="password"
-            name="password"
-            label="Password"
-            type="password"
-            placeholder="Enter your password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            disabled={isLoading}
-            autoComplete="current-password"
-          />
+          {error && (
+            <div
+              role="alert"
+              className="mt-6 rounded-[8px] border border-[#FCA5A5] bg-[#FEF2F2] px-4 py-3 text-sm text-[#DC2626]"
+            >
+              {error}
+            </div>
+          )}
+
+          <div className="mt-7 flex flex-col gap-5">
+            <Input
+              id="email"
+              name="email"
+              label="Email address"
+              type="email"
+              placeholder="you@company.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              disabled={isLoading}
+              autoComplete="email"
+              inputMode="email"
+            />
+
+            <Input
+              id="password"
+              name="password"
+              label="Password"
+              type="password"
+              placeholder="Enter your password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              disabled={isLoading}
+              autoComplete="current-password"
+            />
+          </div>
+
+          <div className="mt-2 flex justify-end">
+            <a
+              href="/forgot-password"
+              className="text-[13.5px] font-medium text-[#2563EB] hover:underline"
+            >
+              Forgot your password?
+            </a>
+          </div>
 
           <Button
             type="submit"
@@ -107,18 +177,12 @@ export default function LoginPage() {
             size="md"
             isLoading={isLoading}
             disabled={isLoading}
-            className="w-full mt-1"
+            className="mt-6 w-full"
           >
             {isLoading ? 'Signing in…' : 'Sign in'}
           </Button>
         </form>
-
-        <p className="mt-5 text-center text-sm">
-          <a href="/forgot-password" className="font-medium text-[#2563EB] hover:underline">
-            Forgot your password?
-          </a>
-        </p>
-      </div>
+      </main>
     </div>
   )
 }

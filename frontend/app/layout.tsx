@@ -16,7 +16,10 @@ const inter = Inter({
 })
 
 export const metadata: Metadata = {
-  title: 'V2E',
+  title: {
+    default: 'V2E: Vision to Execution',
+    template: '%s · V2E',
+  },
   description: 'The operating system for your organisation',
 }
 

@@ -39,6 +39,15 @@ const config: Config = {
         small: ["13px", { fontWeight: "400" }],
         label: ["14px", { fontWeight: "500" }],
       },
+      keyframes: {
+        "fade-rise": {
+          from: { opacity: "0", transform: "translateY(10px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        "fade-rise": "fade-rise 0.5s cubic-bezier(0.2,0.7,0.2,1) both",
+      },
     },
   },
   plugins: [],
