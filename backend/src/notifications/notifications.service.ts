@@ -126,6 +126,68 @@ export class NotificationsService {
     }
   }
 
+  /**
+   * Batched sibling of emit(): persists notifications for many distinct
+   * messages in a single createMany instead of one transaction per message.
+   * Same persisted rows and same best-effort socket/push delivery as looping
+   * emit() — used by high-fan-out system paths (e.g. the SLA cron) to avoid an
+   * N-round-trip storm. Does not support the dedupe option.
+   */
+  async emitMany(items: EmitParams[]): Promise<void> {
+    try {
+      if (items.length === 0) return;
+      const rows: any[] = [];
+      const deliver: Array<{ userId: string; orgId: string; title: string; body: string; link: string | null }> = [];
+
+      // Master config (with its toggles) is per-org and cached; fetch once each.
+      const masters = new Map<string, Record<string, boolean>>();
+      for (const p of items) {
+        if (!masters.has(p.orgId)) {
+          const master = await this.getMaster(p.orgId);
+          masters.set(p.orgId, (master.event_toggles ?? {}) as Record<string, boolean>);
+        }
+        if (masters.get(p.orgId)![p.event_type] === false) continue;
+        const recipients = Array.from(new Set(p.recipients.filter((r): r is string => !!r)));
+        for (const userId of recipients) {
+          rows.push({
+            organization_id: p.orgId,
+            user_id: userId,
+            module: p.module,
+            event_type: p.event_type,
+            title: p.title,
+            body: p.body,
+            link: p.link ?? null,
+            entity_type: p.entity?.type ?? null,
+            entity_id: p.entity?.id ?? null,
+          });
+          deliver.push({ userId, orgId: p.orgId, title: p.title, body: p.body, link: p.link ?? null });
+        }
+      }
+      if (rows.length === 0) return;
+
+      await this.prisma.notification.createMany({ data: rows });
+
+      // Delivery is best-effort — must never throw into the business flow.
+      for (const d of deliver) {
+        try {
+          this.gateway.emitToUser(d.userId, 'notification', {
+            user_id: d.userId,
+            title: d.title,
+            body: d.body,
+            link: d.link,
+          });
+        } catch (err) {
+          this.logger.warn(`Socket emit failed: ${err}`);
+        }
+        void this.push
+          .sendToUser(d.orgId, d.userId, { title: d.title, body: d.body, link: d.link })
+          .catch((err) => this.logger.warn(`Push failed: ${err}`));
+      }
+    } catch (err) {
+      this.logger.error(`emitMany failed: ${err}`);
+    }
+  }
+
   /** Resolve a user's display name (for message bodies). */
   async userName(userId: string): Promise<string> {
     const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { name: true } });

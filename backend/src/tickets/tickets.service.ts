@@ -1566,13 +1566,33 @@ export class TicketsService {
         status: { type: { notIn: ['closed_resolved', 'closed_unresolved'] } },
       },
     })
-    for (const ticket of breaching) {
-      await this.prisma.ticket.update({ where: { id: ticket.id }, data: { sla_breached: true } })
-      await this.logActivity(ticket.organization_id, ticket.id, 'system', 'sla_breached')
-      if (ticket.assigned_to_user_id) {
-        await this.notifyUser(ticket.organization_id, ticket.id, ticket.assigned_to_user_id, 'sla_breached',
-          `SLA breached on ticket ${ticket.ticket_number}: ${ticket.title}`)
-      }
+    if (breaching.length) {
+      await this.prisma.ticket.updateMany({
+        where: { id: { in: breaching.map((t) => t.id) } },
+        data: { sla_breached: true },
+      })
+      await this.prisma.ticketActivityLog.createMany({
+        data: breaching.map((t) => ({
+          organization_id: t.organization_id,
+          ticket_id: t.id,
+          performed_by_user_id: 'system',
+          action: 'sla_breached' as any,
+        })),
+      })
+      await this.notifications.emitMany(
+        breaching
+          .filter((t) => t.assigned_to_user_id)
+          .map((t) => ({
+            orgId: t.organization_id,
+            module: 'tickets' as const,
+            event_type: 'ticket_sla_breached',
+            recipients: [t.assigned_to_user_id!],
+            title: 'Ticket SLA breached',
+            body: `SLA breached on ticket ${t.ticket_number}: ${t.title}`,
+            link: `/dashboard/tasks/tickets/${t.id}`,
+            entity: { type: 'ticket', id: t.id },
+          })),
+      )
     }
 
     // 2) First-response SLA breaches (no response yet, clock elapsed).
@@ -1587,14 +1607,32 @@ export class TicketsService {
         status: { type: { notIn: ['closed_resolved', 'closed_unresolved'] } },
       },
     })
-    for (const ticket of responseBreaching) {
-      await this.prisma.ticket.update({ where: { id: ticket.id }, data: { response_breached: true } })
-      await this.logActivity(ticket.organization_id, ticket.id, 'system', 'response_breached')
-      const targets = [ticket.assigned_to_user_id, ...(await this.getAdminUserIds(orgId))].filter(
-        (u): u is string => !!u,
+    if (responseBreaching.length) {
+      const adminIds = await this.getAdminUserIds(orgId) // hoisted: was re-queried per ticket
+      await this.prisma.ticket.updateMany({
+        where: { id: { in: responseBreaching.map((t) => t.id) } },
+        data: { response_breached: true },
+      })
+      await this.prisma.ticketActivityLog.createMany({
+        data: responseBreaching.map((t) => ({
+          organization_id: t.organization_id,
+          ticket_id: t.id,
+          performed_by_user_id: 'system',
+          action: 'response_breached' as any,
+        })),
+      })
+      await this.notifications.emitMany(
+        responseBreaching.map((t) => ({
+          orgId: t.organization_id,
+          module: 'tickets' as const,
+          event_type: 'ticket_sla_breached',
+          recipients: [t.assigned_to_user_id, ...adminIds].filter((u): u is string => !!u),
+          title: 'Ticket SLA breached',
+          body: `First-response SLA breached on ticket ${t.ticket_number}: ${t.title}`,
+          link: `/dashboard/tasks/tickets/${t.id}`,
+          entity: { type: 'ticket', id: t.id },
+        })),
       )
-      await this.notifyUsers(ticket.organization_id, ticket.id, targets, 'sla_breached',
-        `First-response SLA breached on ticket ${ticket.ticket_number}: ${ticket.title}`)
     }
 
     // 3) Tiered escalation: fire successive levels over time on breached, still-open
@@ -1610,17 +1648,45 @@ export class TicketsService {
       },
       include: { escalations: { orderBy: { level: 'asc' } } },
     })
-    for (const ticket of escalating) {
-      // Only fire the next pending level, and only once its time threshold passed.
-      const pending = ticket.escalations.filter((e) => e.is_active && !e.escalated_at).sort((a, b) => a.level - b.level)
-      const next = pending[0]
-      if (!next) continue
-      const dueAt = new Date(ticket.sla_due_at.getTime() + (next.level - 1) * intervalHours * 60 * 60 * 1000)
-      if (dueAt > now) continue
-      await this.prisma.ticketEscalation.update({ where: { id: next.id }, data: { escalated_at: now } })
-      await this.notifyUser(ticket.organization_id, ticket.id, next.escalate_to_user_id, 'escalated',
-        `Ticket ${ticket.ticket_number} escalated to you (level ${next.level}): ${ticket.title}`)
-      await this.logActivity(ticket.organization_id, ticket.id, 'system', 'escalated', { level: next.level, user_id: next.escalate_to_user_id })
+    // Resolve which escalation fires for each ticket (next pending level whose
+    // time threshold has passed), then apply all of them set-based.
+    const fires = escalating
+      .map((ticket) => {
+        const pending = ticket.escalations.filter((e) => e.is_active && !e.escalated_at).sort((a, b) => a.level - b.level)
+        const next = pending[0]
+        if (!next) return null
+        const dueAt = new Date(ticket.sla_due_at.getTime() + (next.level - 1) * intervalHours * 60 * 60 * 1000)
+        if (dueAt > now) return null
+        return { ticket, next }
+      })
+      .filter((f): f is { ticket: (typeof escalating)[number]; next: (typeof escalating)[number]['escalations'][number] } => !!f)
+
+    if (fires.length) {
+      await this.prisma.ticketEscalation.updateMany({
+        where: { id: { in: fires.map((f) => f.next.id) } },
+        data: { escalated_at: now },
+      })
+      await this.prisma.ticketActivityLog.createMany({
+        data: fires.map((f) => ({
+          organization_id: f.ticket.organization_id,
+          ticket_id: f.ticket.id,
+          performed_by_user_id: 'system',
+          action: 'escalated' as any,
+          metadata: { level: f.next.level, user_id: f.next.escalate_to_user_id } as any,
+        })),
+      })
+      await this.notifications.emitMany(
+        fires.map((f) => ({
+          orgId: f.ticket.organization_id,
+          module: 'tickets' as const,
+          event_type: 'ticket_escalated',
+          recipients: [f.next.escalate_to_user_id],
+          title: 'Ticket escalated to you',
+          body: `Ticket ${f.ticket.ticket_number} escalated to you (level ${f.next.level}): ${f.ticket.title}`,
+          link: `/dashboard/tasks/tickets/${f.ticket.id}`,
+          entity: { type: 'ticket', id: f.ticket.id },
+        })),
+      )
     }
   }
 
