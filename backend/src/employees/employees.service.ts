@@ -49,54 +49,6 @@ export class EmployeesService {
     });
   }
 
-  /**
-   * Cursor-paginated directory listing for the employees TABLE view. Envelope
-   * matches notifications: { items, next_cursor, total }. Search (name/email) and
-   * department filtering are applied server-side so paging stays correct. The bare
-   * findAll() above is retained for the many callers that need the full roster
-   * (pickers, org-chart, reporting tree, self-profile checks).
-   */
-  async findAllPaged(
-    orgId: string,
-    opts: { cursor?: string; limit?: number; search?: string; departmentId?: string } = {},
-  ) {
-    const take = Math.min(Math.max(opts.limit ?? 25, 1), 100);
-    const deptIds = (opts.departmentId ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-
-    const where: Record<string, unknown> = { organization_id: orgId };
-    if (deptIds.length) where.department_id = { in: deptIds };
-    if (opts.search?.trim()) {
-      const q = opts.search.trim();
-      where.user = {
-        is: {
-          OR: [
-            { name: { contains: q, mode: 'insensitive' } },
-            { email: { contains: q, mode: 'insensitive' } },
-          ],
-        },
-      };
-    }
-
-    const [rows, total] = await Promise.all([
-      this.prisma.employeeProfile.findMany({
-        where,
-        include: PROFILE_INCLUDE,
-        orderBy: { created_at: 'asc' },
-        take: take + 1,
-        ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-      }),
-      this.prisma.employeeProfile.count({ where }),
-    ]);
-
-    const hasMore = rows.length > take;
-    const items = hasMore ? rows.slice(0, take) : rows;
-    return {
-      items,
-      next_cursor: hasMore ? items[items.length - 1].id : null,
-      total,
-    };
-  }
-
   async findOne(id: string, orgId: string) {
     const profile = await this.prisma.employeeProfile.findFirst({
       where: { id, organization_id: orgId },

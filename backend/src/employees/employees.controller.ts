@@ -48,23 +48,6 @@ export class EmployeesController {
     return this.employeesService.findAll(orgId);
   }
 
-  @Get('paged')
-  @ApiOperation({ summary: 'Cursor-paginated employee directory (table view): search + department filter' })
-  findAllPaged(
-    @Param('orgId') orgId: string,
-    @Query('cursor') cursor?: string,
-    @Query('limit') limit?: string,
-    @Query('search') search?: string,
-    @Query('department_id') department_id?: string,
-  ) {
-    return this.employeesService.findAllPaged(orgId, {
-      cursor,
-      limit: limit ? parseInt(limit, 10) : undefined,
-      search,
-      departmentId: department_id,
-    });
-  }
-
   @Get('tree')
   @ApiOperation({ summary: 'Get reporting tree for all employees' })
   getReportingTree(@Param('orgId') orgId: string) {
