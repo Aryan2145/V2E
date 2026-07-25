@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
-import { createDepartment, updateDepartment } from '@/lib/api/departments'
+import { X, Trash2 } from 'lucide-react'
+import { createDepartment, updateDepartment, deleteDepartment } from '@/lib/api/departments'
 import { placeUnderParent } from '@/lib/org-chart-layout'
 import { BRANCH_PALETTE } from '@/lib/org-chart-colors'
 import Button from '@/components/ui/Button'
@@ -22,6 +22,7 @@ interface DeptFormDrawerProps {
   orgId: string
   onClose: () => void
   onSaved: (saved: Department) => void
+  onDeleted: (id: string) => void
 }
 
 const inputCls =
@@ -40,6 +41,7 @@ export default function DeptFormDrawer({
   orgId,
   onClose,
   onSaved,
+  onDeleted,
 }: DeptFormDrawerProps) {
   const open = !!target
   const isEdit = target?.mode === 'edit'
@@ -54,6 +56,8 @@ export default function DeptFormDrawer({
   const [headUserId, setHeadUserId] = useState('')
   const [color, setColor] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Hydrate when the target changes.
@@ -73,6 +77,7 @@ export default function DeptFormDrawer({
       setColor(null)
     }
     setError(null)
+    setConfirmDelete(false)
   }, [target])
 
   // A department can't be its own parent (or pick a descendant — kept simple here).
@@ -91,8 +96,11 @@ export default function DeptFormDrawer({
         saved = await updateDepartment(orgId, editing.id, {
           name: name.trim(),
           description: description.trim() || undefined,
-          parent_department_id: parentId || undefined,
-          head_user_id: headUserId || undefined,
+          // Send null (not undefined) so clearing these actually persists —
+          // undefined is stripped from the PATCH and Prisma leaves the column
+          // untouched, which is why "None (top-level)" appeared to do nothing.
+          parent_department_id: parentId || null,
+          head_user_id: headUserId || null,
           color, // hex string, or null to clear → inherit branch hue
         })
       } else {
@@ -114,6 +122,37 @@ export default function DeptFormDrawer({
       setError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to save department.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Only an empty department can be deleted — the backend refuses otherwise, but
+  // we gate the UI up front so the option reads as "available when empty".
+  const counts = editing?._count
+  const blockers: string[] = []
+  if (counts) {
+    if (counts.child_departments > 0)
+      blockers.push(`${counts.child_departments} sub-department${counts.child_departments === 1 ? '' : 's'}`)
+    if (counts.employee_profiles > 0)
+      blockers.push(`${counts.employee_profiles} employee${counts.employee_profiles === 1 ? '' : 's'}`)
+    if (counts.roles > 0)
+      blockers.push(`${counts.roles} job role${counts.roles === 1 ? '' : 's'}`)
+  }
+  const canDelete = blockers.length === 0
+
+  const handleDelete = async () => {
+    if (!editing) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await deleteDepartment(orgId, editing.id)
+      onDeleted(editing.id)
+    } catch (err: unknown) {
+      const raw = (err as { response?: { data?: { message?: string | string[] } } })?.response
+        ?.data?.message
+      setError(Array.isArray(raw) ? raw[0] : raw ?? 'Failed to delete department.')
+      setConfirmDelete(false)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -222,13 +261,63 @@ export default function DeptFormDrawer({
           {error && <p className="text-xs text-[#DC2626]">{error}</p>}
           </div>
 
-          <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex gap-3">
-            <Button variant="primary" isLoading={saving} onClick={handleSave}>
-              {isEdit ? 'Save' : 'Add Department'}
-            </Button>
-            <Button variant="secondary" onClick={onClose} disabled={saving}>
-              Cancel
-            </Button>
+          <div className="px-5 pt-4 pb-12 border-t border-[#E2E8F0] flex flex-col gap-3">
+            <div className="flex gap-3">
+              <Button variant="primary" isLoading={saving} onClick={handleSave}>
+                {isEdit ? 'Save' : 'Add Department'}
+              </Button>
+              <Button variant="secondary" onClick={onClose} disabled={saving || deleting}>
+                Cancel
+              </Button>
+            </div>
+
+            {isEdit && !confirmDelete && (
+              <button
+                type="button"
+                onClick={() => canDelete && setConfirmDelete(true)}
+                disabled={!canDelete}
+                title={
+                  canDelete
+                    ? 'Delete this department'
+                    : `Reassign its ${blockers.join(', ')} first`
+                }
+                className={`flex items-center gap-1.5 text-sm font-medium self-start transition-colors ${
+                  canDelete
+                    ? 'text-[#DC2626] hover:text-[#B91C1C]'
+                    : 'text-[#94A3B8] cursor-not-allowed'
+                }`}
+              >
+                <Trash2 size={14} /> Delete department
+              </button>
+            )}
+
+            {isEdit && !canDelete && (
+              <p className="text-xs text-[#94A3B8] -mt-1">
+                A department with {blockers.join(', ')} can’t be deleted. Reassign or
+                remove them first.
+              </p>
+            )}
+
+            {isEdit && confirmDelete && (
+              <div className="rounded-[8px] border border-[#FECACA] bg-[#FEF2F2] p-3">
+                <p className="text-sm text-[#991B1B] mb-2.5">
+                  Delete <span className="font-semibold">{editing?.name}</span>? This can’t
+                  be undone.
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="danger" isLoading={deleting} onClick={handleDelete}>
+                    Delete
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setConfirmDelete(false)}
+                    disabled={deleting}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>

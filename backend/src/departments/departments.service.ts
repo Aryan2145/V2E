@@ -80,9 +80,15 @@ export class DepartmentsService {
   async update(id: string, orgId: string, dto: UpdateDepartmentDto) {
     await this.findOne(id, orgId);
 
+    // Canvas position is owned exclusively by the dedicated `:id/position`
+    // endpoint. Strip it here so an ordinary edit (name/parent/head/…) can
+    // never clobber the node's placement — the DTO carries position defaults
+    // that would otherwise reset it to (0, 0) on every save.
+    const { position_x: _px, position_y: _py, ...data } = dto;
+
     const updated = await this.prisma.department.update({
       where: { id },
-      data: dto,
+      data,
       include: {
         head_user: {
           select: { id: true, name: true, email: true },

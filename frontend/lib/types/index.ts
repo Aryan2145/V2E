@@ -142,8 +142,8 @@ export interface Department {
   organization_id: string;
   name: string;
   description?: string;
-  parent_department_id?: string;
-  head_user_id?: string;
+  parent_department_id?: string | null;
+  head_user_id?: string | null;
   color?: string | null;
   position_x: number;
   position_y: number;
