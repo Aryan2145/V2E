@@ -325,7 +325,17 @@ export class PermissionAdminService {
     if (role.is_system) {
       throw new BadRequestException(`"Administrator" is a system role and cannot be deleted.`);
     }
-    // Employees assigned this role have their system_role_id set null (FK ON DELETE SET NULL).
+    // Block while employees still hold this access role — reassign them first
+    // (rather than silently stripping their access via the SET NULL FK).
+    const assigned = await this.prisma.employeeProfile.count({
+      where: { organization_id: orgId, system_role_id: id },
+    });
+    if (assigned > 0) {
+      throw new BadRequestException(
+        `${assigned} employee${assigned === 1 ? '' : 's'} still ${assigned === 1 ? 'has' : 'have'} the "${role.name}" access role. ` +
+          'Reassign them to another role before deleting it.',
+      );
+    }
     await this.prisma.systemRole.delete({ where: { id } });
     await this.audit.record({
       orgId, actorId, action: 'delete', resource: 'system_role',

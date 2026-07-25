@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -152,5 +153,18 @@ export class EmployeesController {
     @Body() body: UpdateStatusDto,
   ) {
     return this.employeesService.updateStatus(id, orgId, body.status);
+  }
+
+  @Delete(':id')
+  @RequireAdmin()
+  @ApiOperation({
+    summary: 'Delete an employee (blocked if they have reports/history — deactivate instead)',
+  })
+  remove(
+    @Param('orgId') orgId: string,
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.employeesService.remove(id, orgId, userId);
   }
 }

@@ -123,6 +123,7 @@ export class DepartmentsService {
           select: {
             child_departments: true,
             employee_profiles: true,
+            roles: true,
           },
         },
       },
@@ -141,6 +142,14 @@ export class DepartmentsService {
     if (department._count.employee_profiles > 0) {
       throw new BadRequestException(
         'Cannot delete department that has employees. Reassign employees first.',
+      );
+    }
+
+    // Job roles carry a required department FK, so a raw delete would hit a
+    // constraint error — block it up front with a clear, actionable message.
+    if (department._count.roles > 0) {
+      throw new BadRequestException(
+        'Cannot delete department that has job roles. Move or delete its roles first.',
       );
     }
 

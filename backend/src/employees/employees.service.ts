@@ -25,7 +25,7 @@ const USER_SELECT = {
 
 const PROFILE_INCLUDE = {
   user: { select: USER_SELECT },
-  role: { select: { id: true, title: true, level: true } },
+  role: { select: { id: true, title: true, level: true, job_description: true, kra: true } },
   system_role: { select: { id: true, name: true, is_system: true } },
   department: { select: { id: true, name: true } },
   reporting_to: { select: USER_SELECT },
@@ -313,6 +313,97 @@ export class EmployeesService {
     // Only active employees appear in pickers — status change affects the pool.
     this.assigneeVisibility.invalidate(orgId);
     return updated;
+  }
+
+  /**
+   * Hard-delete an employee. Only a "clean" profile can be removed — anyone who
+   * still owns work, has reports, or heads a department is blocked and should be
+   * DEACTIVATED instead (which preserves their history). What's removed:
+   *   • the HR profile + this org's membership, always;
+   *   • the underlying login/User too, but ONLY if it's used nowhere else on the
+   *     platform (no other org membership/profile and no remaining data — the
+   *     latter enforced by the DB foreign keys, which roll the delete back).
+   * Self and the primary administrator are protected.
+   */
+  async remove(id: string, orgId: string, actingUserId: string) {
+    const profile = await this.prisma.employeeProfile.findFirst({
+      where: { id, organization_id: orgId },
+      include: { user: { select: { id: true, name: true } } },
+    });
+    if (!profile) {
+      throw new NotFoundException(`Employee ${id} not found in this organization`);
+    }
+
+    if (profile.user_id === actingUserId) {
+      throw new BadRequestException(
+        "You can't delete your own account. Ask another administrator to do it.",
+      );
+    }
+
+    const primaryAdmin = await this.prisma.organizationMember.findFirst({
+      where: { organization_id: orgId, is_admin: true },
+      orderBy: { joined_at: 'asc' },
+    });
+    if (primaryAdmin && profile.user_id === primaryAdmin.user_id) {
+      throw new BadRequestException(
+        'The primary administrator of this organization cannot be deleted.',
+      );
+    }
+
+    // People report to this person — deleting would orphan them.
+    const reportCount = await this.prisma.employeeProfile.count({
+      where: { organization_id: orgId, reporting_to_user_id: profile.user_id },
+    });
+    if (reportCount > 0) {
+      throw new BadRequestException(
+        `${reportCount} ${reportCount === 1 ? 'person reports' : 'people report'} to this employee. ` +
+          'Reassign them first, or deactivate this person instead to keep the structure intact.',
+      );
+    }
+
+    // This person heads one or more departments.
+    const headCount = await this.prisma.department.count({
+      where: { organization_id: orgId, head_user_id: profile.user_id },
+    });
+    if (headCount > 0) {
+      throw new BadRequestException(
+        `This person heads ${headCount} department${headCount === 1 ? '' : 's'}. ` +
+          'Assign a new head first, or deactivate this person instead.',
+      );
+    }
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Deleting the profile trips a foreign key if any dependent record
+        // (learning/policy assignments, etc.) still points at it — that rolls
+        // the whole transaction back and we translate it to a friendly message.
+        await tx.employeeProfile.delete({ where: { id } });
+        await tx.organizationMember.deleteMany({
+          where: { organization_id: orgId, user_id: profile.user_id },
+        });
+
+        // Keep the login if it's used anywhere else; otherwise remove it too.
+        const [otherProfiles, otherMemberships] = await Promise.all([
+          tx.employeeProfile.count({ where: { user_id: profile.user_id } }),
+          tx.organizationMember.count({ where: { user_id: profile.user_id } }),
+        ]);
+        if (otherProfiles === 0 && otherMemberships === 0) {
+          // FK-guarded: throws P2003 (→ rollback) if the user still owns work.
+          await tx.user.delete({ where: { id: profile.user_id } });
+        }
+      });
+    } catch (e: any) {
+      if (e?.code === 'P2003') {
+        throw new BadRequestException(
+          'This person has records on the system (tasks, meetings, goals, and the like). ' +
+            'Deactivate them instead to keep that history.',
+        );
+      }
+      throw e;
+    }
+
+    this.assigneeVisibility.invalidate(orgId);
+    return { message: 'Employee deleted successfully' };
   }
 
   // ─── Self-service ────────────────────────────────────────────────────────────────
