@@ -3,9 +3,8 @@
 import { useMemo, useState, useEffect } from 'react'
 import { ChevronRight, Search, X, Workflow } from 'lucide-react'
 import { KIND_META } from './kind-meta'
-import type { TreeNode, ProcessNodeStatus } from '@/lib/api/process-hierarchy'
+import type { TreeNode } from '@/lib/api/process-hierarchy'
 
-const STATUS_DOT: Record<ProcessNodeStatus, string> = { draft: '#94A3B8', in_review: '#D97706', final: '#16A34A' }
 const CONTAINER_KINDS = new Set(['container', 'subprocess'])
 
 interface Props {
@@ -101,7 +100,6 @@ export default function HierarchyTree({ tree, mapName, currentParentId, selected
           >
             <span className="shrink-0 text-[#2563EB]">{KIND_META[n.kind].icon}</span>
             <span className={`flex-1 min-w-0 truncate text-[13px] ${isSelected || isCurrent ? 'text-[#1D4ED8] font-semibold' : 'text-[#0F172A]'}`}>{n.name}</span>
-            <span className="shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: STATUS_DOT[n.status] }} title={n.status} />
           </button>
         </div>
         {hasKids && isOpen && kids.map((c) => renderRow(c, depth + 1))}
@@ -142,7 +140,6 @@ export default function HierarchyTree({ tree, mapName, currentParentId, selected
                   <div className="flex items-center gap-1.5">
                     <span className="shrink-0 text-[#2563EB]">{KIND_META[node.kind].icon}</span>
                     <span className="flex-1 min-w-0 truncate text-[13px] text-[#0F172A] font-medium">{node.name}</span>
-                    <span className="shrink-0 w-1.5 h-1.5 rounded-full" style={{ background: STATUS_DOT[node.status] }} />
                   </div>
                   {path.length > 0 && (
                     <p className="text-[11px] text-[#64748B] truncate pl-5">{path.join(' › ')}</p>

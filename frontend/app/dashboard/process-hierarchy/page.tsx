@@ -8,7 +8,7 @@ import { usePermissions } from '@/lib/auth/use-permissions'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { processHierarchyApi, type ProcessMapSummary, type ProcessTemplateSummary } from '@/lib/api/process-hierarchy'
-import { Workflow, Plus, ChevronRight, X, Loader2, Layers, Trash2 } from 'lucide-react'
+import { Workflow, Plus, ChevronRight, X, Loader2, Layers, Trash2, Search, Star, FolderPlus } from 'lucide-react'
 
 const LEAF = 'process_hierarchy.map.manage'
 
@@ -30,8 +30,11 @@ export default function ProcessHierarchyListPage() {
 
   const [maps, setMaps] = useState<ProcessMapSummary[]>([])
   const [loading, setLoading] = useState(true)
-  const [showCreate, setShowCreate] = useState(false)
+  // undefined = create dialog closed; null = new top-level map; string = new sub-map under that id.
+  const [createParent, setCreateParent] = useState<string | null | undefined>(undefined)
   const [showTemplates, setShowTemplates] = useState(false)
+  const [query, setQuery] = useState('')
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
   const reload = useCallback(async () => {
     if (!orgId) return
@@ -43,6 +46,80 @@ export default function ProcessHierarchyListPage() {
     if (!orgId) { setLoading(false); return }
     reload().finally(() => setLoading(false))
   }, [orgId, reload])
+
+  const idSet = new Set(maps.map((m) => m.id))
+  const childrenBy = new Map<string, ProcessMapSummary[]>()
+  for (const m of maps) {
+    // Orphans (parent hidden/deleted) fall back to the top level so nothing disappears.
+    const key = m.parent_map_id && idSet.has(m.parent_map_id) ? m.parent_map_id : '__root__'
+    const list = childrenBy.get(key) ?? []
+    list.push(m); childrenBy.set(key, list)
+  }
+  childrenBy.forEach((list) => list.sort((a, b) => a.name.localeCompare(b.name)))
+  const roots = childrenBy.get('__root__') ?? []
+  const pinned = maps.filter((m) => m.is_pinned).sort((a, b) => a.name.localeCompare(b.name))
+
+  const q = query.trim().toLowerCase()
+  const results = q
+    ? maps.filter((m) => m.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name))
+    : null
+
+  const toggle = (id: string) => setExpanded((prev) => {
+    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
+  })
+
+  async function togglePin(m: ProcessMapSummary) {
+    setMaps((prev) => prev.map((x) => (x.id === m.id ? { ...x, is_pinned: !x.is_pinned } : x)))
+    try { await processHierarchyApi.updateMap(orgId, m.id, { is_pinned: !m.is_pinned }) } catch { reload() }
+  }
+
+  const pathOf = (m: ProcessMapSummary): string[] => {
+    const byId = new Map(maps.map((x) => [x.id, x]))
+    const crumbs: string[] = []
+    let cur = m.parent_map_id ? byId.get(m.parent_map_id) : undefined
+    let guard = 0
+    while (cur && guard < 20) { crumbs.unshift(cur.name); cur = cur.parent_map_id ? byId.get(cur.parent_map_id) : undefined; guard++ }
+    return crumbs
+  }
+
+  const renderRow = (m: ProcessMapSummary, depth: number) => {
+    const kids = childrenBy.get(m.id) ?? []
+    const isOpen = expanded.has(m.id)
+    return (
+      <div key={m.id}>
+        <div className="group flex items-center gap-1 rounded-[8px] pr-2 hover:bg-[#F1F5F9] transition-colors" style={{ paddingLeft: 4 + depth * 18 }}>
+          <button onClick={() => kids.length && toggle(m.id)} aria-label={isOpen ? 'Collapse' : 'Expand'}
+            className={`shrink-0 w-5 h-5 flex items-center justify-center rounded ${kids.length ? 'text-[#64748B] hover:bg-[#E2E8F0]' : 'opacity-0 pointer-events-none'}`}>
+            <ChevronRight size={14} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+          </button>
+          <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} className="flex-1 min-w-0 flex items-center gap-2 py-2 text-left" title={m.name}>
+            <Workflow size={16} className="shrink-0 text-[#2563EB]" />
+            <span className="truncate text-[14px] font-medium text-[#0F172A]">{m.name}</span>
+            {m.node_count > 0 && (
+              <span title={`${m.node_count} step${m.node_count !== 1 ? 's' : ''}`}
+                className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold tabular-nums">{m.node_count}</span>
+            )}
+            {kids.length > 0 && (
+              <span title={`${kids.length} sub-map${kids.length !== 1 ? 's' : ''}`}
+                className="shrink-0 text-[11px] text-[#64748B]">· {kids.length} inside</span>
+            )}
+            {m.is_owner && <span className="shrink-0 text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-[#E0F2FE] text-[#0369A1]">Owner</span>}
+          </button>
+          <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            <button onClick={() => togglePin(m)} title={m.is_pinned ? 'Unpin' : 'Pin to top'} aria-label="Pin"
+              className={`w-7 h-7 flex items-center justify-center rounded-[6px] hover:bg-[#E2E8F0] ${m.is_pinned ? 'text-[#D97706]' : 'text-[#94A3B8] hover:text-[#0F172A]'}`}>
+              <Star size={14} fill={m.is_pinned ? '#D97706' : 'none'} />
+            </button>
+            {canCreate && (
+              <button onClick={() => setCreateParent(m.id)} title="Add a sub-map here" aria-label="Add sub-map"
+                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#E2E8F0]"><FolderPlus size={14} /></button>
+            )}
+          </div>
+        </div>
+        {isOpen && kids.map((k) => renderRow(k, depth + 1))}
+      </div>
+    )
+  }
 
   if (loading) {
     return (
@@ -72,7 +149,7 @@ export default function ProcessHierarchyListPage() {
                 <Layers size={16} /> From template
               </button>
               <button
-                onClick={() => setShowCreate(true)}
+                onClick={() => setCreateParent(null)}
                 className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors"
               >
                 <Plus size={16} /> New Map
@@ -82,7 +159,7 @@ export default function ProcessHierarchyListPage() {
         </div>
       </div>
 
-      <div className="pt-6">
+      <div className="pt-6 max-w-4xl">
         {maps.length === 0 ? (
           <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
@@ -96,7 +173,7 @@ export default function ProcessHierarchyListPage() {
             </p>
             {canCreate && (
               <button
-                onClick={() => setShowCreate(true)}
+                onClick={() => setCreateParent(null)}
                 className="mt-5 inline-flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-medium bg-[#2563EB] text-white hover:bg-[#1D4ED8] transition-colors"
               >
                 <Plus size={15} /> New Map
@@ -104,49 +181,73 @@ export default function ProcessHierarchyListPage() {
             )}
           </div>
         ) : (
-          // At low counts a 3-col grid strands the row; scale columns to the count.
-          <div className={`grid gap-4 grid-cols-1 ${maps.length === 1 ? 'sm:grid-cols-1 lg:max-w-2xl' : 'sm:grid-cols-2 xl:grid-cols-3'}`}>
-            {maps.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)}
-                className="text-left bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-5 hover:border-[#2563EB] hover:shadow-md active:scale-[0.99] transition-all duration-150 group"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center text-[#2563EB] flex-shrink-0">
-                    <Workflow size={18} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-[#0F172A] text-[15px] truncate">{m.name}</p>
-                      {m.node_count > 0 && (
-                        <span className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold tabular-nums">
-                          {m.node_count}
+          <>
+            {/* Search */}
+            <div className="relative mb-3">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search maps…"
+                className="w-full pl-9 pr-9 py-2.5 text-[15px] rounded-[8px] border border-[#CBD5E1] bg-white focus:border-[#2563EB] focus:outline-none text-[#0F172A] placeholder:text-[#94A3B8]" />
+              {query && (
+                <button onClick={() => setQuery('')} aria-label="Clear search" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94A3B8] hover:text-[#475569]"><X size={15} /></button>
+              )}
+            </div>
+
+            {results ? (
+              // Search is a flat result list, so a single card is the right shape here.
+              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-2">
+                {results.length === 0 ? (
+                  <p className="text-[13px] text-[#64748B] text-center py-8">No maps match “{query}”.</p>
+                ) : (
+                  <div className="space-y-0.5">
+                    {results.map((m) => (
+                      <button key={m.id} onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)}
+                        className="w-full text-left rounded-[8px] px-2.5 py-2 hover:bg-[#F1F5F9] transition-colors flex items-center gap-2">
+                        <Workflow size={16} className="shrink-0 text-[#2563EB]" />
+                        <span className="min-w-0">
+                          <span className="block truncate text-[14px] font-medium text-[#0F172A]">{m.name}</span>
+                          {pathOf(m).length > 0 && <span className="block truncate text-[11px] text-[#64748B]">{pathOf(m).join(' › ')}</span>}
                         </span>
-                      )}
-                      {m.is_owner && (
-                        <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-[#E0F2FE] text-[#0369A1] shrink-0">Owner</span>
-                      )}
-                    </div>
-                    <p className="text-[13px] text-[#475569] mt-0.5 line-clamp-2 min-h-[2.2rem]">
-                      {m.description || 'No description'}
-                    </p>
-                    <p className="text-[12px] text-[#64748B] mt-2">
-                      {m.node_count} node{m.node_count !== 1 ? 's' : ''}
-                    </p>
+                      </button>
+                    ))}
                   </div>
-                  <ChevronRight size={16} className="text-[#CBD5E1] group-hover:text-[#2563EB] transition-colors mt-1 shrink-0" />
+                )}
+              </div>
+            ) : (
+              <>
+                {/* Pinned = quick-jump shortcuts, not a group — shown as chips. */}
+                {pinned.length > 0 && (
+                  <div className="mb-4">
+                    <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide mb-1.5">Pinned</p>
+                    <div className="flex flex-wrap gap-2">
+                      {pinned.map((m) => (
+                        <button key={m.id} onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white border border-[#E2E8F0] hover:border-[#2563EB] text-[13px] font-medium text-[#0F172A] transition-colors">
+                          <Star size={12} className="text-[#D97706]" fill="#D97706" /> <span className="truncate max-w-[160px]">{m.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {/* Each top-level map is its OWN card; anything nested inside it lives in
+                    that card. Separate cards = separate, unrelated maps. */}
+                <div className="space-y-3">
+                  {roots.map((m) => (
+                    <div key={m.id} className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-1.5">
+                      {renderRow(m, 0)}
+                    </div>
+                  ))}
                 </div>
-              </button>
-            ))}
-          </div>
+              </>
+            )}
+          </>
         )}
       </div>
 
-      {showCreate && (
+      {createParent !== undefined && (
         <CreateMapModal
           orgId={orgId}
-          onClose={() => setShowCreate(false)}
+          parentId={createParent}
+          onClose={() => setCreateParent(undefined)}
           onCreated={(id) => router.push(`/dashboard/process-hierarchy/${id}`)}
         />
       )}
@@ -295,7 +396,7 @@ function NameModal({ title, label, initial, confirmLabel, busy, onCancel, onSubm
   )
 }
 
-function CreateMapModal({ orgId, onClose, onCreated }: { orgId: string; onClose: () => void; onCreated: (id: string) => void }) {
+function CreateMapModal({ orgId, parentId, onClose, onCreated }: { orgId: string; parentId?: string | null; onClose: () => void; onCreated: (id: string) => void }) {
   const { addToast } = useToast()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -306,7 +407,7 @@ function CreateMapModal({ orgId, onClose, onCreated }: { orgId: string; onClose:
     if (!name.trim() || saving) return
     setSaving(true)
     try {
-      const map = await processHierarchyApi.createMap(orgId, { name: name.trim(), description: description.trim() || undefined })
+      const map = await processHierarchyApi.createMap(orgId, { name: name.trim(), description: description.trim() || undefined, parent_map_id: parentId ?? null })
       onCreated(map.id)
     } catch {
       addToast('Could not create the map. Please try again.', 'error')
@@ -319,7 +420,7 @@ function CreateMapModal({ orgId, onClose, onCreated }: { orgId: string; onClose:
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative bg-white rounded-[12px] shadow-xl w-full max-w-md p-6 animate-[fadeIn_.15s_ease-out]">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-[#0F172A]">New process map</h3>
+          <h3 className="text-lg font-semibold text-[#0F172A]">{parentId ? 'New sub-map' : 'New process map'}</h3>
           <button onClick={onClose} className="text-[#94A3B8] hover:text-[#0F172A] transition-colors"><X size={18} /></button>
         </div>
         <div className="space-y-4">

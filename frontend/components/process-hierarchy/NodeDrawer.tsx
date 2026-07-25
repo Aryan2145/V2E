@@ -1,42 +1,42 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  X, Trash2, Plus, Check, Download, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink, FolderInput,
+  X, Trash2, Plus, Check, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink,
+  Menu, GitBranch, Copy, Share2,
 } from 'lucide-react'
 import {
   processHierarchyApi,
   type NodeDetail,
   type ProcessArtifact,
-  type ProcessArtifactDirection,
   type ProcessAccessKind,
   type ProcessAccessLevel,
-  type ProcessNodeStatus,
   type ProcessMapSummary,
+  type ProcessNodeKind,
   type TreeNode,
 } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
-import { getUsers } from '@/lib/api/users'
-import type { Department, Role, User } from '@/lib/types'
+import { tasksApi } from '@/lib/api/tasks'
+import type { Department, Role } from '@/lib/types'
 import StyledSelect from '@/components/ui/StyledSelect'
-import EmployeePicker from '@/components/ui/EmployeePicker'
+import EmployeePicker, { type EmployeePickerOption } from '@/components/ui/EmployeePicker'
+import RolePicker from '@/components/ui/RolePicker'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import NodeDocuments from './node-materials'
 import { useToast } from '@/components/ui/Toast'
 
-const STATUS_LABEL: Record<ProcessNodeStatus, string> = { draft: 'Draft', in_review: 'In review', final: 'Final' }
-const STATUS_COLOR: Record<ProcessNodeStatus, string> = { draft: '#94A3B8', in_review: '#D97706', final: '#16A34A' }
-const STATUS_OPTIONS = (['draft', 'in_review', 'final'] as ProcessNodeStatus[]).map((s) => ({ value: s, label: STATUS_LABEL[s], color: STATUS_COLOR[s] }))
 const DRILLABLE = new Set(['container', 'subprocess'])
 const CONTAINER_KINDS = new Set(['container', 'subprocess'])
+const NAME_MAX = 50 // node names are capped so they always fit on the canvas without ellipsis
 
 const inputCls =
   'w-full px-3 py-2 text-[14px] rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A] placeholder:text-[#94A3B8]'
 
 export default function NodeDrawer({
-  orgId, mapId, nodeId, tree = [], onClose, onChanged, onDrill,
+  orgId, mapId, nodeId, tree = [], onClose, onChanged, onDrill, onCopy,
 }: {
   orgId: string
   mapId: string
@@ -45,6 +45,7 @@ export default function NodeDrawer({
   onClose: () => void
   onChanged: () => void
   onDrill: (nodeId: string) => void
+  onCopy?: () => void
 }) {
   const { addToast } = useToast()
   const [node, setNode] = useState<NodeDetail | null>(null)
@@ -52,26 +53,29 @@ export default function NodeDrawer({
   const [maps, setMaps] = useState<ProcessMapSummary[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [roles, setRoles] = useState<Role[]>([])
-  const [users, setUsers] = useState<User[]>([])
+  // Rich people list (name + role + department, grouped) — the same source as the
+  // Create Task assignee picker, so the Responsible person field matches it exactly.
+  const [employees, setEmployees] = useState<EmployeePickerOption[]>([])
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [showMenu, setShowMenu] = useState(false) // header ⋯ (Move to another area)
+  const [detaching, setDetaching] = useState(false)
+  const [makingReusable, setMakingReusable] = useState(false)
 
   // editable local copy
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
-  const [status, setStatus] = useState<ProcessNodeStatus>('draft')
   const [respUser, setRespUser] = useState<string>('')
   const [respRole, setRespRole] = useState<string>('')
   const [checklist, setChecklist] = useState<{ id?: string; text: string }[]>([])
-  const [wfCascade, setWfCascade] = useState(false)
-  const [wfBusy, setWfBusy] = useState(false)
 
   const reloadNode = async () => {
     const d = await processHierarchyApi.getNode(orgId, mapId, nodeId)
     setNode(d)
-    setName(d.name); setDescription(d.description ?? ''); setStatus(d.status)
+    setName(d.name); setDescription(d.description ?? '')
     setRespUser(d.responsible_user_id ?? ''); setRespRole(d.responsible_role_id ?? '')
     setChecklist(d.checklist.map((c) => ({ id: c.id, text: c.text })))
     setDirty(false)
@@ -84,15 +88,29 @@ export default function NodeDrawer({
     processHierarchyApi.listMaps(orgId).then(setMaps).catch(() => {})
     getDepartments(orgId).then(setDepartments).catch(() => {})
     getRoles(orgId).then(setRoles).catch(() => {})
-    getUsers(orgId).then(setUsers).catch(() => {})
+    tasksApi.getEligibleAssignees(orgId).then((res) => {
+      const opts: EmployeePickerOption[] = []
+      res.departments.forEach((d) => d.users.forEach((u) =>
+        opts.push({ user_id: u.user_id, name: u.name, role_title: u.role_title, department_name: u.department_name })))
+      setEmployees(opts)
+    }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodeId, orgId, mapId])
 
+  // Closing with unsaved edits asks first, so typed changes are never lost silently.
+  const requestClose = useCallback(() => {
+    if (dirty) setConfirmDiscard(true)
+    else onClose()
+  }, [dirty, onClose])
+
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || confirmDiscard || confirmDel) return
+      requestClose()
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
+  }, [requestClose, confirmDiscard, confirmDel])
 
   const canEdit = !!node?.can_edit
   const drillable = node ? DRILLABLE.has(node.kind) : false
@@ -112,6 +130,21 @@ export default function NodeDrawer({
     return out
   }, [tree, nodeId])
 
+  // Ancestor names (excluding this node) for the header breadcrumb.
+  const ancestorPath = useMemo(() => {
+    if (!tree.length) return [] as string[]
+    const byId = new Map(tree.map((n) => [n.id, n]))
+    const chain: string[] = []
+    let cur = byId.get(nodeId)?.parent_node_id ?? null
+    let guard = 0
+    while (cur && guard < 50) {
+      const p = byId.get(cur)
+      if (!p) break
+      chain.unshift(p.name); cur = p.parent_node_id; guard++
+    }
+    return chain
+  }, [tree, nodeId])
+
   async function saveCore() {
     if (!node || saving) return
     setSaving(true)
@@ -119,7 +152,6 @@ export default function NodeDrawer({
       await processHierarchyApi.updateNode(orgId, mapId, nodeId, {
         name: name.trim() || node.name,
         description,
-        status,
         responsible_user_id: respUser || null,
         responsible_role_id: respRole || null,
         checklist,
@@ -148,24 +180,33 @@ export default function NodeDrawer({
     }
   }
 
-  async function requestReview() {
-    if (!node || wfBusy) return
-    setWfBusy(true)
-    try { await processHierarchyApi.requestReview(orgId, mapId, nodeId, wfCascade); await reloadNode(); onChanged() }
-    catch { addToast('Could not request review.', 'error') }
-    finally { setWfBusy(false) }
-  }
-  async function decide(s: ProcessNodeStatus) {
-    if (!node || wfBusy) return
-    setWfBusy(true)
-    try { await processHierarchyApi.decideStatus(orgId, mapId, nodeId, s, wfCascade); await reloadNode(); onChanged() }
-    catch { addToast('Could not update the review status.', 'error') }
-    finally { setWfBusy(false) }
-  }
-
   async function setLinkedMap(id: string) {
     try { await processHierarchyApi.updateNode(orgId, mapId, nodeId, { linked_map_id: id || null }); await reloadNode(); onChanged() }
     catch { addToast('Could not update the cross-link.', 'error') }
+  }
+
+  async function detach() {
+    if (detaching) return
+    setDetaching(true)
+    try { await processHierarchyApi.detachNode(orgId, mapId, nodeId); await reloadNode(); onChanged(); addToast('Made an independent copy — edits here no longer affect the original.', 'success') }
+    catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not make a copy.', 'error') }
+    finally { setDetaching(false) }
+  }
+
+  async function makeReusable() {
+    if (makingReusable) return
+    setMakingReusable(true)
+    try {
+      await processHierarchyApi.makeNodeReusable(orgId, mapId, nodeId); await reloadNode(); onChanged()
+      addToast('This is now its own map — reference it as a line item in any map via Add → Reference a map.', 'success')
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not make this reusable.', 'error') }
+    finally { setMakingReusable(false) }
+  }
+
+  async function changeKind(k: string) {
+    if (!node || k === node.kind) return
+    try { await processHierarchyApi.updateNode(orgId, mapId, nodeId, { kind: k as ProcessNodeKind }); await reloadNode(); onChanged() }
+    catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not change the type.', 'error') }
   }
 
   async function moveTo(parentId: string) {
@@ -191,7 +232,6 @@ export default function NodeDrawer({
     return opts
   }, [tree, nodeId, descendantIds, node?.parent_node_id])
 
-  const roleOptions = useMemo(() => [{ value: '', label: '— None —' }, ...roles.map((r) => ({ value: r.id, label: r.title }))], [roles])
   const mapOptions = useMemo(
     () => [{ value: '', label: '— None —' }, ...maps.filter((m) => m.id !== mapId).map((m) => ({ value: m.id, label: m.name }))],
     [maps, mapId],
@@ -202,13 +242,16 @@ export default function NodeDrawer({
     // node keeps its context while you edit it (Part B7). The panel slides in.
     <div className="fixed inset-0 z-[60] pointer-events-none">
       <div className="absolute right-0 top-0 h-full w-full max-w-[440px] bg-white shadow-2xl border-l border-[#E2E8F0] flex flex-col pointer-events-auto animate-[slideInRight_.22s_ease-out]">
-        {/* Header */}
-        <div className="flex items-center gap-2 px-5 py-4 border-b border-[#E2E8F0]">
-          <span className="text-[#2563EB]">{node ? KIND_META[node.kind].icon : <FileText size={14} />}</span>
-          <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">
-            {node ? KIND_META[node.kind].label : 'Loading'}
-          </span>
-          <div className="ml-auto flex items-center gap-1.5">
+        {/* Header — breadcrumb path to this node; the last crumb is its live name. */}
+        <div className="flex items-center gap-2 px-5 py-3.5 border-b border-[#E2E8F0]">
+          <span className="text-[#2563EB] shrink-0">{node ? KIND_META[node.kind].icon : <FileText size={14} />}</span>
+          <div className="min-w-0 flex-1 truncate text-[12px] text-[#64748B]">
+            {ancestorPath.map((a, i) => (
+              <span key={i}>{a} <span className="text-[#CBD5E1]">/</span> </span>
+            ))}
+            <span className="text-[#0F172A] font-semibold">{node ? (name || KIND_META[node.kind].label) : 'Loading'}</span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
             {drillable && (
               <button
                 onClick={() => onDrill(nodeId)}
@@ -217,7 +260,49 @@ export default function NodeDrawer({
                 Open <ChevronRight size={14} />
               </button>
             )}
-            <button onClick={onClose} aria-label="Close panel" className="text-[#94A3B8] hover:text-[#0F172A] transition-colors p-1"><X size={18} /></button>
+            {/* Hamburger: structural actions (Move, Delete) — kept out of the scroll body
+                so they're always reachable without a footer button. */}
+            {node && canEdit && (
+              <div className="relative">
+                <button onClick={() => setShowMenu((v) => !v)} aria-label="Actions" title="Actions" aria-haspopup="menu" aria-expanded={showMenu}
+                  className="text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-[6px] p-1 transition-colors">
+                  <Menu size={18} />
+                </button>
+                {showMenu && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+                    <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-64 bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 animate-[popIn_.12s_ease-out]">
+                      {!isEvent(node.kind) && moveOptions.length > 1 && (
+                        <>
+                          <p className="px-2 py-1 text-[11px] font-semibold text-[#64748B] uppercase tracking-wide">Move to another area</p>
+                          <div className="max-h-48 overflow-y-auto">
+                            {moveOptions.map((o) => (
+                              <button key={o.value} onClick={() => { setShowMenu(false); moveTo(o.value) }}
+                                className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[13px] text-[#0F172A] truncate">
+                                {o.label}
+                              </button>
+                            ))}
+                          </div>
+                          <p className="px-2 py-1 text-[11px] text-[#64748B]">Moves this step (and anything inside it) into another container.</p>
+                          <div className="my-1 border-t border-[#F1F5F9]" />
+                        </>
+                      )}
+                      {onCopy && (
+                        <button onClick={() => { setShowMenu(false); onCopy() }}
+                          className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[13px] font-medium text-[#0F172A] inline-flex items-center gap-2">
+                          <Copy size={14} /> Copy
+                        </button>
+                      )}
+                      <button onClick={() => { setShowMenu(false); setConfirmDel(true) }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-[6px] hover:bg-[#FEF2F2] text-[13px] font-medium text-[#DC2626] inline-flex items-center gap-2">
+                        <Trash2 size={14} /> Delete node
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            <button onClick={requestClose} aria-label="Close panel" className="text-[#94A3B8] hover:text-[#0F172A] transition-colors p-1"><X size={18} /></button>
           </div>
         </div>
 
@@ -226,69 +311,62 @@ export default function NodeDrawer({
             <Loader2 size={22} className="animate-spin text-[#2563EB]" />
           </div>
         ) : (
+          <>
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            {/* Name + status */}
+            {/* Name — capped so it always fits on the canvas (no ellipsis). */}
             <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1">Name</label>
-              <input className={inputCls} value={name} disabled={!canEdit}
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-medium text-[#374151]">Name</label>
+                {canEdit && <span className="text-[10px] text-[#94A3B8] tabular-nums">{name.length}/{NAME_MAX}</span>}
+              </div>
+              <input className={inputCls} value={name} disabled={!canEdit} maxLength={NAME_MAX}
                 onChange={(e) => { setName(e.target.value); touch() }} />
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1">Status</label>
-              <div className="w-40">
-                <StyledSelect value={status} onChange={(v) => { setStatus(v as ProcessNodeStatus); touch() }}
-                  options={STATUS_OPTIONS} disabled={!canEdit} />
-              </div>
-            </div>
-
-            {/* Review workflow */}
-            {!isEvent(node.kind) && (canEdit || node.can_approve) && (
-              <div className="rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0] p-2.5 space-y-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {canEdit && node.status === 'draft' && (
-                    <button onClick={requestReview} disabled={wfBusy}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-60">
-                      {wfBusy ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Request review
-                    </button>
-                  )}
-                  {node.can_approve && node.status !== 'final' && (
-                    <button onClick={() => decide('final')} disabled={wfBusy}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-semibold rounded-[8px] bg-[#16A34A] text-white hover:bg-[#15803D] disabled:opacity-60">
-                      <Check size={13} /> Mark final
-                    </button>
-                  )}
-                  {node.can_approve && node.status !== 'draft' && (
-                    <button onClick={() => decide('draft')} disabled={wfBusy}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-semibold rounded-[8px] border border-[#D97706] text-[#D97706] hover:bg-[#FFFBEB] disabled:opacity-60">
-                      Send back to draft
-                    </button>
-                  )}
-                </div>
-                <label className="flex items-center gap-1.5 text-[12px] text-[#475569]">
-                  <input type="checkbox" checked={wfCascade} onChange={(e) => setWfCascade(e.target.checked)} className="accent-[#2563EB]" />
-                  Apply to everything inside this node
-                </label>
+            {/* Change type — safe conversions only (backend blocks the unsafe ones). */}
+            {canEdit && !isEvent(node.kind) && (
+              <div>
+                <label className="block text-xs font-medium text-[#374151] mb-1">Type</label>
+                <StyledSelect value={node.kind} onChange={changeKind}
+                  options={(CONTAINER_KINDS.has(node.kind)
+                    ? (['container', 'subprocess'] as ProcessNodeKind[])
+                    : (['task', 'decision', 'container', 'subprocess'] as ProcessNodeKind[])
+                  ).map((k) => ({ value: k, label: KIND_META[k].label }))} />
+                <p className="text-[11px] text-[#64748B] mt-1">
+                  {CONTAINER_KINDS.has(node.kind)
+                    ? 'Switch between Container and Sub-process (both hold steps).'
+                    : 'A step can also become an area (Container / Sub-process).'}
+                </p>
               </div>
             )}
 
-            {/* Description */}
-            <div>
-              <label className="block text-xs font-medium text-[#475569] mb-1">Description</label>
-              <textarea className={`${inputCls} resize-none`} rows={3} value={description} disabled={!canEdit}
-                placeholder={canEdit ? 'What happens in this step?' : '—'}
-                onChange={(e) => { setDescription(e.target.value); touch() }} />
-            </div>
+            {/* Description — a Start / End marker is punctuation, so it stays just a name. */}
+            {!isEvent(node.kind) && (
+              <div>
+                <label className="block text-xs font-medium text-[#374151] mb-1">Description</label>
+                <textarea className={`${inputCls} resize-none`} rows={3} value={description} disabled={!canEdit}
+                  placeholder={canEdit ? 'What happens in this step?' : '—'}
+                  onChange={(e) => { setDescription(e.target.value); touch() }} />
+              </div>
+            )}
+
+            {/* Decision: its Yes / No routes are set on the arrows, not here. */}
+            {node.kind === 'decision' && (
+              <div className="flex items-start gap-2 rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-2.5 text-[12px] text-[#475569]">
+                <GitBranch size={14} className="text-[#94A3B8] shrink-0 mt-0.5" />
+                <span>Set the <span className="font-semibold text-[#0F172A]">Yes / No</span> routes by clicking the arrows leaving this diamond on the canvas.</span>
+              </div>
+            )}
 
             {/* Responsible */}
             {!isEvent(node.kind) && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#475569] mb-1"><UserCircle2 size={12} className="inline mr-1" />Person</label>
+                  <label className="block text-xs font-medium text-[#374151] mb-1"><UserCircle2 size={12} className="inline mr-1" />Person</label>
                   <EmployeePicker
                     value={respUser}
                     onChange={(id) => { setRespUser(id); touch() }}
-                    employees={users.map((u) => ({ user_id: u.id, name: u.name }))}
+                    employees={employees}
                     title="Responsible person"
                     placeholder="— None —"
                     allowClear
@@ -296,53 +374,16 @@ export default function NodeDrawer({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#475569] mb-1">Role</label>
-                  <StyledSelect value={respRole} onChange={(v) => { setRespRole(v); touch() }}
-                    options={roleOptions} disabled={!canEdit} placeholder="— None —" />
+                  <label className="block text-xs font-medium text-[#374151] mb-1">Role</label>
+                  <RolePicker value={respRole} onChange={(v) => { setRespRole(v); touch() }}
+                    roles={roles} title="Responsible role" placeholder="— None —" allowClear disabled={!canEdit} />
                 </div>
               </div>
             )}
 
-            {/* Move to (re-parent) */}
-            {canEdit && !isEvent(node.kind) && moveOptions.length > 1 && (
-              <div>
-                <label className="block text-xs font-medium text-[#475569] mb-1"><FolderInput size={12} className="inline mr-1" />Move to another area</label>
-                <StyledSelect value="" onChange={(v) => v && moveTo(v)} options={moveOptions} placeholder="Choose a destination…" />
-                <p className="text-[11px] text-[#64748B] mt-1">Moves this step (and anything inside it) into another container. Its connections here are cleared.</p>
-              </div>
-            )}
-
-            {/* Cross-map link */}
-            {!isEvent(node.kind) && (
-              <div>
-                <label className="block text-xs font-medium text-[#475569] mb-1">Opens another map (cross-link)</label>
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 min-w-0">
-                    <StyledSelect value={node.linked_map_id ?? ''} onChange={(v) => setLinkedMap(v)}
-                      options={mapOptions} disabled={!canEdit} placeholder="— None —" />
-                  </div>
-                  {node.linked_map && (
-                    <button onClick={() => onDrill(nodeId)} title="Open linked map"
-                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF]">
-                      <ExternalLink size={13} /> Open
-                    </button>
-                  )}
-                </div>
-                {node.linked_map && <p className="text-[11px] text-[#64748B] mt-1">Opening this node jumps to “{node.linked_map.name}”.</p>}
-              </div>
-            )}
-
-            {/* Checklist */}
-            {!isEvent(node.kind) && (
+            {/* Checklist — only a Task decomposes into sub-steps (areas use child nodes). */}
+            {node.kind === 'task' && (
               <ChecklistEditor items={checklist} canEdit={canEdit} onChange={(next) => { setChecklist(next); touch() }} />
-            )}
-
-            {/* Save bar for core fields */}
-            {canEdit && dirty && (
-              <button onClick={saveCore} disabled={saving}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:opacity-60 transition-colors">
-                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Save changes
-              </button>
             )}
 
             {/* Artifacts (inputs/outputs) */}
@@ -355,23 +396,78 @@ export default function NodeDrawer({
               />
             )}
 
-            {/* Sharing */}
-            {canEdit && (
+            {/* Opens another map (cross-link) — only areas open a deeper map. */}
+            {CONTAINER_KINDS.has(node.kind) && (
+              <div>
+                <label className="block text-xs font-medium text-[#374151] mb-1">Opens another map (cross-link)</label>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <StyledSelect value={node.linked_map_id ?? ''} onChange={(v) => setLinkedMap(v)}
+                      options={mapOptions} disabled={!canEdit} placeholder="— None —" />
+                  </div>
+                  {node.linked_map && (
+                    <button onClick={() => onDrill(nodeId)} title="Open linked map"
+                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF]">
+                      <ExternalLink size={13} /> Open
+                    </button>
+                  )}
+                </div>
+                {node.linked_map && (
+                  <div className="mt-1 flex items-center justify-between gap-2">
+                    <p className="text-[11px] text-[#64748B]">Opening this node jumps to “{node.linked_map.name}”.</p>
+                    {canEdit && !node.linked_map.owned && (
+                      <button onClick={detach} disabled={detaching}
+                        className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:underline disabled:text-[#94A3B8]">
+                        {detaching ? <Loader2 size={11} className="animate-spin" /> : <Copy size={11} />} Make my own copy
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {/* Make reusable — promote this area into a standalone map that can be
+                    dropped as a line item in any map. Hidden when it's already a shared map. */}
+                {canEdit && !(node.linked_map && !node.linked_map.owned) && (
+                  <div className="mt-2 flex items-start justify-between gap-2 rounded-[8px] border border-[#E2E8F0] bg-[#F8FAFC] p-2.5">
+                    <div className="min-w-0">
+                      <p className="text-[12px] font-semibold text-[#0F172A]">Reusable map</p>
+                      <p className="text-[11px] text-[#64748B] leading-snug">
+                        {node.linked_map?.owned
+                          ? 'Publish this as a shared map you can reference in any other map.'
+                          : 'Turn this into its own map you can drop as a line item in any other map.'}
+                      </p>
+                    </div>
+                    <button onClick={makeReusable} disabled={makingReusable} title="Make reusable"
+                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-50">
+                      {makingReusable ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />} Make reusable
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Sharing — access cascades into an area's contents, so areas only. */}
+            {canEdit && CONTAINER_KINDS.has(node.kind) && (
               <SharingSection
                 orgId={orgId} mapId={mapId} nodeId={nodeId} node={node}
-                departments={departments} roles={roles} users={users}
+                departments={departments} roles={roles} employees={employees}
                 onChanged={reloadNode}
               />
             )}
 
-            {/* Delete */}
-            {canEdit && (
-              <button onClick={() => setConfirmDel(true)}
-                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-[#DC2626] border border-[#FECACA] hover:bg-[#FEF2F2] transition-colors">
-                <Trash2 size={15} /> Delete node
-              </button>
-            )}
           </div>
+
+          {/* Save — pinned footer, always visible so it's obvious your typed edits are
+              held locally and only written when you click Save (never per keystroke). */}
+          {canEdit && (
+            <div className="shrink-0 border-t border-[#E2E8F0] px-5 py-3">
+              <button onClick={saveCore} disabled={saving || !dirty}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors">
+                {saving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
+                {saving ? 'Saving…' : dirty ? 'Save changes' : 'Saved'}
+              </button>
+            </div>
+          )}
+          </>
         )}
       </div>
 
@@ -389,6 +485,17 @@ export default function NodeDrawer({
         onConfirm={removeNode}
         onCancel={() => { if (!deleting) setConfirmDel(false) }}
       />
+
+      <ConfirmDialog
+        open={confirmDiscard}
+        danger
+        title="Discard unsaved changes?"
+        message="You've made edits that aren't saved yet. Closing now will lose them."
+        confirmLabel="Discard"
+        cancelLabel="Keep editing"
+        onConfirm={() => { setConfirmDiscard(false); onClose() }}
+        onCancel={() => setConfirmDiscard(false)}
+      />
     </div>
   )
 
@@ -405,7 +512,7 @@ function ChecklistEditor({ items, canEdit, onChange }: {
   if (!canEdit && items.length === 0) return null
   return (
     <div>
-      <label className="block text-xs font-medium text-[#475569] mb-1.5">Checklist</label>
+      <label className="block text-xs font-medium text-[#374151] mb-1.5">Checklist</label>
       <div className="space-y-1.5">
         {items.map((it, i) => (
           <div key={it.id ?? i} className="flex items-center gap-2">
@@ -432,117 +539,56 @@ function ChecklistEditor({ items, canEdit, onChange }: {
   )
 }
 
-// ─── Artifacts ─────────────────────────────────────────────────────────────
-function ArtifactsSection({ orgId, mapId, nodeId, node, artifacts, canEdit, onArtifactsChanged, onLinksChanged }: {
-  orgId: string; mapId: string; nodeId: string; node: NodeDetail; artifacts: ProcessArtifact[]
-  canEdit: boolean; onArtifactsChanged: () => void; onLinksChanged: () => void
+// ─── Collapsible section (chevron + title + count pill) ─────────────────────
+function CollapsibleSection({ title, count = 0, defaultOpen = false, children }: {
+  title: string; count?: number; defaultOpen?: boolean; children: React.ReactNode
 }) {
-  const { addToast } = useToast()
-  const [dir, setDir] = useState<ProcessArtifactDirection>('input')
-  const [artifactId, setArtifactId] = useState('')
-  const [busy, setBusy] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  async function link() {
-    if (!artifactId || busy) return
-    setBusy(true)
-    try { await processHierarchyApi.linkArtifact(orgId, mapId, nodeId, { artifact_id: artifactId, direction: dir }); setArtifactId(''); onLinksChanged() }
-    catch { addToast('Could not attach the document.', 'error') }
-    finally { setBusy(false) }
-  }
-
-  async function upload(file: File) {
-    setBusy(true)
-    try {
-      const form = new FormData()
-      form.append('file', file)
-      form.append('name', file.name)
-      const created = await processHierarchyApi.uploadArtifact(orgId, mapId, form)
-      onArtifactsChanged()
-      await processHierarchyApi.linkArtifact(orgId, mapId, nodeId, { artifact_id: created.id, direction: dir })
-      onLinksChanged()
-    } catch { addToast('Upload failed. Please try again.', 'error') }
-    finally { setBusy(false) }
-  }
-
-  async function download(id: string) {
-    try { const { url } = await processHierarchyApi.downloadArtifact(orgId, mapId, id); window.open(url, '_blank') }
-    catch { addToast('Could not open the file.', 'error') }
-  }
-
-  async function unlink(linkId: string) {
-    try { await processHierarchyApi.unlinkArtifact(orgId, mapId, nodeId, linkId); onLinksChanged() }
-    catch { addToast('Could not remove the document.', 'error') }
-  }
-
-  const Row = ({ links, title }: { links: NodeDetail['inputs']; title: string }) => (
-    <div>
-      <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide mb-1">{title}</p>
-      {links.length === 0 ? <p className="text-[13px] text-[#64748B]">None</p> : (
-        <div className="space-y-1">
-          {links.map((l) => (
-            <div key={l.id} className="flex items-center gap-2 text-[13px] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[6px] px-2 py-1.5">
-              <FileText size={13} className="text-[#2563EB] shrink-0" />
-              <span className="flex-1 truncate text-[#0F172A]">{l.artifact.name}</span>
-              {l.artifact.storage_key && (
-                <button onClick={() => download(l.artifact.id)} aria-label="Download" className="text-[#475569] hover:text-[#2563EB] shrink-0"><Download size={13} /></button>
-              )}
-              {canEdit && <button onClick={() => unlink(l.id)} aria-label="Remove" className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><X size={13} /></button>}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-
+  const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="space-y-3 border-t border-[#E2E8F0] pt-4">
-      <p className="text-xs font-medium text-[#475569]">Documents</p>
-      <Row links={node.inputs} title="Inputs (needed)" />
-      <Row links={node.outputs} title="Outputs (produced)" />
-      {canEdit && (
-        <div className="space-y-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-2.5">
-          <div className="flex items-center gap-2">
-            <div className="w-28 shrink-0">
-              <StyledSelect value={dir} onChange={(v) => setDir(v as ProcessArtifactDirection)}
-                options={[{ value: 'input', label: 'Input' }, { value: 'output', label: 'Output' }]} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <StyledSelect value={artifactId} onChange={setArtifactId}
-                options={artifacts.map((a) => ({ value: a.id, label: a.name }))} placeholder="Select a document…" />
-            </div>
-            <button onClick={link} disabled={!artifactId || busy} aria-label="Attach document"
-              className="shrink-0 w-8 h-8 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"><Plus size={15} /></button>
-          </div>
-          <div className="flex items-center gap-2">
-            <input ref={fileRef} type="file" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = '' }} />
-            <button onClick={() => fileRef.current?.click()} disabled={busy}
-              className="text-[13px] font-medium text-[#2563EB] hover:text-[#1D4ED8] inline-flex items-center gap-1">
-              {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Upload a new file as {dir}
-            </button>
-          </div>
-        </div>
-      )}
+    <div className="border-t border-[#E2E8F0] pt-4">
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded">
+        <ChevronRight size={14} className={`text-[#94A3B8] shrink-0 transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span className="flex-1 text-xs font-semibold text-[#0F172A]">{title}</span>
+        {count > 0 && (
+          <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold shrink-0">{count}</span>
+        )}
+      </button>
+      {open && <div className="mt-3">{children}</div>}
     </div>
   )
 }
 
+// ─── Artifacts / Documents (file | link | article) ──────────────────────────
+function ArtifactsSection({ orgId, mapId, nodeId, node, canEdit, onArtifactsChanged, onLinksChanged }: {
+  orgId: string; mapId: string; nodeId: string; node: NodeDetail; artifacts: ProcessArtifact[]
+  canEdit: boolean; onArtifactsChanged: () => void; onLinksChanged: () => void
+}) {
+  const docCount = node.inputs.length + node.outputs.length
+  return (
+    <CollapsibleSection title="Documents" count={docCount} defaultOpen={docCount > 0}>
+      <NodeDocuments
+        orgId={orgId} mapId={mapId} nodeId={nodeId}
+        inputs={node.inputs} outputs={node.outputs} canEdit={canEdit}
+        onChanged={onLinksChanged} onArtifactsChanged={onArtifactsChanged}
+      />
+    </CollapsibleSection>
+  )
+}
+
 // ─── Sharing ──────────────────────────────────────────────────────────────
-function SharingSection({ orgId, mapId, nodeId, node, departments, roles, users, onChanged }: {
+function SharingSection({ orgId, mapId, nodeId, node, departments, roles, employees, onChanged }: {
   orgId: string; mapId: string; nodeId: string; node: NodeDetail
-  departments: Department[]; roles: Role[]; users: User[]; onChanged: () => void
+  departments: Department[]; roles: Role[]; employees: EmployeePickerOption[]; onChanged: () => void
 }) {
   const { addToast } = useToast()
   const [kind, setKind] = useState<ProcessAccessKind>('department')
   const [level, setLevel] = useState<ProcessAccessLevel>('view')
   const [entityId, setEntityId] = useState('')
   const [busy, setBusy] = useState(false)
+  const [showAddForm, setShowAddForm] = useState(false) // add-rule form stays hidden behind a link
 
-  const options = useMemo(() => {
-    if (kind === 'department') return departments.map((d) => ({ value: d.id, label: d.name }))
-    if (kind === 'role') return roles.map((r) => ({ value: r.id, label: r.title }))
-    return users.map((u) => ({ value: u.id, label: u.name }))
-  }, [kind, departments, roles, users])
+  const deptOptions = useMemo(() => departments.map((d) => ({ value: d.id, label: d.name })), [departments])
 
   async function add() {
     if (!entityId || busy) return
@@ -567,8 +613,9 @@ function SharingSection({ orgId, mapId, nodeId, node, departments, roles, users,
   }
 
   return (
-    <div className="space-y-3 border-t border-[#E2E8F0] pt-4">
-      <p className="text-xs font-medium text-[#475569] flex items-center gap-1.5"><Shield size={12} /> Who can see / edit this (cascades to everything inside)</p>
+    <CollapsibleSection title="Who can see this" count={node.access_rules.length} defaultOpen={node.access_rules.length > 0}>
+      <div className="space-y-3">
+      <p className="text-[11px] text-[#64748B] flex items-center gap-1.5"><Shield size={12} /> Applies to every node inside this one.</p>
       {node.access_rules.length === 0 ? (
         <p className="text-[13px] text-[#64748B]">No one attached here yet — this node inherits access from above.</p>
       ) : (
@@ -586,29 +633,58 @@ function SharingSection({ orgId, mapId, nodeId, node, departments, roles, users,
           ))}
         </div>
       )}
-      <div className="flex items-center gap-2 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-2.5 flex-wrap">
-        <div className="w-40">
-          <StyledSelect value={kind} onChange={(v) => { setKind(v as ProcessAccessKind); setEntityId('') }}
-            options={[
-              { value: 'department', label: 'Department' },
-              { value: 'role', label: 'Role' },
-              { value: 'user', label: 'Person' },
-              { value: 'exclude_user', label: 'Hide from person' },
-            ]} />
+      {/* Add-rule form stays behind a single link until you want it. */}
+      {!showAddForm ? (
+        <button onClick={() => setShowAddForm(true)}
+          className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#2563EB] hover:underline">
+          <Plus size={14} /> Add person, role or department
+        </button>
+      ) : (
+      /* One control per line so nothing crams; searchable pickers for role/person. */
+      <div className="bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] p-3 space-y-2.5">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-semibold text-[#64748B] uppercase tracking-wide">Give access to</p>
+          <button onClick={() => setShowAddForm(false)} aria-label="Close" className="text-[#94A3B8] hover:text-[#0F172A]"><X size={14} /></button>
         </div>
-        {kind !== 'exclude_user' && (
-          <div className="w-28">
-            <StyledSelect value={level} onChange={(v) => setLevel(v as ProcessAccessLevel)}
-              options={[{ value: 'view', label: 'Can view' }, { value: 'edit', label: 'Can edit' }]} />
-          </div>
+
+        <StyledSelect value={kind} onChange={(v) => { setKind(v as ProcessAccessKind); setEntityId('') }}
+          options={[
+            { value: 'department', label: 'A department' },
+            { value: 'role', label: 'A role' },
+            { value: 'user', label: 'A person' },
+            { value: 'exclude_user', label: 'Hide from a person' },
+          ]} />
+
+        {kind === 'department' && (
+          <StyledSelect value={entityId} onChange={setEntityId} options={deptOptions} placeholder="Choose a department…" />
         )}
-        <div className="flex-1 min-w-[120px]">
-          <StyledSelect value={entityId} onChange={setEntityId} options={options} placeholder="Select…" />
+        {kind === 'role' && (
+          <RolePicker value={entityId} onChange={setEntityId} roles={roles} title="Choose a role" placeholder="Choose a role…" allowClear />
+        )}
+        {(kind === 'user' || kind === 'exclude_user') && (
+          <EmployeePicker value={entityId} onChange={setEntityId} employees={employees} title="Choose a person" placeholder="Choose a person…" allowClear />
+        )}
+
+        <div className="flex items-center gap-2 pt-0.5">
+          {kind !== 'exclude_user' && (
+            <div className="inline-flex rounded-[8px] border border-[#E2E8F0] overflow-hidden bg-white">
+              {(['view', 'edit'] as ProcessAccessLevel[]).map((lv) => (
+                <button key={lv} type="button" onClick={() => setLevel(lv)}
+                  className={`px-3 py-1.5 text-[12px] font-medium transition-colors ${level === lv ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F1F5F9]'}`}>
+                  {lv === 'view' ? 'Can view' : 'Can edit'}
+                </button>
+              ))}
+            </div>
+          )}
+          <button onClick={add} disabled={!entityId || busy}
+            className="ml-auto inline-flex items-center gap-1.5 px-3.5 py-1.5 text-[13px] font-semibold rounded-[8px] bg-[#2563EB] text-white hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] transition-colors">
+            {busy ? <Loader2 size={14} className="animate-spin" /> : <Plus size={15} />} Add
+          </button>
         </div>
-        <button onClick={add} disabled={!entityId || busy} aria-label="Add sharing rule"
-          className="shrink-0 w-8 h-8 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"><Plus size={15} /></button>
       </div>
-      <p className="text-[11px] text-[#64748B]">Attaching a department automatically covers its roles and people. Use “Hide from person” to remove someone who’s otherwise included.</p>
-    </div>
+      )}
+      <p className="text-[11px] text-[#64748B]">Attaching a department automatically covers its roles and people. Use “Hide from a person” to remove someone who’s otherwise included.</p>
+      </div>
+    </CollapsibleSection>
   )
 }
