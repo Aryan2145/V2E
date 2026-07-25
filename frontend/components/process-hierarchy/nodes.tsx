@@ -2,8 +2,8 @@
 
 import React from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Play, Flag, ExternalLink, ChevronRight } from 'lucide-react'
-import type { ProcessNodeKind, ProcessNodeStatus, DiffChangeKind } from '@/lib/api/process-hierarchy'
+import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote } from 'lucide-react'
+import type { ProcessNodeKind, DiffChangeKind, ProcessArtifactContentType } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 
 export { KIND_META }
@@ -11,13 +11,15 @@ export { KIND_META }
 export interface ProcessNodeData {
   name: string
   kind: ProcessNodeKind
-  status: ProcessNodeStatus
   childCount: number
+  docCount?: number // input + output documents attached to this node
   drillable: boolean
   selected: boolean
   diff?: DiffChangeKind // when comparing versions — tints the node
   linkedMapName?: string | null // cross-map link target
-  onOpen?: () => void // drill into this node (container/sub-process/linked map)
+  onEdit?: () => void // open the side panel to edit this node's details (pencil)
+  canExpand?: boolean // references a map → can be unfolded in place
+  onToggleExpand?: () => void // expand/collapse this area inline
 }
 
 const DIFF_COLOR: Partial<Record<DiffChangeKind, string>> = {
@@ -33,80 +35,73 @@ export function borderColor(data: ProcessNodeData, accent: string): string {
   return accent
 }
 
-// Status pill styling per DESIGN_RULES status badges (readable label, not colour-only).
-const STATUS_META: Record<ProcessNodeStatus, { label: string; dot: string; bg: string; text: string }> = {
-  draft: { label: 'Draft', dot: '#94A3B8', bg: '#F1F5F9', text: '#475569' },
-  in_review: { label: 'In review', dot: '#D97706', bg: '#FEF9C3', text: '#CA8A04' },
-  final: { label: 'Final', dot: '#16A34A', bg: '#DCFCE7', text: '#16A34A' },
-}
+const handleStyle: React.CSSProperties = { width: 7, height: 7, background: '#2563EB', border: '2px solid #fff' }
 
-function StatusPill({ status }: { status: ProcessNodeStatus }) {
-  const s = STATUS_META[status]
-  return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold shrink-0"
-      style={{ background: s.bg, color: s.text }}
-    >
-      <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.dot }} />
-      {s.label}
-    </span>
-  )
-}
-
-const handleStyle: React.CSSProperties = { width: 8, height: 8, background: '#2563EB', border: '2px solid #fff' }
-
-function Frame({ children, border }: { children: React.ReactNode; border: string }) {
-  return (
-    <div
-      className="relative bg-white rounded-[10px] px-3 py-2 text-[13px] font-medium text-[#0F172A] shadow-sm"
-      style={{ border: `2px solid ${border}`, minWidth: 160, maxWidth: 230 }}
-    >
-      {children}
-    </div>
-  )
-}
-
-function TitleRow({ data }: { data: ProcessNodeData }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span style={{ color: '#2563EB' }} className="shrink-0">{KIND_META[data.kind].icon}</span>
-      <span className="truncate flex-1">{data.name}</span>
-      <StatusPill status={data.status} />
-    </div>
-  )
-}
-
-/** Explicit, discoverable drill affordance (replaces the hidden double-click). */
-function OpenButton({ data }: { data: ProcessNodeData }) {
-  if (!data.onOpen) return null
+/** Small top-right pencil — opens the side panel to edit this node's details.
+    Stops propagation so it never triggers the node's click-to-enter. */
+function EditButton({ data }: { data: ProcessNodeData }) {
+  if (!data.onEdit) return null
   return (
     <button
       type="button"
-      onClick={(e) => { e.stopPropagation(); data.onOpen!() }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onOpen!() } }}
-      className="nodrag mt-1.5 w-full inline-flex items-center justify-center gap-1 rounded-[6px] bg-[#EFF6FF] text-[#2563EB] hover:bg-[#2563EB] hover:text-white text-[11px] font-semibold py-1 transition-colors"
-      aria-label={`Open ${data.name}${data.childCount ? ` (${data.childCount} inside)` : ''}`}
+      onClick={(e) => { e.stopPropagation(); data.onEdit!() }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onEdit!() } }}
+      className="nodrag absolute top-1 right-1 w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+      aria-label={`Edit ${data.name}`}
+      title="Edit details"
     >
-      Open{data.childCount ? ` · ${data.childCount} inside` : ''} <ChevronRight size={12} />
+      <Pencil size={12} />
     </button>
   )
 }
 
 function StepNode({ data }: NodeProps<ProcessNodeData>) {
+  const isContainer = data.kind === 'container'
   const accent = data.kind === 'container' || data.kind === 'subprocess' ? '#3B82F6' : '#CBD5E1'
   const canOpen = data.drillable || !!data.linkedMapName
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
-      <Frame border={borderColor(data, accent)}>
-        <TitleRow data={data} />
-        {data.linkedMapName && (
+      <div
+        className={`relative bg-white rounded-[8px] px-2.5 py-1.5 shadow-sm flex flex-col justify-center ${canOpen ? 'cursor-pointer' : ''}`}
+        style={{ border: `2px solid ${borderColor(data, accent)}`, width: isContainer ? 220 : 170, minHeight: isContainer ? 88 : 60 }}
+      >
+        {/* Drillable nodes: pencil edits; the body itself opens the level. */}
+        {canOpen && <EditButton data={data} />}
+        {data.canExpand && (
+          <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggleExpand?.() }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onToggleExpand?.() } }}
+            className="nodrag absolute top-1 right-7 w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+            aria-label="Expand in place" title="Expand in place">
+            <Maximize2 size={11} />
+          </button>
+        )}
+        <div className={`flex items-start gap-1.5 ${data.canExpand ? 'pr-11' : canOpen ? 'pr-5' : ''}`}>
+          <span style={{ color: '#2563EB' }} className="shrink-0 mt-0.5">{KIND_META[data.kind].icon}</span>
+          <span className="flex-1 min-w-0 text-[13px] font-medium text-[#0F172A] leading-snug break-words">{data.name}</span>
+        </div>
+        {data.linkedMapName && data.linkedMapName !== data.name && (
           <div className="mt-1 flex items-center gap-1 text-[10px] font-semibold text-[#2563EB]">
             <ExternalLink size={10} /> <span className="truncate">{data.linkedMapName}</span>
           </div>
         )}
-        {canOpen && <OpenButton data={data} />}
-      </Frame>
+        {(canOpen || !!data.docCount) && (
+          <div className="mt-1 flex items-center gap-2">
+            {!!data.docCount && (
+              <button onClick={(e) => { e.stopPropagation(); data.onEdit?.() }}
+                className="nodrag inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#475569] hover:text-[#2563EB]"
+                title={`${data.docCount} document${data.docCount > 1 ? 's' : ''}`}>
+                <FileText size={11} /> {data.docCount}
+              </button>
+            )}
+            {canOpen && (
+              <span className="ml-auto inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#2563EB]">
+                {data.childCount ? `${data.childCount} inside` : 'Open'} <ChevronRight size={11} />
+              </span>
+            )}
+          </div>
+        )}
+      </div>
       <Handle type="source" position={Position.Right} style={handleStyle} />
     </>
   )
@@ -114,23 +109,22 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
 
 function DecisionNode({ data }: NodeProps<ProcessNodeData>) {
   return (
-    <div className="relative" style={{ width: 130, height: 130 }}>
+    <div className="relative" style={{ width: 96, height: 96 }}>
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <div
-        className="absolute inset-0 m-auto bg-white shadow-sm"
+        className="absolute bg-white shadow-sm"
         style={{
-          width: 92,
-          height: 92,
-          top: 19,
-          left: 19,
+          width: 66,
+          height: 66,
+          top: 15,
+          left: 15,
           transform: 'rotate(45deg)',
           border: `2px solid ${borderColor(data, '#D97706')}`,
-          borderRadius: 8,
+          borderRadius: 6,
         }}
       />
-      <div className="absolute inset-0 flex flex-col items-center justify-center px-4 text-center text-[12px] font-medium text-[#0F172A] gap-1">
-        <span className="line-clamp-3">{data.name}</span>
-        <StatusPill status={data.status} />
+      <div className="absolute inset-0 flex items-center justify-center px-3 text-center">
+        <span className="line-clamp-3 text-[10px] font-medium text-[#0F172A] leading-tight">{data.name}</span>
       </div>
       <Handle type="source" position={Position.Right} style={handleStyle} id="yes" />
       <Handle type="source" position={Position.Bottom} style={handleStyle} id="no" />
@@ -140,20 +134,44 @@ function DecisionNode({ data }: NodeProps<ProcessNodeData>) {
 
 function EventNode({ data }: NodeProps<ProcessNodeData>) {
   const isStart = data.kind === 'start_event'
+  const accent = isStart ? '#16A34A' : '#DC2626'
   return (
     <>
       {!isStart && <Handle type="target" position={Position.Left} style={handleStyle} />}
+      {/* 44px circle keeps the node bounds (so handles stay centered); the label is
+          absolutely positioned below so you can read it on the canvas. */}
       <div
-        className="flex items-center justify-center rounded-full bg-white text-[11px] font-semibold text-[#0F172A] shadow-sm"
-        style={{ width: 68, height: 68, border: `3px solid ${borderColor(data, isStart ? '#16A34A' : '#DC2626')}` }}
+        className="relative flex items-center justify-center rounded-full bg-white shadow-sm"
+        style={{ width: 44, height: 44, border: `3px solid ${borderColor(data, accent)}`, color: accent }}
+        title={data.name}
+        aria-label={data.name}
       >
-        <span className="flex flex-col items-center gap-0.5" style={{ color: isStart ? '#16A34A' : '#DC2626' }}>
-          {isStart ? <Play size={16} /> : <Flag size={16} />}
-          <span className="text-[10px]">{isStart ? 'Start' : 'End'}</span>
+        {isStart ? <Play size={18} /> : <Flag size={18} />}
+        <span className="absolute top-[calc(100%+4px)] left-1/2 -translate-x-1/2 w-[120px] text-center text-[11px] font-semibold leading-tight break-words pointer-events-none"
+          style={{ color: accent }}>
+          {data.name}
         </span>
       </div>
       {isStart && <Handle type="source" position={Position.Right} style={handleStyle} />}
     </>
+  )
+}
+
+// ─── Band: an area unfolded in place. Sized by the canvas to hold its children,
+// which render as child nodes inside it (ReactFlow parent/extent). ────────────
+function BandNode({ data }: NodeProps<ProcessNodeData>) {
+  return (
+    <div className="w-full h-full rounded-[12px] border-2 border-[#3B82F6] bg-[#EFF6FF]/40 shadow-sm">
+      <Handle type="target" position={Position.Left} style={handleStyle} />
+      <div className="absolute top-0 left-0 right-0 h-7 flex items-center gap-1.5 px-2 bg-[#EFF6FF] border-b border-[#BFDBFE] rounded-t-[10px]">
+        <Folder size={13} className="text-[#2563EB] shrink-0" />
+        <span className="flex-1 min-w-0 truncate text-[12px] font-semibold text-[#0F172A]">{data.name}</span>
+        <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggleExpand?.() }}
+          className="nodrag shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-[#64748B] hover:text-[#0F172A] hover:bg-white"
+          aria-label="Collapse" title="Collapse"><Minimize2 size={12} /></button>
+      </div>
+      <Handle type="source" position={Position.Right} style={handleStyle} />
+    </div>
   )
 }
 
@@ -163,4 +181,37 @@ function ProcessNodeRenderer(props: NodeProps<ProcessNodeData>) {
   return <StepNode {...props} />
 }
 
-export const nodeTypes = { process: ProcessNodeRenderer }
+// ─── Document chip: a clickable input/output document hanging off a node by its own
+// dotted line. Inputs sit above (line comes down into the node), outputs below. ──
+export interface DocNodeData {
+  name: string
+  contentType: ProcessArtifactContentType
+  io: 'input' | 'output'
+  onOpen: () => void
+}
+export const DOC_CHIP_W = 150
+export const DOC_CHIP_H = 30
+
+function DocNode({ data }: NodeProps<DocNodeData>) {
+  const Icon = data.contentType === 'link' ? Link2 : data.contentType === 'article' ? StickyNote : FileText
+  const isInput = data.io === 'input'
+  return (
+    <>
+      {/* One handle on the side facing the node, so the dotted line meets it cleanly. */}
+      <Handle type="source" position={isInput ? Position.Bottom : Position.Top} style={{ opacity: 0 }} />
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); data.onOpen() }}
+        title={`${isInput ? 'Input' : 'Output'} document — ${data.name}`}
+        style={{ width: DOC_CHIP_W, height: DOC_CHIP_H }}
+        className="nodrag group flex items-center gap-1.5 px-2 rounded-[7px] border border-dashed border-[#CBD5E1] bg-white shadow-sm text-left transition-colors hover:border-[#2563EB]"
+      >
+        <span className="w-[3px] self-stretch my-1 rounded-full shrink-0" style={{ background: isInput ? '#0EA5E9' : '#8B5CF6' }} />
+        <Icon size={13} className="shrink-0" style={{ color: isInput ? '#0EA5E9' : '#8B5CF6' }} />
+        <span className="flex-1 min-w-0 truncate text-[11px] font-medium text-[#334155] group-hover:text-[#0F172A]">{data.name}</span>
+      </button>
+    </>
+  )
+}
+
+export const nodeTypes = { process: ProcessNodeRenderer, band: BandNode, document: DocNode }

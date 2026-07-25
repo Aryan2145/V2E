@@ -3,8 +3,8 @@
 // target one column right (longest-path layering); nodes in the same column stack down.
 import type { ProcessNode, ProcessConnection } from '@/lib/api/process-hierarchy'
 
-const COL = 280
-const ROW = 140
+const COL = 300
+const ROW = 170
 const X0 = 60
 const Y0 = 60
 
@@ -56,6 +56,32 @@ export function autoLayout(
   Array.from(byLayer.keys()).sort((a, b) => a - b).forEach((l) => {
     const arr = byLayer.get(l)!.sort((a, b) => (order.get(a)! - order.get(b)!))
     arr.forEach((id, i) => { pos[id] = { x: X0 + l * COL, y: Y0 + i * ROW } })
+  })
+
+  // Decision fan-out: keep the YES branch level with the diamond and drop the NO branch
+  // one row below, so the two output lines spread apart instead of drawing on top of
+  // each other. (yes exits the right, no exits the bottom — different y separates them.)
+  const kindOf = new Map(nodes.map((n) => [n.id, n.kind]))
+  for (const d of nodes) {
+    if (kindOf.get(d.id) !== 'decision') continue
+    const outs = connections.filter((c) => c.source_node_id === d.id && idset.has(c.target_node_id))
+    const yes = outs.find((c) => c.condition_kind !== 'no')?.target_node_id
+    const no = outs.find((c) => c.condition_kind === 'no')?.target_node_id
+    if (yes && pos[yes]) pos[yes].y = pos[d.id].y
+    if (no && pos[no]) pos[no].y = pos[d.id].y + ROW
+  }
+
+  // De-overlap every column: two nodes sharing a column may never sit closer than one
+  // row, so nothing overlaps after the decision nudges above. Columns are COL apart, so
+  // cross-column nodes never overlap horizontally.
+  const cols = new Map<number, string[]>()
+  ids.forEach((id) => { const a = cols.get(pos[id].x) ?? []; a.push(id); cols.set(pos[id].x, a) })
+  cols.forEach((arr) => {
+    arr.sort((a, b) => pos[a].y - pos[b].y)
+    for (let i = 1; i < arr.length; i++) {
+      const minY = pos[arr[i - 1]].y + ROW
+      if (pos[arr[i]].y < minY) pos[arr[i]].y = minY
+    }
   })
   return pos
 }
