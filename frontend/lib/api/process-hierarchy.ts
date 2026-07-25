@@ -12,6 +12,7 @@ export type ProcessNodeKind = 'container' | 'task' | 'decision' | 'subprocess' |
 export type ProcessNodeStatus = 'draft' | 'in_review' | 'final'
 export type ProcessConditionKind = 'none' | 'yes' | 'no'
 export type ProcessArtifactType = 'form' | 'report' | 'document' | 'data' | 'other'
+export type ProcessArtifactContentType = 'file' | 'link' | 'article'
 export type ProcessArtifactDirection = 'input' | 'output'
 export type ProcessAccessKind = 'department' | 'role' | 'user' | 'exclude_user'
 export type ProcessAccessLevel = 'view' | 'edit'
@@ -21,6 +22,8 @@ export interface ProcessMapSummary {
   id: string
   name: string
   description: string | null
+  parent_map_id: string | null
+  is_pinned: boolean
   node_count: number
   is_owner: boolean
   can_edit: boolean
@@ -39,7 +42,7 @@ export interface ProcessMapDetail {
   updated_at: string
 }
 
-export interface ArtifactRef { id: string; name: string }
+export interface ArtifactRef { id: string; name: string; content_type?: ProcessArtifactContentType }
 
 export interface ProcessNode {
   id: string
@@ -103,6 +106,10 @@ export interface ProcessArtifact {
   name: string
   description: string | null
   artifact_type: ProcessArtifactType
+  content_type: ProcessArtifactContentType
+  url: string | null
+  content_body: string | null
+  allow_download: boolean
   file_name: string | null
   mime_type: string | null
   size_bytes: number | null
@@ -141,7 +148,7 @@ export interface NodeDetail extends Omit<ProcessNode, 'inputs' | 'outputs'> {
   can_approve: boolean
   responsible_user: { id: string; name: string } | null
   responsible_role: { id: string; title: string } | null
-  linked_map: { id: string; name: string } | null
+  linked_map: { id: string; name: string; owned: boolean } | null
   checklist: ChecklistItem[]
   inputs: NodeArtifactLink[]
   outputs: NodeArtifactLink[]
@@ -196,11 +203,11 @@ export const processHierarchyApi = {
   // Maps
   listMaps: async (orgId: string): Promise<ProcessMapSummary[]> =>
     unwrap(await apiClient.get(`${base(orgId)}/maps`)),
-  createMap: async (orgId: string, dto: { name: string; description?: string }): Promise<ProcessMapDetail> =>
+  createMap: async (orgId: string, dto: { name: string; description?: string; parent_map_id?: string | null }): Promise<ProcessMapDetail> =>
     unwrap(await apiClient.post(`${base(orgId)}/maps`, dto)),
   getMap: async (orgId: string, mapId: string): Promise<ProcessMapDetail> =>
     unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}`)),
-  updateMap: async (orgId: string, mapId: string, dto: { name?: string; description?: string }): Promise<ProcessMapDetail> =>
+  updateMap: async (orgId: string, mapId: string, dto: { name?: string; description?: string; parent_map_id?: string | null; is_pinned?: boolean }): Promise<ProcessMapDetail> =>
     unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}`, dto)),
   deleteMap: async (orgId: string, mapId: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/maps/${mapId}`)
@@ -216,8 +223,14 @@ export const processHierarchyApi = {
   createNode: async (
     orgId: string,
     mapId: string,
-    dto: { parent_node_id?: string | null; kind: ProcessNodeKind; name: string; description?: string; position_x?: number; position_y?: number },
+    dto: { parent_node_id?: string | null; kind: ProcessNodeKind; name: string; description?: string; position_x?: number; position_y?: number; create_linked_map?: boolean; linked_map_id?: string },
   ): Promise<ProcessNode> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/nodes`, dto)),
+  // Paste copied nodes (with their sub-trees) into this map/level.
+  pasteNodes: async (
+    orgId: string,
+    mapId: string,
+    dto: { source_map_id: string; node_ids: string[]; parent_node_id?: string | null; position_x?: number; position_y?: number },
+  ): Promise<{ pasted_node_ids: string[] }> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/nodes/paste`, dto)),
   getNode: async (orgId: string, mapId: string, nodeId: string): Promise<NodeDetail> =>
     unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/nodes/${nodeId}`)),
   updateNode: async (
@@ -225,6 +238,7 @@ export const processHierarchyApi = {
     mapId: string,
     nodeId: string,
     dto: Partial<{
+      kind: ProcessNodeKind
       name: string
       description: string
       status: ProcessNodeStatus
@@ -244,6 +258,11 @@ export const processHierarchyApi = {
   ): Promise<void> => {
     await apiClient.post(`${base(orgId)}/maps/${mapId}/node-positions`, { positions })
   },
+  detachNode: async (orgId: string, mapId: string, nodeId: string): Promise<NodeDetail> =>
+    unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/nodes/${nodeId}/detach`, {})),
+  // Turn a container into a standalone map that can be referenced as a line item anywhere.
+  makeNodeReusable: async (orgId: string, mapId: string, nodeId: string): Promise<NodeDetail> =>
+    unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/nodes/${nodeId}/make-reusable`, {})),
   deleteNode: async (orgId: string, mapId: string, nodeId: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/maps/${mapId}/nodes/${nodeId}`)
   },
@@ -282,15 +301,28 @@ export const processHierarchyApi = {
   ): Promise<ProcessArtifact> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/artifacts`, dto)),
   uploadArtifact: async (orgId: string, mapId: string, form: FormData): Promise<ProcessArtifact> =>
     unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/artifacts/upload`, form, { headers: { 'Content-Type': 'multipart/form-data' } })),
+  createMaterial: async (
+    orgId: string,
+    mapId: string,
+    dto: { name: string; url?: string; content_body?: string },
+  ): Promise<ProcessArtifact> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/materials`, dto)),
   updateArtifact: async (
     orgId: string,
     mapId: string,
     artifactId: string,
-    dto: { name?: string; description?: string; artifact_type?: ProcessArtifactType },
+    dto: { name?: string; description?: string; artifact_type?: ProcessArtifactType; url?: string; content_body?: string; allow_download?: boolean },
   ): Promise<ProcessArtifact> => unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/artifacts/${artifactId}`, dto)),
   deleteArtifact: async (orgId: string, mapId: string, artifactId: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/maps/${mapId}/artifacts/${artifactId}`)
   },
+  // Full detail for one document — used to preview it straight from the canvas.
+  getArtifact: async (orgId: string, mapId: string, artifactId: string): Promise<ProcessArtifact> =>
+    unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/artifacts/${artifactId}`)),
+  viewArtifact: async (orgId: string, mapId: string, artifactId: string): Promise<{ url: string; file_name: string | null; mime_type: string | null; allow_download: boolean }> =>
+    unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/artifacts/${artifactId}/view`)),
+  // Same-origin raw bytes (for pdf.js / OfficeViewer, avoiding R2 CORS).
+  viewArtifactBytes: async (orgId: string, mapId: string, artifactId: string): Promise<ArrayBuffer> =>
+    (await apiClient.get(`${base(orgId)}/maps/${mapId}/artifacts/${artifactId}/view-file`, { responseType: 'arraybuffer' })).data as ArrayBuffer,
   downloadArtifact: async (orgId: string, mapId: string, artifactId: string): Promise<{ url: string }> =>
     unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/artifacts/${artifactId}/download`)),
   linkArtifact: async (
