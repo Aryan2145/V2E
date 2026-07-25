@@ -32,7 +32,6 @@ interface ImportRow {
   parent: string
   head: string
   description: string
-  color: string
 }
 
 interface RowResult {
@@ -42,7 +41,9 @@ interface RowResult {
   error?: string
 }
 
-const COLUMNS = ['name', 'parent_department', 'head', 'description', 'color'] as const
+// Colour is intentionally NOT importable — every department is auto-assigned a
+// distinct colour by the app (users can override it in-app afterwards).
+const COLUMNS = ['name', 'parent_department', 'head', 'description'] as const
 type Column = (typeof COLUMNS)[number]
 
 const HEADER_LABEL: Record<Column, string> = {
@@ -50,7 +51,6 @@ const HEADER_LABEL: Record<Column, string> = {
   parent_department: 'parent_department',
   head: 'head (manager name)',
   description: 'description',
-  color: 'color (hex, e.g. #2563EB)',
 }
 
 const COLUMN_ALIASES: Record<string, Column> = {
@@ -64,7 +64,6 @@ const COLUMN_ALIASES: Record<string, Column> = {
   dept_head: 'head',
   manager: 'head',
   description: 'description',
-  color: 'color',
 }
 
 function normalizeHeader(h: string): string {
@@ -211,8 +210,8 @@ export default function ImportDepartmentsModal({
 
       const sampleParent = departments[0]?.name ?? 'Executive'
       const sampleHead = users[0]?.name ?? ''
-      ws.addRow(['Engineering', sampleParent, sampleHead, 'Builds the product', '#2563EB'])
-      ws.addRow(['Mobile Apps', 'Engineering', '', 'iOS & Android', ''])
+      ws.addRow(['Engineering', sampleParent, sampleHead, 'Builds the product'])
+      ws.addRow(['Mobile Apps', 'Engineering', '', 'iOS & Android'])
 
       const LAST = 300
       const addListDV = (col: number, formula: string) => {
@@ -275,7 +274,6 @@ export default function ImportDepartmentsModal({
         parent: get('parent_department'),
         head: get('head'),
         description: get('description'),
-        color: get('color'),
       })
     }
     if (parsed.length === 0) return { rows: [], error: 'No data rows found below the header.' }
@@ -397,15 +395,14 @@ export default function ImportDepartmentsModal({
           })
           continue
         }
-        const color = /^#([0-9a-f]{6})$/i.test(row.color) ? row.color : undefined
         const { x, y } = placeUnderParent(working, parentId)
         try {
+          // No colour on import — the app auto-assigns a distinct one per dept.
           const created = await createDepartment(orgId, {
             name: row.name,
             description: row.description || undefined,
             parent_department_id: parentId,
             head_user_id: headId,
-            color,
             position_x: x,
             position_y: y,
           })

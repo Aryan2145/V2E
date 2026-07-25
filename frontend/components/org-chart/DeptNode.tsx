@@ -26,7 +26,7 @@ function DeptNode({ data, selected }: { data: DeptNodeData; selected: boolean })
 
   return (
     <div
-      className={`group relative rounded-xl border-2 p-4 min-w-[180px] shadow-sm transition-all ${
+      className={`group relative rounded-xl border-2 p-4 w-[200px] shadow-sm transition-all ${
         data.highlighted ? 'ring-2 ring-[#FCD34D]' : selected ? 'ring-2 ring-[#2563EB]/40' : ''
       }`}
       style={{ backgroundColor: fill, color: text, borderColor: border }}
@@ -49,9 +49,11 @@ function DeptNode({ data, selected }: { data: DeptNodeData; selected: boolean })
         </button>
       )}
 
-      <div className="font-semibold text-sm pr-6">{data.name}</div>
+      <div className="font-semibold text-sm pr-6 line-clamp-2 break-words" title={data.name}>
+        {data.name}
+      </div>
       {data.headName && (
-        <div className="text-xs mt-1" style={{ opacity: 0.8 }}>
+        <div className="text-xs mt-1 truncate" style={{ opacity: 0.8 }} title={data.headName}>
           {data.headName}
         </div>
       )}
