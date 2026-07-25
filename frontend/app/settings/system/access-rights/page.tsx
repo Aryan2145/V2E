@@ -17,6 +17,7 @@ import {
 import { useAuth } from '@/lib/auth/context'
 import { useToast } from '@/components/ui/Toast'
 import Button from '@/components/ui/Button'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { clearPermissionsCache } from '@/lib/auth/use-permissions'
 import {
   getPermissionRegistry,
@@ -232,6 +233,9 @@ export default function AccessControlPage() {
   const [newName, setNewName] = useState('')
   const [renaming, setRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
+  const [confirmDeleteRole, setConfirmDeleteRole] = useState(false)
+  const [deletingRole, setDeletingRole] = useState(false)
+  const [deleteRoleError, setDeleteRoleError] = useState<string | null>(null)
 
   const [policies, setPolicies] = useState<SubjectPolicy[]>([])
   const [policyEdits, setPolicyEdits] = useState<Record<string, boolean>>({})
@@ -581,17 +585,23 @@ export default function AccessControlPage() {
       addToast(err?.response?.data?.message ?? 'Failed to rename', 'error')
     }
   }
-  async function handleDelete() {
+  async function performDeleteRole() {
     if (!selectedRole || selectedRole.is_system) return
-    if (!window.confirm(`Delete the "${selectedRole.name}" role? Employees assigned it will have no system role until reassigned.`)) return
+    setDeletingRole(true)
+    setDeleteRoleError(null)
     try {
       const updated = await deleteSystemRole(orgId, selectedRole.id)
       applyMatrix(updated)
       setSelectedRoleId(updated.systemRoles[0]?.id ?? '')
       clearPermissionsCache(orgId)
+      setConfirmDeleteRole(false)
       addToast('Role deleted', 'success')
     } catch (err: any) {
-      addToast(err?.response?.data?.message ?? 'Failed to delete', 'error')
+      // The server blocks deletion while employees still hold the role — show
+      // the plain-language reason here rather than as a toast that vanishes.
+      setDeleteRoleError(err?.response?.data?.message ?? 'Failed to delete role.')
+    } finally {
+      setDeletingRole(false)
     }
   }
 
@@ -860,7 +870,11 @@ export default function AccessControlPage() {
                       >
                         <Pencil size={15} />
                       </button>
-                      <button onClick={handleDelete} className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-[6px]" aria-label="Delete role">
+                      <button
+                        onClick={() => { setDeleteRoleError(null); setConfirmDeleteRole(true) }}
+                        className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-[6px]"
+                        aria-label="Delete role"
+                      >
                         <Trash2 size={15} />
                       </button>
                     </div>
@@ -1132,6 +1146,18 @@ export default function AccessControlPage() {
           {subjectSections.length === 0 && <p className="px-5 py-8 text-sm text-[#94A3B8] text-center">No subject permissions defined.</p>}
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDeleteRole}
+        danger
+        title={selectedRole ? `Delete “${selectedRole.name}”?` : 'Delete role?'}
+        message="This access role will be removed. Employees who still hold it must be reassigned first — if any do, the delete is blocked and you'll see why here."
+        confirmLabel="Delete role"
+        loading={deletingRole}
+        error={deleteRoleError}
+        onConfirm={performDeleteRole}
+        onCancel={() => { if (!deletingRole) { setConfirmDeleteRole(false); setDeleteRoleError(null) } }}
+      />
     </div>
   )
 }

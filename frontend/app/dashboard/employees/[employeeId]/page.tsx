@@ -6,7 +6,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
-import { getEmployee, getEmployees, updateEmployee, updateEmployeeStatus } from '@/lib/api/employees'
+import { getEmployee, getEmployees, updateEmployee, updateEmployeeStatus, deleteEmployee } from '@/lib/api/employees'
 import { updateUser } from '@/lib/api/users'
 import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
 import { getRoles } from '@/lib/api/roles'
@@ -14,7 +14,7 @@ import { getDepartments } from '@/lib/api/departments'
 import Button from '@/components/ui/Button'
 import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissionsPanel'
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
-import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X, Eye, EyeOff } from 'lucide-react'
+import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X, Eye, EyeOff, Trash2 } from 'lucide-react'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
 import DatePicker from '@/components/ui/DatePicker'
 
@@ -156,9 +156,10 @@ interface EditModalProps {
   departments: Department[]
   onClose: () => void
   onSaved: (updated: EmployeeProfile) => void
+  onDeleted: () => void
 }
 
-function EditModal({ employee, allEmployees, roles, departments, onClose, onSaved }: EditModalProps) {
+function EditModal({ employee, allEmployees, roles, departments, onClose, onSaved, onDeleted }: EditModalProps) {
   const { user } = useAuth()
   const orgId = user?.organizationId ?? ''
 
@@ -186,6 +187,8 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   const [error, setError] = useState('')
   const [mounted, setMounted] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   // System roles carry access rights — required, and editable here just like on
   // the Add Employee form so the two stay consistent.
@@ -268,6 +271,22 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
       setError(err?.response?.data?.message ?? 'Failed to save changes')
     } finally {
       setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    setError('')
+    setDeleting(true)
+    try {
+      await deleteEmployee(orgId, employee.id)
+      onDeleted()
+    } catch (err: any) {
+      // The server returns a plain-language reason (reassign reports, deactivate
+      // instead, etc.) — surface it and let the user pick another path.
+      setError(err?.response?.data?.message ?? 'Failed to delete employee.')
+      setConfirmDelete(false)
+    } finally {
+      setDeleting(false)
     }
   }
 
@@ -467,15 +486,56 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end px-6 py-4 border-t border-[#E2E8F0] shrink-0">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
-          >
-            {saving && <Loader2 size={15} className="animate-spin" />}
-            Save Changes
-          </button>
+        <div className="flex flex-col gap-3 px-6 py-4 border-t border-[#E2E8F0] shrink-0">
+          {confirmDelete ? (
+            <div className="rounded-[8px] border border-[#FECACA] bg-[#FEF2F2] p-3">
+              <p className="text-sm text-[#991B1B] mb-2.5">
+                Delete <span className="font-semibold">{employee.user?.name}</span> permanently?
+                This removes them from the organization and can’t be undone. If they have any
+                history, use <span className="font-semibold">Inactive</span> instead.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-[8px] transition-colors disabled:opacity-60"
+                >
+                  {deleting && <Loader2 size={14} className="animate-spin" />}
+                  Delete employee
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  disabled={deleting}
+                  className="px-4 py-2 text-sm font-semibold text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between">
+              {/* Danger action — hidden for yourself and the primary admin (both
+                  are protected server-side too). */}
+              {!isSelf && !isPrimaryAdmin ? (
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="flex items-center gap-1.5 text-sm font-semibold text-[#DC2626] hover:text-[#B91C1C] transition-colors"
+                >
+                  <Trash2 size={15} /> Delete
+                </button>
+              ) : (
+                <span />
+              )}
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
+              >
+                {saving && <Loader2 size={15} className="animate-spin" />}
+                Save Changes
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>,
@@ -693,6 +753,10 @@ export default function EmployeeDetailPage() {
           onSaved={(updated) => {
             setEmployee(updated)
             setShowEdit(false)
+          }}
+          onDeleted={() => {
+            setShowEdit(false)
+            router.push('/settings/organization/employees')
           }}
         />
       )}

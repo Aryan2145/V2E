@@ -256,6 +256,15 @@ export async function updateEmployeeStatus(
   return data.data;
 }
 
+/**
+ * Hard-delete an employee. The server only allows this for a "clean" profile —
+ * it returns a 400 with a plain-language reason (reassign reports, deactivate
+ * instead, etc.) when the person still has structure or history attached.
+ */
+export async function deleteEmployee(orgId: string, id: string): Promise<void> {
+  await apiClient.delete(`/api/v1/org/${orgId}/employees/${id}`);
+}
+
 // ─── Self-service ────────────────────────────────────────────────────────────────
 
 /** The caller's own employee profile (resolved server-side from the JWT). */
