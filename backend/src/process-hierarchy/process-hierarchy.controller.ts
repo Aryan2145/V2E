@@ -8,11 +8,13 @@ import {
   Post,
   Query,
   Request,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { PermissionAction } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -26,9 +28,9 @@ import {
 } from '../tasks/task-attachments.service';
 import { ProcessHierarchyService } from './process-hierarchy.service';
 import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
-import { BulkPositionDto, CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
+import { BulkPositionDto, CreateNodeDto, PasteNodesDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
-import { CreateArtifactDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
+import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto } from './dto/snapshot.dto';
 import { DecideStatusDto, RequestReviewDto } from './dto/status.dto';
@@ -107,6 +109,13 @@ export class ProcessHierarchyController {
     return this.service.createNode(orgId, principalFromUser(req.user), mapId, dto);
   }
 
+  @Post('maps/:mapId/nodes/paste')
+  @RequirePermission(LEAF, PermissionAction.write)
+  @ApiOperation({ summary: 'Paste copied nodes (with sub-trees) into this map/level' })
+  pasteNodes(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: PasteNodesDto) {
+    return this.service.pasteNodes(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
   @Get('maps/:mapId/nodes/:nodeId')
   @RequirePermission(LEAF, PermissionAction.read)
   @ApiOperation({ summary: 'Full node detail (checklist, inputs/outputs, sharing)' })
@@ -139,6 +148,20 @@ export class ProcessHierarchyController {
   @ApiOperation({ summary: 'Delete a node and its sub-tree' })
   deleteNode(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('nodeId') nodeId: string, @Request() req: any) {
     return this.service.deleteNode(orgId, principalFromUser(req.user), mapId, nodeId);
+  }
+
+  @Post('maps/:mapId/nodes/:nodeId/detach')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Detach a reference into its own independent copy (copy-on-write)' })
+  detachNode(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('nodeId') nodeId: string, @Request() req: any) {
+    return this.service.detachNode(orgId, principalFromUser(req.user), mapId, nodeId);
+  }
+
+  @Post('maps/:mapId/nodes/:nodeId/make-reusable')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Turn a container into a standalone map that can be referenced anywhere' })
+  makeNodeReusable(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('nodeId') nodeId: string, @Request() req: any) {
+    return this.service.makeNodeReusable(orgId, principalFromUser(req.user), mapId, nodeId);
   }
 
   // ─── Status workflow (draft → in_review → final) ─────────────────────────────
@@ -211,6 +234,13 @@ export class ProcessHierarchyController {
     return this.service.createArtifact(orgId, principalFromUser(req.user), mapId, dto);
   }
 
+  @Post('maps/:mapId/materials')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Create a link or article material (no file)' })
+  createMaterial(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateMaterialDto) {
+    return this.service.createMaterial(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
   @Post('maps/:mapId/artifacts/upload')
   @RequirePermission(LEAF, PermissionAction.edit)
   @ApiOperation({ summary: 'Create an artifact with a real uploaded file (R2)' })
@@ -244,6 +274,38 @@ export class ProcessHierarchyController {
   @ApiOperation({ summary: 'Delete an artifact (and its file)' })
   deleteArtifact(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('artifactId') artifactId: string, @Request() req: any) {
     return this.service.deleteArtifact(orgId, principalFromUser(req.user), mapId, artifactId);
+  }
+
+  @Get('maps/:mapId/artifacts/:artifactId')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Full detail for one artifact (preview a document from the canvas)' })
+  getArtifact(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('artifactId') artifactId: string, @Request() req: any) {
+    return this.service.getArtifact(orgId, principalFromUser(req.user), mapId, artifactId);
+  }
+
+  @Get('maps/:mapId/artifacts/:artifactId/view')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Inline signed URL for previewing a file (respects view-only for downloads)' })
+  viewArtifact(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('artifactId') artifactId: string, @Request() req: any) {
+    return this.service.viewArtifact(orgId, principalFromUser(req.user), mapId, artifactId);
+  }
+
+  @Get('maps/:mapId/artifacts/:artifactId/view-file')
+  @RequirePermission(LEAF, PermissionAction.read)
+  @ApiOperation({ summary: 'Stream an artifact file inline (same-origin, for pdf.js / OfficeViewer)' })
+  async viewArtifactFile(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('artifactId') artifactId: string,
+    @Request() req: any,
+    @Res() res: Response,
+  ) {
+    const { buffer, mime, fileName } = await this.service.getArtifactBytes(orgId, principalFromUser(req.user), mapId, artifactId);
+    const safe = fileName.replace(/"/g, '');
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `inline; filename="${safe}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.end(buffer);
   }
 
   @Get('maps/:mapId/artifacts/:artifactId/download')

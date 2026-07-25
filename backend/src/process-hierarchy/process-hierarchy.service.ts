@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ProcessAccessKind, ProcessAccessLevel, ProcessNodeStatus } from '@prisma/client';
+import { ProcessAccessKind, ProcessAccessLevel, ProcessNodeKind, ProcessNodeStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -18,9 +18,9 @@ import {
   extensionOf,
 } from '../tasks/task-attachments.service';
 import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
-import { BulkPositionDto, CreateNodeDto, UpdateNodeDto } from './dto/node.dto';
+import { BulkPositionDto, CreateNodeDto, PasteNodesDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
-import { CreateArtifactDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
+import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto } from './dto/snapshot.dto';
 
@@ -43,6 +43,8 @@ export class ProcessHierarchyService {
         id: true,
         name: true,
         description: true,
+        parent_map_id: true,
+        is_pinned: true,
         created_by_user_id: true,
         created_at: true,
         updated_at: true,
@@ -56,6 +58,8 @@ export class ProcessHierarchyService {
         id: m.id,
         name: m.name,
         description: m.description,
+        parent_map_id: m.parent_map_id,
+        is_pinned: m.is_pinned,
         node_count: m._count.nodes,
         is_owner: m.created_by_user_id === principal.userId,
         can_edit: principal.isAdmin || m.created_by_user_id === principal.userId,
@@ -65,11 +69,19 @@ export class ProcessHierarchyService {
   }
 
   async createMap(orgId: string, userId: string, dto: CreateMapDto) {
+    if (dto.parent_map_id) {
+      const parent = await this.prisma.processMap.findFirst({
+        where: { id: dto.parent_map_id, organization_id: orgId, is_deleted: false },
+        select: { id: true },
+      });
+      if (!parent) throw new BadRequestException('Parent map not found');
+    }
     return this.prisma.processMap.create({
       data: {
         organization_id: orgId,
         name: dto.name.trim(),
         description: dto.description ?? null,
+        parent_map_id: dto.parent_map_id ?? null,
         created_by_user_id: userId,
       },
     });
@@ -98,11 +110,33 @@ export class ProcessHierarchyService {
 
   async updateMap(orgId: string, principal: Principal, mapId: string, dto: UpdateMapDto) {
     await this.access.assertCanEditMap(orgId, principal, mapId);
+
+    // Move in the tree: validate destination is in-org and not a cycle (can't put a
+    // map under itself or one of its own descendants).
+    if (dto.parent_map_id !== undefined && dto.parent_map_id !== null) {
+      if (dto.parent_map_id === mapId) throw new BadRequestException('A map cannot be its own parent');
+      const all = await this.prisma.processMap.findMany({
+        where: { organization_id: orgId, is_deleted: false },
+        select: { id: true, parent_map_id: true },
+      });
+      const byId = new Map(all.map((m) => [m.id, m]));
+      if (!byId.has(dto.parent_map_id)) throw new BadRequestException('Parent map not found');
+      let cur: string | null = dto.parent_map_id;
+      const seen = new Set<string>();
+      while (cur && !seen.has(cur)) {
+        if (cur === mapId) throw new BadRequestException('Cannot move a map inside itself');
+        seen.add(cur);
+        cur = byId.get(cur)?.parent_map_id ?? null;
+      }
+    }
+
     return this.prisma.processMap.update({
       where: { id: mapId },
       data: {
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
+        ...(dto.parent_map_id !== undefined ? { parent_map_id: dto.parent_map_id } : {}),
+        ...(dto.is_pinned !== undefined ? { is_pinned: dto.is_pinned } : {}),
       },
     });
   }
@@ -191,7 +225,7 @@ export class ProcessHierarchyService {
     const links = nodeIds.length
       ? await this.prisma.processNodeArtifact.findMany({
           where: { node_id: { in: nodeIds } },
-          select: { node_id: true, direction: true, artifact: { select: { id: true, name: true } } },
+          select: { node_id: true, direction: true, artifact: { select: { id: true, name: true, content_type: true } } },
         })
       : [];
     const linksByNode = new Map<string, { input: { id: string; name: string }[]; output: { id: string; name: string }[] }>();
@@ -352,6 +386,27 @@ export class ProcessHierarchyService {
       where: { organization_id: orgId, map_id: mapId, parent_node_id: dto.parent_node_id ?? null, is_deleted: false },
       _max: { sort_order: true },
     });
+
+    // Composition. Either reference an existing map, or (build-in-place) create a fresh
+    // child map for a container/sub-process so the area is instantly its own map.
+    const isArea = dto.kind === ProcessNodeKind.container || dto.kind === ProcessNodeKind.subprocess;
+    let linkedMapId: string | null = null;
+    if (dto.linked_map_id) {
+      if (dto.linked_map_id === mapId) throw new BadRequestException('A node cannot reference its own map');
+      await this.access.assertCanViewMap(orgId, principal, dto.linked_map_id);
+      linkedMapId = dto.linked_map_id;
+    } else if (dto.create_linked_map && isArea) {
+      const child = await this.prisma.processMap.create({
+        data: {
+          organization_id: orgId,
+          name: dto.name.trim(),
+          parent_map_id: mapId,
+          created_by_user_id: principal.userId,
+        },
+      });
+      linkedMapId = child.id;
+    }
+
     return this.prisma.processNode.create({
       data: {
         organization_id: orgId,
@@ -363,6 +418,7 @@ export class ProcessHierarchyService {
         position_x: dto.position_x ?? 0,
         position_y: dto.position_y ?? 0,
         sort_order: (maxSort._max.sort_order ?? -1) + 1,
+        linked_map_id: linkedMapId,
         created_by_user_id: principal.userId,
       },
     });
@@ -390,11 +446,16 @@ export class ProcessHierarchyService {
         : Promise.resolve(null),
     ]);
 
-    const linkedMap = node.linked_map_id
+    const linkedMapRow = node.linked_map_id
       ? await this.prisma.processMap.findFirst({
           where: { id: node.linked_map_id, organization_id: orgId, is_deleted: false },
-          select: { id: true, name: true },
+          select: { id: true, name: true, parent_map_id: true },
         })
+      : null;
+    // "owned" = built in place here (a single-use child), so detach doesn't apply.
+    // "shared" = references a map owned elsewhere, where detach makes a local variant.
+    const linkedMap = linkedMapRow
+      ? { id: linkedMapRow.id, name: linkedMapRow.name, owned: linkedMapRow.parent_map_id === node.map_id }
       : null;
 
     return {
@@ -413,8 +474,28 @@ export class ProcessHierarchyService {
   }
 
   async updateNode(orgId: string, principal: Principal, mapId: string, nodeId: string, dto: UpdateNodeDto) {
-    await this.requireNode(orgId, mapId, nodeId);
+    const node = await this.requireNode(orgId, mapId, nodeId);
     await this.access.assertCanEditNode(orgId, principal, nodeId);
+
+    // Change node type — only the safe conversions. Start/End are structural markers
+    // and never convert; an "area" (container/sub-process) may only become a step
+    // once it's empty, so its contents are never stranded.
+    if (dto.kind !== undefined && dto.kind !== node.kind) {
+      const AREA: ProcessNodeKind[] = [ProcessNodeKind.container, ProcessNodeKind.subprocess];
+      const STEP: ProcessNodeKind[] = [ProcessNodeKind.task, ProcessNodeKind.decision];
+      const isEvent = (k: ProcessNodeKind) => k === ProcessNodeKind.start_event || k === ProcessNodeKind.end_event;
+      if (isEvent(node.kind) || isEvent(dto.kind)) {
+        throw new BadRequestException('Start and End markers cannot change type');
+      }
+      if (AREA.includes(node.kind) && STEP.includes(dto.kind)) {
+        const children = await this.prisma.processNode.count({
+          where: { organization_id: orgId, map_id: mapId, parent_node_id: nodeId, is_deleted: false },
+        });
+        if (children > 0) {
+          throw new BadRequestException('This area has steps inside it — move or remove them before turning it into a single step');
+        }
+      }
+    }
 
     // Cross-map link: only to a map the actor can see, never to this same map.
     if (dto.linked_map_id) {
@@ -424,7 +505,7 @@ export class ProcessHierarchyService {
 
     // Re-parent (move to another container/level). Validate same-map, permission on
     // the destination, and no cycle (can't move a node inside itself/its own subtree).
-    let reparent: { parent_node_id: string | null; sort_order: number } | null = null;
+    let reparent: { parent_node_id: string | null; sort_order: number; position_x: number; position_y: number } | null = null;
     if (dto.parent_node_id !== undefined) {
       const newParent = dto.parent_node_id ?? null;
       if (newParent === nodeId) throw new BadRequestException('A node cannot be its own parent');
@@ -447,11 +528,15 @@ export class ProcessHierarchyService {
       } else {
         await this.access.assertCanEditMap(orgId, principal, mapId);
       }
-      const maxSort = await this.prisma.processNode.aggregate({
-        where: { organization_id: orgId, map_id: mapId, parent_node_id: newParent, is_deleted: false },
-        _max: { sort_order: true },
+      // Land the moved node in a free spot at the destination — below all existing
+      // content there — so it never drops on top of the target's current diagram.
+      const sibs = await this.prisma.processNode.findMany({
+        where: { organization_id: orgId, map_id: mapId, parent_node_id: newParent, is_deleted: false, id: { not: nodeId } },
+        select: { sort_order: true, position_y: true },
       });
-      reparent = { parent_node_id: newParent, sort_order: (maxSort._max.sort_order ?? -1) + 1 };
+      const nextY = sibs.length ? Math.max(...sibs.map((s) => s.position_y)) + 170 : 60;
+      const nextSort = sibs.reduce((m, s) => Math.max(m, s.sort_order), -1) + 1;
+      reparent = { parent_node_id: newParent, sort_order: nextSort, position_x: 60, position_y: nextY };
       // Moving levels invalidates this node's connections (edges live at one level).
       await this.prisma.processConnection.deleteMany({
         where: {
@@ -465,6 +550,7 @@ export class ProcessHierarchyService {
     await this.prisma.processNode.update({
       where: { id: nodeId },
       data: {
+        ...(dto.kind !== undefined ? { kind: dto.kind } : {}),
         ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.status !== undefined ? { status: dto.status } : {}),
@@ -480,6 +566,20 @@ export class ProcessHierarchyService {
     if (dto.checklist !== undefined) {
       await this.replaceChecklist(nodeId, dto.checklist);
     }
+
+    // Keep a build-in-place area's child map named the same as its node. Ownership
+    // signal: the linked map's parent is this node's map (it was built here). A
+    // shared reference (linked to a map owned elsewhere) is left untouched.
+    if (dto.name !== undefined && node.linked_map_id) {
+      const linked = await this.prisma.processMap.findFirst({
+        where: { id: node.linked_map_id, organization_id: orgId, is_deleted: false },
+        select: { id: true, parent_map_id: true },
+      });
+      if (linked && linked.parent_map_id === node.map_id) {
+        await this.prisma.processMap.update({ where: { id: linked.id }, data: { name: dto.name.trim() } });
+      }
+    }
+
     return this.getNode(orgId, principal, mapId, nodeId);
   }
 
@@ -647,17 +747,42 @@ export class ProcessHierarchyService {
     validateAttachmentFile(file);
     const key = `orgs/${orgId}/process-artifacts/${mapId}/${randomUUID()}.${extensionOf(file.originalname)}`;
     await this.r2.putObject(key, file.buffer, file.mimetype);
+    // Multipart sends booleans as strings; treat only an explicit "false" as view-only.
+    const allowDownload = !(dto.allow_download === false || dto.allow_download === 'false');
     return this.prisma.processArtifact.create({
       data: {
         organization_id: orgId,
         map_id: mapId,
-        name: (dto.name || file.originalname).trim(),
+        name: (dto.name || file.originalname).trim().slice(0, 50),
         description: dto.description ?? null,
         artifact_type: dto.artifact_type ?? 'document',
+        content_type: 'file',
+        allow_download: allowDownload,
         file_name: file.originalname,
         mime_type: file.mimetype,
         size_bytes: file.size,
         storage_key: key,
+        created_by_user_id: principal.userId,
+      },
+    });
+  }
+
+  // Create a link or article material (no file). Exactly one of url / content_body.
+  async createMaterial(orgId: string, principal: Principal, mapId: string, dto: CreateMaterialDto) {
+    await this.access.assertCanEditMap(orgId, principal, mapId);
+    const isLink = !!dto.url;
+    const isArticle = dto.content_body !== undefined && dto.content_body !== null;
+    if (isLink === isArticle) {
+      throw new BadRequestException('Provide either a url (link) or content_body (article), not both');
+    }
+    return this.prisma.processArtifact.create({
+      data: {
+        organization_id: orgId,
+        map_id: mapId,
+        name: dto.name.trim().slice(0, 50),
+        content_type: isLink ? 'link' : 'article',
+        url: isLink ? dto.url : null,
+        content_body: isArticle ? dto.content_body : null,
         created_by_user_id: principal.userId,
       },
     });
@@ -669,9 +794,12 @@ export class ProcessHierarchyService {
     return this.prisma.processArtifact.update({
       where: { id: artifact.id },
       data: {
-        ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+        ...(dto.name !== undefined ? { name: dto.name.trim().slice(0, 50) } : {}),
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.artifact_type !== undefined ? { artifact_type: dto.artifact_type } : {}),
+        ...(dto.url !== undefined && artifact.content_type === 'link' ? { url: dto.url } : {}),
+        ...(dto.content_body !== undefined && artifact.content_type === 'article' ? { content_body: dto.content_body } : {}),
+        ...(dto.allow_download !== undefined && artifact.content_type === 'file' ? { allow_download: dto.allow_download } : {}),
       },
     });
   }
@@ -684,12 +812,40 @@ export class ProcessHierarchyService {
     return { success: true };
   }
 
+  // Full detail for one artifact — used to preview a document straight from the canvas
+  // (decide link vs file vs article, read the url/body). View access to the map is enough.
+  async getArtifact(orgId: string, principal: Principal, mapId: string, artifactId: string) {
+    await this.access.assertCanViewMap(orgId, principal, mapId);
+    return this.requireArtifact(orgId, mapId, artifactId);
+  }
+
+  // Inline URL for previewing a file (does NOT bypass view-only — that only blocks
+  // the download button; previewing is always allowed to anyone who can view the map).
+  async viewArtifact(orgId: string, principal: Principal, mapId: string, artifactId: string) {
+    await this.access.assertCanViewMap(orgId, principal, mapId);
+    const artifact = await this.requireArtifact(orgId, mapId, artifactId);
+    if (!artifact.storage_key) throw new BadRequestException('This material has no file to preview');
+    const url = await this.r2.getSignedDownloadUrl(artifact.storage_key, artifact.file_name ?? artifact.name);
+    return { url, file_name: artifact.file_name, mime_type: artifact.mime_type, allow_download: artifact.allow_download };
+  }
+
   async downloadArtifact(orgId: string, principal: Principal, mapId: string, artifactId: string) {
     await this.access.assertCanViewMap(orgId, principal, mapId);
     const artifact = await this.requireArtifact(orgId, mapId, artifactId);
     if (!artifact.storage_key) throw new BadRequestException('This artifact has no attached file');
+    if (!artifact.allow_download) throw new ForbiddenException('This file is view-only');
     const url = await this.r2.getSignedDownloadUrl(artifact.storage_key, artifact.file_name ?? artifact.name);
     return { url };
+  }
+
+  // Raw bytes, streamed same-origin (so pdf.js / OfficeViewer avoid R2 CORS). Preview
+  // is always allowed to map viewers; view-only only blocks the Download button.
+  async getArtifactBytes(orgId: string, principal: Principal, mapId: string, artifactId: string) {
+    await this.access.assertCanViewMap(orgId, principal, mapId);
+    const artifact = await this.requireArtifact(orgId, mapId, artifactId);
+    if (!artifact.storage_key) throw new BadRequestException('This material has no file to preview');
+    const buffer = await this.r2.getObjectBuffer(artifact.storage_key);
+    return { buffer, mime: artifact.mime_type ?? 'application/octet-stream', fileName: artifact.file_name ?? artifact.name };
   }
 
   private async requireArtifact(orgId: string, mapId: string, artifactId: string) {
@@ -1037,14 +1193,26 @@ export class ProcessHierarchyService {
       where: { id: templateId, organization_id: orgId },
     });
     if (!tpl) throw new NotFoundException('Template not found');
-    const tree = tpl.tree_json as any;
+    return this.instantiateTree(orgId, principal.userId, tpl.tree_json as any, name);
+  }
 
+  // Clone a serialized map tree into a brand-new map. Inner references (linked_map_id)
+  // are preserved as-is — so a detached copy shares the maps its own children point at
+  // (clone the top, keep inner refs shared).
+  private async instantiateTree(
+    orgId: string,
+    userId: string,
+    tree: any,
+    name: string,
+    opts?: { parentMapId?: string | null; description?: string | null },
+  ) {
     const map = await this.prisma.processMap.create({
       data: {
         organization_id: orgId,
         name: name.trim(),
-        description: null,
-        created_by_user_id: principal.userId,
+        description: opts?.description ?? null,
+        parent_map_id: opts?.parentMapId ?? null,
+        created_by_user_id: userId,
       },
     });
 
@@ -1075,11 +1243,15 @@ export class ProcessHierarchyService {
         name: a.name,
         description: a.description ?? null,
         artifact_type: a.artifact_type,
+        content_type: a.content_type ?? 'file',
+        url: a.url ?? null,
+        content_body: a.content_body ?? null,
+        allow_download: a.allow_download ?? true,
         file_name: a.file_name ?? null,
         mime_type: a.mime_type ?? null,
         size_bytes: a.size_bytes ?? null,
         storage_key: storageKey,
-        created_by_user_id: principal.userId,
+        created_by_user_id: userId,
       });
     }
 
@@ -1097,8 +1269,8 @@ export class ProcessHierarchyService {
       position_x: n.position_x ?? 0,
       position_y: n.position_y ?? 0,
       sort_order: n.sort_order ?? 0,
-      linked_map_id: n.linked_map_id ?? null, // cross-map links still point at real maps
-      created_by_user_id: principal.userId,
+      linked_map_id: n.linked_map_id ?? null, // inner references stay shared
+      created_by_user_id: userId,
     }));
 
     const connectionRows = (tree.connections ?? [])
@@ -1139,7 +1311,7 @@ export class ProcessHierarchyService {
         include_sub_departments: a.include_sub_departments ?? true,
         role_id: a.role_id ?? null,
         user_id: a.user_id ?? null,
-        created_by_user_id: principal.userId,
+        created_by_user_id: userId,
       }));
 
     await this.prisma.$transaction(async (tx) => {
@@ -1152,5 +1324,213 @@ export class ProcessHierarchyService {
     });
 
     return map;
+  }
+
+  // Detach a reference into its own independent copy (copy-on-write). Snapshots the
+  // referenced map into a new child map here, then repoints this node at the copy.
+  async detachNode(orgId: string, principal: Principal, mapId: string, nodeId: string) {
+    const node = await this.requireNode(orgId, mapId, nodeId);
+    await this.access.assertCanEditNode(orgId, principal, nodeId);
+    if (!node.linked_map_id) throw new BadRequestException('This node does not reference a map to copy');
+    await this.access.assertCanViewMap(orgId, principal, node.linked_map_id);
+    const src = await this.prisma.processMap.findFirst({
+      where: { id: node.linked_map_id, organization_id: orgId, is_deleted: false },
+      select: { name: true },
+    });
+    const tree = await this.serializeMap(orgId, node.linked_map_id);
+    const clone = await this.instantiateTree(orgId, principal.userId, tree, `${src?.name ?? node.name} (copy)`, { parentMapId: mapId });
+    await this.prisma.processNode.update({ where: { id: nodeId }, data: { linked_map_id: clone.id } });
+    return this.getNode(orgId, principal, mapId, nodeId);
+  }
+
+  // Serialize the subtree *under* a node (its children become the new map's top level),
+  // re-rooting so connections at the node's own level land at the top of the new map.
+  private async serializeSubtree(orgId: string, mapId: string, rootId: string) {
+    const [allNodes, allConns] = await Promise.all([
+      this.prisma.processNode.findMany({ where: { organization_id: orgId, map_id: mapId, is_deleted: false } }),
+      this.prisma.processConnection.findMany({ where: { organization_id: orgId, map_id: mapId } }),
+    ]);
+    const childrenOf = new Map<string | null, typeof allNodes>();
+    for (const n of allNodes) {
+      const list = childrenOf.get(n.parent_node_id) ?? [];
+      list.push(n);
+      childrenOf.set(n.parent_node_id, list);
+    }
+    const desc: typeof allNodes = [];
+    const collect = (pid: string) => { for (const c of childrenOf.get(pid) ?? []) { desc.push(c); collect(c.id); } };
+    collect(rootId);
+    const descIds = new Set(desc.map((n) => n.id));
+
+    // Direct children of the root move to the top level; the connection level that lived
+    // "inside the root" (parent_node_id === root) becomes the new map's top level too.
+    const nodes = desc.map((n) => ({ ...n, parent_node_id: n.parent_node_id === rootId ? null : n.parent_node_id }));
+    const connections = allConns
+      .filter((c) => (c.parent_node_id === rootId || (c.parent_node_id && descIds.has(c.parent_node_id))) && descIds.has(c.source_node_id) && descIds.has(c.target_node_id))
+      .map((c) => ({ ...c, parent_node_id: c.parent_node_id === rootId ? null : c.parent_node_id }));
+
+    const nodeIds = [...descIds];
+    const [links, checklist, access] = await Promise.all([
+      this.prisma.processNodeArtifact.findMany({ where: { node_id: { in: nodeIds } } }),
+      this.prisma.processChecklistItem.findMany({ where: { node_id: { in: nodeIds } } }),
+      this.prisma.processNodeAccess.findMany({ where: { node_id: { in: nodeIds } } }),
+    ]);
+    const artifactIds = [...new Set(links.map((l) => l.artifact_id))];
+    const artifacts = artifactIds.length
+      ? await this.prisma.processArtifact.findMany({ where: { id: { in: artifactIds } } })
+      : [];
+    return {
+      tree: JSON.parse(JSON.stringify({ version: 1, nodes, connections, artifacts, links, checklist, access })),
+      descIds: nodeIds,
+    };
+  }
+
+  // "Make reusable": turn a container/sub-process into a standalone map that can be
+  // referenced (dropped as a line item) in any map. Build-in-place areas are already
+  // maps — we just promote them to top-level + listed; a drill-down container's contents
+  // are extracted into a fresh standalone map, and the container becomes a reference to it.
+  async makeNodeReusable(orgId: string, principal: Principal, mapId: string, nodeId: string) {
+    const node = await this.requireNode(orgId, mapId, nodeId);
+    await this.access.assertCanEditNode(orgId, principal, nodeId);
+    if (node.kind !== ProcessNodeKind.container && node.kind !== ProcessNodeKind.subprocess) {
+      throw new BadRequestException('Only a container or sub-process can become a reusable map');
+    }
+
+    // Already a map (build-in-place child, or a shared reference) → just promote it to a
+    // top-level, listed master so it shows in the maps list and the reference picker.
+    if (node.linked_map_id) {
+      const target = await this.prisma.processMap.findFirst({
+        where: { id: node.linked_map_id, organization_id: orgId, is_deleted: false },
+        select: { id: true },
+      });
+      if (!target) throw new NotFoundException('Linked map not found');
+      await this.prisma.processMap.update({ where: { id: target.id }, data: { parent_map_id: null, is_listed: true } });
+      return this.getNode(orgId, principal, mapId, nodeId);
+    }
+
+    // Drill-down container → extract its contents into a new standalone map, then repoint
+    // the container at that map and drop its now-moved in-map children.
+    const { tree, descIds } = await this.serializeSubtree(orgId, mapId, nodeId);
+    const created = await this.instantiateTree(orgId, principal.userId, tree, node.name, { parentMapId: null });
+    await this.prisma.$transaction(async (tx) => {
+      if (descIds.length) {
+        await tx.processConnection.deleteMany({ where: { organization_id: orgId, map_id: mapId, OR: [{ source_node_id: { in: descIds } }, { target_node_id: { in: descIds } }, { parent_node_id: { in: descIds } }] } });
+        await tx.processNodeArtifact.deleteMany({ where: { node_id: { in: descIds } } });
+        await tx.processChecklistItem.deleteMany({ where: { node_id: { in: descIds } } });
+        await tx.processNodeAccess.deleteMany({ where: { node_id: { in: descIds } } });
+        await tx.processNode.updateMany({ where: { id: { in: descIds } }, data: { is_deleted: true } });
+      }
+      // The connection level that lived inside this container is gone with the children.
+      await tx.processConnection.deleteMany({ where: { organization_id: orgId, map_id: mapId, parent_node_id: nodeId } });
+      await tx.processNode.update({ where: { id: nodeId }, data: { linked_map_id: created.id } });
+    });
+    return this.getNode(orgId, principal, mapId, nodeId);
+  }
+
+  // Copy/paste: duplicate the given nodes (with their sub-trees, documents, checklist,
+  // access and internal connections) into a target map/level. Inner map references stay
+  // shared; documents are copied to the target map when pasting across maps.
+  async pasteNodes(orgId: string, principal: Principal, targetMapId: string, dto: PasteNodesDto) {
+    await this.access.assertCanEditMap(orgId, principal, targetMapId);
+    const targetParent = dto.parent_node_id ?? null;
+    if (targetParent) await this.access.assertCanEditNode(orgId, principal, targetParent);
+    await this.access.assertCanViewMap(orgId, principal, dto.source_map_id);
+
+    const srcNodes = await this.prisma.processNode.findMany({
+      where: { organization_id: orgId, map_id: dto.source_map_id, is_deleted: false },
+    });
+    const byId = new Map(srcNodes.map((n) => [n.id, n]));
+    const childrenOf = new Map<string | null, typeof srcNodes>();
+    for (const n of srcNodes) { const l = childrenOf.get(n.parent_node_id) ?? []; l.push(n); childrenOf.set(n.parent_node_id, l); }
+    const roots = dto.node_ids.filter((id) => byId.has(id));
+    if (!roots.length) throw new BadRequestException('Nothing to paste');
+    // Pasting a container inside its own copied sub-tree would recurse; roots are the
+    // selection's top level, so just collect each root's descendants once.
+    const included = new Set<string>();
+    const collect = (id: string) => { if (included.has(id)) return; included.add(id); for (const c of childrenOf.get(id) ?? []) collect(c.id); };
+    roots.forEach(collect);
+    const nodeIdsArr = [...included];
+
+    const [srcConns, links, checklist, access] = await Promise.all([
+      this.prisma.processConnection.findMany({ where: { organization_id: orgId, map_id: dto.source_map_id } }),
+      this.prisma.processNodeArtifact.findMany({ where: { node_id: { in: nodeIdsArr } } }),
+      this.prisma.processChecklistItem.findMany({ where: { node_id: { in: nodeIdsArr } } }),
+      this.prisma.processNodeAccess.findMany({ where: { node_id: { in: nodeIdsArr } } }),
+    ]);
+    const includedConns = srcConns.filter((c) => included.has(c.source_node_id) && included.has(c.target_node_id));
+
+    const newNodeId = new Map<string, string>();
+    nodeIdsArr.forEach((id) => newNodeId.set(id, randomUUID()));
+
+    // Documents: reuse the same artifacts on a same-map paste; copy them (and their R2
+    // files) into the target map when pasting across maps, so nothing is shared by chance.
+    const usedArtifactIds = [...new Set(links.map((l) => l.artifact_id))];
+    const newArtifactId = new Map<string, string>();
+    const artifactRows: any[] = [];
+    if (targetMapId !== dto.source_map_id && usedArtifactIds.length) {
+      const arts = await this.prisma.processArtifact.findMany({ where: { id: { in: usedArtifactIds } } });
+      for (const a of arts) {
+        const nid = randomUUID();
+        newArtifactId.set(a.id, nid);
+        let storageKey: string | null = a.storage_key ?? null;
+        if (a.storage_key) {
+          const destKey = `orgs/${orgId}/process-artifacts/${targetMapId}/${nid}.${extensionOf(a.file_name ?? '')}`;
+          try { await this.r2.copyObject(a.storage_key, destKey); storageKey = destKey; } catch { storageKey = a.storage_key; }
+        }
+        artifactRows.push({
+          id: nid, organization_id: orgId, map_id: targetMapId, name: a.name, description: a.description,
+          artifact_type: a.artifact_type, content_type: a.content_type, url: a.url, content_body: a.content_body,
+          allow_download: a.allow_download, file_name: a.file_name, mime_type: a.mime_type, size_bytes: a.size_bytes,
+          storage_key: storageKey, created_by_user_id: principal.userId,
+        });
+      }
+    } else {
+      usedArtifactIds.forEach((id) => newArtifactId.set(id, id));
+    }
+
+    // Keep the copied cluster's shape, dropped at the paste point (or nudged off the
+    // originals when no point is given, e.g. a same-spot duplicate).
+    const rootSet = new Set(roots);
+    const rootNodes = roots.map((id) => byId.get(id)!);
+    const minX = Math.min(...rootNodes.map((n) => n.position_x));
+    const minY = Math.min(...rootNodes.map((n) => n.position_y));
+    const baseX = dto.position_x ?? minX + 40;
+    const baseY = dto.position_y ?? minY + 40;
+
+    const nodeRows = nodeIdsArr.map((id) => {
+      const n = byId.get(id)!;
+      const isRoot = rootSet.has(id);
+      return {
+        id: newNodeId.get(id)!, organization_id: orgId, map_id: targetMapId,
+        parent_node_id: isRoot ? targetParent : newNodeId.get(n.parent_node_id!) ?? targetParent,
+        kind: n.kind, name: n.name, description: n.description, status: n.status,
+        responsible_role_id: n.responsible_role_id, responsible_user_id: n.responsible_user_id,
+        position_x: isRoot ? baseX + (n.position_x - minX) : n.position_x,
+        position_y: isRoot ? baseY + (n.position_y - minY) : n.position_y,
+        sort_order: n.sort_order, linked_map_id: n.linked_map_id, created_by_user_id: principal.userId,
+      };
+    });
+    const connRows = includedConns.map((c) => ({
+      id: randomUUID(), organization_id: orgId, map_id: targetMapId,
+      parent_node_id: c.parent_node_id && newNodeId.has(c.parent_node_id) ? newNodeId.get(c.parent_node_id)! : targetParent,
+      source_node_id: newNodeId.get(c.source_node_id)!, target_node_id: newNodeId.get(c.target_node_id)!,
+      label: c.label, condition_kind: c.condition_kind,
+    }));
+    const linkRows = links.map((l) => ({ id: randomUUID(), node_id: newNodeId.get(l.node_id)!, artifact_id: newArtifactId.get(l.artifact_id) ?? l.artifact_id, direction: l.direction }));
+    const checklistRows = checklist.map((c) => ({ id: randomUUID(), node_id: newNodeId.get(c.node_id)!, text: c.text, sort_order: c.sort_order }));
+    const accessRows = access.map((a) => ({
+      id: randomUUID(), organization_id: orgId, node_id: newNodeId.get(a.node_id)!, kind: a.kind, level: a.level,
+      department_id: a.department_id, include_sub_departments: a.include_sub_departments, role_id: a.role_id,
+      user_id: a.user_id, created_by_user_id: principal.userId,
+    }));
+
+    await this.prisma.$transaction(async (tx) => {
+      if (artifactRows.length) await tx.processArtifact.createMany({ data: artifactRows });
+      await tx.processNode.createMany({ data: nodeRows });
+      if (connRows.length) await tx.processConnection.createMany({ data: connRows });
+      if (linkRows.length) await tx.processNodeArtifact.createMany({ data: linkRows });
+      if (checklistRows.length) await tx.processChecklistItem.createMany({ data: checklistRows });
+      if (accessRows.length) await tx.processNodeAccess.createMany({ data: accessRows });
+    });
+    return { pasted_node_ids: roots.map((id) => newNodeId.get(id)!) };
   }
 }

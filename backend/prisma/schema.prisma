@@ -3785,6 +3785,14 @@ enum ProcessArtifactDirection {
   output // a document the node produces
 }
 
+// What kind of material an artifact is: an uploaded file, a pasted link, or a
+// written article. Mirrors the Learning module's content types.
+enum ProcessArtifactContentType {
+  file
+  link
+  article
+}
+
 // Mirrors ChecklistTemplateAccessRule: attach dept/role/person at a node, cascade
 // down. `exclude_user` = "attached but hidden" exception. Department attaches are
 // LIVE rules (joiners/leavers auto-reflect); add/remove of individuals stored as
@@ -3813,6 +3821,11 @@ model ProcessMap {
   organization_id    String
   name               String
   description        String?   @db.Text
+  // Composition tree: a map can live under another (an area built inside a bigger
+  // map). null = top level. Drives the searchable tree list.
+  parent_map_id      String?
+  is_pinned          Boolean   @default(false) // show at the list's top level
+  is_listed          Boolean   @default(true)  // false = local-only (not a reusable list entry)
   is_deleted         Boolean   @default(false)
   deleted_at         DateTime?
   deleted_by_user_id String?
@@ -3820,12 +3833,15 @@ model ProcessMap {
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
 
+  parent_map  ProcessMap?  @relation("MapTree", fields: [parent_map_id], references: [id], onDelete: SetNull)
+  child_maps  ProcessMap[] @relation("MapTree")
   nodes       ProcessNode[]
   connections ProcessConnection[]
   artifacts   ProcessArtifact[]
   snapshots   ProcessSnapshot[]
 
   @@index([organization_id])
+  @@index([parent_map_id])
   @@map("process_maps")
 }
 
@@ -3900,7 +3916,12 @@ model ProcessArtifact {
   name               String
   description        String?             @db.Text
   artifact_type      ProcessArtifactType @default(document)
-  // optional real file (all null = metadata-only)
+  // file (upload) | link (pasted URL) | article (written text)
+  content_type       ProcessArtifactContentType @default(file)
+  url                String?             @db.Text // when content_type = link
+  content_body       String?             @db.Text // when content_type = article
+  allow_download     Boolean             @default(true) // files: false = view-only
+  // optional real file (all null = metadata-only / link / article)
   file_name          String?
   mime_type          String?
   size_bytes         Int?
