@@ -3,11 +3,11 @@ import type { Department } from './types'
 /**
  * Department node colors for the org chart.
  *
- * Scheme: each TOP-LEVEL branch (a child of the root/Executive) gets a distinct
- * hue from the palette; descendants inherit that hue, lightened a step at each
- * level down ("full tinted card, faded by depth"). A department may carry an
- * explicit `color` override, which becomes the base hue for it AND cascades to
- * its descendants. The root itself is a neutral slate.
+ * Scheme: each TOP-LEVEL department (no parent) gets a distinct hue from the
+ * palette; descendants inherit that hue, lightened a step at each level down
+ * ("full tinted card, faded by depth"). A department may carry an explicit
+ * `color` override, which becomes the base hue for it AND cascades to its
+ * descendants.
  *
  * Palette reuses hues already used across the app (avatars, modules, scorecard)
  * so the chart feels native.
@@ -24,7 +24,6 @@ export const BRANCH_PALETTE = [
   '#CA8A04', // gold
   '#0369A1', // deep blue
 ]
-export const ROOT_COLOR = '#334155' // slate-700
 
 export interface NodeColor {
   fill: string
@@ -72,10 +71,10 @@ export function computeNodeColors(departments: Department[]): Record<string, Nod
     }
   }
 
-  // Top-level branches = children of roots; assign palette hues by name (stable).
-  const branchIds = roots.flatMap((r) => childrenOf.get(r) ?? [])
+  // Top-level departments (the roots) each get a distinct palette hue by name
+  // (stable), and cascade it faded to their descendants.
   const branchIdx = new Map<string, number>()
-  ;[...branchIds]
+  ;[...roots]
     .sort((a, b) => byId.get(a)!.name.localeCompare(byId.get(b)!.name))
     .forEach((id, i) => branchIdx.set(id, i % BRANCH_PALETTE.length))
 
@@ -84,13 +83,12 @@ export function computeNodeColors(departments: Department[]): Record<string, Nod
     const d = byId.get(id)!
     let base: { hex: string; depth: number }
     if (d.color) base = { hex: d.color, depth }
-    else if (depth === 0) base = { hex: ROOT_COLOR, depth: 0 }
     else if (branchIdx.has(id)) base = { hex: BRANCH_PALETTE[branchIdx.get(id)!], depth }
     else if (parentBase) base = parentBase
     else base = { hex: BRANCH_PALETTE[0], depth }
 
     const rel = Math.min(FADE_MAX, Math.max(0, (depth - base.depth) * FADE_STEP))
-    const fill = depth === 0 && !d.color ? ROOT_COLOR : lighten(base.hex, rel)
+    const fill = lighten(base.hex, rel)
     const text = luminance(fill) < 0.62 ? '#FFFFFF' : '#0F172A'
     out[id] = { fill, text, border: darken(fill, 0.1), base: base.hex }
 
