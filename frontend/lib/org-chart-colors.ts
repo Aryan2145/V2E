@@ -4,10 +4,11 @@ import type { Department } from './types'
  * Department node colors for the org chart.
  *
  * Scheme: each TOP-LEVEL department (no parent) gets a distinct hue from the
- * palette; descendants inherit that hue, lightened a step at each level down
- * ("full tinted card, faded by depth"). A department may carry an explicit
- * `color` override, which becomes the base hue for it AND cascades to its
- * descendants.
+ * palette at full strength (it anchors the branch); EVERY descendant beneath it
+ * shares ONE consistent light tint of that same hue — flat, not faded by depth,
+ * so a branch reads as a single colour family regardless of how deep it nests.
+ * A department may carry an explicit `color` override, which becomes a fresh
+ * full-strength base for it AND the flat tint for its own descendants.
  *
  * Palette reuses hues already used across the app (avatars, modules, scorecard)
  * so the chart feels native.
@@ -52,8 +53,9 @@ function luminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-const FADE_STEP = 0.26 // lightening applied per level below the hue's origin
-const FADE_MAX = 0.68
+// One flat, consistent tint for ALL descendants of a hue's origin (root or an
+// overridden node) — no per-level fading, so every child/grandchild matches.
+const CHILD_TINT = 0.82
 
 /** Per-department node colors, keyed by department id. */
 export function computeNodeColors(departments: Department[]): Record<string, NodeColor> {
@@ -87,8 +89,10 @@ export function computeNodeColors(departments: Department[]): Record<string, Nod
     else if (parentBase) base = parentBase
     else base = { hex: BRANCH_PALETTE[0], depth }
 
-    const rel = Math.min(FADE_MAX, Math.max(0, (depth - base.depth) * FADE_STEP))
-    const fill = lighten(base.hex, rel)
+    // Origin node (root or an overridden node) shows the full hue; everything
+    // below it shares the single flat tint — depth beyond the first doesn't
+    // lighten further.
+    const fill = depth > base.depth ? lighten(base.hex, CHILD_TINT) : base.hex
     const text = luminance(fill) < 0.62 ? '#FFFFFF' : '#0F172A'
     out[id] = { fill, text, border: darken(fill, 0.1), base: base.hex }
 
@@ -99,7 +103,7 @@ export function computeNodeColors(departments: Department[]): Record<string, Nod
   // Fallback for anything not reached.
   for (const d of departments) {
     if (!out[d.id]) {
-      const fill = lighten(d.color ?? BRANCH_PALETTE[0], 0.4)
+      const fill = lighten(d.color ?? BRANCH_PALETTE[0], CHILD_TINT)
       out[d.id] = { fill, text: '#0F172A', border: darken(fill, 0.1), base: d.color ?? BRANCH_PALETTE[0] }
     }
   }
