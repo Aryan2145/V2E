@@ -205,10 +205,6 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
-          {error && (
-            <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3 text-sm text-[#DC2626]">{error}</div>
-          )}
-
           {/* Title */}
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Title <span className="text-[#DC2626]">*</span></label>
@@ -359,16 +355,23 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
           />
         </form>
 
-        {/* Footer — no Cancel button; the header X / Escape / backdrop close the modal */}
-        <div className="shrink-0 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
-          >
-            {submitting ? 'Saving...' : 'Save Changes'}
-          </button>
+        {/* Footer — no Cancel button; the header X / Escape / backdrop close the modal.
+            Error sits here so it's always visible next to Save, not hidden above
+            the fold when the form is scrolled down. */}
+        <div className="shrink-0 px-6 py-4 border-t border-[#E2E8F0] space-y-3">
+          {error && (
+            <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3 text-sm text-[#DC2626]">{error}</div>
+          )}
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            >
+              {submitting ? 'Saving...' : 'Save Changes'}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

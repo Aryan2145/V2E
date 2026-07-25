@@ -53,6 +53,7 @@ export function buildReminderSpecs(
   resolveRelative: boolean,
   deadlineDate?: string,
 ): ReminderSpec[] {
+  const now = Date.now()
   return rows.flatMap((r) => {
     const recipients: ReminderRecipient[] = [
       'assignee',
@@ -62,14 +63,22 @@ export function buildReminderSpecs(
     if (r.kind === 'relative') {
       const spec: ReminderSpec = { kind: 'relative', offset_days: r.offsetDays, time: r.time || '09:00', recipients }
       if (resolveRelative && deadlineDate) {
+        // One-time: resolve to an absolute instant. If that instant is already
+        // in the past (e.g. "1 day before" on a same-day task) it can never
+        // fire, so drop it rather than blocking the save.
         const d = new Date(`${deadlineDate}T${r.time || '09:00'}`)
         d.setDate(d.getDate() - r.offsetDays)
+        if (d.getTime() <= now) return []
         spec.remind_at = d.toISOString()
       }
+      // Recurring keeps it relative (no remind_at) so each instance recomputes it.
       return [spec]
     }
     if (!r.date) return []
-    return [{ kind: 'absolute', remind_at: new Date(`${r.date}T${r.time || '09:00'}`).toISOString(), recipients }]
+    const at = new Date(`${r.date}T${r.time || '09:00'}`)
+    if (at.getTime() <= now) return [] // an absolute reminder in the past never fires
+    const spec: ReminderSpec = { kind: 'absolute', remind_at: at.toISOString(), recipients }
+    return [spec]
   })
 }
 
@@ -109,9 +118,19 @@ function reminderInstant(r: ReminderRow, deadlineDate?: string): Date | null {
   return r.date ? new Date(`${r.date}T${r.time || '09:00'}`) : null
 }
 
+/** True if this reminder would fire in the past (given a one-time deadline). */
+export function reminderIsPast(r: ReminderRow, deadlineDate?: string): boolean {
+  const at = reminderInstant(r, deadlineDate)
+  return !!at && at.getTime() <= Date.now()
+}
+
 /**
- * Reminders must fall between now and the deadline. One-time mode only —
- * recurring recomputes per instance. Returns an error string, or null if valid.
+ * Validate reminders for a one-time task. Only genuine INPUT mistakes block the
+ * save (an "on a date" reminder with no date, or one set after the deadline).
+ * A reminder that lands in the PAST does NOT block — it simply won't be
+ * scheduled (buildReminderSpecs drops it) and the row shows an inline warning —
+ * so, e.g., the default "1 day before" reminder never stops a same-day task.
+ * Returns an error string, or null if valid.
  */
 export function validateRemindersAgainstDeadline(
   rows: ReminderRow[],
@@ -119,12 +138,10 @@ export function validateRemindersAgainstDeadline(
   deadlineDate?: string,
 ): string | null {
   if (rows.some((r) => r.kind === 'absolute' && !r.date)) return 'Pick a date for each “on a date” reminder.'
-  const now = new Date()
   const deadlineInstant = deadlineISO ? new Date(deadlineISO) : null
   for (const r of rows) {
     const at = reminderInstant(r, deadlineDate)
     if (!at) continue
-    if (at.getTime() <= now.getTime()) return `A reminder (${reminderLabel(r)}) falls in the past. Reminders must be after now.`
     if (deadlineInstant && at.getTime() > deadlineInstant.getTime()) {
       return `A reminder (${reminderLabel(r)}) is after the deadline. Reminders must be on or before the due date.`
     }
@@ -221,6 +238,9 @@ export default function RemindersField({ reminders, onChange, mode, deadlineDate
                   d.setDate(d.getDate() - r.offsetDays)
                   hint = d.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: '2-digit' })
                 }
+                // One-time reminders that land in the past can't fire — warn but
+                // don't block; buildReminderSpecs drops them on save.
+                const past = mode === 'one_time' && reminderIsPast(r, deadlineDate)
                 return (
                   <div key={r.key} className="relative rounded-[10px] border border-[#E2E8F0] bg-[#F8FAFC] p-3 space-y-2.5">
                     {/* remove — top-right corner */}
@@ -317,6 +337,12 @@ export default function RemindersField({ reminders, onChange, mode, deadlineDate
                         </button>
                       </div>
                     </div>
+
+                    {past && (
+                      <p className="flex items-start gap-1.5 text-[11px] text-[#B45309] bg-[#FEF3C7] border border-[#FDE68A] rounded-[6px] px-2 py-1.5">
+                        This reminder falls in the past, so it won’t be sent. The task will still save.
+                      </p>
+                    )}
                   </div>
                 )
               })

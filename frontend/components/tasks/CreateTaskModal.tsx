@@ -529,12 +529,6 @@ export default function CreateTaskModal({
 
         {/* Body */}
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
-          {error && (
-            <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3 text-sm text-[#DC2626]">
-              {error}
-            </div>
-          )}
-
           {/* Title */}
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">
@@ -869,16 +863,25 @@ export default function CreateTaskModal({
           />
         </form>
 
-        {/* Footer — no Cancel button; the header X closes the modal (see DESIGN_RULES) */}
-        <div className="shrink-0 flex flex-col-reverse sm:flex-row sm:justify-end gap-2 px-6 py-4 border-t border-[#E2E8F0]">
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={submitting || (mode === 'one_time' && holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day && !holidayOverride)}
-            className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
-          >
-            {submitting ? 'Creating...' : mode === 'recurring' ? 'Create Recurring Task' : 'Create Task'}
-          </button>
+        {/* Footer — no Cancel button; the header X closes the modal (see DESIGN_RULES).
+            The error lives here (not at the top of the scrollable body) so it's
+            always visible right next to Save — never hidden above the fold. */}
+        <div className="shrink-0 px-6 py-4 border-t border-[#E2E8F0] space-y-3">
+          {error && (
+            <div className="bg-[#FEE2E2] border border-[#FECACA] rounded-[8px] px-4 py-3 text-sm text-[#DC2626]">
+              {error}
+            </div>
+          )}
+          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting || (mode === 'one_time' && holidayCheck?.action === 'skip_create' && !holidayCheck.is_working_day && !holidayOverride)}
+              className="w-full sm:w-auto px-5 py-[10px] text-sm font-semibold text-white bg-[#2563EB] rounded-[8px] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
+            >
+              {submitting ? 'Creating...' : mode === 'recurring' ? 'Create Recurring Task' : 'Create Task'}
+            </button>
+          </div>
         </div>
       </div>
     </div>,
