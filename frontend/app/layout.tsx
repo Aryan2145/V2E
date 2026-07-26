@@ -6,6 +6,7 @@ import QueryProvider from '@/lib/providers/QueryProvider'
 import { ToastProvider } from '@/components/ui/Toast'
 import { NotificationsProvider } from '@/lib/notifications/NotificationsProvider'
 import NoScrollNumberInputs from '@/components/ui/NoScrollNumberInputs'
+import RouteSpinner from '@/components/ui/RouteSpinner'
 import SplashGate from '@/components/ui/SplashGate'
 import NotificationsOptInPrompt from '@/components/notifications/NotificationsOptInPrompt'
 
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <QueryProvider>
           <AuthProvider>
             <NoScrollNumberInputs />
+            <RouteSpinner />
             <ToastProvider>
               <NotificationsProvider>
                 <SplashGate>{children}</SplashGate>
