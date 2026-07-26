@@ -178,7 +178,7 @@ export default function ProcessMapExplorerPage() {
       // Wire it straight into the flow only when continuing from a selected node (skip if
       // that node is an End marker or the new node is a Start marker). A node dropped into
       // empty space stays standalone — drag/connect it yourself.
-      if (anchor && anchor.kind !== 'end_event' && kind !== 'start_event') {
+      if (anchor && anchor.kind !== 'end_event' && kind !== 'start_event' && kind !== 'note') {
         const condition: ProcessConditionKind = anchor.kind === 'decision' ? 'yes' : 'none'
         await processHierarchyApi.createConnection(orgId, mapId, {
           parent_node_id: parentId, source_node_id: anchor.id, target_node_id: created.id,
@@ -337,7 +337,7 @@ export default function ProcessMapExplorerPage() {
       {showAdd && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowAdd(false)} />
-          <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-56 bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 animate-[popIn_.12s_ease-out]">
+          <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-56 max-h-[248px] overflow-y-auto bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 animate-[popIn_.12s_ease-out]">
             {ADD_KINDS.map((k) => (
               <button key={k} onClick={() => addNode(k)}
                 className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
@@ -355,6 +355,14 @@ export default function ProcessMapExplorerPage() {
               <span className="min-w-0">
                 <span className="block text-[13px] font-medium text-[#0F172A]">Reference a map</span>
                 <span className="block text-[11px] text-[#64748B]">Drop an instance of an existing map</span>
+              </span>
+            </button>
+            <button onClick={() => addNode('note')}
+              className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+              <span className="text-[#CA8A04] mt-0.5">{KIND_META.note.icon}</span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium text-[#0F172A]">Note</span>
+                <span className="block text-[11px] text-[#64748B]">A free-form sticky annotation</span>
               </span>
             </button>
             {clipboard && (

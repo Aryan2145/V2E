@@ -20,6 +20,7 @@ function sizeForKind(kind: string): { w: number; h: number } {
   if (kind === 'container') return { w: 220, h: 88 }
   if (kind === 'decision') return { w: 96, h: 96 }
   if (kind === 'start_event' || kind === 'end_event') return { w: 60, h: 60 }
+  if (kind === 'note') return { w: 190, h: 96 }
   return { w: 170, h: 64 } // task, subprocess (collapsed)
 }
 
@@ -115,7 +116,7 @@ function subDescOf(n: ProcessNode, mapId: string): SubDesc | null {
 // A map's single way in / way out (for phase connections). Prefer BPMN Start/End
 // markers; else the node with no incoming / no outgoing; else first / last.
 function entryExitOf(flow: FlowLevel): { entry: string | null; exit: string | null } {
-  const ns = flow.nodes
+  const ns = flow.nodes.filter((n) => n.kind !== 'note') // notes are annotations, not flow
   if (!ns.length) return { entry: null, exit: null }
   const hasIn = new Set(flow.connections.map((c) => c.target_node_id))
   const hasOut = new Set(flow.connections.map((c) => c.source_node_id))
@@ -171,7 +172,9 @@ function buildContent(
   const PUSH_GAP = 24
   const displayY: Record<string, number> = {}
   if (top) {
-    const ordered = [...flow.nodes].sort((a, b) => a.position_y - b.position_y || a.position_x - b.position_x)
+    // Notes float freely — they never push steps or get pushed (they keep their position
+    // via the posOf fallback below).
+    const ordered = [...flow.nodes].filter((n) => n.kind !== 'note').sort((a, b) => a.position_y - b.position_y || a.position_x - b.position_x)
     for (const n of ordered) {
       const nw = sizeOf(n.id).w
       let y = n.position_y
@@ -233,6 +236,7 @@ function buildContent(
         data: {
           name: n.name, kind: n.kind, childCount: n.child_count ?? 0,
           docCount: (n.inputs?.length ?? 0) + (n.outputs?.length ?? 0),
+          checklist: n.checklist ?? [],
           drillable: DRILLABLE.has(n.kind),
           selected: top && n.id === opts.selectedNodeId,
           diff: top ? opts.diffStatus?.[n.id] : undefined,

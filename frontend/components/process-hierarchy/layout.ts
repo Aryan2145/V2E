@@ -9,9 +9,11 @@ const X0 = 60
 const Y0 = 60
 
 export function autoLayout(
-  nodes: ProcessNode[],
+  allNodes: ProcessNode[],
   connections: ProcessConnection[],
 ): Record<string, { x: number; y: number }> {
+  // Notes are free-floating annotations — Auto-arrange leaves them exactly where they are.
+  const nodes = allNodes.filter((n) => n.kind !== 'note')
   const ids = nodes.map((n) => n.id)
   const idset = new Set(ids)
   const outgoing = new Map<string, string[]>()

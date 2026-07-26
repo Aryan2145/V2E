@@ -31,6 +31,7 @@ import { useToast } from '@/components/ui/Toast'
 const DRILLABLE = new Set(['container', 'subprocess'])
 const CONTAINER_KINDS = new Set(['container', 'subprocess'])
 const NAME_MAX = 50 // node names are capped so they always fit on the canvas without ellipsis
+const NOTE_MAX = 500 // a sticky note holds more than a name, but still bounded
 
 const inputCls =
   'w-full px-3 py-2 text-[14px] rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A] placeholder:text-[#94A3B8]'
@@ -113,6 +114,7 @@ export default function NodeDrawer({
   }, [requestClose, confirmDiscard, confirmDel])
 
   const canEdit = !!node?.can_edit
+  const isNote = node?.kind === 'note' // a sticky annotation — only its text is editable
   const drillable = node ? DRILLABLE.has(node.kind) : false
 
   // Descendants of this node (from the map tree) — used for the delete blast radius
@@ -313,18 +315,31 @@ export default function NodeDrawer({
         ) : (
           <>
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
-            {/* Name — capped so it always fits on the canvas (no ellipsis). */}
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="text-xs font-medium text-[#374151]">Name</label>
-                {canEdit && <span className="text-[10px] text-[#94A3B8] tabular-nums">{name.length}/{NAME_MAX}</span>}
+            {/* Name — capped so it always fits on the canvas (no ellipsis). A note has no
+                name, just body text, so it shows a roomy textarea instead. */}
+            {isNote ? (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-[#374151]">Note</label>
+                  {canEdit && <span className="text-[10px] text-[#94A3B8] tabular-nums">{name.length}/{NOTE_MAX}</span>}
+                </div>
+                <textarea className={`${inputCls} resize-none`} rows={6} value={name} disabled={!canEdit} maxLength={NOTE_MAX}
+                  placeholder={canEdit ? 'Write your note…' : '—'}
+                  onChange={(e) => { setName(e.target.value); touch() }} />
               </div>
-              <input className={inputCls} value={name} disabled={!canEdit} maxLength={NAME_MAX}
-                onChange={(e) => { setName(e.target.value); touch() }} />
-            </div>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-[#374151]">Name</label>
+                  {canEdit && <span className="text-[10px] text-[#94A3B8] tabular-nums">{name.length}/{NAME_MAX}</span>}
+                </div>
+                <input className={inputCls} value={name} disabled={!canEdit} maxLength={NAME_MAX}
+                  onChange={(e) => { setName(e.target.value); touch() }} />
+              </div>
+            )}
 
             {/* Change type — safe conversions only (backend blocks the unsafe ones). */}
-            {canEdit && !isEvent(node.kind) && (
+            {canEdit && !isEvent(node.kind) && !isNote && (
               <div>
                 <label className="block text-xs font-medium text-[#374151] mb-1">Type</label>
                 <StyledSelect value={node.kind} onChange={changeKind}
@@ -341,7 +356,7 @@ export default function NodeDrawer({
             )}
 
             {/* Description — a Start / End marker is punctuation, so it stays just a name. */}
-            {!isEvent(node.kind) && (
+            {!isEvent(node.kind) && !isNote && (
               <div>
                 <label className="block text-xs font-medium text-[#374151] mb-1">Description</label>
                 <textarea className={`${inputCls} resize-none`} rows={3} value={description} disabled={!canEdit}
@@ -359,7 +374,7 @@ export default function NodeDrawer({
             )}
 
             {/* Responsible */}
-            {!isEvent(node.kind) && (
+            {!isEvent(node.kind) && !isNote && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-[#374151] mb-1"><UserCircle2 size={12} className="inline mr-1" />Person</label>
@@ -387,7 +402,7 @@ export default function NodeDrawer({
             )}
 
             {/* Artifacts (inputs/outputs) */}
-            {!isEvent(node.kind) && (
+            {!isEvent(node.kind) && !isNote && (
               <ArtifactsSection
                 orgId={orgId} mapId={mapId} nodeId={nodeId} node={node} artifacts={artifacts}
                 canEdit={canEdit}

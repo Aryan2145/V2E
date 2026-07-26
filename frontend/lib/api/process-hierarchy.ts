@@ -8,7 +8,7 @@ function unwrap<T>(res: { data: { data: T } | T }): T {
 }
 
 // ─── Types ───────────────────────────────────────────────────────────────────
-export type ProcessNodeKind = 'container' | 'task' | 'decision' | 'subprocess' | 'start_event' | 'end_event'
+export type ProcessNodeKind = 'container' | 'task' | 'decision' | 'subprocess' | 'start_event' | 'end_event' | 'note'
 export type ProcessNodeStatus = 'draft' | 'in_review' | 'final'
 export type ProcessConditionKind = 'none' | 'yes' | 'no'
 export type ProcessArtifactType = 'form' | 'report' | 'document' | 'data' | 'other'
@@ -62,6 +62,7 @@ export interface ProcessNode {
   linked_map_name?: string | null
   inputs?: ArtifactRef[] // light refs for edge chips (from the flow endpoint)
   outputs?: ArtifactRef[]
+  checklist?: { id: string; text: string }[] // task checklist, for on-canvas expand
 }
 
 export interface ProcessConnection {

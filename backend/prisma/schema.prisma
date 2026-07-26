@@ -3758,6 +3758,7 @@ enum ProcessNodeKind {
   subprocess   // a step that opens into its own deeper flow (the recursion)
   start_event  // BPMN start marker (no detail panel)
   end_event    // BPMN end marker (no detail panel)
+  note         // free-form sticky annotation; not part of the flow, never counted
 }
 
 enum ProcessNodeStatus {

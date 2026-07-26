@@ -1,8 +1,8 @@
 'use client'
 
-import React from 'react'
+import React, { useState } from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote } from 'lucide-react'
+import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote, ListChecks, Square } from 'lucide-react'
 import type { ProcessNodeKind, DiffChangeKind, ProcessArtifactContentType } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 
@@ -20,6 +20,7 @@ export interface ProcessNodeData {
   onEdit?: () => void // open the side panel to edit this node's details (pencil)
   canExpand?: boolean // references a map → can be unfolded in place
   onToggleExpand?: () => void // expand/collapse this area inline
+  checklist?: { id: string; text: string }[] // task checklist — shown/expanded on the box
 }
 
 const DIFF_COLOR: Partial<Record<DiffChangeKind, string>> = {
@@ -59,6 +60,8 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
   const isContainer = data.kind === 'container'
   const accent = data.kind === 'container' || data.kind === 'subprocess' ? '#3B82F6' : '#CBD5E1'
   const canOpen = data.drillable || !!data.linkedMapName
+  const checks = data.checklist ?? []
+  const [showChecks, setShowChecks] = useState(false)
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -98,6 +101,27 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
               <span className="ml-auto inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#2563EB]">
                 {data.childCount ? `${data.childCount} inside` : 'Open'} <ChevronRight size={11} />
               </span>
+            )}
+          </div>
+        )}
+        {/* Checklist — a line under the box; the chevron loads the items onto the canvas. */}
+        {checks.length > 0 && (
+          <div className="mt-1 border-t border-[#F1F5F9] pt-1">
+            <button type="button" onClick={(e) => { e.stopPropagation(); setShowChecks((v) => !v) }}
+              className="nodrag inline-flex items-center gap-1 text-[10px] font-semibold text-[#475569] hover:text-[#2563EB]"
+              aria-expanded={showChecks} title={showChecks ? 'Hide checklist' : 'Show checklist'}>
+              <ChevronRight size={11} className={`transition-transform ${showChecks ? 'rotate-90' : ''}`} />
+              <ListChecks size={11} /> {checks.length} checklist item{checks.length !== 1 ? 's' : ''}
+            </button>
+            {showChecks && (
+              <ul className="mt-1 space-y-0.5">
+                {checks.map((c) => (
+                  <li key={c.id} className="flex items-start gap-1 text-[10px] leading-snug text-[#334155]">
+                    <Square size={9} className="shrink-0 mt-0.5 text-[#94A3B8]" />
+                    <span className="break-words">{c.text}</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         )}
@@ -175,9 +199,30 @@ function BandNode({ data }: NodeProps<ProcessNodeData>) {
   )
 }
 
+// ─── Note: a free-form sticky annotation. Not part of the flow — no handles, no
+// connections; click to edit its text in the side panel. ─────────────────────
+function NoteNode({ data }: NodeProps<ProcessNodeData>) {
+  return (
+    <div
+      className={`relative rounded-[6px] px-3 py-2.5 shadow-sm ${data.selected ? 'ring-2 ring-[#2563EB]' : ''}`}
+      style={{ width: 190, minHeight: 96, background: '#FEF9C3', border: '1px solid #FDE68A' }}
+    >
+      <div className="flex items-center gap-1 mb-1 text-[#B45309]">
+        <StickyNote size={12} className="shrink-0" />
+        <span className="text-[10px] font-semibold uppercase tracking-wide">Note</span>
+        {data.onEdit && <Pencil size={11} className="ml-auto text-[#CA8A04]" />}
+      </div>
+      <p className="text-[12px] leading-snug text-[#713F12] whitespace-pre-wrap break-words">
+        {data.name || 'Empty note — click to write'}
+      </p>
+    </div>
+  )
+}
+
 function ProcessNodeRenderer(props: NodeProps<ProcessNodeData>) {
   if (props.data.kind === 'decision') return <DecisionNode {...props} />
   if (props.data.kind === 'start_event' || props.data.kind === 'end_event') return <EventNode {...props} />
+  if (props.data.kind === 'note') return <NoteNode {...props} />
   return <StepNode {...props} />
 }
 

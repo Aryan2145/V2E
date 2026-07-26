@@ -2,7 +2,7 @@
 // Deliberately free of any `reactflow` import so pages and drawers can use it
 // without dragging the whole canvas library into their server/SSR bundle.
 import React from 'react'
-import { Folder, Square, GitBranch, Layers, Play, Flag } from 'lucide-react'
+import { Folder, Square, GitBranch, Layers, Play, Flag, StickyNote } from 'lucide-react'
 import type { ProcessNodeKind } from '@/lib/api/process-hierarchy'
 
 export const KIND_META: Record<ProcessNodeKind, { label: string; icon: React.ReactNode; hint: string }> = {
@@ -12,4 +12,5 @@ export const KIND_META: Record<ProcessNodeKind, { label: string; icon: React.Rea
   subprocess: { label: 'Sub-process', icon: <Layers size={14} />, hint: 'A step that opens a deeper flow' },
   start_event: { label: 'Start', icon: <Play size={14} />, hint: 'Where the flow begins' },
   end_event: { label: 'End', icon: <Flag size={14} />, hint: 'Where the flow ends' },
+  note: { label: 'Note', icon: <StickyNote size={14} />, hint: 'A free-form sticky annotation (not part of the flow)' },
 }

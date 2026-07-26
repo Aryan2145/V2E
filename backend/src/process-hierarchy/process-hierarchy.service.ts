@@ -48,7 +48,8 @@ export class ProcessHierarchyService {
         created_by_user_id: true,
         created_at: true,
         updated_at: true,
-        _count: { select: { nodes: true } },
+        // Sticky notes aren't steps, so they don't count toward a map's node count.
+        _count: { select: { nodes: { where: { kind: { not: ProcessNodeKind.note } } } } },
       },
     });
     const visible = await this.access.visibleMapIds(orgId, principal, maps);
@@ -211,7 +212,7 @@ export class ProcessHierarchyService {
     // Child counts so the canvas knows which nodes are drillable.
     const childCounts = await this.prisma.processNode.groupBy({
       by: ['parent_node_id'],
-      where: { organization_id: orgId, map_id: mapId, is_deleted: false, parent_node_id: { in: nodeIds } },
+      where: { organization_id: orgId, map_id: mapId, is_deleted: false, kind: { not: ProcessNodeKind.note }, parent_node_id: { in: nodeIds } },
       _count: { _all: true },
     });
     const childCountBy = new Map(childCounts.map((c) => [c.parent_node_id, c._count._all]));
@@ -235,6 +236,21 @@ export class ProcessHierarchyService {
       linksByNode.set(l.node_id, entry);
     }
 
+    // Checklist items per node, so a task can show/expand its checklist on the canvas.
+    const checklistItems = nodeIds.length
+      ? await this.prisma.processChecklistItem.findMany({
+          where: { node_id: { in: nodeIds } },
+          select: { id: true, node_id: true, text: true },
+          orderBy: { sort_order: 'asc' },
+        })
+      : [];
+    const checklistByNode = new Map<string, { id: string; text: string }[]>();
+    for (const c of checklistItems) {
+      const list = checklistByNode.get(c.node_id) ?? [];
+      list.push({ id: c.id, text: c.text });
+      checklistByNode.set(c.node_id, list);
+    }
+
     // Names of cross-linked maps referenced at this level (for the link badge).
     const linkedIds = Array.from(new Set(visibleNodes.map((n) => n.linked_map_id).filter((x): x is string => !!x)));
     const linkedMaps = linkedIds.length
@@ -256,6 +272,7 @@ export class ProcessHierarchyService {
         linked_map_name: n.linked_map_id ? linkedNameById.get(n.linked_map_id) ?? null : null,
         inputs: linksByNode.get(n.id)?.input ?? [],
         outputs: linksByNode.get(n.id)?.output ?? [],
+        checklist: checklistByNode.get(n.id) ?? [],
       })),
       connections,
     };
@@ -434,7 +451,7 @@ export class ProcessHierarchyService {
         include: { artifact: true },
       }),
       this.prisma.processNodeAccess.findMany({ where: { organization_id: orgId, node_id: nodeId } }),
-      this.prisma.processNode.count({ where: { organization_id: orgId, map_id: mapId, parent_node_id: nodeId, is_deleted: false } }),
+      this.prisma.processNode.count({ where: { organization_id: orgId, map_id: mapId, parent_node_id: nodeId, is_deleted: false, kind: { not: ProcessNodeKind.note } } }),
     ]);
 
     const [responsibleUser, responsibleRole] = await Promise.all([
