@@ -12,11 +12,12 @@ const COLLAPSE_KEY = 'governance-sidebar-collapsed'
 export default function GovernanceSidebar() {
   const pathname = usePathname()
   const { entitlements } = useEntitlements()
-  // Show every item until entitlements load (avoids a flash of missing links),
-  // then hide any line item the org isn't entitled to. Mirrors the Work sidebar.
-  const navItems = GOVERNANCE_NAV.filter(
-    (item) => !entitlements || entitlements[item.entitlement] !== 'off',
-  )
+  // Fail closed: render no line items until the org's entitlement ceiling loads,
+  // then show only the ones it's entitled to. Prevents a first-login / first-
+  // switch flash of items the org didn't buy. Mirrors the Work sidebar.
+  const navItems = entitlements
+    ? GOVERNANCE_NAV.filter((item) => entitlements[item.entitlement] !== 'off')
+    : []
   const [collapsed, setCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false
     return window.localStorage.getItem(COLLAPSE_KEY) === '1'

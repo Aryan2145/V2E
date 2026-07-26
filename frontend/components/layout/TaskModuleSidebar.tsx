@@ -212,6 +212,9 @@ export default function TaskModuleSidebar() {
       <nav className="sidebar-scroll flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
         {NAV_GROUPS.map((group, gi) => {
           const entitlementState = entitlements?.[group.module]
+          // Fail closed: hide an entitlement-gated group until its ceiling loads,
+          // rather than flashing a module the org may not have bought.
+          if (group.module && !entitlements) return null
           if (entitlementState === 'off') return null
           // Delegation section is visible only to people who can delegate (its
           // recipient view is currently hidden — see canDelegate above).

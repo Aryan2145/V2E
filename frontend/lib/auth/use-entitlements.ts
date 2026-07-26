@@ -26,7 +26,11 @@ export function useEntitlements() {
       setLoading(false)
       return
     }
+    // Switching to an org we haven't loaded yet — drop any previous org's map so
+    // the nav fails CLOSED (renders nothing gated) until this org's ceiling
+    // arrives, instead of briefly showing the prior org's modules.
     let cancelled = false
+    setMap(null)
     setLoading(true)
     const req =
       inflight.get(orgId) ??

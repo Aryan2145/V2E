@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { LogOut, ChevronDown, Building2, Check, Menu, X, Settings } from 'lucide-react'
+import { LogOut, ChevronDown, Building2, Check, Menu, X, Settings, UserCircle } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { useEntitlements } from '@/lib/auth/use-entitlements'
 import { GOVERNANCE_NAV } from '@/lib/governance-nav'
@@ -75,7 +75,10 @@ export default function TopNav() {
     }
   }, [user?.organizationId])
 
-  // Until entitlements load, show everything (avoids a flash of missing tabs).
+  // While entitlements are unknown the nav fails CLOSED (see the filter below):
+  // gated tabs stay hidden until the org's ceiling loads, so a restricted org
+  // never flashes modules it didn't buy. Cached/returning users have the map
+  // warm on first render, so they see no flash.
   const workModules = ['tasks', 'projects', 'workflows', 'tickets', 'delegation'] as const
   const firstEnabledWorkModule = workModules.find((module) => entitlements?.[module] !== 'off')
   const workHref: Record<(typeof workModules)[number], string> = {
@@ -92,7 +95,9 @@ export default function TopNav() {
   )
   const visibleNav = NAV_ITEMS
     .filter((item) => {
-      if (!item.module || !entitlements) return true
+      if (!item.module) return true
+      // Fail closed: hide gated tabs until we actually know the org's ceiling.
+      if (!entitlements) return false
       if (item.module === 'work') return !!firstEnabledWorkModule
       if (item.module === 'governance') return !!firstEnabledGovernance
       return entitlements[item.module] !== 'off'
@@ -250,7 +255,7 @@ export default function TopNav() {
                     Dismiss
                   </button>
                   <Link
-                    href="/setup/step-1-identity"
+                    href="/settings/organization/company"
                     onClick={handleDismiss}
                     className="text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] px-3.5 py-1.5 rounded-[6px] transition-colors"
                   >
@@ -306,6 +311,20 @@ export default function TopNav() {
                 <p className="text-sm font-semibold text-[#0F172A] truncate">{user.name}</p>
                 <p className="text-xs text-[#64748B] truncate">{user.email}</p>
               </div>
+
+              {/* My Profile — universal, available to every user */}
+              {!user.isSuperAdmin && (
+                <div className="p-2 border-b border-[#F1F5F9]">
+                  <Link
+                    href="/dashboard/profile"
+                    onClick={() => setOpen(false)}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 rounded-[6px] text-sm font-medium text-[#1E293B] hover:bg-[#F8FAFC] transition-colors"
+                  >
+                    <UserCircle size={15} className="text-[#64748B]" />
+                    My Profile
+                  </Link>
+                </div>
+              )}
 
               {/* Org section — hidden for super admin */}
               {!user.isSuperAdmin && user.organizationId && (
