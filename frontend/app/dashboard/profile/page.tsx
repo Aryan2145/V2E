@@ -210,7 +210,7 @@ export default function MyProfilePage() {
   const isActive = profile ? profile.status === 'active' : true
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       {/* Profile header — mirrors the employee-detail page */}
       <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5">
