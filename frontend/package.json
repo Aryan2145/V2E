@@ -3,7 +3,11 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "copy-pdfjs": "node scripts/copy-pdfjs.mjs",
+    "postinstall": "node scripts/copy-pdfjs.mjs",
+    "predev": "node scripts/copy-pdfjs.mjs",
     "dev": "cross-env NODE_OPTIONS=--max-old-space-size=8192 next dev",
+    "prebuild": "node scripts/copy-pdfjs.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"

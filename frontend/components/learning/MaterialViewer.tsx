@@ -156,7 +156,14 @@ function PdfCanvas({ url, loader, fullscreen }: { url: string | null; loader?: (
             return { promise, resolve, reject }
           }
         }
-        const pdfjs: any = await import('pdfjs-dist')
+        // Load pdf.js from /public at runtime, fully hidden from static bundling.
+        // A plain `import('pdfjs-dist')` pulls build/pdf.mjs into the module graph,
+        // whose fake-worker fallback `import(this.workerSrc)` neither webpack (via the
+        // magic comment) nor Turbopack (which ignores it) can resolve — breaking the
+        // build. Building the dynamic import through Function() keeps the specifier
+        // invisible to BOTH bundlers; the browser resolves '/pdf.min.mjs' same-origin.
+        const loadPdfjs = new Function("return import('/pdf.min.mjs')") as () => Promise<any>
+        const pdfjs: any = await loadPdfjs()
         // Served same-origin from /public — no bundler/CDN worker resolution to fail.
         pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
 
