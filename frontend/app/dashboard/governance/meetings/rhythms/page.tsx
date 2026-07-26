@@ -111,7 +111,7 @@ export default function RhythmsPage() {
           {rhythms.map((r) => (
             <div key={r.id} className="bg-white border border-[#E2E8F0] rounded-[12px] p-5 flex flex-col">
               <div className="flex items-start justify-between gap-2">
-                <h3 className="text-[16px] font-semibold text-[#0F172A]">{r.title}</h3>
+                <Link href={`/dashboard/governance/meetings/rhythms/${r.id}`} className="text-[16px] font-semibold text-[#0F172A] hover:text-[#2563EB] hover:underline">{r.title}</Link>
                 <span className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border shrink-0"
                   style={r.is_active ? { backgroundColor: '#DCFCE7', color: '#16A34A', borderColor: '#BBF7D0' } : { backgroundColor: '#F1F5F9', color: '#475569', borderColor: '#E2E8F0' }}>
                   {r.is_active ? 'Active' : 'Paused'}
@@ -123,7 +123,7 @@ export default function RhythmsPage() {
                 <span className="inline-flex items-center gap-1.5"><Users size={14} /> {(r.attendee_user_ids ?? []).length} attendee(s) · {r.occurrences ?? 0} held</span>
               </div>
               <div className="flex items-center gap-2 mt-4 pt-3 border-t border-[#E2E8F0]">
-                <Link href={`/dashboard/governance/meetings?rhythm_id=${r.id}`} className="text-sm font-medium text-[#2563EB] hover:underline">View meetings</Link>
+                <Link href={`/dashboard/governance/meetings/rhythms/${r.id}`} className="text-sm font-medium text-[#2563EB] hover:underline">View details &amp; history</Link>
                 {r.can_manage && (
                   <div className="ml-auto flex items-center gap-1">
                     <button onClick={() => setEditing(r)} title="Edit" className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]"><Pencil size={16} /></button>

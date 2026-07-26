@@ -179,6 +179,36 @@ export async function setModuleScope(
   return data.data
 }
 
+// ─── Eligible-subject pickers ───────────────────────────────────────────────────
+// One shared endpoint every "who can be acted upon" picker consumes. Returns ALL
+// candidates annotated with `eligible` + `reason`, so the picker can grey-out
+// ineligible people (with the reason) instead of letting the user pick someone and
+// then hit a blocking error on submit.
+
+export interface EligibleSubjectItem {
+  userId: string
+  name: string
+  email?: string
+  department?: string | null
+  eligible: boolean
+  reason?: string
+}
+
+export async function listEligibleSubjects(
+  orgId: string,
+  subjectKey: string,
+  opts?: { candidateIds?: string[]; search?: string },
+): Promise<EligibleSubjectItem[]> {
+  const params = new URLSearchParams()
+  if (opts?.search) params.set('search', opts.search)
+  if (opts?.candidateIds?.length) params.set('candidateIds', opts.candidateIds.join(','))
+  const qs = params.toString()
+  const { data } = await apiClient.get<ApiResponse<{ items: EligibleSubjectItem[] }>>(
+    `${base(orgId)}/eligible-subjects/${subjectKey}${qs ? `?${qs}` : ''}`,
+  )
+  return data.data.items
+}
+
 export async function getSubjectPolicies(orgId: string): Promise<{ policies: SubjectPolicy[] }> {
   const { data } = await apiClient.get<ApiResponse<{ policies: SubjectPolicy[] }>>(`${base(orgId)}/subject-policies`)
   return data.data

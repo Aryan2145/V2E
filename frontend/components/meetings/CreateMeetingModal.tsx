@@ -8,6 +8,8 @@ import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi, type CreateMeetingInput, type CreateRhythmInput, type RhythmScheduleInput } from '@/lib/api/meetings'
+import { listEligibleSubjects } from '@/lib/api/permissions'
+import { useAuth } from '@/lib/auth/context'
 import { goalsApi } from '@/lib/api/goals'
 import type { BusyView, Meeting, MeetingLinkType, MeetingType } from '@/lib/types/meetings'
 import StyledSelect from '@/components/ui/StyledSelect'
@@ -56,6 +58,9 @@ function timeToMin(time: string): number {
 
 export default function CreateMeetingModal({ isOpen, onClose, orgId, people, initialStart, onCreated }: Props) {
   const { addToast } = useToast()
+  const { user } = useAuth()
+  const hostId = user?.id
+  const [ineligibleReasons, setIneligibleReasons] = useState<Record<string, string>>({})
   const [title, setTitle] = useState('')
   const [type, setType] = useState<MeetingType>('online') // 'online' | 'offline' (In person)
   const [onlineLink, setOnlineLink] = useState('')
@@ -105,6 +110,22 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, ini
     }
     setActualDate(''); setActualStart('10:00'); setActualEnd('11:00')
   }, [isOpen, initialStart])
+
+  // Who can't be invited to a meeting (org policy / per-person revoke). Greys them
+  // out in the picker up-front instead of failing on submit.
+  useEffect(() => {
+    if (!isOpen || !orgId) return
+    let active = true
+    listEligibleSubjects(orgId, 'meetings.subject.invitable')
+      .then((items) => {
+        if (!active) return
+        const map: Record<string, string> = {}
+        for (const it of items) if (!it.eligible) map[it.userId] = it.reason ?? 'Not eligible to be invited'
+        setIneligibleReasons(map)
+      })
+      .catch(() => { if (active) setIneligibleReasons({}) })
+    return () => { active = false }
+  }, [isOpen, orgId])
 
   useEffect(() => {
     if (linkType === 'goal' && goals.length === 0) {
@@ -247,8 +268,8 @@ export default function CreateMeetingModal({ isOpen, onClose, orgId, people, ini
         {/* Attendees */}
         <div>
           <label className={labelClass}>Attendees</label>
-          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} optional={optional} onToggleOptional={toggleOptional} placeholder="Add attendees" />
-          <p className="text-xs text-[#64748B] mt-1.5">Everyone added is attending. They can mark “can’t make it” with a reason. Toggle who’s optional.</p>
+          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} optional={optional} onToggleOptional={toggleOptional} placeholder="Add attendees" hostId={hostId} hostLabel="You" ineligibleReasons={ineligibleReasons} />
+          <p className="text-xs text-[#64748B] mt-1.5">You’re the host — always in the meeting. Everyone you add is attending; they can mark “can’t make it” with a reason. Toggle who’s optional.</p>
           {callMode === 'fixed' && recurMode === 'one_time' && attendees.length > 0 && (
             <button
               type="button"

@@ -199,10 +199,10 @@ export class MeetingRhythmsService {
       orderBy: { created_at: 'desc' },
     });
     const now = await this.clock.now(orgId);
-    return this.enrich(orgId, rhythms, now);
+    return this.enrich(orgId, rhythms, now, actor);
   }
 
-  private async enrich(orgId: string, rhythms: any[], now: Date) {
+  private async enrich(orgId: string, rhythms: any[], now: Date, actor?: Actor) {
     if (rhythms.length === 0) return [];
     const creatorIds = [...new Set(rhythms.map((r) => r.created_by_user_id))];
     const users = await this.prisma.user.findMany({ where: { id: { in: creatorIds } }, select: { id: true, name: true } });
@@ -212,6 +212,7 @@ export class MeetingRhythmsService {
       created_by_name: nameOf.get(r.created_by_user_id) ?? 'Unknown',
       occurrences: (r.schedule_entries ?? []).reduce((s: number, e: any) => s + (e.occurrence_count ?? 0), 0),
       next_run: this.nextRun(r, now),
+      ...(actor ? { can_manage: this.canManage(actor, r) } : {}),
     }));
   }
 

@@ -5,6 +5,8 @@ import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { meetingsApi, type CreateRhythmInput } from '@/lib/api/meetings'
+import { listEligibleSubjects } from '@/lib/api/permissions'
+import { useAuth } from '@/lib/auth/context'
 import type { MeetingRhythm, MeetingType } from '@/lib/types/meetings'
 import StyledSelect from '@/components/ui/StyledSelect'
 import ScheduleEntryRow, { type ScheduleEntryDraft } from '@/components/tasks/ScheduleEntryRow'
@@ -97,6 +99,10 @@ function recurrenceSummary(sched: ScheduleEntryDraft): string {
 export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCreated, rhythm }: Props) {
   const isEditing = !!rhythm
   const { addToast } = useToast()
+  const { user } = useAuth()
+  // The host is the rhythm's creator (current user for a new rhythm).
+  const hostId = rhythm?.created_by_user_id ?? user?.id
+  const [ineligibleReasons, setIneligibleReasons] = useState<Record<string, string>>({})
   const [title, setTitle] = useState('')
   const [type, setType] = useState<MeetingType>('online')
   const [onlineLink, setOnlineLink] = useState('')
@@ -145,6 +151,21 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
   }, [isOpen, rhythm])
 
   useEffect(() => { setOptional((opt) => opt.filter((id) => attendees.includes(id))) }, [attendees])
+
+  // Grey out anyone who can't be invited to a meeting, up-front (vs failing on submit).
+  useEffect(() => {
+    if (!isOpen || !orgId) return
+    let active = true
+    listEligibleSubjects(orgId, 'meetings.subject.invitable')
+      .then((items) => {
+        if (!active) return
+        const map: Record<string, string> = {}
+        for (const it of items) if (!it.eligible) map[it.userId] = it.reason ?? 'Not eligible to be invited'
+        setIneligibleReasons(map)
+      })
+      .catch(() => { if (active) setIneligibleReasons({}) })
+    return () => { active = false }
+  }, [isOpen, orgId])
 
   function toggleOptional(id: string) { setOptional((o) => (o.includes(id) ? o.filter((x) => x !== id) : [...o, id])) }
 
@@ -237,8 +258,17 @@ export default function CreateRhythmModal({ isOpen, onClose, orgId, people, onCr
         {/* Attendees */}
         <div>
           <label className={labelClass}>Attendees</label>
-          <MeetingAttendeeSelector options={people} value={attendees} onChange={setAttendees} optional={optional} onToggleOptional={toggleOptional} />
-          <p className="text-xs text-[#64748B] mt-1">Everyone is on every occurrence by default. Toggle who is optional.</p>
+          <MeetingAttendeeSelector
+            options={people}
+            value={attendees}
+            onChange={setAttendees}
+            optional={optional}
+            onToggleOptional={toggleOptional}
+            hostId={hostId}
+            hostLabel={hostId === user?.id ? 'You' : rhythm?.created_by_name}
+            ineligibleReasons={ineligibleReasons}
+          />
+          <p className="text-xs text-[#64748B] mt-1">The host is on every occurrence by default. Everyone you add is too — toggle who is optional.</p>
         </div>
 
         {/* Recurrence — the SAME shared editor as recurring tasks and meetings */}

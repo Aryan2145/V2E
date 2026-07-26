@@ -19,6 +19,12 @@ interface Props {
   onToggleOptional?: (id: string) => void
   excludeIds?: string[]
   placeholder?: string
+  /** The organiser/host. Always in the meeting — shown as a locked chip, never a pickable row. */
+  hostId?: string
+  /** Overrides the host's displayed name (e.g. "You"). Falls back to the option's name. */
+  hostLabel?: string
+  /** userId → reason for people who cannot be invited. Rendered greyed-out & unselectable. */
+  ineligibleReasons?: Record<string, string>
 }
 
 // ── avatar helpers (shared look with the task Assignees & CC picker) ────────────
@@ -30,6 +36,20 @@ function avatarColor(name: string): string {
 }
 function initials(name: string): string {
   return name.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2) || '?'
+}
+
+// The host is always in the meeting — a locked chip, never removable and never a
+// pickable row (backend auto-adds the organiser).
+function HostChip({ name }: { name: string }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] pl-1.5 pr-2 py-1 max-w-[220px]">
+      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0 ${avatarColor(name)}`}>
+        {initials(name)}
+      </div>
+      <span className="text-xs font-medium text-[#0F172A] truncate">{name.split(' ')[0]}</span>
+      <span className="text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 bg-white text-[#2563EB] border border-[#BFDBFE] shrink-0">Host</span>
+    </div>
+  )
 }
 
 function AttendeeChip({
@@ -68,23 +88,29 @@ function AttendeeChip({
 
 export default function MeetingAttendeeSelector({
   options, value, onChange, optional = [], onToggleOptional, excludeIds = [], placeholder = 'Add attendees',
+  hostId, hostLabel, ineligibleReasons = {},
 }: Props) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
   const byId = useMemo(() => new Map(options.map((o) => [o.user_id, o])), [options])
+  // The host is never a value chip nor a pickable row (backend always adds them).
   const selectedSet = useMemo(() => new Set(value), [value])
   const showToggle = !!onToggleOptional
+  const hostName = hostId ? hostLabel ?? byId.get(hostId)?.name ?? 'You' : null
+  // Chips exclude the host defensively (never render them as a removable attendee).
+  const chipValue = useMemo(() => value.filter((id) => id !== hostId), [value, hostId])
 
   const list = useMemo(
     () =>
       options.filter(
         (o) =>
+          o.user_id !== hostId &&
           !excludeIds.includes(o.user_id) &&
           (o.name.toLowerCase().includes(query.toLowerCase()) || (o.email ?? '').toLowerCase().includes(query.toLowerCase())),
       ),
-    [options, excludeIds, query],
+    [options, excludeIds, hostId, query],
   )
 
   useEffect(() => {
@@ -96,14 +122,17 @@ export default function MeetingAttendeeSelector({
   }, [open])
 
   function toggle(id: string) {
+    // Can't add someone who isn't eligible to be invited (but always allow removing).
+    if (!selectedSet.has(id) && ineligibleReasons[id]) return
     onChange(selectedSet.has(id) ? value.filter((v) => v !== id) : [...value, id])
   }
 
   return (
     <div className="relative">
-      {/* Trigger: selected chips + Add */}
+      {/* Trigger: host (locked) + selected chips + Add */}
       <div className="flex flex-wrap gap-1.5 items-center min-h-[42px] p-1.5 border border-[#CBD5E1] rounded-[8px] bg-white">
-        {value.map((id) => {
+        {hostName && <HostChip name={hostName} />}
+        {chipValue.map((id) => {
           const p = byId.get(id)
           if (!p) return null
           return (
@@ -122,7 +151,7 @@ export default function MeetingAttendeeSelector({
           onClick={() => setOpen(true)}
           className="flex items-center gap-1 px-2 py-1 rounded-[6px] text-xs font-medium text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
         >
-          <Plus size={12} /> {value.length === 0 ? placeholder : 'Add'}
+          <Plus size={12} /> {chipValue.length === 0 ? placeholder : 'Add'}
         </button>
       </div>
 
@@ -156,10 +185,11 @@ export default function MeetingAttendeeSelector({
               </div>
             </div>
 
-            {/* Selected chips inside the dialog */}
-            {value.length > 0 && (
+            {/* Selected chips inside the dialog (host is always shown first, locked) */}
+            {(hostName || chipValue.length > 0) && (
               <div className="px-4 py-2.5 border-b border-[#F1F5F9] shrink-0 flex flex-wrap gap-1.5 max-h-[104px] overflow-y-auto">
-                {value.map((id) => {
+                {hostName && <HostChip name={hostName} />}
+                {chipValue.map((id) => {
                   const p = byId.get(id)
                   if (!p) return null
                   return (
@@ -187,21 +217,33 @@ export default function MeetingAttendeeSelector({
               ) : (
                 list.map((p) => {
                   const selected = selectedSet.has(p.user_id)
+                  const reason = ineligibleReasons[p.user_id]
+                  const blocked = !!reason && !selected
                   return (
                     <button
                       key={p.user_id}
                       type="button"
                       onClick={() => toggle(p.user_id)}
-                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${selected ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'}`}
+                      disabled={blocked}
+                      title={blocked ? reason : undefined}
+                      className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                        blocked ? 'opacity-55 cursor-not-allowed' : selected ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
+                      }`}
                     >
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${avatarColor(p.name)}`}>
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${blocked ? 'bg-[#94A3B8]' : avatarColor(p.name)}`}>
                         {initials(p.name)}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-[#0F172A] truncate">{p.name}</p>
-                        {p.email && <p className="text-xs text-[#64748B] truncate">{p.email}</p>}
+                        {blocked ? (
+                          <p className="text-xs text-[#DC2626] truncate">{reason}</p>
+                        ) : (
+                          p.email && <p className="text-xs text-[#64748B] truncate">{p.email}</p>
+                        )}
                       </div>
-                      {selected && (
+                      {blocked ? (
+                        <span className="text-[10px] font-semibold text-[#94A3B8] uppercase tracking-wide shrink-0">Can't invite</span>
+                      ) : selected && (
                         <span className="w-4 h-4 flex items-center justify-center bg-[#2563EB] rounded-full shrink-0">
                           <Check size={10} className="text-white" strokeWidth={3} />
                         </span>

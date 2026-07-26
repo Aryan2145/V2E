@@ -1,0 +1,338 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
+import {
+  ArrowLeft, Repeat, Pause, Play, Square, Clock, Users, CalendarClock, Pencil,
+  CalendarDays, CheckCircle2, CalendarX2, ChevronRight, Video, MapPin,
+} from 'lucide-react'
+import { useAuth } from '@/lib/auth/context'
+import { meetingsApi } from '@/lib/api/meetings'
+import { getEmployees } from '@/lib/api/employees'
+import type { Meeting, MeetingRhythm } from '@/lib/types/meetings'
+import type { PersonOption } from '@/components/meetings/MeetingAttendeeSelector'
+import CreateRhythmModal from '@/components/meetings/CreateRhythmModal'
+import Button from '@/components/ui/Button'
+import Modal from '@/components/ui/Modal'
+import { useToast } from '@/components/ui/Toast'
+
+const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+function cadence(r: MeetingRhythm): string {
+  const e = r.schedule_entries?.[0]
+  if (!e) return '—'
+  const every = e.every > 1 ? `every ${e.every} ` : ''
+  if (e.schedule_type === 'daily') return `${every ? every + 'days' : 'Daily'} at ${e.time}`
+  if (e.schedule_type === 'weekly') return `${every ? 'Every ' + e.every + ' weeks' : 'Weekly'} · ${(e.days ?? []).map((d) => DOW[d]).join(', ')} at ${e.time}`
+  if (e.schedule_type === 'monthly') return `Monthly · day ${(e.month_days ?? []).join(', ')} at ${e.time}`
+  return `Yearly at ${e.time}`
+}
+
+function fmtDate(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString(undefined, { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+}
+function fmtTime(iso?: string | null): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d.getTime()) ? '' : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+}
+
+// The visible lifecycle of a single spawned occurrence.
+type Bucket = 'upcoming' | 'in_progress' | 'held' | 'missed' | 'cancelled'
+function bucketOf(m: Meeting, now: number): Bucket {
+  if (m.status === 'cancelled') return 'cancelled'
+  if (m.status === 'in_progress') return 'in_progress'
+  if (m.status === 'closed') return 'held'
+  // scheduled
+  const start = m.scheduled_start ? new Date(m.scheduled_start).getTime() : 0
+  return start && start < now ? 'missed' : 'upcoming'
+}
+const BUCKET_META: Record<Bucket, { label: string; bg: string; fg: string; border: string }> = {
+  upcoming: { label: 'Upcoming', bg: '#EFF6FF', fg: '#2563EB', border: '#BFDBFE' },
+  in_progress: { label: 'In progress', bg: '#FEF9C3', fg: '#A16207', border: '#FDE68A' },
+  held: { label: 'Held', bg: '#DCFCE7', fg: '#16A34A', border: '#BBF7D0' },
+  missed: { label: 'Missed', bg: '#FEE2E2', fg: '#DC2626', border: '#FECACA' },
+  cancelled: { label: 'Cancelled', bg: '#F1F5F9', fg: '#64748B', border: '#E2E8F0' },
+}
+
+const STATUS_FILTERS: { key: 'all' | Bucket; label: string }[] = [
+  { key: 'all', label: 'All' },
+  { key: 'upcoming', label: 'Upcoming' },
+  { key: 'held', label: 'Held' },
+  { key: 'missed', label: 'Missed' },
+  { key: 'cancelled', label: 'Cancelled' },
+]
+
+function StatCard({ icon, value, label, tint }: { icon: React.ReactNode; value: React.ReactNode; label: string; tint: string }) {
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-4 flex items-center gap-3">
+      <div className="w-10 h-10 rounded-[10px] flex items-center justify-center shrink-0" style={{ backgroundColor: tint }}>{icon}</div>
+      <div className="min-w-0">
+        <div className="text-[20px] font-bold text-[#0F172A] leading-none">{value}</div>
+        <div className="text-xs text-[#64748B] mt-1 truncate">{label}</div>
+      </div>
+    </div>
+  )
+}
+
+function SidebarCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-4">
+      <h3 className="text-[13px] font-semibold text-[#475569] uppercase tracking-wide mb-3">{title}</h3>
+      {children}
+    </div>
+  )
+}
+
+const AVATAR_COLORS = ['bg-[#2563EB]', 'bg-[#7C3AED]', 'bg-[#059669]', 'bg-[#D97706]', 'bg-[#DC2626]', 'bg-[#0891B2]']
+function avatarColor(name: string) { let h = 0; for (let i = 0; i < name.length; i++) h += name.charCodeAt(i); return AVATAR_COLORS[h % AVATAR_COLORS.length] }
+function initials(name: string) { return name.split(' ').map((n) => n[0] ?? '').join('').toUpperCase().slice(0, 2) || '?' }
+
+export default function RhythmDetailPage() {
+  const { user } = useAuth()
+  const router = useRouter()
+  const params = useParams()
+  const rhythmId = String(params?.rhythmId ?? '')
+  const orgId = user?.organizationId ?? ''
+  const { addToast } = useToast()
+
+  const [rhythm, setRhythm] = useState<MeetingRhythm | null>(null)
+  const [meetings, setMeetings] = useState<Meeting[]>([])
+  const [people, setPeople] = useState<PersonOption[]>([])
+  const [loading, setLoading] = useState(true)
+  const [notFound, setNotFound] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [filter, setFilter] = useState<'all' | Bucket>('all')
+
+  const load = useCallback(() => {
+    if (!orgId || !rhythmId) { setLoading(false); return }
+    setLoading(true)
+    Promise.all([
+      meetingsApi.getRhythm(orgId, rhythmId).catch(() => null),
+      meetingsApi.list(orgId, { rhythm_id: rhythmId }).catch(() => [] as Meeting[]),
+      getEmployees(orgId).catch(() => [] as any[]),
+    ])
+      .then(([r, ms, emps]) => {
+        if (!r) { setNotFound(true); return }
+        setRhythm(r)
+        setMeetings(ms)
+        setPeople((emps as any[]).map((e) => ({ user_id: e.user_id, name: e.user?.name ?? e.name ?? e.email ?? 'Unknown', email: e.user?.email })))
+      })
+      .finally(() => setLoading(false))
+  }, [orgId, rhythmId])
+
+  useEffect(() => { load() }, [load])
+
+  const nameOf = useMemo(() => new Map(people.map((p) => [p.user_id, p.name])), [people])
+  const now = Date.now()
+
+  const buckets = useMemo(() => {
+    const counts: Record<Bucket, number> = { upcoming: 0, in_progress: 0, held: 0, missed: 0, cancelled: 0 }
+    for (const m of meetings) counts[bucketOf(m, now)]++
+    return counts
+  }, [meetings, now])
+
+  // Upcoming first (soonest at top), then past (most recent first).
+  const sorted = useMemo(() => {
+    const withBucket = meetings.map((m) => ({ m, b: bucketOf(m, now) }))
+    const filtered = filter === 'all' ? withBucket : withBucket.filter((x) => x.b === filter)
+    return filtered.sort((a, b) => {
+      const ta = a.m.scheduled_start ? new Date(a.m.scheduled_start).getTime() : 0
+      const tb = b.m.scheduled_start ? new Date(b.m.scheduled_start).getTime() : 0
+      const aFuture = ta >= now, bFuture = tb >= now
+      if (aFuture !== bFuture) return aFuture ? -1 : 1
+      return aFuture ? ta - tb : tb - ta
+    })
+  }, [meetings, filter, now])
+
+  async function toggleActive() {
+    if (!rhythm) return
+    try {
+      const updated = rhythm.is_active ? await meetingsApi.pauseRhythm(orgId, rhythm.id) : await meetingsApi.resumeRhythm(orgId, rhythm.id)
+      setRhythm(updated)
+      addToast(rhythm.is_active ? 'Rhythm paused' : 'Rhythm resumed', 'success')
+      load()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
+  }
+  async function stop(mode: 'stop' | 'delete-future') {
+    if (!rhythm) return
+    try {
+      await meetingsApi.removeRhythm(orgId, rhythm.id, mode)
+      addToast('Rhythm stopped', 'success')
+      setStopping(false)
+      load()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Failed', 'error') }
+  }
+
+  if (loading) return <div className="p-10 text-center text-sm text-[#475569]">Loading…</div>
+  if (notFound || !rhythm) {
+    return (
+      <div className="max-w-2xl">
+        <Link href="/dashboard/governance/meetings/rhythms" className="inline-flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] mb-4"><ArrowLeft size={15} /> Rhythms</Link>
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] p-12 text-center">
+          <h3 className="text-[18px] font-semibold text-[#0F172A]">Rhythm not found</h3>
+          <p className="text-sm text-[#475569] mt-1">It may have been removed, or you don’t have access to it.</p>
+        </div>
+      </div>
+    )
+  }
+
+  const attendeeIds = rhythm.attendee_user_ids ?? []
+  const e = rhythm.schedule_entries?.[0]
+
+  return (
+    <div className="max-w-[1200px]">
+      <Link href="/dashboard/governance/meetings/rhythms" className="inline-flex items-center gap-1.5 text-sm font-medium text-[#475569] hover:text-[#0F172A] w-fit mb-4"><ArrowLeft size={15} /> Rhythms</Link>
+
+      {/* Sticky header: title + cadence + actions */}
+      <div className="sticky top-0 z-10 bg-[#F8FAFC] -mx-1 px-1 pb-4 mb-1">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight flex items-center gap-2">
+              <Repeat size={22} className="text-[#7C3AED] shrink-0" /> {rhythm.title}
+              <span className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border shrink-0"
+                style={rhythm.is_active ? { backgroundColor: '#DCFCE7', color: '#16A34A', borderColor: '#BBF7D0' } : { backgroundColor: '#F1F5F9', color: '#475569', borderColor: '#E2E8F0' }}>
+                {rhythm.is_active ? 'Active' : 'Paused'}
+              </span>
+            </h1>
+            <p className="text-sm text-[#475569] mt-1 flex items-center gap-1.5"><Clock size={14} /> {cadence(rhythm)}</p>
+          </div>
+          {rhythm.can_manage && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"><Pencil size={15} /> Edit</button>
+              <button onClick={toggleActive} title={rhythm.is_active ? 'Pause' : 'Resume'} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9] rounded-[8px]">
+                {rhythm.is_active ? <><Pause size={15} /> Pause</> : <><Play size={15} /> Resume</>}
+              </button>
+              <button onClick={() => setStopping(true)} title="Stop" className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#DC2626] border border-[#FECACA] hover:bg-[#FEE2E2] rounded-[8px]"><Square size={15} /> Stop</button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={<CalendarDays size={18} className="text-[#2563EB]" />} value={meetings.length} label="Total occurrences" tint="#EFF6FF" />
+        <StatCard icon={<CheckCircle2 size={18} className="text-[#16A34A]" />} value={buckets.held} label="Held" tint="#DCFCE7" />
+        <StatCard icon={<CalendarClock size={18} className="text-[#7C3AED]" />} value={buckets.upcoming} label="Upcoming" tint="#F5F3FF" />
+        <StatCard icon={<CalendarX2 size={18} className="text-[#DC2626]" />} value={buckets.missed + buckets.cancelled} label="Missed / cancelled" tint="#FEE2E2" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-5 items-start">
+        {/* Instances list */}
+        <div className="bg-white border border-[#E2E8F0] rounded-[12px] flex flex-col">
+          <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#E2E8F0] flex-wrap">
+            <h2 className="text-[15px] font-semibold text-[#0F172A]">Meetings <span className="text-[#94A3B8] font-normal">({sorted.length})</span></h2>
+            <div className="flex items-center gap-1 flex-wrap">
+              {STATUS_FILTERS.map((f) => (
+                <button key={f.key} onClick={() => setFilter(f.key)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-[6px] border transition-colors ${filter === f.key ? 'bg-[#2563EB] text-white border-[#2563EB]' : 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]'}`}>
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {sorted.length === 0 ? (
+            <div className="p-12 text-center">
+              <div className="w-12 h-12 rounded-[14px] bg-[#F5F3FF] flex items-center justify-center text-[#7C3AED] mx-auto mb-3"><CalendarDays size={22} /></div>
+              <p className="text-sm font-medium text-[#0F172A]">No meetings {filter === 'all' ? 'yet' : `in “${STATUS_FILTERS.find((f) => f.key === filter)?.label}”`}</p>
+              <p className="text-xs text-[#64748B] mt-1">Occurrences spawn automatically up to 60 days ahead.</p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#F1F5F9] max-h-[640px] overflow-y-auto">
+              {sorted.map(({ m, b }) => {
+                const meta = BUCKET_META[b]
+                return (
+                  <button key={m.id} onClick={() => router.push(`/dashboard/governance/meetings/${m.id}`)}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[#F8FAFC] transition-colors">
+                    <div className="w-11 shrink-0 text-center">
+                      <div className="text-[11px] font-semibold text-[#94A3B8] uppercase">{m.scheduled_start ? new Date(m.scheduled_start).toLocaleDateString(undefined, { month: 'short' }) : '—'}</div>
+                      <div className="text-[18px] font-bold text-[#0F172A] leading-none">{m.scheduled_start ? new Date(m.scheduled_start).getDate() : '·'}</div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[#0F172A] truncate">{m.title}</p>
+                      <p className="text-xs text-[#64748B] flex items-center gap-1.5 mt-0.5">
+                        <span>{fmtDate(m.scheduled_start)}{fmtTime(m.scheduled_start) ? ` · ${fmtTime(m.scheduled_start)}` : ''}</span>
+                        <span className="inline-flex items-center gap-1">· {m.type === 'offline' ? <MapPin size={11} /> : <Video size={11} />} {m._count?.attendees ?? (m.attendees?.length ?? 0)}</span>
+                      </p>
+                    </div>
+                    <span className="inline-flex items-center font-medium text-[11px] rounded-full px-2.5 py-0.5 border shrink-0" style={{ backgroundColor: meta.bg, color: meta.fg, borderColor: meta.border }}>{meta.label}</span>
+                    <ChevronRight size={16} className="text-[#CBD5E1] shrink-0" />
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Sidebar */}
+        <div className="flex flex-col gap-4">
+          <SidebarCard title="Schedule">
+            <div className="flex flex-col gap-2 text-sm text-[#334155]">
+              <div className="flex items-center gap-2"><Clock size={14} className="text-[#94A3B8]" /> {cadence(rhythm)}</div>
+              <div className="flex items-center gap-2"><CalendarClock size={14} className="text-[#94A3B8]" /> Next: {rhythm.is_active ? fmtDate(rhythm.next_run) : 'Paused'}</div>
+              {e?.start_date && <div className="flex items-center gap-2 text-[#64748B]"><CalendarDays size={14} className="text-[#94A3B8]" /> Since {fmtDate(e.start_date)}</div>}
+              {e && e.end_condition === 'on_date' && e.end_date && <div className="text-xs text-[#64748B]">Ends {fmtDate(e.end_date)}</div>}
+              {e && e.end_condition === 'after_n' && e.end_after != null && <div className="text-xs text-[#64748B]">Ends after {e.end_after} occurrences</div>}
+            </div>
+          </SidebarCard>
+
+          <SidebarCard title="Format">
+            <div className="flex flex-col gap-2 text-sm text-[#334155]">
+              <div className="flex items-center gap-2">
+                {rhythm.type === 'offline' ? <MapPin size={14} className="text-[#94A3B8]" /> : <Video size={14} className="text-[#94A3B8]" />}
+                {rhythm.type === 'offline' ? 'In person' : rhythm.type === 'hybrid' ? 'Hybrid' : 'Online'} · {rhythm.duration_min} min
+              </div>
+              {rhythm.type !== 'offline' && rhythm.online_link && <a href={rhythm.online_link} target="_blank" rel="noreferrer" className="text-sm text-[#2563EB] hover:underline truncate">{rhythm.online_link}</a>}
+              {rhythm.type !== 'online' && rhythm.location && <div className="text-sm text-[#64748B]">{rhythm.location}</div>}
+            </div>
+          </SidebarCard>
+
+          <SidebarCard title={`Attendees · ${attendeeIds.length + 1}`}>
+            <div className="flex flex-col gap-2">
+              {/* Host is always in. */}
+              <div className="flex items-center gap-2.5">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${avatarColor(rhythm.created_by_name ?? 'Host')}`}>{initials(rhythm.created_by_name ?? 'H')}</div>
+                <span className="text-sm text-[#0F172A] truncate">{rhythm.created_by_user_id === user?.id ? 'You' : (rhythm.created_by_name ?? 'Host')}</span>
+                <span className="text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE] ml-auto shrink-0">Host</span>
+              </div>
+              {attendeeIds.map((id) => {
+                const name = nameOf.get(id) ?? 'Unknown'
+                const opt = (rhythm.optional_user_ids ?? []).includes(id)
+                return (
+                  <div key={id} className="flex items-center gap-2.5">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shrink-0 ${avatarColor(name)}`}>{initials(name)}</div>
+                    <span className="text-sm text-[#334155] truncate">{name}</span>
+                    {opt && <span className="text-[10px] font-medium rounded-[4px] px-1.5 py-0.5 bg-[#F1F5F9] text-[#64748B] ml-auto shrink-0">Optional</span>}
+                  </div>
+                )
+              })}
+              {attendeeIds.length === 0 && <p className="text-xs text-[#94A3B8]">No other attendees — just the host.</p>}
+            </div>
+          </SidebarCard>
+
+          {rhythm.agenda && (
+            <SidebarCard title="Standing agenda">
+              <p className="text-sm text-[#334155] whitespace-pre-wrap">{rhythm.agenda}</p>
+            </SidebarCard>
+          )}
+        </div>
+      </div>
+
+      <CreateRhythmModal isOpen={editing} onClose={() => setEditing(false)} orgId={orgId} people={people} rhythm={rhythm} onCreated={() => { setEditing(false); load() }} />
+
+      <Modal isOpen={stopping} onClose={() => setStopping(false)} title="Stop rhythm" size="sm">
+        <p className="text-sm text-[#1E293B]">Stop “{rhythm.title}”? No new occurrences will be created. Past meetings are kept.</p>
+        <div className="flex flex-col gap-2 mt-5">
+          <Button variant="primary" onClick={() => stop('stop')}>Stop — keep upcoming meetings</Button>
+          <Button variant="danger" onClick={() => stop('delete-future')}>Stop &amp; remove upcoming (still-scheduled) meetings</Button>
+          <Button variant="secondary" onClick={() => setStopping(false)}>Cancel</Button>
+        </div>
+      </Modal>
+    </div>
+  )
+}
