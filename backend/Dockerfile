@@ -8,8 +8,9 @@ COPY prisma ./prisma
 RUN npm ci --legacy-peer-deps && npx prisma generate
 
 COPY . .
-# nest build is memory-hungry; raise V8 heap so it doesn't OOM on small instances
-RUN NODE_OPTIONS=--max-old-space-size=2048 npm run build
+# nest build is memory-hungry and OOMs at 2GB. The build now runs on CI runners
+# (16GB), not on the small EC2 box, so give V8 a 4GB heap.
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build
 
 EXPOSE 3001
 

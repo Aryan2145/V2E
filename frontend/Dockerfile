@@ -2,6 +2,9 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
+# The postinstall hook (scripts/copy-pdfjs.mjs) runs during `npm ci`, so the
+# scripts dir must already be present in the image before install.
+COPY scripts ./scripts
 RUN npm ci
 
 COPY . .
