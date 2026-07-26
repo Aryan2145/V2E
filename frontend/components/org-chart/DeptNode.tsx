@@ -26,7 +26,7 @@ function DeptNode({ data, selected }: { data: DeptNodeData; selected: boolean })
 
   return (
     <div
-      className={`group relative rounded-xl border-2 p-4 w-[200px] shadow-sm transition-all ${
+      className={`group relative flex flex-col rounded-xl border-2 p-4 w-[200px] h-[120px] shadow-sm transition-all ${
         data.highlighted ? 'ring-2 ring-[#FCD34D]' : selected ? 'ring-2 ring-[#2563EB]/40' : ''
       }`}
       style={{ backgroundColor: fill, color: text, borderColor: border }}
@@ -52,12 +52,12 @@ function DeptNode({ data, selected }: { data: DeptNodeData; selected: boolean })
       <div className="font-semibold text-sm pr-6 line-clamp-2 break-words" title={data.name}>
         {data.name}
       </div>
-      {data.headName && (
-        <div className="text-xs mt-1 truncate" style={{ opacity: 0.8 }} title={data.headName}>
-          {data.headName}
-        </div>
-      )}
-      <div className="flex items-center gap-1 mt-2">
+      {/* Always reserve the head line so a box with no head is the same height
+          as one with a head. */}
+      <div className="text-xs mt-1 h-4 truncate" style={{ opacity: 0.8 }} title={data.headName || undefined}>
+        {data.headName || ''}
+      </div>
+      <div className="flex items-center gap-1 mt-auto pt-2">
         <Users size={12} style={{ opacity: 0.75 }} />
         <span className="text-xs" style={{ opacity: 0.85 }}>
           {data.teamCount ?? 0} members
