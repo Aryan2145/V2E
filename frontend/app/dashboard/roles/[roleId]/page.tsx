@@ -151,7 +151,7 @@ export default function RoleDetailPage() {
           </div>
         </div>
         {canEdit && (
-          <Link href="/setup/step-4-roles">
+          <Link href="/settings/organization/roles">
             <Button variant="secondary" size="sm">
               <Pencil size={14} />
               Edit

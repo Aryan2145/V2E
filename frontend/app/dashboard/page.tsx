@@ -207,7 +207,7 @@ export default function DashboardPage() {
               </p>
             </div>
             <Link
-              href="/setup/step-1-identity"
+              href="/settings/organization/company"
               className="flex items-center gap-1.5 text-sm font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors flex-shrink-0 whitespace-nowrap"
             >
               Continue setup
