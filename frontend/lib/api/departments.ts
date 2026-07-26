@@ -33,6 +33,10 @@ export async function updateDepartment(
   return data.data;
 }
 
+export async function deleteDepartment(orgId: string, id: string): Promise<void> {
+  await apiClient.delete(`/api/v1/org/${orgId}/departments/${id}`);
+}
+
 export async function updateDepartmentPosition(
   orgId: string,
   id: string,

@@ -513,6 +513,7 @@ export default function AddEmployeeModal({
             setCreatingDept(false)
             addToast(`Department "${saved.name}" created`, 'success')
           }}
+          onDeleted={() => {}} // create-only here; delete lives on the org chart
         />
       )}
 

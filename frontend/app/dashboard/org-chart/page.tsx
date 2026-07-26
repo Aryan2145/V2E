@@ -462,6 +462,16 @@ export default function OrgChartPage() {
     [reload],
   )
 
+  const handleDeleted = useCallback(
+    (id: string) => {
+      setFormTarget(null)
+      setSelected((cur) => (cur?.id === id ? null : cur))
+      setDepartments((prev) => prev.filter((d) => d.id !== id))
+      reload()
+    },
+    [reload],
+  )
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -585,6 +595,7 @@ export default function OrgChartPage() {
           orgId={orgId}
           onClose={() => setFormTarget(null)}
           onSaved={handleSaved}
+          onDeleted={handleDeleted}
         />
       )}
 
