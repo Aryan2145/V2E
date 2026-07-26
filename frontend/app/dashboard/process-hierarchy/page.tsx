@@ -121,6 +121,57 @@ export default function ProcessHierarchyListPage() {
     )
   }
 
+  // A top-level map as a proper card; its sub-maps nest inside it (expandable).
+  const renderCard = (m: ProcessMapSummary) => {
+    const kids = childrenBy.get(m.id) ?? []
+    const isOpen = expanded.has(m.id)
+    return (
+      <div key={m.id} className="group relative flex flex-col bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] hover:border-[#93C5FD] hover:shadow-md transition-all">
+        <div className="absolute top-2.5 right-2.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <button onClick={() => togglePin(m)} title={m.is_pinned ? 'Unpin' : 'Pin to top'} aria-label="Pin"
+            className={`w-7 h-7 flex items-center justify-center rounded-[6px] hover:bg-[#F1F5F9] ${m.is_pinned ? 'text-[#D97706]' : 'text-[#94A3B8] hover:text-[#0F172A]'}`}>
+            <Star size={15} fill={m.is_pinned ? '#D97706' : 'none'} />
+          </button>
+          {canCreate && (
+            <button onClick={() => setCreateParent(m.id)} title="Add a sub-map here" aria-label="Add sub-map"
+              className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#F1F5F9]"><FolderPlus size={15} /></button>
+          )}
+        </div>
+        {/* Header — icon + name open the map; the meta row keeps a fixed shape so every
+            card is the SAME height whether or not it has sub-maps. */}
+        <div className="p-4 flex items-start gap-3">
+          <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} aria-label={`Open ${m.name}`}
+            className="shrink-0 w-10 h-10 rounded-[10px] bg-[#EFF6FF] flex items-center justify-center hover:bg-[#DBEAFE] transition-colors"><Workflow size={20} className="text-[#2563EB]" /></button>
+          <div className="min-w-0 flex-1 pr-8">
+            <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} className="block w-full text-left" title={m.name}>
+              <span className="block text-[15px] font-semibold text-[#0F172A] truncate">{m.name}</span>
+            </button>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {m.node_count > 0 && (
+                <span className="inline-flex items-center gap-1 text-[12px] font-medium text-[#475569]">
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold tabular-nums">{m.node_count}</span>
+                  step{m.node_count !== 1 ? 's' : ''}
+                </span>
+              )}
+              {m.is_owner && <span className="text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-[#E0F2FE] text-[#0369A1]">Owner</span>}
+              {kids.length > 0 && (
+                <button onClick={() => toggle(m.id)}
+                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-[#2563EB] hover:bg-[#EFF6FF] rounded-full px-1.5 py-0.5 transition-colors">
+                  <ChevronRight size={12} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                  {kids.length} inside
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        {/* Expanded sub-maps grow only this card (grid uses items-start, so peers stay put). */}
+        {isOpen && kids.length > 0 && (
+          <div className="mx-4 pb-3 pt-2 space-y-0.5 border-t border-[#F1F5F9]">{kids.map((k) => renderRow(k, 0))}</div>
+        )}
+      </div>
+    )
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -159,7 +210,7 @@ export default function ProcessHierarchyListPage() {
         </div>
       </div>
 
-      <div className="pt-6 max-w-4xl">
+      <div className="pt-6">
         {maps.length === 0 ? (
           <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20 text-center">
             <div className="w-16 h-16 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
@@ -193,25 +244,24 @@ export default function ProcessHierarchyListPage() {
             </div>
 
             {results ? (
-              // Search is a flat result list, so a single card is the right shape here.
-              <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-2">
-                {results.length === 0 ? (
-                  <p className="text-[13px] text-[#64748B] text-center py-8">No maps match “{query}”.</p>
-                ) : (
-                  <div className="space-y-0.5">
-                    {results.map((m) => (
-                      <button key={m.id} onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)}
-                        className="w-full text-left rounded-[8px] px-2.5 py-2 hover:bg-[#F1F5F9] transition-colors flex items-center gap-2">
-                        <Workflow size={16} className="shrink-0 text-[#2563EB]" />
-                        <span className="min-w-0">
-                          <span className="block truncate text-[14px] font-medium text-[#0F172A]">{m.name}</span>
-                          {pathOf(m).length > 0 && <span className="block truncate text-[11px] text-[#64748B]">{pathOf(m).join(' › ')}</span>}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              results.length === 0 ? (
+                <p className="text-[13px] text-[#64748B] text-center py-10">No maps match “{query}”.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-3 items-start">
+                  {results.map((m) => (
+                    <button key={m.id} onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)}
+                      className="text-left bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] hover:border-[#93C5FD] hover:shadow-md transition-all p-3.5 flex items-start gap-2.5">
+                      <span className="shrink-0 w-9 h-9 rounded-[9px] bg-[#EFF6FF] flex items-center justify-center"><Workflow size={17} className="text-[#2563EB]" /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[14px] font-semibold text-[#0F172A]">{m.name}</span>
+                        {pathOf(m).length > 0
+                          ? <span className="block truncate text-[11px] text-[#64748B] mt-0.5">{pathOf(m).join(' › ')}</span>
+                          : <span className="block text-[11px] text-[#94A3B8] mt-0.5">Top-level map</span>}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )
             ) : (
               <>
                 {/* Pinned = quick-jump shortcuts, not a group — shown as chips. */}
@@ -228,14 +278,10 @@ export default function ProcessHierarchyListPage() {
                     </div>
                   </div>
                 )}
-                {/* Each top-level map is its OWN card; anything nested inside it lives in
-                    that card. Separate cards = separate, unrelated maps. */}
-                <div className="space-y-3">
-                  {roots.map((m) => (
-                    <div key={m.id} className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] p-1.5">
-                      {renderRow(m, 0)}
-                    </div>
-                  ))}
+                {/* Each top-level map is its OWN card, laid out in a grid that fills the
+                    width; anything nested inside it lives in that card (expandable). */}
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4 items-start">
+                  {roots.map((m) => renderCard(m))}
                 </div>
               </>
             )}
