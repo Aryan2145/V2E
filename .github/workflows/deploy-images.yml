@@ -61,10 +61,14 @@ jobs:
           tags: |
             ${{ env.IMAGE_BASE }}/v2e-${{ matrix.name }}:latest
             ${{ env.IMAGE_BASE }}/v2e-${{ matrix.name }}:${{ github.sha }}
-          # Frontend bakes NEXT_PUBLIC_WS_URL at build time (public URL, so it is
-          # compiled into the browser bundle). Ignored by the backend build.
+          # Frontend bakes BOTH of these at build time (ignored by the backend build):
+          #  - NEXT_PUBLIC_WS_URL: public URL compiled into the browser bundle.
+          #  - BACKEND_URL: the /api/* rewrite destination is baked into
+          #    routes-manifest.json at build time, so it MUST be a build arg (a
+          #    runtime env is ignored). Points at the backend over the compose net.
           build-args: |
             NEXT_PUBLIC_WS_URL=https://v2e.rgbindia.com
+            BACKEND_URL=http://backend:3001
           # Speed up repeat builds by caching layers in GitHub Actions.
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
