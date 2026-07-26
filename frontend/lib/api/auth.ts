@@ -53,6 +53,11 @@ export async function resetPassword(
   await apiClient.post('/api/v1/auth/reset-password', { email, reset_token, password });
 }
 
+/** Change the current (already logged-in) user's password directly — no OTP, no current password. */
+export async function changePassword(password: string): Promise<void> {
+  await apiClient.patch('/api/v1/auth/change-password', { password });
+}
+
 export async function refreshToken(token: string): Promise<{ access_token: string; refresh_token?: string }> {
   const { data } = await apiClient.post<ApiResponse<{ access_token: string; refresh_token?: string }>>(
     '/api/v1/auth/refresh',

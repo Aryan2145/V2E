@@ -172,6 +172,23 @@ export class AuthService {
     return { message: 'Logged out successfully' };
   }
 
+  /**
+   * Self-service password change for an already-authenticated user. By product
+   * decision this requires neither the current password nor an email OTP — the
+   * live session is treated as sufficient proof. The current session's refresh
+   * tokens are left intact so the user stays logged in after changing it.
+   */
+  async changePassword(userId: string, newPassword: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new BadRequestException('Account not found.');
+    const password_hash = await bcrypt.hash(newPassword, 12);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { password_hash },
+    });
+    return { success: true };
+  }
+
   async listAdmins() {
     const admins = await this.prisma.user.findMany({
       where: { is_super_admin: true },
