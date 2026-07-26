@@ -156,6 +156,8 @@ export interface Task {
   } | null
   is_deleted: boolean
   deadline?: string
+  /** Quarterly goal this task is linked to as an initiative (null/absent = unlinked). */
+  goal_id?: string | null
   recurring_template_id?: string
   workflow_instance_step_id?: string
   workflow_step?: {

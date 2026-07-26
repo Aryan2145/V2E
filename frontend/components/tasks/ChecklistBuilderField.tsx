@@ -7,6 +7,10 @@ import type { ChecklistTemplate } from '@/lib/types/tasks'
 
 export interface ChecklistEntry {
   title: string
+  // Set only when the item already exists on a task (edit flow). Threaded back to
+  // the server so an edit preserves the item's identity — and with it every
+  // assignee's per-person tick/skip progress — instead of deleting and recreating.
+  id?: string
 }
 
 // A task can carry several checklists at once — e.g. one applied from a template
@@ -32,7 +36,7 @@ const nextGroupKey = () => `g${(groupSeq += 1)}`
 // stays unlabelled and renders as a plain list.
 export function buildChecklistItems(
   checklistGroups: ChecklistGroup[],
-): { title: string; order_index: number; group_title?: string }[] | undefined {
+): { id?: string; title: string; order_index: number; group_title?: string }[] | undefined {
   const groups = checklistGroups.filter((g) => g.items.length > 0)
   if (groups.length === 0) return undefined
   const multiple = groups.length >= 2
@@ -40,6 +44,9 @@ export function buildChecklistItems(
   return groups.flatMap((g) => {
     const labelled = multiple || g.source === 'template' || g.keepLabel === true
     return g.items.map((item) => ({
+      // Emit `id` ONLY for pre-existing items (edit flow). Create never sets it, so
+      // its payload stays id-free; the backend uses the id to keep an item's progress.
+      ...(item.id ? { id: item.id } : {}),
       title: item.title,
       order_index: order++,
       group_title: labelled ? g.title.trim() || 'Checklist' : undefined,
@@ -50,7 +57,7 @@ export function buildChecklistItems(
 // Rebuild editable groups from a stored flat definition (edit-recurring prefill).
 // Consecutive items sharing a group_title fold back into one group.
 export function groupsFromChecklistItems(
-  items: { title: string; order_index: number; group_title?: string | null }[] | undefined | null,
+  items: { id?: string; title: string; order_index: number; group_title?: string | null }[] | undefined | null,
 ): ChecklistGroup[] {
   if (!Array.isArray(items) || items.length === 0) return []
   const sorted = [...items].sort((a, b) => a.order_index - b.order_index)
@@ -59,14 +66,14 @@ export function groupsFromChecklistItems(
     const heading = item.group_title?.trim() || ''
     const last = groups[groups.length - 1]
     if (last && (last.title === heading || (!heading && last.title === 'Checklist' && groups.length === 1))) {
-      last.items.push({ title: item.title })
+      last.items.push({ id: item.id, title: item.title })
     } else {
       groups.push({
         key: nextGroupKey(),
         title: heading || 'Checklist',
         source: 'custom',
         keepLabel: !!heading,
-        items: [{ title: item.title }],
+        items: [{ id: item.id, title: item.title }],
         draft: '',
       })
     }

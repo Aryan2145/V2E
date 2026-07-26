@@ -1964,6 +1964,22 @@ export class TasksService {
       priority_id: dto.priority_id !== old.priority_id ? dto.priority_id : undefined,
       department_id: dto.department_id !== old.department_id ? dto.department_id : undefined,
     });
+
+    // Editing the checklist is only allowed while the task is open (once closed it's a
+    // frozen record — mirrors assertTaskOpenForChecklist), and any freshly-applied
+    // template must be one the editor is allowed to use (same gate as create).
+    if (dto.checklist_items !== undefined) {
+      if (isTerminal((old as any).status?.type)) {
+        throw new BadRequestException('This task is closed. Reopen it before changing the checklist.');
+      }
+      for (const templateId of dto.checklist_template_ids ?? []) {
+        const allowed = await this.checklistAccess.isAccessible(orgId, userId, templateId);
+        if (!allowed) {
+          throw new ForbiddenException('You are not allowed to use this checklist template.');
+        }
+      }
+    }
+
     const changedFields: Array<{ field: string; from: unknown; to: unknown }> = [];
 
     const updateData: any = {};
@@ -2077,6 +2093,15 @@ export class TasksService {
       }
     }
 
+    // Reconcile the checklist (add / edit / remove items). Runs as part of the edit;
+    // items kept by id retain every assignee's per-person progress.
+    if (dto.checklist_items !== undefined) {
+      const checklistChanged = await this.reconcileTaskChecklist(orgId, taskId, dto.checklist_items);
+      if (checklistChanged) {
+        changedFields.push({ field: 'checklist', from: null, to: `${dto.checklist_items.length} item(s)` });
+      }
+    }
+
     if (changedFields.length > 0) {
       const action: TaskActionType = changedFields.some((f) => f.field === 'status_id') ? 'status_changed' : 'edited';
       await this.logActivity(orgId, taskId, userId, action, { changes: changedFields });
@@ -2104,6 +2129,69 @@ export class TasksService {
     // Return the fully-enriched task (per-person status + overdue + attribution) so
     // callers that swap it straight into view state don't lose the scoreboard data.
     return this.getTask(orgId, taskId);
+  }
+
+  /**
+   * Make the task's checklist match `incoming` exactly. Items carrying an `id` that
+   * still exists are updated in place (title / group / order), so their per-person
+   * TaskChecklistItemState rows — every assignee's tick or skip — survive the edit.
+   * Items whose id is gone are deleted (their states cascade away). Items with no
+   * known id are created fresh (everyone starts "not started" on them). Returns
+   * whether anything actually changed, for the activity log.
+   */
+  private async reconcileTaskChecklist(
+    orgId: string,
+    taskId: string,
+    incoming: { id?: string; title: string; order_index: number; group_title?: string }[],
+  ): Promise<boolean> {
+    const existing = await this.prisma.taskChecklist.findMany({
+      where: { task_id: taskId, organization_id: orgId },
+    });
+    const existingById = new Map(existing.map((c) => [c.id, c]));
+    const keepIds = new Set(
+      incoming.map((i) => i.id).filter((id): id is string => !!id && existingById.has(id)),
+    );
+
+    let changed = false;
+
+    // Drop items the edit removed — their per-person states cascade away.
+    const toDelete = existing.filter((c) => !keepIds.has(c.id)).map((c) => c.id);
+    if (toDelete.length > 0) {
+      await this.prisma.taskChecklist.deleteMany({ where: { id: { in: toDelete } } });
+      changed = true;
+    }
+
+    // Keep/update or create each incoming item, preserving the payload's order.
+    for (const item of incoming) {
+      const groupTitle = item.group_title?.trim() ? item.group_title.trim() : null;
+      const prev = item.id ? existingById.get(item.id) : undefined;
+      if (prev) {
+        if (
+          prev.title !== item.title ||
+          prev.group_title !== groupTitle ||
+          prev.order_index !== item.order_index
+        ) {
+          await this.prisma.taskChecklist.update({
+            where: { id: prev.id },
+            data: { title: item.title, group_title: groupTitle, order_index: item.order_index },
+          });
+          changed = true;
+        }
+      } else {
+        await this.prisma.taskChecklist.create({
+          data: {
+            organization_id: orgId,
+            task_id: taskId,
+            title: item.title,
+            group_title: groupTitle,
+            order_index: item.order_index,
+          },
+        });
+        changed = true;
+      }
+    }
+
+    return changed;
   }
 
   // ─── Delete Task ──────────────────────────────────────────────────────────────

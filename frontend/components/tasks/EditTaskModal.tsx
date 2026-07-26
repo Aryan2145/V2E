@@ -2,16 +2,24 @@
 
 import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { X, Plus } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import StyledSelect from '@/components/ui/StyledSelect'
+import FileDropzone, { AttachmentErrorBox } from '@/components/ui/FileDropzone'
+import { PendingFileList, AttachmentList } from '@/components/ui/AttachmentList'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { holidaysApi } from '@/lib/api/holidays'
-import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode } from '@/lib/types/tasks'
+import type { Task, TaskCategory, TaskPriority, TaskStatus, CompletionMode, ChecklistTemplate, TaskAttachment } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
+import ChecklistBuilderField, {
+  buildChecklistItems,
+  groupsFromChecklistItems,
+  type ChecklistGroup,
+} from '@/components/tasks/ChecklistBuilderField'
+import GoalSelectField from '@/components/tasks/GoalSelectField'
 import ProofRequirementField from './ProofRequirementField'
 import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
 import LeaveWarningBadge from '@/components/leave/LeaveWarningBadge'
@@ -58,6 +66,40 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
   const [completionMode, setCompletionMode] = useState<CompletionMode>(task.completion_mode ?? 'any_can_complete')
   const [proofRequired, setProofRequired] = useState(task.proof_required ?? false)
   const [proofAllowedExtensions, setProofAllowedExtensions] = useState<string[]>(task.proof_allowed_extensions ?? [])
+  const [goalId, setGoalId] = useState(task.goal_id ?? '')
+
+  // Checklist — editable post-creation. Seeded from the task's existing items (each
+  // carrying its id so unchanged items keep every assignee's tick/skip progress on
+  // save). Frozen once the task is closed, mirroring the backend guard.
+  const [checklistGroups, setChecklistGroups] = useState<ChecklistGroup[]>(() =>
+    groupsFromChecklistItems(task.checklist),
+  )
+  const [checklistTemplates, setChecklistTemplates] = useState<ChecklistTemplate[]>([])
+  const [checklistOpen, setChecklistOpen] = useState(false)
+  // Signature of the checklist as loaded, to detect edits for the dirty check.
+  const initialChecklistSig = React.useMemo(
+    () => JSON.stringify(buildChecklistItems(groupsFromChecklistItems(task.checklist)) ?? []),
+    [task.checklist],
+  )
+
+  // Load the checklist templates this user may apply (for "add from a template").
+  useEffect(() => {
+    if (!orgId || taskIsTerminal) return
+    tasksApi.getAccessibleChecklistTemplates(orgId).then(setChecklistTemplates).catch(() => setChecklistTemplates([]))
+  }, [orgId, taskIsTerminal])
+
+  // Attachments — existing files load on open (each removable only by its uploader,
+  // enforced server-side); new files are queued and uploaded on save.
+  const [existingAttachments, setExistingAttachments] = useState<TaskAttachment[]>([])
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([])
+  const [attachErrors, setAttachErrors] = useState<string[]>([])
+  const [attachmentsOpen, setAttachmentsOpen] = useState(false)
+  const [deletingAttachmentIds, setDeletingAttachmentIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    if (!orgId) return
+    tasksApi.listAttachments(orgId, task.id).then(setExistingAttachments).catch(() => setExistingAttachments([]))
+  }, [orgId, task.id])
   const [deadlineDate, setDeadlineDate] = useState(() => task.deadline ? toLocalDateStr(task.deadline) : '')
   const [deadlineTime, setDeadlineTime] = useState(() => task.deadline ? toLocalTimeStr(task.deadline) : '')
   const todayStr = new Date().toISOString().split('T')[0]
@@ -138,11 +180,36 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
     (!taskIsTerminal && statusId !== task.status_id) ||
     deadline !== (task.deadline ?? '') ||
     completionMode !== (task.completion_mode ?? 'any_can_complete') ||
-    proofRequired !== (task.proof_required ?? false)
+    proofRequired !== (task.proof_required ?? false) ||
+    goalId !== (task.goal_id ?? '') ||
+    attachmentFiles.length > 0 ||
+    (!taskIsTerminal && JSON.stringify(buildChecklistItems(checklistGroups) ?? []) !== initialChecklistSig)
 
   function handleCloseAttempt() {
     if (isDirty && !window.confirm('Discard your unsaved changes?')) return
     onClose()
+  }
+
+  function handleDownloadAttachment(a: TaskAttachment) {
+    tasksApi.downloadAttachment(orgId, task.id, a.id).catch(() => {
+      setError('Could not open that file. Please try again.')
+    })
+  }
+
+  // Removing an existing attachment takes effect immediately (server allows the
+  // uploader only). It's a file the user chose to delete — no "Save" needed.
+  async function handleRemoveExistingAttachment(a: TaskAttachment) {
+    if (deletingAttachmentIds.has(a.id)) return
+    if (!window.confirm(`Remove “${a.file_name}”? This deletes the file for everyone on the task.`)) return
+    setDeletingAttachmentIds((prev) => new Set(prev).add(a.id))
+    try {
+      await tasksApi.deleteAttachment(orgId, task.id, a.id)
+      setExistingAttachments((prev) => prev.filter((x) => x.id !== a.id))
+    } catch (e2) {
+      setError(apiErrorMessage(e2, 'Could not remove that file. Please try again.'))
+    } finally {
+      setDeletingAttachmentIds((prev) => { const n = new Set(prev); n.delete(a.id); return n })
+    }
   }
 
   async function handleSubmit(e: React.FormEvent, holidayOverrideArg?: boolean) {
@@ -165,7 +232,31 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
         completion_mode: completionMode,
         proof_required: proofRequired,
         proof_allowed_extensions: proofRequired ? proofAllowedExtensions : [],
+        goal_id: goalId || undefined,
+        // Checklist edits only apply to an open task (the backend freezes it once closed).
+        ...(taskIsTerminal
+          ? {}
+          : {
+              checklist_items: buildChecklistItems(checklistGroups) ?? [],
+              checklist_template_ids: Array.from(
+                new Set(checklistGroups.filter((g) => g.templateId).map((g) => g.templateId as string)),
+              ),
+            }),
       } as any)
+      // Upload any newly-queued files after the field update lands. Sequential so a
+      // partial failure is easy to surface without losing the rest of the edit.
+      if (attachmentFiles.length > 0) {
+        try {
+          for (const file of attachmentFiles) {
+            await tasksApi.uploadTaskAttachment(orgId, task.id, file)
+          }
+          setAttachmentFiles([])
+        } catch {
+          setError('Your changes were saved, but a file failed to upload. Reopen the task to add it again.')
+          onSaved(updated)
+          return
+        }
+      }
       onSaved(updated)
     } catch (e2) {
       const msg = apiErrorMessage(e2, 'Failed to save changes. Please try again.')
@@ -353,6 +444,80 @@ export default function EditTaskModal({ task, categories, priorities, statuses, 
             allowedExtensions={proofAllowedExtensions}
             onAllowedExtensionsChange={setProofAllowedExtensions}
           />
+
+          {/* Link to goal — re-link or unlink the quarterly goal this task counts
+              toward. Hidden when the org has no goals. */}
+          <GoalSelectField orgId={orgId} value={goalId} onChange={setGoalId} />
+
+          {/* Checklist — add, edit or remove items. Editing an item keeps every
+              assignee's existing tick/skip; removing one clears it. Hidden once the
+              task is closed (the checklist is then a frozen record). */}
+          {!taskIsTerminal && (
+            <ChecklistBuilderField
+              groups={checklistGroups}
+              onChange={setChecklistGroups}
+              templates={checklistTemplates}
+              open={checklistOpen}
+              onOpenChange={setChecklistOpen}
+            />
+          )}
+
+          {/* Attachments — existing files (removable by their uploader) plus a
+              dropzone to add more. Collapsed by default; the badge counts existing +
+              queued. Adding a file uploads on Save; removing one deletes immediately. */}
+          <div>
+            <div className="rounded-[12px] border border-[#E2E8F0] bg-white overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setAttachmentsOpen((v) => !v)}
+                aria-expanded={attachmentsOpen}
+                className="w-full flex items-center gap-2 px-3 py-3 text-left hover:bg-[#F8FAFC] transition-colors"
+              >
+                <label className="text-sm font-medium text-[#374151] cursor-pointer">Attachments</label>
+                <span className="text-xs font-normal text-[#475569]">Optional</span>
+                {existingAttachments.length + attachmentFiles.length > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+                    {existingAttachments.length + attachmentFiles.length}
+                  </span>
+                )}
+                <span
+                  className={['ml-auto flex items-center justify-center w-6 h-6 rounded-[6px] text-[#2563EB] transition-transform', attachmentsOpen ? 'rotate-45' : ''].join(' ')}
+                  aria-hidden
+                >
+                  <Plus size={18} />
+                </span>
+              </button>
+              {attachmentsOpen && (
+                <div className="px-3 pb-3 pt-0 space-y-2">
+                  <FileDropzone
+                    onFiles={(fs) => setAttachmentFiles((prev) => [...prev, ...fs])}
+                    onReject={setAttachErrors}
+                    disabled={submitting}
+                  />
+                  {(attachErrors.length > 0 || existingAttachments.length > 0 || attachmentFiles.length > 0) && (
+                    <div className="max-h-[260px] overflow-y-auto space-y-2">
+                      {attachErrors.length > 0 && (
+                        <AttachmentErrorBox errors={attachErrors} onDismiss={() => setAttachErrors([])} />
+                      )}
+                      {/* Already-uploaded files — remove is uploader-only (server-enforced). */}
+                      <AttachmentList
+                        attachments={existingAttachments}
+                        onDownload={handleDownloadAttachment}
+                        onRemove={handleRemoveExistingAttachment}
+                        canRemove={(a) => a.uploaded_by_user_id === user?.id}
+                      />
+                      {/* Newly-queued files — uploaded on Save. */}
+                      <PendingFileList
+                        files={attachmentFiles}
+                        uploading={submitting && attachmentFiles.length > 0}
+                        onRemove={(idx) => setAttachmentFiles((prev) => prev.filter((_, i) => i !== idx))}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </form>
 
         {/* Footer — no Cancel button; the header X / Escape / backdrop close the modal.
