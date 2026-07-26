@@ -18,6 +18,47 @@ export interface ReminderRow {
   toCc: boolean
 }
 
+/**
+ * Small number field for "days before" that stays editable. It keeps its own
+ * raw string so the box can be EMPTY while typing (you can clear the 0 and type
+ * a new number) — the parent only ever receives a coerced non-negative integer,
+ * and an empty box reads as 0 on blur.
+ */
+function OffsetDaysInput({
+  value,
+  onChange,
+  className,
+}: {
+  value: number
+  onChange: (n: number) => void
+  className?: string
+}) {
+  const [raw, setRaw] = React.useState(String(value))
+
+  // Re-sync only when the external value no longer matches what's typed (e.g. a
+  // form reset) — never mid-typing, so it can't stomp an in-progress edit.
+  React.useEffect(() => {
+    if (parseInt(raw || '0', 10) !== value) setRaw(String(value))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={raw}
+      onChange={(e) => {
+        const v = e.target.value.replace(/^0+(?=\d)/, '') // drop leading zeros
+        if (!/^\d*$/.test(v)) return // digits only; allow empty
+        setRaw(v)
+        onChange(v === '' ? 0 : Math.max(0, parseInt(v, 10)))
+      }}
+      onBlur={() => { if (raw === '') setRaw('0') }}
+      className={className}
+    />
+  )
+}
+
 let reminderSeq = 0
 export function makeReminderRow(partial?: Partial<ReminderRow>): ReminderRow {
   return {
@@ -280,11 +321,9 @@ export default function RemindersField({ reminders, onChange, mode, deadlineDate
                     <div className="flex items-center gap-x-3 gap-y-2 flex-wrap">
                       {r.kind === 'relative' ? (
                         <div className="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={0}
+                          <OffsetDaysInput
                             value={r.offsetDays}
-                            onChange={(e) => update(r.key, { offsetDays: Math.max(0, parseInt(e.target.value) || 0) })}
+                            onChange={(n) => update(r.key, { offsetDays: n })}
                             className="w-11 text-center border border-[#CBD5E1] rounded-[8px] px-2 py-1.5 text-[13px] text-[#0F172A] bg-[#F8FAFC] hover:bg-white hover:border-[#94A3B8] focus:bg-white focus:border-2 focus:border-[#2563EB] focus:outline-none"
                           />
                           <span className="text-[13px] text-[#475569]">days before</span>
