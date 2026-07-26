@@ -1,0 +1,39 @@
+# Runs the PRE-BUILT images from GHCR. This is the file you use ON THE EC2 BOX.
+# It does NOT build anything — it pulls the images GitHub Actions already built.
+#
+# Usage on EC2:
+#   docker compose -f docker-compose.deploy.yml pull
+#   docker compose -f docker-compose.deploy.yml up -d
+#
+# Requires a .env.production file next to this one (see .env.production.example).
+services:
+  backend:
+    image: ghcr.io/aryan2145/v2e-backend:latest
+    env_file: .env.production
+    environment:
+      PORT: 3001
+      CORS_ORIGIN: https://v2e.rgbindia.com
+      TZ: Asia/Kolkata
+    ports:
+      - "4300:3001"
+    restart: unless-stopped
+    networks:
+      - v2e_prod
+
+  frontend:
+    image: ghcr.io/aryan2145/v2e-frontend:latest
+    environment:
+      # Server-side rewrite target — reaches the backend over the compose network.
+      BACKEND_URL: http://backend:3001
+      TZ: Asia/Kolkata
+    ports:
+      - "3300:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - v2e_prod
+
+networks:
+  v2e_prod:
+    driver: bridge

@@ -1,0 +1,70 @@
+# Builds the backend + frontend Docker images and pushes them to the GitHub
+# Container Registry (GHCR). Runs on every push to main, and can be triggered
+# by hand from the Actions tab ("Run workflow").
+#
+# Images produced:
+#   ghcr.io/aryan2145/v2e-backend:latest   (+ a tag for the exact commit)
+#   ghcr.io/aryan2145/v2e-frontend:latest  (+ a tag for the exact commit)
+#
+# GHCR login uses the automatic GITHUB_TOKEN — no secret to configure here.
+name: Build & push images
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # lets you run it manually from the Actions tab
+
+# GHCR paths must be lowercase. Owner "Aryan2145" -> "aryan2145".
+env:
+  IMAGE_BASE: ghcr.io/aryan2145
+
+# Allow this workflow to push packages (images) using GITHUB_TOKEN.
+permissions:
+  contents: read
+  packages: write
+
+# If you push twice quickly, cancel the older run.
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: ./backend
+          - name: frontend
+            context: ./frontend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push ${{ matrix.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/v2e-${{ matrix.name }}:latest
+            ${{ env.IMAGE_BASE }}/v2e-${{ matrix.name }}:${{ github.sha }}
+          # Frontend bakes NEXT_PUBLIC_WS_URL at build time (public URL, so it is
+          # compiled into the browser bundle). Ignored by the backend build.
+          build-args: |
+            NEXT_PUBLIC_WS_URL=https://v2e.rgbindia.com
+          # Speed up repeat builds by caching layers in GitHub Actions.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
