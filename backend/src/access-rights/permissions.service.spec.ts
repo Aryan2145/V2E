@@ -184,6 +184,22 @@ describe('PermissionsService', () => {
       expect(eligibility.reason).toContain('not enabled');
     });
 
+    it('should gate the meetings subject on the per-line-item governance entitlement, not the module key', async () => {
+      // Regression: `meetings.subject.invitable` lives under Governance, which is
+      // sold per line item — there is no `governance` entitlement row, only
+      // `governance.meetings`. Gating on the module key wrongly resolved to 'off'
+      // and marked everyone ineligible.
+      prismaMock.orgModuleEntitlement.findUnique.mockResolvedValue({ state: EntitlementState.full });
+      prismaMock.userSubjectOverride.findUnique.mockResolvedValue(null);
+      prismaMock.subjectEligibilityPolicy.findUnique.mockResolvedValue(null);
+
+      const eligibility = await service.isEligibleSubject(orgId, 'meetings.subject.invitable', userId);
+      expect(eligibility.eligible).toBe(true);
+      expect(prismaMock.orgModuleEntitlement.findUnique).toHaveBeenCalledWith({
+        where: { organization_id_module_key: { organization_id: orgId, module_key: 'governance.meetings' } },
+      });
+    });
+
     it('should respect user-specific subject overrides', async () => {
       prismaMock.orgModuleEntitlement.findUnique.mockResolvedValue({ state: EntitlementState.full });
       prismaMock.userSubjectOverride.findUnique.mockResolvedValue({ effect: 'deny', reason: 'On probation' });

@@ -392,9 +392,11 @@ export class PermissionsService {
     userId: string,
     labelForReason?: string,
   ): Promise<SubjectEligibility> {
-    // Module ceiling — if the module is off, no one is a subject of it.
+    // Module ceiling — if the module is off, no one is a subject of it. Gate on the
+    // leaf's entitlement key (per-line-item for Governance, e.g. `governance.meetings`),
+    // NOT the top-level module key, which for Governance has no entitlement row.
     if (isEntitlementControlled(subjectKey)) {
-      const state = await this.entitlementState(orgId, moduleOf(subjectKey)!);
+      const state = await this.entitlementState(orgId, entitlementKeyOf(subjectKey)!);
       if (state === 'off') {
         return { eligible: false, reason: `${labelForReason ?? 'This module'} is not enabled for this organization` };
       }
@@ -433,7 +435,7 @@ export class PermissionsService {
     if (candidateUserIds.length === 0) return out;
 
     if (isEntitlementControlled(subjectKey)) {
-      const state = await this.entitlementState(orgId, moduleOf(subjectKey)!);
+      const state = await this.entitlementState(orgId, entitlementKeyOf(subjectKey)!);
       if (state === 'off') {
         for (const id of candidateUserIds) {
           out.set(id, { eligible: false, reason: `${labelForReason ?? 'This module'} is not enabled for this organization` });
