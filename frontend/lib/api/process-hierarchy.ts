@@ -17,6 +17,8 @@ export type ProcessArtifactDirection = 'input' | 'output'
 export type ProcessAccessKind = 'department' | 'role' | 'user' | 'exclude_user'
 export type ProcessAccessLevel = 'view' | 'edit'
 export type ProcessSnapshotStatus = 'draft' | 'in_review' | 'final'
+export type ProcessPool = 'customer' | 'company' | 'vendor'
+export type ProcessLaneOrigin = 'manual' | 'auto'
 
 export interface ProcessMapSummary {
   id: string
@@ -34,6 +36,7 @@ export interface ProcessMapSummary {
 export interface ProcessMapDetail {
   id: string
   name: string
+  chart_type: string // renderer family of the root level (swimlane|org|mindmap|…)
   description: string | null
   created_by_user_id: string
   is_owner: boolean
@@ -54,6 +57,9 @@ export interface ProcessNode {
   status: ProcessNodeStatus
   responsible_role_id: string | null
   responsible_user_id: string | null
+  chart_type?: string // for a container: renderer family of the level inside it
+  pool?: ProcessPool | null // swimlane participant band (null = free-form, no swimlane)
+  department_id?: string | null // the lane within the Company pool
   position_x: number
   position_y: number
   sort_order: number
@@ -73,15 +79,26 @@ export interface ProcessConnection {
   target_node_id: string
   label: string | null
   condition_kind: ProcessConditionKind
+  source_side?: string | null // swimlane: which dot of the source the line exits (right|bottom|top|left)
+}
+
+export interface ProcessLane {
+  id: string
+  department_id: string
+  department_name: string
+  origin: ProcessLaneOrigin
+  sort_order: number
 }
 
 export interface FlowLevel {
   map_id: string
   parent_node_id: string | null
+  chart_type: string // renderer family for THIS level (swimlane|org|mindmap|…)
   breadcrumb: { id: string; name: string }[]
   can_edit: boolean
   nodes: ProcessNode[]
   connections: ProcessConnection[]
+  lanes: ProcessLane[] // Company-pool department bands for this level (top→bottom)
 }
 
 export interface TreeNode {
@@ -224,7 +241,7 @@ export const processHierarchyApi = {
   createNode: async (
     orgId: string,
     mapId: string,
-    dto: { parent_node_id?: string | null; kind: ProcessNodeKind; name: string; description?: string; position_x?: number; position_y?: number; create_linked_map?: boolean; linked_map_id?: string },
+    dto: { parent_node_id?: string | null; kind: ProcessNodeKind; name: string; description?: string; pool?: ProcessPool; department_id?: string; position_x?: number; position_y?: number; create_linked_map?: boolean; linked_map_id?: string },
   ): Promise<ProcessNode> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/nodes`, dto)),
   // Paste copied nodes (with their sub-trees) into this map/level.
   pasteNodes: async (
@@ -245,6 +262,8 @@ export const processHierarchyApi = {
       status: ProcessNodeStatus
       responsible_role_id: string | null
       responsible_user_id: string | null
+      pool: ProcessPool | null
+      department_id: string | null
       position_x: number
       position_y: number
       linked_map_id: string | null
@@ -280,7 +299,7 @@ export const processHierarchyApi = {
   createConnection: async (
     orgId: string,
     mapId: string,
-    dto: { parent_node_id?: string | null; source_node_id: string; target_node_id: string; label?: string; condition_kind?: ProcessConditionKind },
+    dto: { parent_node_id?: string | null; source_node_id: string; target_node_id: string; label?: string; condition_kind?: ProcessConditionKind; source_side?: string },
   ): Promise<ProcessConnection> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/connections`, dto)),
   updateConnection: async (
     orgId: string,
@@ -290,6 +309,19 @@ export const processHierarchyApi = {
   ): Promise<ProcessConnection> => unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/connections/${connId}`, dto)),
   deleteConnection: async (orgId: string, mapId: string, connId: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/maps/${mapId}/connections/${connId}`)
+  },
+
+  // Swimlanes (Company-pool department bands). Create makes an empty, persistent lane;
+  // delete needs move_to_department_id when the lane still has steps.
+  createLane: async (
+    orgId: string,
+    mapId: string,
+    dto: { department_id: string; parent_node_id?: string | null },
+  ): Promise<ProcessLane> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/lanes`, dto)),
+  deleteLane: async (orgId: string, mapId: string, laneId: string, moveToDepartmentId?: string): Promise<void> => {
+    await apiClient.delete(`${base(orgId)}/maps/${mapId}/lanes/${laneId}`, {
+      params: moveToDepartmentId ? { move_to_department_id: moveToDepartmentId } : undefined,
+    })
   },
 
   // Artifacts

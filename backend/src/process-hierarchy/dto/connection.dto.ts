@@ -1,5 +1,7 @@
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ProcessConditionKind } from '@prisma/client';
+
+const SIDES = ['right', 'bottom', 'top', 'left'];
 
 export class CreateConnectionDto {
   @IsOptional()
@@ -20,6 +22,11 @@ export class CreateConnectionDto {
   @IsOptional()
   @IsEnum(ProcessConditionKind)
   condition_kind?: ProcessConditionKind;
+
+  // Swimlane: which dot of the source the line leaves from (what the user dragged from).
+  @IsOptional()
+  @IsIn(SIDES)
+  source_side?: string;
 }
 
 export class UpdateConnectionDto {

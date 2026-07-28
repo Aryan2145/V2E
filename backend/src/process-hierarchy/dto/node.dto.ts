@@ -12,7 +12,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { ProcessNodeKind, ProcessNodeStatus } from '@prisma/client';
+import { ProcessNodeKind, ProcessNodeStatus, ProcessPool } from '@prisma/client';
 
 export class ChecklistItemInput {
   @IsOptional()
@@ -50,6 +50,16 @@ export class CreateNodeDto {
   @IsOptional()
   @IsNumber()
   position_y?: number;
+
+  // Swimlane placement. pool = participant band; department_id = the lane (a Department id)
+  // when pool = company. Customer/Vendor have no department.
+  @IsOptional()
+  @IsEnum(ProcessPool)
+  pool?: ProcessPool;
+
+  @IsOptional()
+  @IsUUID()
+  department_id?: string;
 
   // Composition: for a container/sub-process, also create a child map and reference it
   // (build-in-place — the area instantly becomes its own reusable map).
@@ -92,6 +102,18 @@ export class UpdateNodeDto {
   @IsOptional()
   @IsUUID()
   responsible_user_id?: string | null;
+
+  // Swimlane placement. Changing pool/department moves the node to that band/lane; the
+  // service auto-creates the target lane if missing and cleans up an emptied auto lane.
+  @IsOptional()
+  @ValidateIf((o) => o.pool !== null)
+  @IsEnum(ProcessPool)
+  pool?: ProcessPool | null;
+
+  @IsOptional()
+  @ValidateIf((o) => o.department_id !== null)
+  @IsUUID()
+  department_id?: string | null;
 
   @IsOptional()
   @IsNumber()

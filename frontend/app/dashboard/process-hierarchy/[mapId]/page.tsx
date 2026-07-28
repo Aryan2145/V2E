@@ -13,6 +13,7 @@ import {
   type ProcessMapDetail,
   type ProcessNodeKind,
   type ProcessConditionKind,
+  type ProcessPool,
   type SnapshotSummary,
   type MapDiff,
   type TreeNode,
@@ -25,7 +26,9 @@ import { MaterialPreviewModal } from '@/components/process-hierarchy/node-materi
 import ArtifactLibrary from '@/components/process-hierarchy/ArtifactLibrary'
 import HierarchyTree from '@/components/process-hierarchy/HierarchyTree'
 import { KIND_META } from '@/components/process-hierarchy/kind-meta'
-import { autoLayout } from '@/components/process-hierarchy/layout'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import { getDepartments } from '@/lib/api/departments'
+import type { Department } from '@/lib/types'
 
 // Client-only: keeps ReactFlow + html-to-image out of this route's server/SSR bundle.
 const ProcessCanvas = dynamic(() => import('@/components/process-hierarchy/ProcessCanvas'), {
@@ -38,12 +41,14 @@ const ProcessCanvas = dynamic(() => import('@/components/process-hierarchy/Proce
 })
 import {
   Eye, Pencil, Filter, History, Plus, Check, X, Loader2, RotateCcw,
-  GitCompare, FolderOpen, Save, MoreHorizontal, PanelLeft, Lightbulb, Trash2,
-  Link2 as LinkIcon, Search, Workflow, ClipboardPaste,
+  GitCompare, FolderOpen, Save, MoreHorizontal, PanelLeft, Trash2,
+  Link2 as LinkIcon, Search, Workflow, ClipboardPaste, Download, Rows3,
 } from 'lucide-react'
 
 const ADD_KINDS: ProcessNodeKind[] = ['task', 'decision', 'subprocess', 'container', 'start_event', 'end_event']
-const HINT_KEY = 'ph.explorer.hintDismissed'
+// Inside a swimlane there are no containers (folders) — a lane holds flow steps and
+// sub-processes only. See the process-swimlanes design decisions.
+const LANE_ADD_KINDS: ProcessNodeKind[] = ['task', 'decision', 'subprocess', 'start_event', 'end_event']
 
 export default function ProcessMapExplorerPage() {
   const { user } = useAuth()
@@ -70,14 +75,22 @@ export default function ProcessMapExplorerPage() {
   const [showMore, setShowMore] = useState(false)
   const [showDeleteMap, setShowDeleteMap] = useState(false)
   const [deletingMap, setDeletingMap] = useState(false)
-  const [showTree, setShowTree] = useState(false) // outline is now a slide-over; closed by default
+  const [showTree, setShowTree] = useState(false) // outline is now a slide-over; opened from the ⋯ menu
+  // The process explorer is always the swimlane renderer now (no toggle). When other chart
+  // families (org, mindmap) arrive, this becomes `flow.chart_type === 'swimlane'`.
+  const swimlane = true
+  const [departments, setDepartments] = useState<Department[]>([]) // for the New-swimlane picker
+  const [addLanePick, setAddLanePick] = useState(false) // Add-step menu is showing its lane picker
+  const [laneAdd, setLaneAdd] = useState<{ pool: ProcessPool | null; departmentId: string | null; fromNodeId?: string | null; side?: string; autoCond?: ProcessConditionKind; ask?: boolean } | null>(null) // lane "+" / node-dot "add next" kind picker
+  const [branchPick, setBranchPick] = useState<{ mode: 'create'; source: string; target: string; side?: string } | { mode: 'set'; connId: string } | null>(null) // Yes/No chooser for a decision connection
   const [modeInitialized, setModeInitialized] = useState(false)
   const [diff, setDiff] = useState<MapDiff | null>(null)
   const [comparing, setComparing] = useState<{ base: string; target: string; baseLabel: string; targetLabel: string } | null>(null)
-  // The on-canvas hint toast; dismissal is remembered per user (local preference).
-  const [hintDismissed, setHintDismissed] = useState(true)
   const [docPreview, setDocPreview] = useState<ProcessArtifact | null>(null)
   const spawnCenterRef = useRef<(() => { x: number; y: number }) | null>(null)
+  const exportPngRef = useRef<(() => void) | null>(null)
+  // Cascades repeat pastes at the same spot so they don't stack on top of each other.
+  const pasteSeqRef = useRef<{ key: string; n: number }>({ key: '', n: 0 })
   // Clipboard lives in sessionStorage so it survives navigating to another map — that's
   // the whole point of "copy here, open a different map, paste there".
   const [clipboard, setClipboardState] = useState<{ sourceMapId: string; nodeIds: string[] } | null>(null)
@@ -88,21 +101,12 @@ export default function ProcessMapExplorerPage() {
     setClipboardState(c)
     try { if (c) sessionStorage.setItem('ph-clipboard', JSON.stringify(c)); else sessionStorage.removeItem('ph-clipboard') } catch {}
   }, [])
-  useEffect(() => {
-    try { setHintDismissed(localStorage.getItem(HINT_KEY) === '1') } catch { setHintDismissed(false) }
-  }, [])
-  const dismissHint = useCallback(() => {
-    setHintDismissed(true)
-    try { localStorage.setItem(HINT_KEY, '1') } catch { /* ignore */ }
-  }, [])
-  const showHint = useCallback(() => {
-    setHintDismissed(false)
-    try { localStorage.removeItem(HINT_KEY) } catch { /* ignore */ }
-  }, [])
 
   const loadTree = useCallback(() => {
     processHierarchyApi.getTree(orgId, mapId).then((t) => setTree(t.nodes)).catch(() => {})
   }, [orgId, mapId])
+
+  useEffect(() => { if (orgId) getDepartments(orgId).then(setDepartments).catch(() => {}) }, [orgId])
 
   const loadFlow = useCallback(async (pid: string | null) => {
     const f = await processHierarchyApi.getFlow(orgId, mapId, pid)
@@ -196,24 +200,157 @@ export default function ProcessMapExplorerPage() {
     const ids = nodeIds.filter((id) => !id.includes('::')) // only real top-level nodes
     if (!ids.length) return
     setClipboard({ sourceMapId: mapId, nodeIds: ids })
+    pasteSeqRef.current = { key: '', n: 0 } // fresh copy restarts the paste cascade
     addToast(`Copied ${ids.length} item${ids.length !== 1 ? 's' : ''}. Paste from the Add menu.`, 'success')
   }, [mapId, addToast])
 
   const pasteClipboard = useCallback(async () => {
     if (!clipboard) return
     setShowAdd(false)
+    // Drop where you're looking. If you paste again without moving, cascade each copy down-right
+    // by a small step so repeat pastes never stack on the same spot.
     const c = spawnCenterRef.current?.() ?? null
+    let pos: { position_x: number; position_y: number } | null = null
+    if (c) {
+      const bx = Math.round(c.x), by = Math.round(c.y)
+      const key = `${bx},${by}`
+      const seq = pasteSeqRef.current
+      const n = seq.key === key ? seq.n + 1 : 0
+      pasteSeqRef.current = { key, n }
+      pos = { position_x: bx + n * 28, position_y: by + n * 28 }
+    }
     try {
       const { pasted_node_ids } = await processHierarchyApi.pasteNodes(orgId, mapId, {
         source_map_id: clipboard.sourceMapId, node_ids: clipboard.nodeIds,
         parent_node_id: parentId,
-        ...(c ? { position_x: Math.round(c.x), position_y: Math.round(c.y) } : {}),
+        ...(pos ?? {}),
       })
       await refresh()
-      if (pasted_node_ids[0]) setSelectedNodeId(pasted_node_ids[0])
+      // Note: intentionally do NOT select/open the pasted node — pasting shouldn't pop the sidebar.
       addToast(`Pasted ${pasted_node_ids.length} item${pasted_node_ids.length !== 1 ? 's' : ''}.`, 'success')
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not paste here.', 'error') }
   }, [clipboard, orgId, mapId, parentId, refresh, addToast])
+
+  // Create a swimlane (a department lane) straight from the Add step menu, and reveal the
+  // swimlane view so the result is visible even if you were on the free-form canvas.
+  const createLane = useCallback(async (deptId: string) => {
+    if (!deptId) return
+    try {
+      await processHierarchyApi.createLane(orgId, mapId, { department_id: deptId, parent_node_id: parentId })
+      setShowAdd(false); setAddLanePick(false)
+      await refresh()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not add the lane.', 'error') }
+  }, [orgId, mapId, parentId, refresh, addToast])
+
+  // Output rules: a decision has exactly one Yes + one No; every other step has a single output.
+  // Returns whether another output is allowed, and — for a decision — which branch this one is
+  // (auto-picking the remaining branch) or whether to ask (first branch, none chosen yet).
+  const outputRuleFor = useCallback((sourceId: string): { ok: boolean; reason?: string; condition?: ProcessConditionKind; ask?: boolean } => {
+    const src = flow?.nodes.find((n) => n.id === sourceId)
+    if (!flow || !src) return { ok: false, reason: 'Could not find that step.' }
+    const outs = flow.connections.filter((c) => c.source_node_id === sourceId)
+    if (src.kind === 'decision') {
+      const hasYes = outs.some((c) => c.condition_kind === 'yes')
+      const hasNo = outs.some((c) => c.condition_kind === 'no')
+      if ((hasYes && hasNo) || outs.length >= 2) return { ok: false, reason: 'A decision can only branch into Yes and No — both are already used.' }
+      if (hasYes) return { ok: true, condition: 'no' }
+      if (hasNo) return { ok: true, condition: 'yes' }
+      return { ok: true, ask: true }
+    }
+    if (outs.length >= 1) return { ok: false, reason: 'This step already leads to a next step.' }
+    return { ok: true, condition: 'none' }
+  }, [flow])
+
+  // The lane "+" opens a small picker for WHAT to add (Task / Decision / Container / …),
+  // then the chosen kind is created straight into that lane (pool + department pre-set).
+  const openLaneAdd = useCallback((pool: ProcessPool, departmentId: string | null) => {
+    setLaneAdd({ pool, departmentId })
+  }, [])
+  // Click a node's exit dot: open the kind picker, remembering which node to link the new
+  // step from, inheriting its pool + department.
+  const appendFromNode = useCallback((nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => {
+    const rule = outputRuleFor(nodeId)
+    if (!rule.ok) { addToast(rule.reason!, 'error'); return }
+    setLaneAdd({ pool, departmentId, fromNodeId: nodeId, side: sourceSide, autoCond: rule.condition, ask: rule.ask })
+  }, [outputRuleFor, addToast])
+  const addLaneKind = useCallback(async (kind: ProcessNodeKind) => {
+    if (!laneAdd) return
+    const { pool, departmentId, fromNodeId, side, autoCond, ask } = laneAdd
+    setLaneAdd(null)
+    const isArea = kind === 'subprocess' // no containers in a swimlane; only sub-process is an area
+    try {
+      const created = await processHierarchyApi.createNode(orgId, mapId, {
+        parent_node_id: parentId, kind, name: `New ${KIND_META[kind].label}`,
+        ...(pool ? { pool } : {}), ...(departmentId ? { department_id: departmentId } : {}),
+        ...(isArea ? { create_linked_map: true } : {}),
+      })
+      // Dot "add next" also draws the connection into the new node — with the branch the output
+      // rule resolved (auto-picked for a decision's second branch), or unlabeled if we'll ask.
+      let newConnId: string | null = null
+      if (fromNodeId) {
+        const cond: ProcessConditionKind = autoCond ?? 'none'
+        const conn = await processHierarchyApi.createConnection(orgId, mapId, {
+          parent_node_id: parentId, source_node_id: fromNodeId, target_node_id: created.id,
+          condition_kind: cond, label: cond === 'yes' ? 'Yes' : cond === 'no' ? 'No' : undefined,
+          ...(side ? { source_side: side } : {}),
+        }).catch(() => null)
+        newConnId = conn?.id ?? null
+      }
+      await refresh()
+      setSelectedNodeId(created.id)
+      // Only ask for the branch when the rule said to (a decision's very first branch).
+      if (fromNodeId && newConnId && ask) setBranchPick({ mode: 'set', connId: newConnId })
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not add a step to this lane.', 'error') }
+  }, [laneAdd, orgId, mapId, parentId, refresh, addToast])
+
+  // Drawing a line FROM a decision to an existing node → ask Yes/No before creating it.
+  // Drag a node onto another lane → set its department (Customer/Vendor have none) and keep
+  // the horizontal spot it was dropped at.
+  const reassignLane = useCallback(async (nodeId: string, pool: ProcessPool, departmentId: string | null, positionX: number) => {
+    try {
+      await processHierarchyApi.updateNode(orgId, mapId, nodeId, { pool, department_id: departmentId, position_x: positionX })
+      await refresh()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not move it to that lane.', 'error') }
+  }, [orgId, mapId, refresh, addToast])
+
+  const onDecisionConnect = useCallback((source: string, target: string, sourceSide?: string) => {
+    const rule = outputRuleFor(source)
+    if (!rule.ok) { addToast(rule.reason!, 'error'); return }
+    if (rule.ask) { setBranchPick({ mode: 'create', source, target, side: sourceSide }); return }
+    // One branch already used → this is automatically the other one; no pop-up.
+    const cond = rule.condition!
+    processHierarchyApi.createConnection(orgId, mapId, {
+      parent_node_id: parentId, source_node_id: source, target_node_id: target,
+      condition_kind: cond, label: cond === 'yes' ? 'Yes' : 'No',
+      ...(sourceSide ? { source_side: sourceSide } : {}),
+    }).then(() => loadFlow(parentId)).catch(() => addToast('Could not connect those steps.', 'error'))
+  }, [outputRuleFor, orgId, mapId, parentId, loadFlow, addToast])
+  const chooseBranch = useCallback(async (cond: 'yes' | 'no') => {
+    const bp = branchPick
+    setBranchPick(null)
+    if (!bp) return
+    const label = cond === 'yes' ? 'Yes' : 'No'
+    try {
+      if (bp.mode === 'create') {
+        await processHierarchyApi.createConnection(orgId, mapId, {
+          parent_node_id: parentId, source_node_id: bp.source, target_node_id: bp.target, condition_kind: cond, label,
+          ...(bp.side ? { source_side: bp.side } : {}),
+        })
+      } else {
+        await processHierarchyApi.updateConnection(orgId, mapId, bp.connId, { condition_kind: cond, label })
+      }
+      await loadFlow(parentId)
+    } catch { addToast('Could not set the branch.', 'error') }
+  }, [branchPick, orgId, mapId, parentId, loadFlow, addToast])
+  const cancelBranch = useCallback(async () => {
+    const bp = branchPick
+    setBranchPick(null)
+    if (!bp) return
+    // "Nothing chosen → break the connection." (In create mode nothing was created yet.)
+    if (bp.mode === 'set') {
+      try { await processHierarchyApi.deleteConnection(orgId, mapId, bp.connId); await loadFlow(parentId) } catch { /* ignore */ }
+    }
+  }, [branchPick, orgId, mapId, parentId, loadFlow])
 
   // Build-in-place: containers / sub-processes instantly become their own child map.
   const addNode = useCallback((kind: ProcessNodeKind) => {
@@ -227,15 +364,19 @@ export default function ProcessMapExplorerPage() {
     return spawnNode('subprocess', { name: map.name, linkedMapId: map.id })
   }, [spawnNode])
 
-  const onConnect = useCallback(async (source: string, target: string, condition: ProcessConditionKind) => {
+  const onConnect = useCallback(async (source: string, target: string, _condition: ProcessConditionKind, sourceSide?: string) => {
+    const rule = outputRuleFor(source)
+    if (!rule.ok) { addToast(rule.reason!, 'error'); return }
+    const cond = rule.condition ?? 'none'
     try {
       await processHierarchyApi.createConnection(orgId, mapId, {
         parent_node_id: parentId, source_node_id: source, target_node_id: target,
-        condition_kind: condition, label: condition === 'yes' ? 'Yes' : condition === 'no' ? 'No' : undefined,
+        condition_kind: cond, label: cond === 'yes' ? 'Yes' : cond === 'no' ? 'No' : undefined,
+        ...(sourceSide ? { source_side: sourceSide } : {}),
       })
       await loadFlow(parentId)
     } catch { addToast('Could not connect those steps.', 'error') }
-  }, [orgId, mapId, parentId, loadFlow, addToast])
+  }, [orgId, mapId, parentId, loadFlow, addToast, outputRuleFor])
 
   const onNodeDragStop = useCallback(async (nodeId: string, x: number, y: number) => {
     // Update local state too, so a later expand/collapse rebuilds at the new spot
@@ -285,14 +426,6 @@ export default function ProcessMapExplorerPage() {
     } catch { addToast('Could not delete this map. Please try again.', 'error'); setDeletingMap(false) }
   }, [orgId, mapId, router, addToast])
 
-  const runAutoLayout = useCallback(async () => {
-    if (!flow) return
-    const pos = autoLayout(flow.nodes, flow.connections)
-    const updates = flow.nodes.filter((n) => pos[n.id]).map((n) => ({ id: n.id, position_x: pos[n.id].x, position_y: pos[n.id].y }))
-    if (!updates.length) return
-    setFlow({ ...flow, nodes: flow.nodes.map((n) => (pos[n.id] ? { ...n, position_x: pos[n.id].x, position_y: pos[n.id].y } : n)) })
-    await processHierarchyApi.bulkPosition(orgId, mapId, updates).catch(() => addToast('Could not save the layout.', 'error'))
-  }, [flow, orgId, mapId, addToast])
 
   const updateConn = useCallback(async (id: string, dto: { label?: string; condition_kind?: ProcessConditionKind }) => {
     try { await processHierarchyApi.updateConnection(orgId, mapId, id, dto); await loadFlow(parentId) }
@@ -327,53 +460,80 @@ export default function ProcessMapExplorerPage() {
     )
   }
 
-  // Floating "Add step" primary — rendered over the canvas (top-right cluster).
+  // Floating "Add step" primary — rendered over the canvas (top-right cluster). In swimlane
+  // work a lane is often the FIRST thing you add, so "New swimlane" lives right in this menu.
   const addStepControl = canEditHere ? (
     <div className="relative">
-      <button onClick={() => setShowAdd((v) => !v)}
+      <button onClick={() => { setShowAdd((v) => !v); setAddLanePick(false) }}
         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[8px] bg-[#2563EB] text-white hover:bg-[#1D4ED8] shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1">
         <Plus size={14} /> Add step
       </button>
       {showAdd && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setShowAdd(false)} />
-          <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-56 max-h-[248px] overflow-y-auto bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 animate-[popIn_.12s_ease-out]">
-            {ADD_KINDS.map((k) => (
-              <button key={k} onClick={() => addNode(k)}
-                className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
-                <span className="text-[#2563EB] mt-0.5">{KIND_META[k].icon}</span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-medium text-[#0F172A]">{KIND_META[k].label}</span>
-                  <span className="block text-[11px] text-[#64748B]">{KIND_META[k].hint}</span>
-                </span>
-              </button>
-            ))}
-            <div className="my-1 border-t border-[#F1F5F9]" />
-            <button onClick={() => { setShowAdd(false); setShowRefPicker(true) }}
-              className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
-              <span className="text-[#2563EB] mt-0.5"><LinkIcon size={14} /></span>
-              <span className="min-w-0">
-                <span className="block text-[13px] font-medium text-[#0F172A]">Reference a map</span>
-                <span className="block text-[11px] text-[#64748B]">Drop an instance of an existing map</span>
-              </span>
-            </button>
-            <button onClick={() => addNode('note')}
-              className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
-              <span className="text-[#CA8A04] mt-0.5">{KIND_META.note.icon}</span>
-              <span className="min-w-0">
-                <span className="block text-[13px] font-medium text-[#0F172A]">Note</span>
-                <span className="block text-[11px] text-[#64748B]">A free-form sticky annotation</span>
-              </span>
-            </button>
-            {clipboard && (
-              <button onClick={pasteClipboard}
-                className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
-                <span className="text-[#2563EB] mt-0.5"><ClipboardPaste size={14} /></span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] font-medium text-[#0F172A]">Paste {clipboard.nodeIds.length} item{clipboard.nodeIds.length !== 1 ? 's' : ''}</span>
-                  <span className="block text-[11px] text-[#64748B]">Drop a copy of what you copied here</span>
-                </span>
-              </button>
+          <div className="fixed inset-0 z-40" onClick={() => { setShowAdd(false); setAddLanePick(false) }} />
+          <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-64 max-h-[320px] overflow-y-auto bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 animate-[popIn_.12s_ease-out]">
+            {addLanePick ? (
+              <div className="p-1">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[13px] font-semibold text-[#0F172A]">New swimlane</span>
+                  <button onClick={() => setAddLanePick(false)} className="text-[12px] font-medium text-[#2563EB] hover:underline">‹ Back</button>
+                </div>
+                <DepartmentSelect
+                  inline value="" departments={departments} onChange={createLane}
+                  placeholder="Pick a department"
+                  lockedReason={(id) => (flow.lanes.some((l) => l.department_id === id) ? 'Already a lane' : null)}
+                />
+                <p className="text-[11px] text-[#64748B] mt-2">A lane is a department band in the Company pool.</p>
+              </div>
+            ) : (
+              <>
+                {ADD_KINDS.map((k) => (
+                  <button key={k} onClick={() => addNode(k)}
+                    className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                    <span className="text-[#2563EB] mt-0.5">{KIND_META[k].icon}</span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium text-[#0F172A]">{KIND_META[k].label}</span>
+                      <span className="block text-[11px] text-[#64748B]">{KIND_META[k].hint}</span>
+                    </span>
+                  </button>
+                ))}
+                <div className="my-1 border-t border-[#F1F5F9]" />
+                <button onClick={() => setAddLanePick(true)}
+                  className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                  <span className="text-[#2563EB] mt-0.5"><Rows3 size={14} /></span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-[#0F172A]">New swimlane</span>
+                    <span className="block text-[11px] text-[#64748B]">Add a department lane (a horizontal band)</span>
+                  </span>
+                </button>
+                <div className="my-1 border-t border-[#F1F5F9]" />
+                <button onClick={() => { setShowAdd(false); setShowRefPicker(true) }}
+                  className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                  <span className="text-[#2563EB] mt-0.5"><LinkIcon size={14} /></span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-[#0F172A]">Reference a map</span>
+                    <span className="block text-[11px] text-[#64748B]">Drop an instance of an existing map</span>
+                  </span>
+                </button>
+                <button onClick={() => addNode('note')}
+                  className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                  <span className="text-[#CA8A04] mt-0.5">{KIND_META.note.icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-[#0F172A]">Note</span>
+                    <span className="block text-[11px] text-[#64748B]">A free-form sticky annotation</span>
+                  </span>
+                </button>
+                {clipboard && (
+                  <button onClick={pasteClipboard}
+                    className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                    <span className="text-[#2563EB] mt-0.5"><ClipboardPaste size={14} /></span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium text-[#0F172A]">Paste {clipboard.nodeIds.length} item{clipboard.nodeIds.length !== 1 ? 's' : ''}</span>
+                      <span className="block text-[11px] text-[#64748B]">Drop a copy of what you copied here</span>
+                    </span>
+                  </button>
+                )}
+              </>
             )}
           </div>
         </>
@@ -413,12 +573,6 @@ export default function ProcessMapExplorerPage() {
 
         {/* Right controls */}
         <div className="flex items-center gap-1.5 shrink-0">
-          {/* Outline slide-over toggle */}
-          <button onClick={() => setShowTree((v) => !v)} title={showTree ? 'Hide outline' : 'Show outline'} aria-pressed={showTree}
-            className={`inline-flex items-center gap-1.5 h-8 px-2.5 text-[13px] font-medium rounded-[8px] border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1 ${showTree ? 'border-[#2563EB] text-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] text-[#475569] bg-white hover:bg-[#F1F5F9]'}`}>
-            <PanelLeft size={14} /> <span className="hidden md:inline">Outline</span>
-          </button>
-
           {map.can_edit && (
             <div className="inline-flex h-8 rounded-[8px] border border-[#E2E8F0] overflow-hidden">
               <button onClick={() => setMode('view')} title="View"
@@ -453,10 +607,13 @@ export default function ProcessMapExplorerPage() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMore(false)} />
                 <div className="absolute right-0 top-[calc(100%+6px)] z-50 w-52 bg-white border border-[#E2E8F0] rounded-[10px] shadow-lg p-1.5 animate-[popIn_.12s_ease-out]">
+                  <MenuItem icon={<PanelLeft size={15} />} label="Outline" onClick={() => { setShowMore(false); setShowTree(true) }} />
+                  {flow.nodes.length > 0 && (
+                    <MenuItem icon={<Download size={15} />} label="Export as PNG" onClick={() => { setShowMore(false); exportPngRef.current?.() }} />
+                  )}
                   <MenuItem icon={<History size={15} />} label="Versions & compare" onClick={() => { setShowMore(false); setShowVersions(true) }} />
                   {map.can_edit && <MenuItem icon={<FolderOpen size={15} />} label="Document library" onClick={() => { setShowMore(false); setShowDocs(true) }} />}
                   <MenuItem icon={<Save size={15} />} label="Save as template" onClick={() => { setShowMore(false); setShowSaveTpl(true) }} />
-                  {hintDismissed && <MenuItem icon={<Lightbulb size={15} />} label="Show tips" onClick={() => { setShowMore(false); showHint() }} />}
                   {map.is_owner && (
                     <>
                       <div className="my-1 h-px bg-[#F1F5F9]" />
@@ -496,32 +653,32 @@ export default function ProcessMapExplorerPage() {
       {/* Canvas — takes the full remaining area, inset with a light border + rounded corners.
           Everything else (outline, add, hint) floats over it. */}
       <div className="relative flex-1 min-h-0 mt-2 rounded-[12px] border border-[#E2E8F0] bg-white shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
-        {flow.nodes.length === 0 ? (
+        {/* Show the empty state only when there's genuinely nothing to draw. In swimlane view a
+            lane with no steps IS something to show, so render the canvas once any lane exists. */}
+        {flow.nodes.length === 0 && !(swimlane && flow.lanes.length > 0) ? (
           <div className="h-full flex flex-col items-center justify-center text-center px-6">
+            {/* The canvas (which normally hosts Add step) isn't mounted when empty, so float
+                the same control here — otherwise the empty state is a dead end. */}
+            {addStepControl && <div className="absolute top-3 right-3 z-10">{addStepControl}</div>}
             <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-3">
               {KIND_META.start_event.icon}
             </div>
             <p className="text-[#0F172A] font-semibold">This level is empty</p>
             <p className="text-[#475569] text-sm mt-1 max-w-sm">
-              {canEditHere ? 'Add a Start marker and your first steps, then drag between them to connect.' : 'Nothing has been mapped here yet.'}
+              {canEditHere
+                ? 'Add your first step with the Add step button, top right — pick a Container, Task, Decision or a Start/End marker.'
+                : 'Nothing has been mapped here yet.'}
             </p>
-            {canEditHere && (
-              <div className="flex items-center gap-2 mt-4">
-                <button onClick={() => addNode('start_event')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] transition-colors">
-                  <Plus size={15} /> Add Start
-                </button>
-                <button onClick={() => addNode('task')}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-[8px] text-sm font-semibold text-[#2563EB] border-2 border-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
-                  <Plus size={15} /> Add first step
-                </button>
-              </div>
-            )}
           </div>
         ) : (
           <ProcessCanvas
             flow={flow}
             canEdit={canEditHere}
+            swimlane={swimlane}
+            onAddInLane={openLaneAdd}
+            onAppendFromNode={appendFromNode}
+            onDecisionConnect={onDecisionConnect}
+            onReassignLane={reassignLane}
             selectedNodeId={selectedNodeId}
             visibleNodeIds={visible}
             diffStatus={comparing ? diff?.node_status ?? null : null}
@@ -531,7 +688,6 @@ export default function ProcessMapExplorerPage() {
             onNodeDragStop={onNodeDragStop}
             onNodesMove={onNodesMove}
             onDeleteNodes={deleteNodes}
-            onAutoLayout={runAutoLayout}
             onUpdateConnection={updateConn}
             onDeleteConnection={deleteConn}
             topRightExtra={addStepControl}
@@ -539,6 +695,7 @@ export default function ProcessMapExplorerPage() {
             onOpenMap={(mid) => router.push(`/dashboard/process-hierarchy/${mid}`)}
             onOpenDoc={openDoc}
             spawnCenterRef={spawnCenterRef}
+            exportPngRef={exportPngRef}
             onCopyNodes={copyNodes}
             onPaste={pasteClipboard}
           />
@@ -547,22 +704,6 @@ export default function ProcessMapExplorerPage() {
         {docPreview && (
           <MaterialPreviewModal orgId={orgId} mapId={mapId} artifact={docPreview}
             onClose={() => setDocPreview(null)} onDownload={downloadDoc} />
-        )}
-
-        {/* Hint toast — dismissible, remembered per user. Sits top-left, clear of the
-            floating Add step button (top-right) and the fit-to-view'd nodes. */}
-        {!hintDismissed && (
-          <div className="absolute top-3 left-3 z-20 max-w-[min(340px,calc(100%-24px))] animate-[popIn_.15s_ease-out]">
-            <div className="flex items-start gap-2 rounded-[10px] bg-white/95 backdrop-blur border border-[#E2E8F0] shadow-sm pl-3 pr-1.5 py-2">
-              <p className="text-[12px] leading-snug text-[#475569]">
-                Click a step to edit it{canEditHere ? '; drag between step edges to connect, or click a connection to relabel it' : '; use “Open” on a container to go deeper'}.
-              </p>
-              <button onClick={dismissHint} aria-label="Dismiss hint"
-                className="shrink-0 -mr-0.5 w-6 h-6 inline-flex items-center justify-center rounded-full text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]">
-                <X size={14} />
-              </button>
-            </div>
-          </div>
         )}
 
         {/* Outline slide-over — floats over the canvas; click the canvas or pick an item to close. */}
@@ -611,6 +752,53 @@ export default function ProcessMapExplorerPage() {
 
       {showRefPicker && (
         <ReferenceMapModal orgId={orgId} excludeId={mapId} onClose={() => setShowRefPicker(false)} onPick={addReference} />
+      )}
+
+      {/* Decision branch chooser — "what does this connection mean?" Cancel breaks the connection. */}
+      {branchPick && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={cancelBranch} />
+          <div className="relative bg-white rounded-[12px] shadow-xl w-full max-w-xs p-4 animate-[fadeIn_.15s_ease-out]">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-[#0F172A]">What does this branch mean?</h3>
+              <button onClick={cancelBranch} className="text-[#94A3B8] hover:text-[#0F172A]"><X size={18} /></button>
+            </div>
+            <p className="text-[12px] text-[#64748B] mb-3">Pick the outcome for this route out of the decision.</p>
+            <div className="flex gap-2">
+              <button onClick={() => chooseBranch('yes')}
+                className="flex-1 px-3 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#16A34A] hover:bg-[#15803D]">Yes</button>
+              <button onClick={() => chooseBranch('no')}
+                className="flex-1 px-3 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C]">No</button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Lane "+" picker — choose what kind of step to drop into the chosen lane. */}
+      {laneAdd && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setLaneAdd(null)} />
+          <div className="relative bg-white rounded-[12px] shadow-xl w-full max-w-xs p-4 animate-[fadeIn_.15s_ease-out]">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-[#0F172A]">Add to this lane</h3>
+              <button onClick={() => setLaneAdd(null)} className="text-[#94A3B8] hover:text-[#0F172A]"><X size={18} /></button>
+            </div>
+            <div className="space-y-0.5">
+              {LANE_ADD_KINDS.map((k) => (
+                <button key={k} onClick={() => addLaneKind(k)}
+                  className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                  <span className="text-[#2563EB] mt-0.5">{KIND_META[k].icon}</span>
+                  <span className="min-w-0">
+                    <span className="block text-[13px] font-medium text-[#0F172A]">{KIND_META[k].label}</span>
+                    <span className="block text-[11px] text-[#64748B]">{KIND_META[k].hint}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
 
       <ConfirmDialog

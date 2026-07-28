@@ -3773,6 +3773,22 @@ enum ProcessConditionKind {
   no   // the "No" branch out of a decision
 }
 
+// Swimlane model (Phase 2). A node sits in a POOL; a Company-pool node also sits in a
+// LANE (= a department). Customer/Vendor are external participants — one band, no lanes.
+enum ProcessPool {
+  customer
+  company
+  vendor
+}
+
+// How a lane came to exist. `manual` lanes persist even when empty (kept on purpose);
+// `auto` lanes are born when a node is assigned their department and are removed when
+// their last node leaves. See PROCESS_MAP_UI_BRIEF.md.
+enum ProcessLaneOrigin {
+  manual
+  auto
+}
+
 enum ProcessArtifactType {
   form
   report
@@ -3821,6 +3837,9 @@ model ProcessMap {
   id                 String    @id @default(uuid())
   organization_id    String
   name               String
+  // Renderer family for this map's root level. String (not enum) so new chart types —
+  // org, mindmap, … — are just a new value + renderer, with no DB migration. Default swimlane.
+  chart_type         String    @default("swimlane")
   description        String?   @db.Text
   // Composition tree: a map can live under another (an area built inside a bigger
   // map). null = top level. Drives the searchable tree list.
@@ -3838,6 +3857,7 @@ model ProcessMap {
   child_maps  ProcessMap[] @relation("MapTree")
   nodes       ProcessNode[]
   connections ProcessConnection[]
+  lanes       ProcessLane[]
   artifacts   ProcessArtifact[]
   snapshots   ProcessSnapshot[]
 
@@ -3856,11 +3876,18 @@ model ProcessNode {
   map_id              String
   parent_node_id      String? // null = top level of the map
   kind                ProcessNodeKind   @default(task)
+  // For a container: the renderer family of the level INSIDE it (swimlane|org|mindmap|…).
+  // String, not enum, so a new chart type never needs a migration. Default swimlane.
+  chart_type          String            @default("swimlane")
   name                String
   description         String?           @db.Text
   status              ProcessNodeStatus @default(draft)
   responsible_role_id String? // -> Role.id (bare scalar)
   responsible_user_id String? // -> User.id (bare scalar)
+  // Swimlane placement (Phase 2). pool = which participant band; department_id = the lane
+  // within the Company pool (a Department.id, bare scalar). null pool = free-form (no swimlane).
+  pool                ProcessPool?
+  department_id       String?
   position_x          Float             @default(0) // free-form ReactFlow placement
   position_y          Float             @default(0)
   sort_order          Int               @default(0)
@@ -3896,6 +3923,7 @@ model ProcessConnection {
   target_node_id  String
   label           String? // e.g. "Yes"/"No" off a decision
   condition_kind  ProcessConditionKind @default(none)
+  source_side     String? // swimlane: which side of the source the line exits — right|bottom|top|left (the dot the user dragged from). null = auto.
   created_at      DateTime             @default(now())
 
   map ProcessMap @relation(fields: [map_id], references: [id], onDelete: Cascade)
@@ -3904,6 +3932,28 @@ model ProcessConnection {
   @@index([map_id])
   @@index([parent_node_id])
   @@map("process_connections")
+}
+
+// A swimlane in the Company pool of ONE flow level (map_id + parent_node_id, mirroring
+// ProcessConnection). A lane == a department. `origin` drives its lifecycle: manual lanes
+// stay when empty; auto lanes vanish when their last node leaves. sort_order = top→bottom.
+model ProcessLane {
+  id                 String            @id @default(uuid())
+  organization_id    String
+  map_id             String
+  parent_node_id     String? // the flow (level) this lane belongs to; null = map root
+  department_id      String // -> Department.id (bare scalar); the department this band represents
+  origin             ProcessLaneOrigin @default(manual)
+  sort_order         Int               @default(0)
+  created_by_user_id String
+  created_at         DateTime          @default(now())
+  updated_at         DateTime          @updatedAt
+
+  map ProcessMap @relation(fields: [map_id], references: [id], onDelete: Cascade)
+
+  @@index([organization_id])
+  @@index([map_id, parent_node_id])
+  @@map("process_lanes")
 }
 
 // A document that flows between steps. Metadata-only when the R2 file fields are

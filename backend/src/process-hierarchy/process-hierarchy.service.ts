@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ProcessAccessKind, ProcessAccessLevel, ProcessNodeKind, ProcessNodeStatus } from '@prisma/client';
+import { ProcessAccessKind, ProcessAccessLevel, ProcessNodeKind, ProcessNodeStatus, ProcessPool, ProcessLaneOrigin } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -20,6 +20,7 @@ import {
 import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
 import { BulkPositionDto, CreateNodeDto, PasteNodesDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
+import { CreateLaneDto } from './dto/lane.dto';
 import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto } from './dto/snapshot.dto';
@@ -95,6 +96,7 @@ export class ProcessHierarchyService {
       select: {
         id: true,
         name: true,
+        chart_type: true,
         description: true,
         created_by_user_id: true,
         created_at: true,
@@ -261,9 +263,36 @@ export class ProcessHierarchyService {
       : [];
     const linkedNameById = new Map(linkedMaps.map((m) => [m.id, m.name]));
 
+    // Swimlanes for THIS level (Company-pool department bands), ordered top→bottom.
+    const laneRows = await this.prisma.processLane.findMany({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null },
+      orderBy: { sort_order: 'asc' },
+    });
+    const laneDeptIds = Array.from(new Set(laneRows.map((l) => l.department_id)));
+    const deptRows = laneDeptIds.length
+      ? await this.prisma.department.findMany({
+          where: { id: { in: laneDeptIds }, organization_id: orgId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const deptNameById = new Map(deptRows.map((d) => [d.id, d.name]));
+    const lanes = laneRows.map((l) => ({
+      id: l.id,
+      department_id: l.department_id,
+      department_name: deptNameById.get(l.department_id) ?? 'Department',
+      origin: l.origin,
+      sort_order: l.sort_order,
+    }));
+
+    // Renderer family for THIS level: the container's chart_type, or the map's at the root.
+    const levelChartType = parent
+      ? ((parent as { chart_type?: string }).chart_type ?? 'swimlane')
+      : ((await this.prisma.processMap.findFirst({ where: { id: mapId }, select: { chart_type: true } }))?.chart_type ?? 'swimlane');
+
     return {
       map_id: mapId,
       parent_node_id: parentNodeId ?? null,
+      chart_type: levelChartType,
       breadcrumb: await this.breadcrumb(orgId, mapId, parentNodeId ?? null),
       can_edit: canEdit,
       nodes: visibleNodes.map((n) => ({
@@ -275,6 +304,7 @@ export class ProcessHierarchyService {
         checklist: checklistByNode.get(n.id) ?? [],
       })),
       connections,
+      lanes,
     };
   }
 
@@ -424,6 +454,13 @@ export class ProcessHierarchyService {
       linkedMapId = child.id;
     }
 
+    // Swimlane placement. A Company node needs a department (its lane); Customer/Vendor
+    // have none. Assigning a Company node auto-creates its lane if one isn't there yet.
+    const { pool, departmentId } = await this.resolveLane(orgId, dto.pool ?? null, dto.department_id ?? null);
+    if (pool === ProcessPool.company && departmentId) {
+      await this.ensureAutoLane(orgId, principal.userId, mapId, dto.parent_node_id ?? null, departmentId);
+    }
+
     return this.prisma.processNode.create({
       data: {
         organization_id: orgId,
@@ -432,6 +469,8 @@ export class ProcessHierarchyService {
         kind: dto.kind,
         name: dto.name.trim(),
         description: dto.description ?? null,
+        pool,
+        department_id: departmentId,
         position_x: dto.position_x ?? 0,
         position_y: dto.position_y ?? 0,
         sort_order: (maxSort._max.sort_order ?? -1) + 1,
@@ -439,6 +478,136 @@ export class ProcessHierarchyService {
         created_by_user_id: principal.userId,
       },
     });
+  }
+
+  // ─── Swimlane helpers ───────────────────────────────────────────────────────────
+
+  // Validate a pool/department pair: a Company node MUST have a real department; a
+  // Customer/Vendor (or unset) node never carries one.
+  private async resolveLane(
+    orgId: string,
+    pool: ProcessPool | null,
+    departmentId: string | null,
+  ): Promise<{ pool: ProcessPool | null; departmentId: string | null }> {
+    if (pool === ProcessPool.company) {
+      if (!departmentId) throw new BadRequestException('A step in the Company pool needs a department (lane).');
+      const dept = await this.prisma.department.findFirst({
+        where: { id: departmentId, organization_id: orgId },
+        select: { id: true },
+      });
+      if (!dept) throw new BadRequestException('Department not found');
+      return { pool, departmentId };
+    }
+    return { pool: pool ?? null, departmentId: null };
+  }
+
+  // Create the (auto) lane for a department at a level if it doesn't already exist.
+  private async ensureAutoLane(orgId: string, userId: string, mapId: string, parentNodeId: string | null, departmentId: string) {
+    const existing = await this.prisma.processLane.findFirst({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null, department_id: departmentId },
+      select: { id: true },
+    });
+    if (existing) return;
+    const max = await this.prisma.processLane.aggregate({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null },
+      _max: { sort_order: true },
+    });
+    await this.prisma.processLane.create({
+      data: {
+        organization_id: orgId,
+        map_id: mapId,
+        parent_node_id: parentNodeId ?? null,
+        department_id: departmentId,
+        origin: ProcessLaneOrigin.auto,
+        sort_order: (max._max.sort_order ?? -1) + 1,
+        created_by_user_id: userId,
+      },
+    });
+  }
+
+  // Remove an AUTO lane once its last node leaves. Manual lanes are left alone (kept on purpose).
+  private async cleanupAutoLane(orgId: string, mapId: string, parentNodeId: string | null, departmentId: string) {
+    const lane = await this.prisma.processLane.findFirst({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null, department_id: departmentId, origin: ProcessLaneOrigin.auto },
+      select: { id: true },
+    });
+    if (!lane) return;
+    const count = await this.prisma.processNode.count({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null, department_id: departmentId, is_deleted: false },
+    });
+    if (count === 0) await this.prisma.processLane.delete({ where: { id: lane.id } });
+  }
+
+  // Create an empty lane by hand (origin = manual, so it persists even while empty). If a
+  // lane for that department already exists at this level, promote it to manual and reuse it.
+  async createLane(orgId: string, principal: Principal, mapId: string, dto: CreateLaneDto) {
+    const parentId = dto.parent_node_id ?? null;
+    if (parentId) {
+      await this.requireNode(orgId, mapId, parentId);
+      await this.access.assertCanEditNode(orgId, principal, parentId);
+    } else {
+      await this.access.assertCanEditMap(orgId, principal, mapId);
+    }
+    const dept = await this.prisma.department.findFirst({
+      where: { id: dto.department_id, organization_id: orgId },
+      select: { id: true },
+    });
+    if (!dept) throw new BadRequestException('Department not found');
+
+    const existing = await this.prisma.processLane.findFirst({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentId, department_id: dto.department_id },
+    });
+    if (existing) {
+      if (existing.origin === ProcessLaneOrigin.auto) {
+        return this.prisma.processLane.update({ where: { id: existing.id }, data: { origin: ProcessLaneOrigin.manual } });
+      }
+      return existing;
+    }
+    const max = await this.prisma.processLane.aggregate({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentId },
+      _max: { sort_order: true },
+    });
+    return this.prisma.processLane.create({
+      data: {
+        organization_id: orgId,
+        map_id: mapId,
+        parent_node_id: parentId,
+        department_id: dto.department_id,
+        origin: ProcessLaneOrigin.manual,
+        sort_order: (max._max.sort_order ?? -1) + 1,
+        created_by_user_id: principal.userId,
+      },
+    });
+  }
+
+  // Delete a lane. Empty → removed at once. Has steps → the caller must name a lane to move
+  // them into first (never silently strand or delete a step).
+  async deleteLane(orgId: string, principal: Principal, mapId: string, laneId: string, moveToDepartmentId?: string) {
+    const lane = await this.prisma.processLane.findFirst({
+      where: { id: laneId, map_id: mapId, organization_id: orgId },
+    });
+    if (!lane) throw new NotFoundException('Lane not found');
+    if (lane.parent_node_id) await this.access.assertCanEditNode(orgId, principal, lane.parent_node_id);
+    else await this.access.assertCanEditMap(orgId, principal, mapId);
+
+    const nodesInLane = await this.prisma.processNode.count({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: lane.parent_node_id, department_id: lane.department_id, is_deleted: false },
+    });
+    if (nodesInLane > 0) {
+      if (!moveToDepartmentId) throw new BadRequestException('This lane has steps — choose a lane to move them to first.');
+      if (moveToDepartmentId === lane.department_id) throw new BadRequestException('Choose a different lane to move the steps into.');
+      const dest = await this.prisma.processLane.findFirst({
+        where: { organization_id: orgId, map_id: mapId, parent_node_id: lane.parent_node_id, department_id: moveToDepartmentId },
+        select: { id: true },
+      });
+      if (!dest) throw new BadRequestException('Destination lane not found');
+      await this.prisma.processNode.updateMany({
+        where: { organization_id: orgId, map_id: mapId, parent_node_id: lane.parent_node_id, department_id: lane.department_id, is_deleted: false },
+        data: { department_id: moveToDepartmentId },
+      });
+    }
+    await this.prisma.processLane.delete({ where: { id: lane.id } });
+    return { success: true };
   }
 
   async getNode(orgId: string, principal: Principal, mapId: string, nodeId: string) {
@@ -564,6 +733,23 @@ export class ProcessHierarchyService {
       });
     }
 
+    // Swimlane re-assignment. Changing pool/department moves the node to that band/lane.
+    // The lane IS the department (single source of truth) — no separate warning, it just moves.
+    let laneUpdate: { pool: ProcessPool | null; department_id: string | null } | null = null;
+    if (dto.pool !== undefined || dto.department_id !== undefined) {
+      const desiredPool = dto.pool !== undefined ? (dto.pool ?? null) : node.pool;
+      const desiredDept = dto.department_id !== undefined ? (dto.department_id ?? null) : node.department_id;
+      const resolved = await this.resolveLane(orgId, desiredPool, desiredDept);
+      laneUpdate = { pool: resolved.pool, department_id: resolved.departmentId };
+    }
+    const finalParent = reparent ? reparent.parent_node_id : node.parent_node_id;
+    const effPool = laneUpdate ? laneUpdate.pool : node.pool;
+    const effDept = laneUpdate ? laneUpdate.department_id : node.department_id;
+    // Ensure the target lane exists for the node's final level (covers dept change AND re-parent).
+    if (effPool === ProcessPool.company && effDept) {
+      await this.ensureAutoLane(orgId, principal.userId, mapId, finalParent, effDept);
+    }
+
     await this.prisma.processNode.update({
       where: { id: nodeId },
       data: {
@@ -573,12 +759,20 @@ export class ProcessHierarchyService {
         ...(dto.status !== undefined ? { status: dto.status } : {}),
         ...(dto.responsible_role_id !== undefined ? { responsible_role_id: dto.responsible_role_id } : {}),
         ...(dto.responsible_user_id !== undefined ? { responsible_user_id: dto.responsible_user_id } : {}),
+        ...(laneUpdate ? { pool: laneUpdate.pool, department_id: laneUpdate.department_id } : {}),
         ...(dto.position_x !== undefined ? { position_x: dto.position_x } : {}),
         ...(dto.position_y !== undefined ? { position_y: dto.position_y } : {}),
         ...(dto.linked_map_id !== undefined ? { linked_map_id: dto.linked_map_id } : {}),
         ...(reparent ? reparent : {}),
       },
     });
+
+    // If the node left an auto lane (dept changed, pool left Company, or it moved levels),
+    // remove that lane when it's now empty. Manual lanes are kept.
+    const levelChanged = !!reparent && (reparent.parent_node_id ?? null) !== (node.parent_node_id ?? null);
+    if (node.department_id && (effDept !== node.department_id || effPool !== ProcessPool.company || levelChanged)) {
+      await this.cleanupAutoLane(orgId, mapId, node.parent_node_id, node.department_id);
+    }
 
     if (dto.checklist !== undefined) {
       await this.replaceChecklist(nodeId, dto.checklist);
@@ -695,6 +889,22 @@ export class ProcessHierarchyService {
     if (parentId) await this.access.assertCanEditNode(orgId, principal, parentId);
     else await this.access.assertCanEditMap(orgId, principal, mapId);
 
+    // Output limits: a decision branches into exactly one Yes and one No; every other step has
+    // a single outgoing connection. (Authoritative guard — the client enforces the same rule.)
+    const outs = await this.prisma.processConnection.findMany({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentId, source_node_id: dto.source_node_id },
+      select: { condition_kind: true },
+    });
+    const cond = dto.condition_kind ?? 'none';
+    if (source.kind === ProcessNodeKind.decision) {
+      if (cond !== 'none' && outs.some((o) => o.condition_kind === cond)) {
+        throw new BadRequestException(`This decision already has a ${cond === 'yes' ? 'Yes' : 'No'} branch.`);
+      }
+      if (outs.length >= 2) throw new BadRequestException('A decision can only branch into Yes and No.');
+    } else if (outs.length >= 1) {
+      throw new BadRequestException('This step already leads to a next step.');
+    }
+
     return this.prisma.processConnection.create({
       data: {
         organization_id: orgId,
@@ -703,7 +913,8 @@ export class ProcessHierarchyService {
         source_node_id: dto.source_node_id,
         target_node_id: dto.target_node_id,
         label: dto.label ?? null,
-        condition_kind: dto.condition_kind ?? 'none',
+        condition_kind: cond,
+        source_side: dto.source_side ?? null,
       },
     });
   }

@@ -51,3 +51,6 @@ DESIGN_RULES.md
 CODEBASE_MAP.md
 SECURITY_AUDIT.md
 TASK_REVIEW*.md
+
+# Claude Code local settings
+.claude/settings.json

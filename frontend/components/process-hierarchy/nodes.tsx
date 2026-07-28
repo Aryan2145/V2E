@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote, ListChecks, Square } from 'lucide-react'
+import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote, ListChecks, Square, Plus } from 'lucide-react'
 import type { ProcessNodeKind, DiffChangeKind, ProcessArtifactContentType } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 
@@ -150,8 +150,11 @@ function DecisionNode({ data }: NodeProps<ProcessNodeData>) {
       <div className="absolute inset-0 flex items-center justify-center px-3 text-center">
         <span className="line-clamp-3 text-[10px] font-medium text-[#0F172A] leading-tight">{data.name}</span>
       </div>
-      <Handle type="source" position={Position.Right} style={handleStyle} id="yes" />
-      <Handle type="source" position={Position.Bottom} style={handleStyle} id="no" />
+      {/* Exit dots are directional, NOT Yes/No — the branch meaning is chosen in a pop-up
+          when the connection is drawn, so the line can leave from whichever side faces the target. */}
+      <Handle type="source" position={Position.Right} style={handleStyle} id="right" />
+      <Handle type="source" position={Position.Bottom} style={handleStyle} id="bottom" />
+      <Handle type="source" position={Position.Top} style={handleStyle} id="top" />
     </div>
   )
 }
@@ -219,6 +222,49 @@ function NoteNode({ data }: NodeProps<ProcessNodeData>) {
   )
 }
 
+// ─── Swimlane band: a pool or a department lane, drawn behind the steps. The label
+// runs vertically down the left strip (like the reference BPMN diagram). Non-interactive
+// (pointer-events off in the layout) so panning/clicking passes through to the canvas. ──
+export interface SwimlaneBandData { label: string; variant: 'pool' | 'lane'; onAdd?: () => void }
+function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
+  const isPool = data.variant === 'pool'
+  return (
+    <div
+      className="relative w-full h-full"
+      style={{
+        border: `1.5px solid ${isPool ? '#94A3B8' : '#CBD5E1'}`,
+        background: isPool ? 'rgba(248,250,252,0.35)' : 'rgba(241,245,249,0.30)',
+        borderRadius: 4,
+      }}
+    >
+      <div
+        className="absolute left-0 top-0 bottom-0 flex items-center justify-center border-r"
+        style={{ width: 30, borderColor: isPool ? '#CBD5E1' : '#E2E8F0' }}
+      >
+        <span
+          className="text-[11px] font-bold text-[#1E293B] whitespace-nowrap"
+          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+        >
+          {data.label}
+        </span>
+      </div>
+      {/* Per-lane add (top-right): the band itself is click-through (pointer-events off in the
+          layout), but this button re-enables pointer events. It opens a picker for WHAT to add. */}
+      {data.onAdd && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); data.onAdd!() }}
+          title="Add a step to this lane"
+          style={{ pointerEvents: 'auto' }}
+          className="nodrag absolute top-2 right-2 w-6 h-6 inline-flex items-center justify-center rounded-[6px] text-[#2563EB] hover:bg-[#EFF6FF] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        >
+          <Plus size={16} />
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ProcessNodeRenderer(props: NodeProps<ProcessNodeData>) {
   if (props.data.kind === 'decision') return <DecisionNode {...props} />
   if (props.data.kind === 'start_event' || props.data.kind === 'end_event') return <EventNode {...props} />
@@ -259,4 +305,4 @@ function DocNode({ data }: NodeProps<DocNodeData>) {
   )
 }
 
-export const nodeTypes = { process: ProcessNodeRenderer, band: BandNode, document: DocNode }
+export const nodeTypes = { process: ProcessNodeRenderer, band: BandNode, document: DocNode, swimlane: SwimlaneBandNode }

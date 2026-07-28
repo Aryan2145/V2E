@@ -30,6 +30,7 @@ import { ProcessHierarchyService } from './process-hierarchy.service';
 import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
 import { BulkPositionDto, CreateNodeDto, PasteNodesDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
+import { CreateLaneDto } from './dto/lane.dto';
 import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto } from './dto/snapshot.dto';
@@ -217,6 +218,27 @@ export class ProcessHierarchyController {
   @ApiOperation({ summary: 'Delete a connection' })
   deleteConnection(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('connId') connId: string, @Request() req: any) {
     return this.service.deleteConnection(orgId, principalFromUser(req.user), mapId, connId);
+  }
+
+  // ─── Swimlanes ───────────────────────────────────────────────────────────────
+  @Post('maps/:mapId/lanes')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Create an (empty) swimlane for a department in a level' })
+  createLane(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateLaneDto) {
+    return this.service.createLane(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Delete('maps/:mapId/lanes/:laneId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Delete a swimlane (move its steps to another lane first if not empty)' })
+  deleteLane(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('laneId') laneId: string,
+    @Request() req: any,
+    @Query('move_to_department_id') moveToDepartmentId?: string,
+  ) {
+    return this.service.deleteLane(orgId, principalFromUser(req.user), mapId, laneId, moveToDepartmentId);
   }
 
   // ─── Artifacts ────────────────────────────────────────────────────────────────

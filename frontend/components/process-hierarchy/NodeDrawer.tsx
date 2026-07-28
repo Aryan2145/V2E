@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Trash2, Plus, Check, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink,
-  Menu, GitBranch, Copy, Share2,
+  Menu, GitBranch, Copy, Share2, Rows3,
 } from 'lucide-react'
 import {
   processHierarchyApi,
@@ -14,6 +14,7 @@ import {
   type ProcessAccessLevel,
   type ProcessMapSummary,
   type ProcessNodeKind,
+  type ProcessPool,
   type TreeNode,
 } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
@@ -22,6 +23,7 @@ import { getRoles } from '@/lib/api/roles'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Department, Role } from '@/lib/types'
 import StyledSelect from '@/components/ui/StyledSelect'
+import DepartmentSelect from '@/components/employees/DepartmentSelect'
 import EmployeePicker, { type EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import RolePicker from '@/components/ui/RolePicker'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
@@ -30,6 +32,7 @@ import { useToast } from '@/components/ui/Toast'
 
 const DRILLABLE = new Set(['container', 'subprocess'])
 const CONTAINER_KINDS = new Set(['container', 'subprocess'])
+const POOL_LABEL: Record<ProcessPool, string> = { customer: 'Customer', company: 'Company', vendor: 'Vendor' }
 const NAME_MAX = 50 // node names are capped so they always fit on the canvas without ellipsis
 const NOTE_MAX = 500 // a sticky note holds more than a name, but still bounded
 
@@ -71,6 +74,8 @@ export default function NodeDrawer({
   const [description, setDescription] = useState('')
   const [respUser, setRespUser] = useState<string>('')
   const [respRole, setRespRole] = useState<string>('')
+  const [pool, setPool] = useState<ProcessPool | ''>('')
+  const [deptId, setDeptId] = useState<string>('')
   const [checklist, setChecklist] = useState<{ id?: string; text: string }[]>([])
 
   const reloadNode = async () => {
@@ -78,6 +83,7 @@ export default function NodeDrawer({
     setNode(d)
     setName(d.name); setDescription(d.description ?? '')
     setRespUser(d.responsible_user_id ?? ''); setRespRole(d.responsible_role_id ?? '')
+    setPool(d.pool ?? ''); setDeptId(d.department_id ?? '')
     setChecklist(d.checklist.map((c) => ({ id: c.id, text: c.text })))
     setDirty(false)
   }
@@ -149,6 +155,12 @@ export default function NodeDrawer({
 
   async function saveCore() {
     if (!node || saving) return
+    // A Company step must name its department (that's its lane) — catch it here so the
+    // whole save doesn't fail with a backend 400.
+    if (pool === 'company' && !deptId) {
+      addToast('Pick a department for the Company lane.', 'error')
+      return
+    }
     setSaving(true)
     try {
       await processHierarchyApi.updateNode(orgId, mapId, nodeId, {
@@ -156,6 +168,8 @@ export default function NodeDrawer({
         description,
         responsible_user_id: respUser || null,
         responsible_role_id: respRole || null,
+        pool: pool || null,
+        department_id: pool === 'company' ? deptId : null,
         checklist,
       })
       await reloadNode()
@@ -370,6 +384,41 @@ export default function NodeDrawer({
               <div className="flex items-start gap-2 rounded-[8px] bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-2.5 text-[12px] text-[#475569]">
                 <GitBranch size={14} className="text-[#94A3B8] shrink-0 mt-0.5" />
                 <span>Set the <span className="font-semibold text-[#0F172A]">Yes / No</span> routes by clicking the arrows leaving this diamond on the canvas.</span>
+              </div>
+            )}
+
+            {/* Pool / Lane — which swimlane band this step sits in. Company steps pick a
+                department (their lane); Customer/Vendor sit in a single band. */}
+            {!isNote && (
+              <div>
+                <label className="block text-xs font-medium text-[#374151] mb-1"><Rows3 size={12} className="inline mr-1" />Pool / Lane</label>
+                {canEdit ? (
+                  <>
+                    <StyledSelect
+                      value={pool}
+                      onChange={(v) => { const p = v as ProcessPool | ''; setPool(p); if (p !== 'company') setDeptId(''); touch() }}
+                      options={[
+                        { value: '', label: '— None (free-form) —' },
+                        { value: 'customer', label: 'Customer' },
+                        { value: 'company', label: 'Company' },
+                        { value: 'vendor', label: 'Vendor' },
+                      ]}
+                    />
+                    {pool === 'company' && (
+                      <div className="mt-2">
+                        <DepartmentSelect inline value={deptId} onChange={(id) => { setDeptId(id); touch() }}
+                          departments={departments} placeholder="Pick a department (lane)" />
+                        {!deptId && <p className="text-[11px] text-[#DC2626] mt-1">A Company step needs a department.</p>}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-[#0F172A]">
+                    {pool ? POOL_LABEL[pool] : 'Free-form (no swimlane)'}
+                    {pool === 'company' && deptId ? ` · ${departments.find((d) => d.id === deptId)?.name ?? 'Department'}` : ''}
+                  </p>
+                )}
+                <p className="text-[11px] text-[#64748B] mt-1">Company steps pick a department (their lane); Customer/Vendor sit in one band.</p>
               </div>
             )}
 
