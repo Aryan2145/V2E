@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Search, X, Check, Briefcase, ChevronDown } from 'lucide-react'
+import { Search, X, Check, Briefcase } from 'lucide-react'
 import { levelColors, rankOfLevel } from '@/lib/role-levels'
 import type { Role } from '@/lib/types'
 
@@ -91,28 +91,25 @@ export default function RolePicker({
         className="w-full flex items-center gap-2 min-h-[42px] px-2 py-1.5 border border-[#CBD5E1] rounded-[8px] bg-white text-left hover:border-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {selected ? (
-          <span className="inline-flex items-center gap-1.5 bg-[#F8FAFC] border border-[#E2E8F0] rounded-[8px] pl-1.5 pr-2 py-1 max-w-full">
-            <Briefcase size={13} className="text-[#2563EB] shrink-0" />
-            <span className="text-sm font-medium text-[#0F172A] truncate">{selected.title}</span>
-          </span>
+          <>
+            <Briefcase size={14} className="text-[#2563EB] shrink-0" />
+            <span className="flex-1 min-w-0 truncate text-sm font-medium text-[#0F172A]">{selected.title}</span>
+          </>
         ) : (
-          <span className="flex-1 text-[15px] text-[#94A3B8] px-1">{placeholder}</span>
+          <span className="flex-1 text-[15px] text-[#94A3B8]">{placeholder}</span>
         )}
-        <span className="ml-auto flex items-center gap-1 shrink-0">
-          {selected && allowClear && (
-            <span
-              role="button"
-              tabIndex={0}
-              aria-label="Clear selection"
-              onClick={(e) => { e.stopPropagation(); onChange('') }}
-              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onChange('') } }}
-              className="w-5 h-5 flex items-center justify-center rounded-[4px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#F1F5F9] transition-colors"
-            >
-              <X size={13} />
-            </span>
-          )}
-          <ChevronDown size={16} className="text-[#94A3B8]" />
-        </span>
+        {selected && allowClear && (
+          <span
+            role="button"
+            tabIndex={0}
+            aria-label="Clear selection"
+            onClick={(e) => { e.stopPropagation(); onChange('') }}
+            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onChange('') } }}
+            className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#F1F5F9] transition-colors"
+          >
+            <X size={12} />
+          </span>
+        )}
       </button>
 
       {open && typeof document !== 'undefined' && createPortal(
