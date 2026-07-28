@@ -238,9 +238,12 @@ export function buildSwimlane(
   const centerOf = new Map<string, { cx: number; cy: number }>()
   for (const n of steps) {
     const key = bandKeyOf(n)
-    const bandTop = key === 'loose' ? bandsBottom + LOOSE_GAP : (bandY.get(key) ?? 0)
     const px = xOf(n.id)
-    const py = bandTop + BAND_PAD + (rowOf.get(n.id) ?? 0) * ROW_H + (ROW_H - NODE_H) / 2
+    // Lane-less nodes (e.g. containers) are placed freely — honour their stored y, else drop
+    // them into a strip below the pools. Pooled steps are locked to their lane row.
+    const py = key === 'loose'
+      ? ((n.position_y ?? 0) > 0 ? (n.position_y as number) : bandsBottom + LOOSE_GAP + (ROW_H - NODE_H) / 2)
+      : (bandY.get(key) ?? 0) + BAND_PAD + (rowOf.get(n.id) ?? 0) * ROW_H + (ROW_H - NODE_H) / 2
     centerOf.set(n.id, { cx: px + sizeForKind(n.kind).w / 2, cy: py + NODE_H / 2 })
     meta[n.id] = { mapId: flow.map_id, realId: n.id }
     nodes.push({

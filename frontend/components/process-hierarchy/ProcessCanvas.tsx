@@ -400,18 +400,25 @@ function Inner({
     (_: React.MouseEvent, node: Node) => {
       if (node.id.includes('::')) return
       if (swimlane) {
-        // Vertical is locked to the lane; horizontal is free. Which lane did it land in (by the
-        // node's vertical centre)? Different department → reassign (keeping the new x). Same lane
-        // → just store the new x (spacing). Dropped outside any lane → snap back.
+        // Which lane did it land in (by the node's vertical centre)?
         const cy = node.position.y + 48 // half of the fixed swimlane node height (96)
         const newX = Math.max(CONTENT_X, Math.round(node.position.x))
         const band = laneBandsRef.current.find((b) => cy >= b.yTop && cy < b.yBottom)
         const cur = flow.nodes.find((n) => n.id === node.id)
-        if (!band || !cur) { setNodes(rfNodes); return }
-        if (band.pool !== (cur.pool ?? null) || band.deptId !== (cur.department_id ?? null)) {
-          onReassignLane?.(node.id, band.pool, band.deptId, newX)
+        if (!cur) { setNodes(rfNodes); return }
+        if (band) {
+          // Inside a lane: vertical is locked to the lane, horizontal is free. Different
+          // department → reassign (keep the new x); same lane → just save the new x (spacing).
+          if (band.pool !== (cur.pool ?? null) || band.deptId !== (cur.department_id ?? null)) {
+            onReassignLane?.(node.id, band.pool, band.deptId, newX)
+          } else {
+            onNodeDragStop(node.id, newX, node.position.y)
+          }
+        } else if (!cur.pool) {
+          // A lane-less node (e.g. a container) — placed freely: save both x and y.
+          onNodeDragStop(node.id, newX, Math.round(node.position.y))
         } else {
-          onNodeDragStop(node.id, newX, node.position.y) // same lane → save horizontal position
+          setNodes(rfNodes) // a pooled step dropped in the gap between lanes → snap back
         }
         return
       }
