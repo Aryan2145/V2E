@@ -257,7 +257,7 @@ export default function ProjectSettingsPage() {
       // Pre-fill PM user from eligible list
       const allUsers = eligible.departments.flatMap((d) => d.users)
       const pm = allUsers.find((u) => u.user_id === proj.project_manager_user_id)
-      setPmUser(pm ?? { user_id: proj.project_manager_user_id, name: proj.project_manager_user_id.slice(0, 8), role_title: '', department_id: '', department_name: '', active_task_count: 0, frequency_count: 0, is_frequent: false, avatar_url: null })
+      setPmUser(pm ?? { user_id: proj.project_manager_user_id, name: proj.project_manager_user_id.slice(0, 8), role_title: '', role_id: null, department_id: '', department_name: '', active_task_count: 0, frequency_count: 0, is_frequent: false, avatar_url: null })
     }).catch(() => setError('Failed to load project')).finally(() => setLoading(false))
   }, [orgId, id])
 
