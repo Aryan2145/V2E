@@ -30,16 +30,13 @@ import DeptFormDrawer, { type DeptFormTarget } from '@/components/org-chart/Dept
 import DeptTableView from '@/components/org-chart/DeptTableView'
 import ImportDepartmentsModal from '@/components/org-chart/ImportDepartmentsModal'
 import ViewToggle, { type ViewMode } from '@/components/ui/ViewToggle'
+import { useFlowNav, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
 import { useToast } from '@/components/ui/Toast'
 import type { Department, EmployeeProfile, User } from '@/lib/types'
 import { Download, Network, Plus, LayoutGrid, Search, Check, Upload } from 'lucide-react'
 
 const nodeTypes = { deptNode: DeptNode }
 const STRUCTURE_LEAF = 'settings.organization.structure'
-
-// DeptNode footprint, used to bound panning (translateExtent).
-const DEPT_NODE_W = 200
-const DEPT_NODE_H = 120
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -117,33 +114,9 @@ function OrgChartInner({
     return new Set(departments.filter((d) => d.name.toLowerCase().includes(q)).map((d) => d.id))
   }, [query, departments])
 
-  // Bound panning to the content (plus margin) so the wheel/drag can't scroll the
-  // canvas into infinity — same approach as the employee tree. Computed from the
-  // department positions and the DeptNode footprint.
-  const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
-    let minX = Infinity
-    let minY = Infinity
-    let maxX = -Infinity
-    let maxY = -Infinity
-    departments.forEach((d) => {
-      minX = Math.min(minX, d.position_x)
-      minY = Math.min(minY, d.position_y)
-      maxX = Math.max(maxX, d.position_x + DEPT_NODE_W)
-      maxY = Math.max(maxY, d.position_y + DEPT_NODE_H)
-    })
-    if (!Number.isFinite(minX)) {
-      return [
-        [-500, -500],
-        [500, 500],
-      ]
-    }
-    const PAD_X = 320
-    const PAD_Y = 240
-    return [
-      [minX - PAD_X, minY - PAD_Y],
-      [maxX + PAD_X, maxY + PAD_Y],
-    ]
-  }, [departments])
+  // Shared Figma-style canvas navigation — the same pan / wheel-scroll / ⌘-scroll zoom / bounded
+  // extent / smooth ease / faint scrollbars / auto-minimap the process map uses.
+  const nav = useFlowNav(nodes)
 
   // Rebuild nodes when the server data, edit-ability, colors or highlight set changes.
   // (Transient drag moves go through onNodesChange and are persisted on drag stop.)
@@ -311,7 +284,9 @@ function OrgChartInner({
       </div>
 
       <div style={{ height: 'calc(640px - 57px)' }}>
+        <FlowNavStyles />
         <ReactFlow
+          {...nav.flowProps}
           nodes={nodes}
           edges={edges}
           onNodesChange={onNodesChange}
@@ -323,19 +298,14 @@ function OrgChartInner({
           onInit={() => focusTop(0)}
           minZoom={0.2}
           maxZoom={2}
-          proOptions={{ hideAttribution: true }}
-          translateExtent={translateExtent}
-          // Mirror the employee tree's scroll model: the mouse wheel scrolls the
-          // PAGE (preventScrolling=false, no panOnScroll), dragging the canvas
-          // pans, and Ctrl/⌘ + scroll or trackpad pinch zooms.
-          panOnDrag
-          zoomOnScroll={false}
-          preventScrolling={false}
-          zoomOnPinch
         >
           <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
           <Controls showInteractive={false} />
-          <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable />
+          {!nav.isTouch && <CanvasScrollbars nodes={nodes} setInstant={nav.setInstant} />}
+          {nav.needsMinimap && (
+            <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable
+              className="!hidden sm:!block" style={{ width: 180, height: 120 }} />
+          )}
         </ReactFlow>
       </div>
     </div>

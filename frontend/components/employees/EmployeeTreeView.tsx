@@ -22,6 +22,7 @@ import 'reactflow/dist/style.css'
 import { Maximize2, Users, Zap } from 'lucide-react'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { levelColors } from '@/lib/role-levels'
+import { useFlowNav, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
 import {
   buildEmployeeForest,
   computeForestLayout,
@@ -208,16 +209,9 @@ function Flow({
     else frameTop(0)
   }, [paneW, paneH, frameTop, setViewport])
 
-  // Bound panning to the content (plus margin) so it can't scroll into infinity.
-  const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
-    if (!bbox) return [[-500, -500], [500, 500]]
-    const PAD_X = 320
-    const PAD_Y = 240
-    return [
-      [bbox.minX - PAD_X, bbox.minY - PAD_Y],
-      [bbox.maxX + PAD_X, bbox.maxY + PAD_Y],
-    ]
-  }, [bbox])
+  // Shared Figma-style canvas navigation — the same pan / wheel-scroll / ⌘-scroll zoom / bounded
+  // extent / smooth ease / faint scrollbars / auto-minimap the process map uses.
+  const nav = useFlowNav(rfNodes)
 
   // Keep the canvas in sync with the data and re-frame when it actually changes
   // (e.g. a filter is applied) — but not on the first sync, which the initial
@@ -240,7 +234,10 @@ function Flow({
   }
 
   return (
+    <>
+    <FlowNavStyles />
     <ReactFlow
+      {...nav.flowProps}
       nodes={rfNodes}
       edges={rfEdges}
       onNodesChange={onNodesChange}
@@ -252,14 +249,8 @@ function Flow({
       nodesDraggable={false}
       nodesConnectable={false}
       elementsSelectable
-      panOnDrag
-      zoomOnScroll={false}
-      preventScrolling={false}
-      zoomOnPinch
-      translateExtent={translateExtent}
       minZoom={0.2}
       maxZoom={2.5}
-      proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
       <Panel position="bottom-center">
@@ -268,12 +259,17 @@ function Flow({
             interacted ? 'opacity-0' : 'opacity-100'
           }`}
         >
-          Scroll to move the page · drag to explore the chart
+          Scroll or drag to move · ⌘/Ctrl + scroll to zoom
         </div>
       </Panel>
       <Controls showInteractive={false} onFitView={() => frameTop(300)} />
-      <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable />
+      {!nav.isTouch && <CanvasScrollbars nodes={rfNodes} setInstant={nav.setInstant} />}
+      {nav.needsMinimap && (
+        <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable
+          className="!hidden sm:!block" style={{ width: 180, height: 120 }} />
+      )}
     </ReactFlow>
+    </>
   )
 }
 

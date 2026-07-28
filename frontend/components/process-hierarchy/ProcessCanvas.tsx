@@ -16,7 +16,6 @@ import ReactFlow, {
   ReactFlowProvider,
   BackgroundVariant,
   MarkerType,
-  SelectionMode,
   type Node,
   type Edge,
   type Connection,
@@ -31,6 +30,7 @@ import { buildNested, type NodeMeta, type SubDesc } from './nested-render'
 import { buildSwimlane, CONTENT_X, type LaneBand } from './swimlane-layout'
 import StyledSelect from '@/components/ui/StyledSelect'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import { useFlowNav, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
 
 const edgeTypes = { floating: FloatingEdge }
 import type { FlowLevel, ProcessConditionKind, ProcessConnection, DiffChangeKind, ProcessPool } from '@/lib/api/process-hierarchy'
@@ -87,19 +87,6 @@ const FIT_OPTIONS = { padding: 0.2, minZoom: 0.6, maxZoom: 1, duration: 300 }
 // Below this zoom, unfolded areas fold back to boxes (semantic zoom). Kept under the
 // fit minZoom (0.6) so auto-fitting an expand never trips it.
 const LOD_THRESHOLD = 0.5
-
-// A short ease on the viewport transform turns the discrete wheel-scroll / zoom steps into
-// smooth glides. Node-dragging is unaffected (nodes live inside the viewport). The ph-no-anim
-// class is toggled on during a scrollbar-thumb drag so that stays 1:1 with the pointer.
-const PH_CANVAS_CSS = `
-.ph-canvas .react-flow__viewport { transition: transform 90ms ease-out; }
-.ph-canvas .react-flow__viewport.ph-no-anim { transition: none; }
-`
-
-// Panning is bounded to the map's content plus this margin (breathing room, not infinite space).
-// The scrollbars use the SAME margin, so a bar shows exactly when that axis can scroll, and the
-// thumb maps 1:1 to the real scroll range.
-const PAN_PAD = 300
 
 function Inner({
   flow, canEdit, swimlane = false, onAddInLane, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
@@ -216,64 +203,11 @@ function Inner({
     }
   }, [anyExpanded, topAreas, fetchSub, flow.map_id])
 
-  // Touch devices always pan on one-finger drag (no marquee) so the map is never stuck;
-  // mouse/trackpad get the Figma model (drag = marquee-select in edit mode).
-  const [isTouch, setIsTouch] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(pointer: coarse)')
-    const on = () => setIsTouch(mq.matches)
-    on()
-    mq.addEventListener?.('change', on)
-    return () => mq.removeEventListener?.('change', on)
-  }, [])
-  // Swimlane view has computed positions (nodes aren't dragged), so drag just pans there.
-  const marquee = canEdit && !isTouch && !swimlane
-
-  // The minimap earns its place only when the map is bigger than the screen — otherwise it's
-  // clutter with nothing to navigate. Recomputes on zoom / resize, not on every pan.
-  const paneW = useStore((s) => s.width)
-  const paneH = useStore((s) => s.height)
-  const zoomLevel = useStore((s) => s.transform[2])
-  const needsMinimap = useMemo(() => {
-    const tops = nodes.filter((n) => !n.parentNode)
-    if (tops.length < 2 || !paneW || !paneH) return false
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const n of tops) {
-      const w = n.width ?? 200, h = n.height ?? 100
-      minX = Math.min(minX, n.position.x); minY = Math.min(minY, n.position.y)
-      maxX = Math.max(maxX, n.position.x + w); maxY = Math.max(maxY, n.position.y + h)
-    }
-    return (maxX - minX) * zoomLevel > paneW + 24 || (maxY - minY) * zoomLevel > paneH + 24
-  }, [nodes, paneW, paneH, zoomLevel])
-
-  // Bound panning to the map's content (+ a margin) so you can't scroll off into infinite
-  // empty space. Recomputes as nodes move / are added, so the reachable area always fits the map.
-  const translateExtent = useMemo<[[number, number], [number, number]]>(() => {
-    const tops = nodes.filter((n) => !n.parentNode)
-    if (!tops.length) return [[-Infinity, -Infinity], [Infinity, Infinity]]
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const n of tops) {
-      const w = n.width ?? 220, h = n.height ?? 120
-      minX = Math.min(minX, n.position.x); minY = Math.min(minY, n.position.y)
-      maxX = Math.max(maxX, n.position.x + w); maxY = Math.max(maxY, n.position.y + h)
-    }
-    return [[minX - PAN_PAD, minY - PAN_PAD], [maxX + PAN_PAD, maxY + PAN_PAD]]
-  }, [nodes])
-
-  // The viewport ease smooths panning, but on ZOOM it eases the scale + zoom-to-cursor focal
-  // point, which reads as laggy/slippery. So kill the ease whenever the zoom level changes
-  // (wheel, pinch, buttons, fit) and restore it shortly after — zoom stays instant and locked
-  // to the cursor, panning stays smooth.
-  const prevZoom = useRef(zoomLevel)
-  useEffect(() => {
-    if (prevZoom.current === zoomLevel) return
-    prevZoom.current = zoomLevel
-    const vp = document.querySelector('.ph-canvas .react-flow__viewport')
-    if (!vp) return
-    vp.classList.add('ph-no-anim')
-    const t = setTimeout(() => vp.classList.remove('ph-no-anim'), 120)
-    return () => clearTimeout(t)
-  }, [zoomLevel])
+  // Figma-style canvas navigation (pan / wheel-scroll / ⌘-scroll zoom / bounded extent / smooth
+  // ease / faint scrollbars / touch), shared verbatim with the department + employee trees.
+  // Marquee-select is on only in edit mode outside the swimlane view (there positions are
+  // computed, so a drag just pans).
+  const nav = useFlowNav(nodes, { marquee: canEdit && !swimlane })
 
   // Re-fit the view each time we enter a new level (initial load, drill in, or
   // drill out). Keyed on the level id so dragging/adding within a level never
@@ -444,9 +378,9 @@ function Inner({
 
   return (
     <>
-    <style>{PH_CANVAS_CSS}</style>
+    <FlowNavStyles />
     <ReactFlow
-      className="ph-canvas"
+      {...nav.flowProps}
       nodes={nodes}
       edges={edges}
       onNodesChange={onNodesChange}
@@ -469,31 +403,16 @@ function Inner({
       fitViewOptions={FIT_OPTIONS}
       minZoom={0.2}
       maxZoom={2}
-      translateExtent={translateExtent}
-      proOptions={{ hideAttribution: true }}
-      // Figma-style navigation on mouse/trackpad: drag empty space = marquee-select (edit
-      // only), wheel / two-finger scroll = pan, ⌘/Ctrl+scroll or trackpad-pinch = zoom, and
-      // hold Space (or middle/right mouse) to pan while the marquee is on. On touch, one-finger
-      // drag always pans and pinch zooms, so the map is never stuck.
-      selectionOnDrag={marquee}
-      selectionMode={SelectionMode.Partial}
-      panOnDrag={marquee ? [1, 2] : true}
-      panOnScroll={!isTouch}
-      zoomOnScroll={false}
-      zoomActivationKeyCode={['Meta', 'Control']}
-      panActivationKeyCode="Space"
-      deleteKeyCode={null}
-      zoomOnPinch
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#E2E8F0" />
       {/* fitViewOptions must be repeated here — the Controls fit button uses its own,
           not the flow-level fitViewOptions (else it zooms in past 100%). */}
       <Controls showInteractive={false} fitViewOptions={FIT_OPTIONS} />
       {/* Faint scrollbars — the visible pan affordance for a mouse user in the Figma model. */}
-      {!isTouch && <CanvasScrollbars nodes={nodes} />}
+      {!nav.isTouch && <CanvasScrollbars nodes={nodes} setInstant={nav.setInstant} />}
       {/* Minimap floats bottom-right; hidden on the narrowest screens so it can't
           overlap the zoom / add controls, and toggleable when it's in the way. */}
-      {needsMinimap && (
+      {nav.needsMinimap && (
         <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable
           className="!hidden sm:!block" style={{ width: 180, height: 120 }} />
       )}
@@ -614,103 +533,6 @@ function Inner({
       }}
       onCancel={() => { if (!deletingMany) setConfirmDelMany(false) }}
     />
-    </>
-  )
-}
-
-// Faint Figma-style scrollbars. In the Figma nav model a left-drag makes a selection box, so
-// these are the one *visible* way for a mouse user to pan — especially horizontally, which
-// matters because process maps grow left-to-right. Dragging a thumb pans the viewport. They
-// auto-hide when the whole map already fits, and inset to clear the zoom controls / minimap.
-function CanvasScrollbars({ nodes }: { nodes: Node[] }) {
-  const { setViewport } = useReactFlow()
-  const tx = useStore((s) => s.transform[0])
-  const ty = useStore((s) => s.transform[1])
-  const zoom = useStore((s) => s.transform[2])
-  const width = useStore((s) => s.width)
-  const height = useStore((s) => s.height)
-  const drag = useRef<{ axis: 'h' | 'v'; startX: number; startY: number; tx: number; ty: number } | null>(null)
-
-  // The bars are a 12px-thick strip at the extreme edge; the zoom controls and minimap sit ~15px
-  // inside, so they never collide. Only a small corner gap (VB/HR) keeps the two bars from crossing.
-  const HL = 8, HR = 16, VT = 8, VB = 16
-
-  const geo = useMemo(() => {
-    const tops = nodes.filter((n) => !n.parentNode)
-    if (!tops.length || !width || !height) return null
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const n of tops) {
-      const w = n.width ?? 200, h = n.height ?? 100
-      minX = Math.min(minX, n.position.x); minY = Math.min(minY, n.position.y)
-      maxX = Math.max(maxX, n.position.x + w); maxY = Math.max(maxY, n.position.y + h)
-    }
-    const exL = minX - PAN_PAD, exT = minY - PAN_PAD
-    const exW = (maxX - minX) + PAN_PAD * 2, exH = (maxY - minY) + PAN_PAD * 2
-    if (exW <= 0 || exH <= 0) return null
-    const visL = -tx / zoom, visT = -ty / zoom
-    const visW = width / zoom, visH = height / zoom
-    return {
-      exW, exH,
-      // Extent = content + the same margin panning is bounded to, so a bar shows exactly when that
-      // axis can scroll, and the thumb maps 1:1 to the real range. Visibility depends only on zoom
-      // (not pan position), so a bar never blinks out mid-scroll.
-      showH: exW * zoom > width + 1,
-      showV: exH * zoom > height + 1,
-      hLeft: (visL - exL) / exW, hSize: visW / exW,
-      vTop: (visT - exT) / exH, vSize: visH / exH,
-    }
-  }, [nodes, tx, ty, zoom, width, height])
-
-  const onMove = useCallback((e: PointerEvent) => {
-    const d = drag.current, g = geo
-    if (!d || !g) return
-    if (d.axis === 'h') {
-      const trackW = width - HL - HR
-      const dxPx = e.clientX - d.startX
-      setViewport({ x: d.tx - (dxPx / trackW) * g.exW * zoom, y: d.ty, zoom })
-    } else {
-      const trackH = height - VT - VB
-      const dyPx = e.clientY - d.startY
-      setViewport({ x: d.tx, y: d.ty - (dyPx / trackH) * g.exH * zoom, zoom })
-    }
-  }, [geo, width, height, zoom, setViewport, HL, HR, VT, VB])
-
-  const onUp = useCallback(() => {
-    drag.current = null
-    // Re-enable the smooth ease once the thumb is released.
-    document.querySelector('.ph-canvas .react-flow__viewport')?.classList.remove('ph-no-anim')
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-  }, [onMove])
-
-  const onDown = useCallback((axis: 'h' | 'v', e: React.PointerEvent) => {
-    e.preventDefault(); e.stopPropagation()
-    drag.current = { axis, startX: e.clientX, startY: e.clientY, tx, ty }
-    // Thumb-drag should track the pointer 1:1 — turn the viewport ease off for the drag.
-    document.querySelector('.ph-canvas .react-flow__viewport')?.classList.add('ph-no-anim')
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }, [tx, ty, onMove, onUp])
-
-  if (!geo || (!geo.showH && !geo.showV)) return null
-  const hLeft = Math.max(0, Math.min(geo.hLeft, 1 - geo.hSize))
-  const vTop = Math.max(0, Math.min(geo.vTop, 1 - geo.vSize))
-  return (
-    <>
-      {geo.showH && (
-        <div className="absolute z-10 pointer-events-none" style={{ left: HL, right: HR, bottom: 3, height: 9 }}>
-          <div onPointerDown={(e) => onDown('h', e)} role="scrollbar" aria-orientation="horizontal"
-            className="absolute top-0 h-full rounded-full bg-[#94A3B8]/40 hover:bg-[#64748B]/70 pointer-events-auto cursor-grab active:cursor-grabbing transition-colors"
-            style={{ left: `${hLeft * 100}%`, width: `${geo.hSize * 100}%`, minWidth: 28 }} />
-        </div>
-      )}
-      {geo.showV && (
-        <div className="absolute z-10 pointer-events-none" style={{ right: 3, top: VT, bottom: VB, width: 9 }}>
-          <div onPointerDown={(e) => onDown('v', e)} role="scrollbar" aria-orientation="vertical"
-            className="absolute left-0 w-full rounded-full bg-[#94A3B8]/40 hover:bg-[#64748B]/70 pointer-events-auto cursor-grab active:cursor-grabbing transition-colors"
-            style={{ top: `${vTop * 100}%`, height: `${geo.vSize * 100}%`, minHeight: 28 }} />
-        </div>
-      )}
     </>
   )
 }
