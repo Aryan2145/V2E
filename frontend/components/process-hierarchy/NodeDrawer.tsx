@@ -68,6 +68,7 @@ export default function NodeDrawer({
   const [showMenu, setShowMenu] = useState(false) // header ⋯ (Move to another area)
   const [detaching, setDetaching] = useState(false)
   const [makingReusable, setMakingReusable] = useState(false)
+  const [deptError, setDeptError] = useState(false) // only shown after a save attempt
 
   // editable local copy
   const [name, setName] = useState('')
@@ -98,7 +99,7 @@ export default function NodeDrawer({
     tasksApi.getEligibleAssignees(orgId).then((res) => {
       const opts: EmployeePickerOption[] = []
       res.departments.forEach((d) => d.users.forEach((u) =>
-        opts.push({ user_id: u.user_id, name: u.name, role_title: u.role_title, department_name: u.department_name })))
+        opts.push({ user_id: u.user_id, name: u.name, role_title: u.role_title, role_id: u.role_id, department_id: u.department_id, department_name: u.department_name })))
       setEmployees(opts)
     }).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,6 +122,9 @@ export default function NodeDrawer({
 
   const canEdit = !!node?.can_edit
   const isNote = node?.kind === 'note' // a sticky annotation — only its text is editable
+  // Customer / Vendor steps are performed by an external party — internal Person/Role
+  // don't apply, so we hide those fields for them.
+  const isExternalPool = pool === 'customer' || pool === 'vendor'
   const drillable = node ? DRILLABLE.has(node.kind) : false
 
   // Descendants of this node (from the map tree) — used for the delete blast radius
@@ -158,6 +162,7 @@ export default function NodeDrawer({
     // A Company step must name its department (that's its lane) — catch it here so the
     // whole save doesn't fail with a backend 400.
     if (pool === 'company' && !deptId) {
+      setDeptError(true)
       addToast('Pick a department for the Company lane.', 'error')
       return
     }
@@ -166,8 +171,9 @@ export default function NodeDrawer({
       await processHierarchyApi.updateNode(orgId, mapId, nodeId, {
         name: name.trim() || node.name,
         description,
-        responsible_user_id: respUser || null,
-        responsible_role_id: respRole || null,
+        // External (Customer/Vendor) steps never carry an internal owner.
+        responsible_user_id: isExternalPool ? null : (respUser || null),
+        responsible_role_id: isExternalPool ? null : (respRole || null),
         pool: pool || null,
         department_id: pool === 'company' ? deptId : null,
         checklist,
@@ -235,6 +241,54 @@ export default function NodeDrawer({
     } catch {
       addToast('Could not move this step there.', 'error')
     }
+  }
+
+  // ── Person ⇄ Role ⇄ Lane cross-derivation ──────────────────────────────────
+  // No scope yet → full lists. A chosen role scopes people to that role; a chosen
+  // lane (department) scopes both. Picking a person fills its role + lane; picking a
+  // role fills its lane. Re-scoping the pool/lane blanks the owner (can't conflict).
+  const filteredRoles = useMemo(
+    () => (pool === 'company' && deptId ? roles.filter((r) => r.department_id === deptId || r.id === respRole) : roles),
+    [roles, pool, deptId, respRole],
+  )
+  const filteredEmployees = useMemo(() => {
+    // Always keep the currently-selected person visible even if the scope would hide them.
+    if (respRole) return employees.filter((e) => e.role_id === respRole || e.user_id === respUser)
+    if (pool === 'company' && deptId) return employees.filter((e) => e.department_id === deptId || e.user_id === respUser)
+    return employees
+  }, [employees, respRole, respUser, pool, deptId])
+
+  function pickPerson(userId: string) {
+    setRespUser(userId)
+    const p = userId ? employees.find((e) => e.user_id === userId) : null
+    if (p) {
+      if (p.role_id) setRespRole(p.role_id)
+      if (p.department_id) { setPool('company'); setDeptId(p.department_id) }
+    }
+    touch()
+  }
+  function pickRole(roleId: string) {
+    setRespRole(roleId)
+    const r = roleId ? roles.find((x) => x.id === roleId) : null
+    if (r?.department_id) { setPool('company'); setDeptId(r.department_id) }
+    if (roleId && respUser) {
+      const p = employees.find((e) => e.user_id === respUser)
+      if (p && p.role_id !== roleId) setRespUser('') // person no longer matches the role
+    }
+    touch()
+  }
+  // User re-scopes the swimlane → any current owner may now conflict, so blank it.
+  function pickPool(p: ProcessPool | '') {
+    setPool(p)
+    if (p !== 'company') { setDeptId(''); setDeptError(false) }
+    setRespUser(''); setRespRole('')
+    touch()
+  }
+  function pickDept(d: string) {
+    setDeptId(d)
+    if (d) setDeptError(false)
+    setRespUser(''); setRespRole('')
+    touch()
   }
 
   const touch = () => setDirty(true)
@@ -396,7 +450,7 @@ export default function NodeDrawer({
                   <>
                     <StyledSelect
                       value={pool}
-                      onChange={(v) => { const p = v as ProcessPool | ''; setPool(p); if (p !== 'company') setDeptId(''); touch() }}
+                      onChange={(v) => pickPool(v as ProcessPool | '')}
                       options={[
                         { value: '', label: '— None (free-form) —' },
                         { value: 'customer', label: 'Customer' },
@@ -406,9 +460,9 @@ export default function NodeDrawer({
                     />
                     {pool === 'company' && (
                       <div className="mt-2">
-                        <DepartmentSelect inline value={deptId} onChange={(id) => { setDeptId(id); touch() }}
+                        <DepartmentSelect inline value={deptId} onChange={pickDept}
                           departments={departments} placeholder="Pick a department (lane)" />
-                        {!deptId && <p className="text-[11px] text-[#DC2626] mt-1">A Company step needs a department.</p>}
+                        {deptError && !deptId && <p className="text-[11px] text-[#DC2626] mt-1">A Company step needs a department.</p>}
                       </div>
                     )}
                   </>
@@ -422,15 +476,16 @@ export default function NodeDrawer({
               </div>
             )}
 
-            {/* Responsible */}
-            {!isEvent(node.kind) && !isNote && (
+            {/* Responsible — internal Person/Role only for Company / free-form steps. A
+                Customer or Vendor step is done by that external party, so we hide them. */}
+            {!isEvent(node.kind) && !isNote && !isExternalPool && (
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-[#374151] mb-1"><UserCircle2 size={12} className="inline mr-1" />Person</label>
                   <EmployeePicker
                     value={respUser}
-                    onChange={(id) => { setRespUser(id); touch() }}
-                    employees={employees}
+                    onChange={pickPerson}
+                    employees={filteredEmployees}
                     title="Responsible person"
                     placeholder="— None —"
                     allowClear
@@ -439,8 +494,8 @@ export default function NodeDrawer({
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-[#374151] mb-1">Role</label>
-                  <RolePicker value={respRole} onChange={(v) => { setRespRole(v); touch() }}
-                    roles={roles} title="Responsible role" placeholder="— None —" allowClear disabled={!canEdit} />
+                  <RolePicker value={respRole} onChange={pickRole}
+                    roles={filteredRoles} title="Responsible role" placeholder="— None —" allowClear disabled={!canEdit} />
                 </div>
               </div>
             )}
