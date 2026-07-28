@@ -26,6 +26,7 @@ export interface ProfileLite {
   name: string;
   department_id: string;
   department_name: string;
+  role_id: string | null;
   role_title: string;
   role_level: string;
   member_role: string | null;
@@ -344,7 +345,7 @@ export class AssigneeVisibilityService {
         include: {
           user: { select: { id: true, name: true, is_active: true } },
           department: { select: { id: true, name: true } },
-          role: { select: { title: true, level: true } },
+          role: { select: { id: true, title: true, level: true } },
         },
       }),
       this.prisma.department.findMany({
@@ -387,6 +388,7 @@ export class AssigneeVisibilityService {
         name: p.user.name,
         department_id: p.department_id,
         department_name: p.department.name,
+        role_id: p.role.id,
         role_title: p.role.title,
         role_level: p.role.level,
         member_role: memberRoleOf.get(p.user_id) ?? null,

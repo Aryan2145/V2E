@@ -772,6 +772,7 @@ export interface EligibleAssigneeUser {
   user_id: string
   name: string
   avatar_url: string | null
+  role_id: string | null
   role_title: string
   department_id: string
   department_name: string

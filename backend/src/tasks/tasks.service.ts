@@ -3528,6 +3528,7 @@ export class TasksService {
       user_id: p.user_id,
       name: p.name,
       avatar_url: null as null,
+      role_id: p.role_id,
       role_title: p.role_title,
       department_id: p.department_id,
       department_name: p.department_name,
