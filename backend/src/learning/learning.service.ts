@@ -102,14 +102,21 @@ export class LearningService {
       include: PATH_INCLUDE,
     });
 
-    // Auto-assign to all active employees with the matching role_id
-    if (path.role_id) {
+    // Auto-assign to all active employees matching the target role and/or department.
+    // (bulkAssign de-dupes, so an employee in both the role and the department is
+    // assigned once.)
+    if (path.role_id || path.department_id) {
+      const orTargets: { role_id?: string; department_id?: string }[] = [];
+      if (path.role_id) orTargets.push({ role_id: path.role_id });
+      if (path.department_id) orTargets.push({ department_id: path.department_id });
+
       const employees = await this.prisma.employeeProfile.findMany({
         where: {
           organization_id: orgId,
-          role_id: path.role_id,
           status: 'active',
+          OR: orTargets,
         },
+        select: { id: true },
       });
 
       const employeeIds = employees.map((e) => e.id);
@@ -573,16 +580,25 @@ export class LearningService {
 
   async autoAssignForNewEmployee(
     employeeProfileId: string,
-    roleId: string,
+    roleId: string | null | undefined,
     orgId: string,
     assignedByUserId: string,
+    departmentId?: string | null,
   ) {
+    // Match every published course targeted at this joiner's role OR their department,
+    // so a new hire automatically inherits both role- and department-scoped courses.
+    const orTargets: { role_id?: string; department_id?: string }[] = [];
+    if (roleId) orTargets.push({ role_id: roleId });
+    if (departmentId) orTargets.push({ department_id: departmentId });
+    if (orTargets.length === 0) return;
+
     const publishedPaths = await this.prisma.learningPath.findMany({
       where: {
         organization_id: orgId,
         status: LearningPathStatus.published,
-        role_id: roleId,
+        OR: orTargets,
       },
+      select: { id: true },
     });
 
     for (const path of publishedPaths) {

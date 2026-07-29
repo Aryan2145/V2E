@@ -15,21 +15,32 @@ import type { ContentType } from '@/lib/types/learning'
 export default function AddMaterialBar({
   onAdd,
 }: {
-  onAdd: (type: ContentType, file?: File) => Promise<void>
+  onAdd: (type: ContentType, files?: File[]) => Promise<void>
 }) {
   const fileInput = useRef<HTMLInputElement>(null)
   const [busy, setBusy] = useState<ContentType | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
-  async function run(type: ContentType, file?: File) {
-    if (type === 'file' && file) {
-      const bad = validateFile(file)
-      if (bad) { setErr(bad); return }
+  async function run(type: ContentType, files?: File[]) {
+    let accepted = files
+    if (type === 'file' && files?.length) {
+      // Add every valid file; skip only the invalid ones and name them so the user
+      // knows exactly what didn't go in (never reject the whole pick).
+      accepted = []
+      const rejected: string[] = []
+      for (const f of files) {
+        const bad = validateFile(f)
+        if (bad) rejected.push(`${f.name} — ${bad}`)
+        else accepted.push(f)
+      }
+      setErr(rejected.length ? `Skipped: ${rejected.join('; ')}` : null)
+      if (accepted.length === 0) return
+    } else {
+      setErr(null)
     }
-    setErr(null)
     setBusy(type)
     try {
-      await onAdd(type, file)
+      await onAdd(type, accepted)
     } catch (e: any) {
       setErr(e?.response?.data?.message ?? e?.message ?? 'Something went wrong. Please try again.')
     } finally {
@@ -50,7 +61,7 @@ export default function AddMaterialBar({
           className={`${btn} text-white bg-[#2563EB] border-[#2563EB] hover:bg-[#1D4ED8]`}
         >
           {busy === 'file' ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
-          Upload file
+          Upload files
         </button>
         <button type="button" disabled={!!busy} onClick={() => run('url')}
           className={`${btn} text-[#475569] bg-white border-[#CBD5E1] hover:border-[#2563EB] hover:text-[#2563EB]`}>
@@ -62,15 +73,16 @@ export default function AddMaterialBar({
         </button>
       </div>
       <p className="text-[11px] text-[#475569] mt-2">
-        PDF, images and video/audio play in-app · up to 25 MB. For slides, export PowerPoint to PDF so it plays in-app (Office files upload but open by download).
+        Pick one or several files at once — each becomes its own material. PDF, images and video/audio play in-app · up to 25 MB each. For slides, export PowerPoint to PDF so it plays in-app (Office files upload but open by download).
       </p>
       {err && <p className="text-xs text-[#DC2626] mt-1">{err}</p>}
       <input
         ref={fileInput}
         type="file"
         accept={ACCEPT_ATTR}
+        multiple
         className="hidden"
-        onChange={(e) => { run('file', e.target.files?.[0]); e.target.value = '' }}
+        onChange={(e) => { run('file', e.target.files ? Array.from(e.target.files) : undefined); e.target.value = '' }}
       />
     </div>
   )

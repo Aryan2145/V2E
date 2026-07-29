@@ -196,7 +196,7 @@ export class EmployeeImportService {
           }
           // Auto-assign published learning paths (best-effort — never fail the row).
           try {
-            await this.learningService.autoAssignForNewEmployee(profile.id, p.role!.id, orgId, user.id);
+            await this.learningService.autoAssignForNewEmployee(profile.id, p.role!.id, orgId, user.id, p.dept!.id);
           } catch {
             /* non-critical */
           }

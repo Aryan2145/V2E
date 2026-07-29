@@ -18,6 +18,7 @@ export interface LearningPath {
   status: LearningPathStatus;
   mode: SequentialMode;
   role_id?: string;
+  department_id?: string;
   created_by_user_id: string;
   estimated_minutes?: number;
   created_at: string;

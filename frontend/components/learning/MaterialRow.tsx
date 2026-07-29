@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
   FileText, Link2, Video, BookOpen, Trash2, Eye, RefreshCw,
-  Loader2, X, Download, Ban,
+  Loader2, X, Download, Ban, GripVertical,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import {
@@ -36,7 +36,7 @@ function conversionHint(ext: string): string | null {
 }
 
 export default function MaterialRow({
-  orgId, pathId, index, item, onChange, onRemove,
+  orgId, pathId, index, item, onChange, onRemove, onGripPointerDown,
 }: {
   orgId: string
   pathId: string
@@ -44,6 +44,8 @@ export default function MaterialRow({
   item: LearningItem
   onChange: (item: LearningItem) => void
   onRemove: (id: string) => void
+  /** Provided by the builder to start a drag-reorder; renders a grip handle when set. */
+  onGripPointerDown?: (e: React.PointerEvent) => void
 }) {
   const { user } = useAuth()
   const [title, setTitle] = useState(item.title)
@@ -117,6 +119,17 @@ export default function MaterialRow({
   return (
     <div className="rounded-[10px] border border-[#E2E8F0] bg-white">
       <div className="flex items-start gap-3 p-3.5">
+        {onGripPointerDown && (
+          <button
+            type="button"
+            onPointerDown={onGripPointerDown}
+            title="Drag to reorder"
+            aria-label="Drag to reorder"
+            className="shrink-0 mt-1.5 p-0.5 -ml-1 text-[#CBD5E1] hover:text-[#64748B] cursor-grab active:cursor-grabbing touch-none"
+          >
+            <GripVertical size={16} />
+          </button>
+        )}
         <span className="text-xs text-[#94A3B8] w-5 text-center shrink-0 mt-2">{index + 1}</span>
         <div className="w-8 h-8 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center shrink-0 mt-0.5">
           <Icon size={15} className="text-[#2563EB]" />
