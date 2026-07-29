@@ -31,6 +31,10 @@ export class CreateLearningPathDto {
   role_id?: string;
 
   @IsOptional()
+  @IsUUID()
+  department_id?: string;
+
+  @IsOptional()
   @IsInt()
   @Min(1)
   estimated_minutes?: number;

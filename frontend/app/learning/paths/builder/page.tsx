@@ -16,10 +16,11 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import {
-  createPath, updatePath, getPath, addItem, updateItem, publishPath, assignPath, uploadItemFile,
+  createPath, updatePath, getPath, addItem, updateItem, publishPath, assignPath, uploadItemFile, reorderItems,
 } from '@/lib/api/learning'
 import { getEmployees } from '@/lib/api/employees'
 import { getRoles } from '@/lib/api/roles'
+import { getDepartments } from '@/lib/api/departments'
 import type { LearningPath, LearningItem, ContentType, SequentialMode, LearningPathStatus } from '@/lib/types/learning'
 import type { EmployeeProfile } from '@/lib/types'
 import StyledSelect from '@/components/ui/StyledSelect'
@@ -48,6 +49,8 @@ export default function CourseBuilderPage() {
   // People / assignment
   const [roleId, setRoleId] = useState('')
   const [roles, setRoles] = useState<{ id: string; title: string }[]>([])
+  const [departmentId, setDepartmentId] = useState('')
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
   const [employees, setEmployees] = useState<EmployeeProfile[]>([])
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([])
   const [dueDate, setDueDate] = useState('')
@@ -71,6 +74,7 @@ export default function CourseBuilderPage() {
     if (!orgId) return
     getEmployees(orgId).then(setEmployees).catch(() => undefined)
     getRoles(orgId).then((r: any[]) => setRoles(r.map((x) => ({ id: x.id, title: x.title })))).catch(() => undefined)
+    getDepartments(orgId).then((d: any[]) => setDepartments(d.map((x) => ({ id: x.id, name: x.name })))).catch(() => undefined)
   }, [orgId])
 
   useEffect(() => {
@@ -82,6 +86,7 @@ export default function CourseBuilderPage() {
         setDescription(p.description ?? '')
         setMode(p.mode)
         setRoleId(p.role_id ?? '')
+        setDepartmentId(p.department_id ?? '')
         setItems(p.items ?? [])
         setStatus(p.status)
       })
@@ -118,6 +123,7 @@ export default function CourseBuilderPage() {
           description: description || undefined,
           mode,
           role_id: roleId || undefined,
+          department_id: departmentId || undefined,
         })
         setSaveState('saved')
       } catch {
@@ -125,28 +131,54 @@ export default function CourseBuilderPage() {
       }
     }, 700)
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current) }
-  }, [title, description, mode, roleId, pathId, orgId])
+  }, [title, description, mode, roleId, departmentId, pathId, orgId])
 
   // ── Materials ──
-  async function handleAddMaterial(type: ContentType, file?: File) {
-    const pid = await ensurePath()
-    // Sensible default title; file uploads inherit the filename server-side.
-    const defaultTitle =
-      type === 'file' ? (file?.name ?? 'New file') :
-      type === 'url' ? 'New link' :
-      type === 'video' ? 'New video' : 'New article'
+  const isBlankPlaceholder = (i: LearningItem) =>
+    (i.content_type === 'url' && !i.content_url?.trim()) ||
+    (i.content_type === 'video' && !i.content_url?.trim()) ||
+    (i.content_type === 'article' && !i.content_body?.trim())
 
-    // A leftover BLANK placeholder (empty link/article/video) is REUSED for whatever you
-    // add next — converted in place (same row) so there's no remove/re-add flicker.
-    const blank = items.find(
-      (i) =>
-        (i.content_type === 'url' && !i.content_url?.trim()) ||
-        (i.content_type === 'video' && !i.content_url?.trim()) ||
-        (i.content_type === 'article' && !i.content_body?.trim()),
-    )
+  async function handleAddMaterial(type: ContentType, files?: File[]) {
+    const pid = await ensurePath()
+
+    // Files: one material per picked file. A leftover blank placeholder is reused for
+    // the FIRST file (converted in place — no flicker); the rest are fresh rows.
+    if (type === 'file') {
+      const list = files ?? []
+      if (list.length === 0) return
+      let blank = items.find(isBlankPlaceholder)
+      for (const file of list) {
+        if (blank) {
+          const converted: LearningItem = await updateItem(orgId, pid, blank.id, {
+            title: file.name,
+            content_type: 'file',
+          })
+          patchItem(converted)
+          const uploaded = await uploadItemFile(orgId, pid, blank.id, file, true)
+          patchItem(uploaded)
+          blank = undefined // only the first file reuses it
+        } else {
+          const created: LearningItem = await addItem(orgId, pid, {
+            title: file.name,
+            content_type: 'file',
+            allow_download: true,
+          })
+          setItems((prev) => [...prev, created])
+          const uploaded = await uploadItemFile(orgId, pid, created.id, file, true)
+          patchItem(uploaded)
+        }
+      }
+      setAddedSignal((s) => s + 1)
+      return
+    }
+
+    // Link / article: create a single empty row (or reuse an existing blank of that kind).
+    const defaultTitle = type === 'url' ? 'New link' : type === 'video' ? 'New video' : 'New article'
+    const blank = items.find(isBlankPlaceholder)
     if (blank) {
       // Same-kind blank already there → nothing to change (repeat clicks are a no-op).
-      if (blank.content_type === type && type !== 'file') {
+      if (blank.content_type === type) {
         setAddedSignal((s) => s + 1)
         return
       }
@@ -156,10 +188,6 @@ export default function CourseBuilderPage() {
       })
       patchItem(converted)
       setAddedSignal((s) => s + 1)
-      if (type === 'file' && file) {
-        const uploaded = await uploadItemFile(orgId, pid, blank.id, file, true)
-        patchItem(uploaded)
-      }
       return
     }
 
@@ -170,14 +198,48 @@ export default function CourseBuilderPage() {
     })
     setItems((prev) => [...prev, created])
     setAddedSignal((s) => s + 1)
-    if (type === 'file' && file) {
-      const uploaded = await uploadItemFile(orgId, pid, created.id, file, true)
-      patchItem(uploaded)
-    }
   }
 
   function patchItem(updated: LearningItem) {
     setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)))
+  }
+
+  // ── Drag-to-reorder materials ──
+  // Live-reorders the list as you drag over a new slot (updates in place, no flicker),
+  // then persists the final order to the server on drop.
+  const itemsRef = useRef(items)
+  useEffect(() => { itemsRef.current = items }, [items])
+  const [dragId, setDragId] = useState<string | null>(null)
+  const dragIndexRef = useRef<number | null>(null)
+
+  function handleDragStart(e: React.DragEvent, idx: number) {
+    dragIndexRef.current = idx
+    e.dataTransfer.effectAllowed = 'move'
+  }
+  function handleDragOver(e: React.DragEvent, overIdx: number) {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    const from = dragIndexRef.current
+    if (from === null || from === overIdx) return
+    setItems((prev) => {
+      const next = [...prev]
+      const [moved] = next.splice(from, 1)
+      next.splice(overIdx, 0, moved)
+      return next
+    })
+    dragIndexRef.current = overIdx
+  }
+  async function handleDragEnd() {
+    setDragId(null)
+    dragIndexRef.current = null
+    const pid = pathId
+    if (!pid) return
+    const ordered = itemsRef.current.map((it, i) => ({ id: it.id, order_index: i }))
+    try {
+      await reorderItems(orgId, pid, ordered)
+    } catch {
+      /* order already reflects locally; a failed persist self-heals on next reorder/reload */
+    }
   }
   function removeItemLocal(id: string) {
     setItems((prev) => prev.filter((i) => i.id !== id))
@@ -197,9 +259,10 @@ export default function CourseBuilderPage() {
         description: description || undefined,
         mode,
         role_id: roleId || undefined,
+        department_id: departmentId || undefined,
       })
       // Only publish a draft — an already-published course is edited in place.
-      if (!isPublished) await publishPath(orgId, pid) // auto-assigns to role_id if set
+      if (!isPublished) await publishPath(orgId, pid) // auto-assigns to role_id / department_id if set
       if (selectedEmployees.length > 0) {
         await assignPath(orgId, pid, selectedEmployees, dueDate || undefined)
       }
@@ -309,6 +372,9 @@ export default function CourseBuilderPage() {
               {items.length}
             </span>
           )}
+          {items.length > 1 && (
+            <span className="ml-auto text-[11px] text-[#94A3B8]">Drag the handle to set the order learners see</span>
+          )}
         </div>
 
         {items.length === 0 ? (
@@ -320,15 +386,27 @@ export default function CourseBuilderPage() {
         ) : (
           <div ref={listRef} className="flex flex-col gap-3 mb-4 max-h-[520px] overflow-y-auto pr-1">
             {items.map((item, idx) => (
-              <MaterialRow
+              <div
                 key={item.id}
-                orgId={orgId}
-                pathId={pathId!}
-                index={idx}
-                item={item}
-                onChange={patchItem}
-                onRemove={removeItemLocal}
-              />
+                draggable={dragId === item.id}
+                onDragStart={(e) => handleDragStart(e, idx)}
+                onDragOver={(e) => handleDragOver(e, idx)}
+                onDragEnd={handleDragEnd}
+                onDrop={(e) => e.preventDefault()}
+                className={`transition-shadow duration-200 rounded-[10px] ${
+                  dragId === item.id ? 'opacity-60 ring-2 ring-[#2563EB] shadow-md' : ''
+                }`}
+              >
+                <MaterialRow
+                  orgId={orgId}
+                  pathId={pathId!}
+                  index={idx}
+                  item={item}
+                  onChange={patchItem}
+                  onRemove={removeItemLocal}
+                  onGripPointerDown={() => setDragId(item.id)}
+                />
+              </div>
             ))}
           </div>
         )}
@@ -343,19 +421,32 @@ export default function CourseBuilderPage() {
           <h2 className="text-[18px] font-semibold text-[#0F172A]">Who learns this</h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-5">
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Auto-assign to a role</label>
             <StyledSelect
               value={roleId}
               onChange={setRoleId}
-              placeholder="No role — pick people below"
+              placeholder="No role"
               options={[
-                { value: '', label: 'No role — pick people below' },
+                { value: '', label: 'No role' },
                 ...roles.map((r) => ({ value: r.id, label: r.title })),
               ]}
             />
-            <p className="text-xs text-[#64748B] mt-1">Everyone in this role gets it automatically, now and in future.</p>
+            <p className="text-xs text-[#64748B] mt-1">Everyone in this role gets it automatically — now and future joiners.</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-[#374151] mb-1.5">Auto-assign to a department</label>
+            <StyledSelect
+              value={departmentId}
+              onChange={setDepartmentId}
+              placeholder="No department"
+              options={[
+                { value: '', label: 'No department' },
+                ...departments.map((d) => ({ value: d.id, label: d.name })),
+              ]}
+            />
+            <p className="text-xs text-[#64748B] mt-1">Everyone in this department gets it automatically — now and future joiners.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-[#374151] mb-1.5">Due date (optional)</label>

@@ -550,6 +550,7 @@ model LearningPath {
   status             LearningPathStatus @default(draft)
   mode               SequentialMode     @default(free_form)
   role_id            String?
+  department_id      String?
   created_by_user_id String
   estimated_minutes  Int?
   created_at         DateTime           @default(now())
@@ -560,6 +561,7 @@ model LearningPath {
   assignments  LearningPathAssignment[]
 
   @@index([organization_id, status, role_id])
+  @@index([organization_id, status, department_id])
   @@map("learning_paths")
 }
 

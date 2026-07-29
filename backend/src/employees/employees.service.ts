@@ -209,6 +209,7 @@ export class EmployeesService {
       profileData.role_id,
       orgId,
       createdUserId,
+      profileData.department_id,
     );
 
     this.assigneeVisibility.invalidate(orgId);
