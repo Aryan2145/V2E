@@ -72,6 +72,7 @@ export default function NodeDrawer({
 
   // editable local copy
   const [name, setName] = useState('')
+  const [kind, setKind] = useState<ProcessNodeKind>('task') // staged like every other field — only committed on Save
   const [description, setDescription] = useState('')
   const [respUser, setRespUser] = useState<string>('')
   const [respRole, setRespRole] = useState<string>('')
@@ -82,7 +83,7 @@ export default function NodeDrawer({
   const reloadNode = async () => {
     const d = await processHierarchyApi.getNode(orgId, mapId, nodeId)
     setNode(d)
-    setName(d.name); setDescription(d.description ?? '')
+    setName(d.name); setKind(d.kind); setDescription(d.description ?? '')
     setRespUser(d.responsible_user_id ?? ''); setRespRole(d.responsible_role_id ?? '')
     setPool(d.pool ?? ''); setDeptId(d.department_id ?? '')
     setChecklist(d.checklist.map((c) => ({ id: c.id, text: c.text })))
@@ -177,6 +178,7 @@ export default function NodeDrawer({
         pool: pool || null,
         department_id: pool === 'company' ? deptId : null,
         checklist,
+        ...(kind !== node.kind ? { kind } : {}),
       })
       await reloadNode()
       onChanged()
@@ -223,12 +225,6 @@ export default function NodeDrawer({
       addToast('This is now its own map — reference it as a line item in any map via Add → Reference a map.', 'success')
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not make this reusable.', 'error') }
     finally { setMakingReusable(false) }
-  }
-
-  async function changeKind(k: string) {
-    if (!node || k === node.kind) return
-    try { await processHierarchyApi.updateNode(orgId, mapId, nodeId, { kind: k as ProcessNodeKind }); await reloadNode(); onChanged() }
-    catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not change the type.', 'error') }
   }
 
   async function moveTo(parentId: string) {
@@ -410,7 +406,7 @@ export default function NodeDrawer({
             {canEdit && !isEvent(node.kind) && !isNote && (
               <div>
                 <label className="block text-xs font-medium text-[#374151] mb-1">Type</label>
-                <StyledSelect value={node.kind} onChange={changeKind}
+                <StyledSelect value={kind} onChange={(k) => { setKind(k as ProcessNodeKind); touch() }}
                   options={(CONTAINER_KINDS.has(node.kind)
                     ? (['container', 'subprocess'] as ProcessNodeKind[])
                     : (['task', 'decision', 'container', 'subprocess'] as ProcessNodeKind[])

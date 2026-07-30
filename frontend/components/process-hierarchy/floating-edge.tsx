@@ -1,6 +1,6 @@
 'use client'
 
-import { useStore, getBezierPath, BaseEdge, EdgeLabelRenderer, Position, type EdgeProps, type Node } from 'reactflow'
+import { useStore, getBezierPath, getSmoothStepPath, BaseEdge, EdgeLabelRenderer, Position, type EdgeProps, type Node } from 'reactflow'
 
 // ─── Floating-edge geometry ──────────────────────────────────────────────────
 // Computes where the line between two node centres crosses each node's boundary,
@@ -44,6 +44,91 @@ function edgeParams(source: Box, target: Box) {
   const sp = intersection(source, target)
   const tp = intersection(target, source)
   return { sx: sp.x, sy: sp.y, tx: tp.x, ty: tp.y, sourcePos: sideOf(source, sp), targetPos: sideOf(target, tp) }
+}
+
+// ─── Orthogonal single-bend geometry (swimlane) ──────────────────────────────
+// A connection makes ONE clean 90° turn: same row → straight across; another lane → leaves the
+// source's bottom/top (so a decision's branches drop out of its base) and, if the target is
+// offset, turns once into the target's near side. Never an S or a line that doubles back.
+function stepParams(source: Box, target: Box) {
+  // Until both nodes are measured, fall back to a plain right→left link so the path always has a
+  // real end point and the arrowhead orients (a degenerate 0-size box makes the marker vanish).
+  if (!source.width || !source.height || !target.width || !target.height) {
+    return {
+      sx: source.x + source.width, sy: source.y + source.height / 2, sourcePos: Position.Right,
+      tx: target.x, ty: target.y + target.height / 2, targetPos: Position.Left,
+    }
+  }
+  const scx = source.x + source.width / 2, scy = source.y + source.height / 2
+  const tcx = target.x + target.width / 2, tcy = target.y + target.height / 2
+  const dx = tcx - scx, dy = tcy - scy
+  const sameRow = Math.abs(dy) <= Math.max(source.height, target.height) / 2
+  const sameCol = Math.abs(dx) <= Math.max(source.width, target.width) / 2
+  const rightward = dx >= 0
+  const srcSideX = rightward ? source.x + source.width : source.x
+  const srcSidePos = rightward ? Position.Right : Position.Left
+  const tgtNearX = rightward ? target.x : target.x + target.width
+  const tgtNearPos = rightward ? Position.Left : Position.Right
+
+  // Same lane/row → straight across. Use a shared Y (within both boxes) so a short step and a
+  // taller one — which have different centre heights — still connect with a dead-straight line.
+  if (sameRow) {
+    const y = Math.min(scy, tcy)
+    return { sx: srcSideX, sy: y, sourcePos: srcSidePos, tx: tgtNearX, ty: y, targetPos: tgtNearPos }
+  }
+  // Target in a LOWER lane → drop out the source's BOTTOM (so a decision's branch leaves its
+  // base): straight into the target's top if aligned, else one turn into its near side.
+  if (dy >= 0) {
+    if (sameCol) return { sx: scx, sy: source.y + source.height, sourcePos: Position.Bottom, tx: tcx, ty: target.y, targetPos: Position.Top }
+    return { sx: scx, sy: source.y + source.height, sourcePos: Position.Bottom, tx: tgtNearX, ty: tcy, targetPos: tgtNearPos }
+  }
+  // Target in a HIGHER lane → carry on forward out the source's SIDE and rise into the target's
+  // BOTTOM, so it doesn't merge with a line already entering the target's left. Aligned → straight up.
+  if (sameCol) return { sx: scx, sy: source.y, sourcePos: Position.Top, tx: tcx, ty: target.y + target.height, targetPos: Position.Bottom }
+  return { sx: srcSideX, sy: scy, sourcePos: srcSidePos, tx: tcx, ty: target.y + target.height, targetPos: Position.Bottom }
+}
+
+// Arrowhead drawn explicitly (not via ReactFlow's shared marker, which failed to orient on
+// bottom/top entries). A filled triangle whose tip sits at the entry point, pointing INTO the
+// node from whichever side the edge arrives.
+function arrowPoints(tx: number, ty: number, pos: Position) {
+  const L = 8, W = 5 // length back from the tip; half-width of the base
+  switch (pos) {
+    case Position.Left: return `${tx},${ty} ${tx - L},${ty - W} ${tx - L},${ty + W}`
+    case Position.Right: return `${tx},${ty} ${tx + L},${ty - W} ${tx + L},${ty + W}`
+    case Position.Top: return `${tx},${ty} ${tx - W},${ty - L} ${tx + W},${ty - L}`
+    default: return `${tx},${ty} ${tx - W},${ty + L} ${tx + W},${ty + L}` // Bottom
+  }
+}
+
+export function FloatingStepEdge({ id, source, target, style, data }: EdgeProps<{ label?: string }>) {
+  const sourceNode = useStore((s) => s.nodeInternals.get(source))
+  const targetNode = useStore((s) => s.nodeInternals.get(target))
+  if (!sourceNode || !targetNode) return null
+
+  const { sx, sy, tx, ty, sourcePos, targetPos } = stepParams(boxOf(sourceNode), boxOf(targetNode))
+  const [path, labelX, labelY] = getSmoothStepPath({
+    sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
+    targetX: tx, targetY: ty, targetPosition: targetPos, borderRadius: 8,
+  })
+  const color = (style?.stroke as string) ?? '#475569'
+
+  return (
+    <>
+      <BaseEdge id={id} path={path} style={style} />
+      <polygon points={arrowPoints(tx, ty, targetPos)} fill={color} />
+      {data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan absolute rounded-[4px] bg-white/90 px-1 py-0.5 text-[11px] font-semibold text-[#475569]"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: 'all' }}
+          >
+            {data.label}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+    </>
+  )
 }
 
 // ─── Edge component ──────────────────────────────────────────────────────────

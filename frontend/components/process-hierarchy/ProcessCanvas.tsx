@@ -25,14 +25,14 @@ import ReactFlow, {
 import 'reactflow/dist/style.css'
 import { Trash2, X, Maximize2, Minimize2, Copy } from 'lucide-react'
 import { nodeTypes, type ProcessNodeData } from './nodes'
-import FloatingEdge from './floating-edge'
+import FloatingEdge, { FloatingStepEdge } from './floating-edge'
 import { buildNested, type NodeMeta, type SubDesc } from './nested-render'
 import { buildSwimlane, CONTENT_X, type LaneBand } from './swimlane-layout'
 import StyledSelect from '@/components/ui/StyledSelect'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { useFlowNav, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
 
-const edgeTypes = { floating: FloatingEdge }
+const edgeTypes = { floating: FloatingEdge, floatingStep: FloatingStepEdge }
 import type { FlowLevel, ProcessConditionKind, ProcessConnection, DiffChangeKind, ProcessPool } from '@/lib/api/process-hierarchy'
 
 interface Props {
@@ -42,7 +42,7 @@ interface Props {
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void // lane "+" in swimlane view
   onAppendFromNode?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => void // click a node's exit dot → append a connected step
   onDecisionConnect?: (source: string, target: string, sourceSide?: string) => void // drag FROM a decision → choose Yes/No in a pop-up
-  onReassignLane?: (nodeId: string, pool: ProcessPool, departmentId: string | null, positionX: number) => void // drag a node onto another lane → change its department (+ keep its horizontal spot)
+  onReassignLane?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, positionX: number) => void // drag a node onto another lane → change its pool/department (null pool = dropped in the no-lane area)
   selectedNodeId: string | null
   visibleNodeIds: Set<string> | null // null = show all
   diffStatus?: Record<string, DiffChangeKind> | null // when comparing versions
@@ -53,7 +53,9 @@ interface Props {
   onUpdateConnection?: (id: string, dto: { label?: string; condition_kind?: ProcessConditionKind }) => void
   onDeleteConnection?: (id: string) => void
   // Box-select support: persist a group's new canvas positions, and delete a group.
-  onNodesMove?: (positions: { id: string; position_x: number; position_y: number }[]) => void
+  onNodesMove?: (positions: { id: string; position_x: number; position_y: number }[]) => void | Promise<void>
+  // A box-selected group dragged onto other lane(s) → reassign each node's pool/department (+ x).
+  onNodesReassign?: (items: { id: string; pool: ProcessPool | null; department_id: string | null; position_x: number; position_y: number }[]) => void | Promise<void>
   onDeleteNodes?: (ids: string[]) => Promise<void> | void
   // Rendered as the rightmost item in the canvas's top-right control cluster
   // (used to float the page's "Add step" primary over the canvas).
@@ -91,7 +93,7 @@ const LOD_THRESHOLD = 0.5
 function Inner({
   flow, canEdit, swimlane = false, onAddInLane, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
   onSelectNode, onDrill, onConnect, onNodeDragStop, onUpdateConnection, onDeleteConnection,
-  onNodesMove, onDeleteNodes, topRightExtra, loadFlowAt, onOpenMap, onOpenDoc, spawnCenterRef, onCopyNodes, onPaste, exportPngRef,
+  onNodesMove, onNodesReassign, onDeleteNodes, topRightExtra, loadFlowAt, onOpenMap, onOpenDoc, spawnCenterRef, onCopyNodes, onPaste, exportPngRef,
 }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -176,9 +178,45 @@ function Inner({
   const handleSelectionChange = useCallback(({ nodes: sel }: { nodes: Node[] }) => {
     setSelectedIds(sel.map((n) => n.id))
   }, [])
-  const handleSelectionDragStop = useCallback((_: React.MouseEvent, dragged: Node[]) => {
-    onNodesMove?.(dragged.map((n) => ({ id: n.id, position_x: n.position.x, position_y: n.position.y })))
-  }, [onNodesMove])
+  const handleSelectionDragStop = useCallback(async (_: React.MouseEvent, dragged: Node[]) => {
+    if (!swimlane) {
+      onNodesMove?.(dragged.map((n) => ({ id: n.id, position_x: n.position.x, position_y: n.position.y })))
+      return
+    }
+    // Swimlane: reassign each node to the lane it landed in — same rules as a single-node drag,
+    // applied per node. Nodes that changed lane go through the batch reassign (pool/dept + x);
+    // ones that stayed in place (or a lane-less node moved within the loose area) just save
+    // their position; a pooled node dropped in the gap between lanes snaps back.
+    const reassigns: { id: string; pool: ProcessPool | null; department_id: string | null; position_x: number; position_y: number }[] = []
+    const moves: { id: string; position_x: number; position_y: number }[] = []
+    const poolsBottom = laneBandsRef.current.length ? Math.max(...laneBandsRef.current.map((b) => b.yBottom)) : 0
+    for (const node of dragged) {
+      if (node.id.includes('::')) continue
+      const cur = flow.nodes.find((n) => n.id === node.id)
+      if (!cur) continue
+      const cy = node.position.y + 48
+      const newX = Math.max(CONTENT_X, Math.round(node.position.x))
+      const band = laneBandsRef.current.find((b) => cy >= b.yTop && cy < b.yBottom)
+      if (band) {
+        if (band.pool !== (cur.pool ?? null) || band.deptId !== (cur.department_id ?? null)) {
+          reassigns.push({ id: node.id, pool: band.pool, department_id: band.deptId, position_x: newX, position_y: node.position.y })
+        } else {
+          moves.push({ id: node.id, position_x: newX, position_y: node.position.y })
+        }
+      } else if (!cur.pool) {
+        moves.push({ id: node.id, position_x: newX, position_y: Math.round(node.position.y) })
+      } else if (laneBandsRef.current.length && cy >= poolsBottom) {
+        // Dropped in the no-lane area below the pools → make it lane-less.
+        reassigns.push({ id: node.id, pool: null, department_id: null, position_x: newX, position_y: node.position.y })
+      }
+    }
+    if (moves.length) await onNodesMove?.(moves)
+    if (reassigns.length) await onNodesReassign?.(reassigns)
+    // If nothing was persisted (e.g. the whole group was dropped in a gap), no rebuild fires — so
+    // re-snap the dragged nodes back to their computed spots. Any persist triggers a rebuild that
+    // already resets every node.
+    if (!moves.length && !reassigns.length) setNodes(rfNodes)
+  }, [swimlane, flow.nodes, onNodesMove, onNodesReassign, setNodes, rfNodes])
   const clearSelection = useCallback(() => {
     setNodes((nds) => nds.map((n) => (n.selected ? { ...n, selected: false } : n)))
     setSelectedIds([])
@@ -205,9 +243,10 @@ function Inner({
 
   // Figma-style canvas navigation (pan / wheel-scroll / ⌘-scroll zoom / bounded extent / smooth
   // ease / faint scrollbars / touch), shared verbatim with the department + employee trees.
-  // Marquee-select is on only in edit mode outside the swimlane view (there positions are
-  // computed, so a drag just pans).
-  const nav = useFlowNav(nodes, { marquee: canEdit && !swimlane })
+  // Marquee-select (drag empty space = selection box) is on in edit mode on mouse/trackpad; the
+  // hook turns it off on touch so one-finger drag pans instead. Pan on a mouse is then via
+  // wheel / two-finger scroll, the scrollbars, hold-Space, or middle/right-drag.
+  const nav = useFlowNav(nodes, { marquee: canEdit })
 
   // Re-fit the view each time we enter a new level (initial load, drill in, or
   // drill out). Keyed on the level id so dragging/adding within a level never
@@ -259,6 +298,14 @@ function Inner({
   const connectStartRef = useRef<{ nodeId: string; handleId: string | null; x: number; y: number } | null>(null)
   const madeConnRef = useRef(false)
   const appendGuardRef = useRef(0) // timestamp — suppresses the node click that can follow a dot click
+  // Route a source→target connection: from a decision it asks Yes/No (created in the pop-up),
+  // otherwise it's a plain sequence flow created immediately.
+  const connectNodes = useCallback((source: string, target: string, side?: string) => {
+    if (!source || !target || source === target) return
+    const src = flow.nodes.find((n) => n.id === source)
+    if (src?.kind === 'decision' && onDecisionConnect) { onDecisionConnect(source, target, side); return }
+    onConnect(source, target, 'none', side)
+  }, [onConnect, onDecisionConnect, flow.nodes])
   const handleConnectStart = useCallback((e: any, params: { nodeId: string | null; handleId: string | null }) => {
     madeConnRef.current = false
     const p = e?.touches?.[0] ?? e
@@ -267,14 +314,25 @@ function Inner({
   const handleConnectEnd = useCallback((e: any) => {
     const start = connectStartRef.current
     connectStartRef.current = null
-    if (madeConnRef.current || !start || !swimlane || !onAppendFromNode) return
+    if (madeConnRef.current || !start || !swimlane) return
     const p = e?.changedTouches?.[0] ?? e
-    if (Math.hypot((p?.clientX ?? 0) - start.x, (p?.clientY ?? 0) - start.y) > 6) return // a drag that missed a node, not a click
-    const src = flow.nodes.find((n) => n.id === start.nodeId)
-    if (!src) return
-    appendGuardRef.current = Date.now()
-    onAppendFromNode(start.nodeId, src.pool ?? null, src.department_id ?? null, start.handleId ?? undefined)
-  }, [swimlane, onAppendFromNode, flow.nodes])
+    const moved = Math.hypot((p?.clientX ?? 0) - start.x, (p?.clientY ?? 0) - start.y) > 6
+    if (!moved) {
+      // A plain dot click (no drag) → open the "add a connected next step" picker.
+      if (!onAppendFromNode) return
+      const src = flow.nodes.find((n) => n.id === start.nodeId)
+      if (!src) return
+      appendGuardRef.current = Date.now()
+      onAppendFromNode(start.nodeId, src.pool ?? null, src.department_id ?? null, start.handleId ?? undefined)
+      return
+    }
+    // A real drag that didn't land on a handle dot: if it was released anywhere over another node,
+    // connect the two — the whole node body is a drop target, not just its handle.
+    const el = document.elementFromPoint(p?.clientX ?? 0, p?.clientY ?? 0) as HTMLElement | null
+    const targetId = el?.closest('.react-flow__node')?.getAttribute('data-id') ?? null
+    if (!targetId || targetId === start.nodeId || targetId.startsWith('band::') || targetId.includes('::')) return
+    connectNodes(start.nodeId, targetId, start.handleId ?? undefined)
+  }, [swimlane, onAppendFromNode, flow.nodes, connectNodes])
 
   // A tap on a drillable node (container / sub-process / linked map) goes *inside*
   // it; the small pencil (handled in the node) opens the edit panel instead. A tap
@@ -351,8 +409,11 @@ function Inner({
         } else if (!cur.pool) {
           // A lane-less node (e.g. a container) — placed freely: save both x and y.
           onNodeDragStop(node.id, newX, Math.round(node.position.y))
+        } else if (laneBandsRef.current.length && cy >= Math.max(...laneBandsRef.current.map((b) => b.yBottom))) {
+          // Dropped in the no-lane area BELOW all the pools → drop its pool (make it lane-less).
+          onReassignLane?.(node.id, null, null, newX)
         } else {
-          setNodes(rfNodes) // a pooled step dropped in the gap between lanes → snap back
+          setNodes(rfNodes) // dropped in a gap between two pools → not a real drop zone, snap back
         }
         return
       }
@@ -362,16 +423,10 @@ function Inner({
   )
   const handleConnect = useCallback(
     (c: Connection) => {
-      madeConnRef.current = true // a real connection was drawn — not a dot click
-      if (!c.source || !c.target || c.source === c.target) return
-      // Drawing FROM a decision asks Yes/No in a pop-up (created there); anything else is a
-      // plain sequence flow, created immediately. Either way we remember the exact dot dragged from.
-      const side = c.sourceHandle ?? undefined
-      const src = flow.nodes.find((n) => n.id === c.source)
-      if (src?.kind === 'decision' && onDecisionConnect) { onDecisionConnect(c.source, c.target, side); return }
-      onConnect(c.source, c.target, 'none', side)
+      madeConnRef.current = true // a real connection was drawn on a handle — not a dot click
+      connectNodes(c.source ?? '', c.target ?? '', c.sourceHandle ?? undefined)
     },
-    [onConnect, onDecisionConnect, flow.nodes],
+    [connectNodes],
   )
 
   const edgeFromDecision = edgeEdit ? kindById.get(edgeEdit.conn.source_node_id) === 'decision' : false
@@ -387,8 +442,10 @@ function Inner({
       onEdgesChange={onEdgesChange}
       nodeTypes={nodeTypes}
       edgeTypes={edgeTypes}
-      nodesDraggable={canEdit}
-      nodesConnectable={canEdit}
+      // Touch is view + drill only: nodes don't drag (so a tap opens/drills a container instead
+      // of moving it) and can't be wired up. Editing gestures are mouse/trackpad only.
+      nodesDraggable={canEdit && !nav.isTouch}
+      nodesConnectable={canEdit && !nav.isTouch}
       elementsSelectable
       onNodeClick={handleNodeClick}
       onEdgeClick={handleEdgeClick}
@@ -413,7 +470,12 @@ function Inner({
       {/* Minimap floats bottom-right; hidden on the narrowest screens so it can't
           overlap the zoom / add controls, and toggleable when it's in the way. */}
       {nav.needsMinimap && (
-        <MiniMap nodeColor={() => '#2563EB'} maskColor="rgba(15,23,42,0.05)" pannable zoomable
+        // Paint the swimlane bands transparent so the minimap shows the actual step nodes, not
+        // the full-width lane stripes that would otherwise cover everything.
+        <MiniMap
+          nodeColor={(n) => (n.type === 'swimlane' ? 'transparent' : '#2563EB')}
+          nodeStrokeColor={(n) => (n.type === 'swimlane' ? 'transparent' : '#2563EB')}
+          maskColor="rgba(15,23,42,0.05)" pannable zoomable
           className="!hidden sm:!block" style={{ width: 180, height: 120 }} />
       )}
 

@@ -6,7 +6,7 @@
 // lane, so new steps land to the RIGHT of existing ones, never stacked underneath. Columns
 // still respect the flow order (longest-path depth) so connected steps read left→right and
 // downstream steps sit further right. Connections within a pool are solid; across pools dotted.
-import { MarkerType, type Edge, type Node } from 'reactflow'
+import { type Edge, type Node } from 'reactflow'
 import type { FlowLevel, ProcessNode, ProcessPool } from '@/lib/api/process-hierarchy'
 import type { ProcessNodeData, SwimlaneBandData } from './nodes'
 
@@ -18,7 +18,7 @@ export const CONTENT_X = POOL_LABEL_W + LANE_LABEL_W + 20 // left edge of conten
 const COL_GAP = 56
 const ROW_H = 112 // height of a lane's single row (all steps sit on one line; no row-dropping)
 const BAND_PAD = 14 // vertical padding inside a lane band
-const NODE_H = 96 // fixed wrapper height for every step (keeps handles aligned → straight lines)
+const NODE_H = 96 // baseline (min) wrapper height for a step; taller content (checklist/docs) grows it
 const RIGHT_PAD = 80
 const LOOSE_GAP = 44 // gap below the pools where lane-less steps sit
 
@@ -123,9 +123,9 @@ export function buildSwimlane(
     colX.set(c, cx)
     cx += (widthOfCol.get(c) ?? 170) + Math.max(COL_GAP, gapForCol.get(c) ?? 0)
   }
-  // A node dragged horizontally keeps its stored x; otherwise it flows in its auto column.
+  // Where the user *wants* a node horizontally: its hand-dragged x if set, else its auto column.
   // (Vertical is always the lane row — horizontal is the only thing the user places by hand.)
-  const xOf = (id: string) => {
+  const desiredX = (id: string) => {
     const px = nodeById.get(id)?.position_x ?? 0
     return px >= CONTENT_X ? px : (colX.get(colOf.get(id) ?? 0) ?? CONTENT_X)
   }
@@ -166,6 +166,29 @@ export function buildSwimlane(
     for (const e of ins) r = Math.min(r, (rowOf.get(e.src) ?? 0) + (branchOffset.get(e.src + '->' + n.id) ?? 0))
     if (r !== Infinity) rowOf.set(n.id, r)
   }
+
+  // ── Horizontal placement: honour a hand-dragged x, but never overlap or fall behind. Walk the
+  // steps left→right (flow-column order); each sits at max(its desired x, a floor). The floor is
+  // the furthest of its lane's running edge (so two steps in a lane can't overlap or cross) and
+  // every incoming step's edge (so a node can't slip behind a predecessor — same lane = past its
+  // right, another lane = not left of it). Dragging a node right just pushes the ones after it
+  // along; dragging it left stops when it would touch the one before. ──
+  const laneCursorX = new Map<string, number>()
+  const xFinal = new Map<string, number>()
+  for (const n of byCol) {
+    const lane = bandKeyOf(n)
+    let floor = Math.max(CONTENT_X, laneCursorX.get(lane) ?? CONTENT_X)
+    for (const e of (incoming.get(n.id) ?? [])) {
+      const sx = xFinal.get(e.src)
+      if (sx == null) continue // predecessor not placed yet (rare column inversion) — skip its floor
+      const src = nodeById.get(e.src)!
+      floor = Math.max(floor, bandKeyOf(src) === lane ? sx + sizeForKind(src.kind).w + COL_GAP : sx)
+    }
+    const x = Math.max(desiredX(n.id), floor)
+    xFinal.set(n.id, x)
+    laneCursorX.set(lane, x + sizeForKind(n.kind).w + COL_GAP)
+  }
+  const xOf = (id: string) => xFinal.get(id) ?? CONTENT_X
 
   // ── Bands, top→bottom (Customer · Company lanes · Vendor). No "Unassigned" band. ──
   const bands: Band[] = []
@@ -235,21 +258,25 @@ export function buildSwimlane(
   // left/right handles sit at one shared height per row — connectors stay straight even when
   // a task and a taller decision sit side by side (that mismatch is what bent the line). ──
   const meta: Record<string, { mapId: string; realId: string }> = {}
-  const centerOf = new Map<string, { cx: number; cy: number }>()
   for (const n of steps) {
     const key = bandKeyOf(n)
     const px = xOf(n.id)
-    // Lane-less nodes (e.g. containers) are placed freely — honour their stored y, else drop
-    // them into a strip below the pools. Pooled steps are locked to their lane row.
+    // Containers float freely in the loose strip (honour their stored y). Every other lane-less
+    // node is a flow step and locks to the loose row, exactly like a lane, so steps stay aligned.
+    const looseTop = bandsBottom + LOOSE_GAP
     const py = key === 'loose'
-      ? ((n.position_y ?? 0) > 0 ? (n.position_y as number) : bandsBottom + LOOSE_GAP + (ROW_H - NODE_H) / 2)
+      ? (n.kind === 'container' && (n.position_y ?? 0) > 0
+          ? (n.position_y as number)
+          : looseTop + BAND_PAD + (rowOf.get(n.id) ?? 0) * ROW_H + (ROW_H - NODE_H) / 2)
       : (bandY.get(key) ?? 0) + BAND_PAD + (rowOf.get(n.id) ?? 0) * ROW_H + (ROW_H - NODE_H) / 2
-    centerOf.set(n.id, { cx: px + sizeForKind(n.kind).w / 2, cy: py + NODE_H / 2 })
     meta[n.id] = { mapId: flow.map_id, realId: n.id }
     nodes.push({
       id: n.id, type: 'process', position: { x: px, y: py },
       draggable: opts.canEdit, selectable: true, zIndex: 2,
-      style: { height: NODE_H, display: 'flex', alignItems: 'center' },
+      // minHeight (not a fixed height) keeps short steps uniform at NODE_H yet lets a step with a
+      // checklist / docs grow, so its measured box — and the arrowhead drawn at its bottom — matches
+      // what's on screen instead of clipping at 96.
+      style: { minHeight: NODE_H, display: 'flex', alignItems: 'center' },
       data: {
         name: n.name, kind: n.kind, childCount: n.child_count ?? 0,
         docCount: (n.inputs?.length ?? 0) + (n.outputs?.length ?? 0),
@@ -263,35 +290,23 @@ export function buildSwimlane(
     })
   }
 
-  // ── Edges: solid within a pool, dotted (message) across pools; orthogonal routing. ──
+  // ── Edges: solid within a pool, dotted (message) across pools. The FloatingStepEdge picks the
+  // sides that make one clean 90° turn from the live node geometry, so there's no manual handle
+  // choice here (and no S-shapes / back-tracking lines). Yes/No rides as the edge label. ──
   const edges: Edge[] = []
   for (const c of flow.connections) {
     const s = nodeById.get(c.source_node_id)
     const t = nodeById.get(c.target_node_id)
     if (!s || !t) continue
     const crossPool = groupOf(s) !== groupOf(t)
-    const fromDecision = s.kind === 'decision'
     const label = c.label || (c.condition_kind !== 'none' ? c.condition_kind.toUpperCase() : '')
     const color = crossPool ? '#64748B' : '#475569'
-    // A decision's line leaves from the side that actually faces its target, so it stays
-    // straight: same lane/row → exit RIGHT (straight across); a target in a different pool/
-    // lane → exit BOTTOM or TOP (straight down/up). Never a U-turn. Yes/No is the label.
-    let sourceHandle: string | undefined
-    if (fromDecision) {
-      const sc = centerOf.get(c.source_node_id), tc = centerOf.get(c.target_node_id)
-      if (!sc || !tc || Math.abs(tc.cy - sc.cy) < 4) sourceHandle = 'right' // same height → straight across
-      else sourceHandle = tc.cy > sc.cy ? 'bottom' : 'top' // lower → exit bottom, higher → exit top
-    }
     edges.push({
       id: c.id,
       source: c.source_node_id,
       target: c.target_node_id,
-      sourceHandle,
-      type: 'smoothstep',
-      label: label || undefined,
-      labelStyle: { fontSize: 11, fontWeight: 600, fill: '#475569' },
-      labelBgStyle: { fill: '#ffffff', fillOpacity: 0.85 },
-      markerEnd: { type: MarkerType.ArrowClosed, color, width: 12, height: 12 },
+      type: 'floatingStep',
+      data: { label: label || undefined },
       style: { stroke: color, strokeWidth: 1.6, ...(crossPool ? { strokeDasharray: '5 4' } : {}) },
       zIndex: 1,
     } as Edge)

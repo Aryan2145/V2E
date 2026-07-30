@@ -306,11 +306,24 @@ export default function ProcessMapExplorerPage() {
   // Drawing a line FROM a decision to an existing node → ask Yes/No before creating it.
   // Drag a node onto another lane → set its department (Customer/Vendor have none) and keep
   // the horizontal spot it was dropped at.
-  const reassignLane = useCallback(async (nodeId: string, pool: ProcessPool, departmentId: string | null, positionX: number) => {
+  const reassignLane = useCallback(async (nodeId: string, pool: ProcessPool | null, departmentId: string | null, positionX: number) => {
     try {
       await processHierarchyApi.updateNode(orgId, mapId, nodeId, { pool, department_id: departmentId, position_x: positionX })
       await refresh()
-    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not move it to that lane.', 'error') }
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not move it out of the lane.', 'error') }
+  }, [orgId, mapId, refresh, addToast])
+
+  // A box-selected group dragged across lanes — reassign each node's pool/department (+ x/y) to
+  // the lane it landed in. Sequential so the per-node auto-lane create/cleanup can't race, then
+  // one refresh.
+  const onNodesReassign = useCallback(async (items: { id: string; pool: ProcessPool | null; department_id: string | null; position_x: number; position_y: number }[]) => {
+    if (!items.length) return
+    try {
+      for (const it of items) {
+        await processHierarchyApi.updateNode(orgId, mapId, it.id, { pool: it.pool, department_id: it.department_id, position_x: it.position_x, position_y: it.position_y })
+      }
+      await refresh()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not move those to that lane.', 'error') }
   }, [orgId, mapId, refresh, addToast])
 
   const onDecisionConnect = useCallback((source: string, target: string, sourceSide?: string) => {
@@ -687,6 +700,7 @@ export default function ProcessMapExplorerPage() {
             onConnect={onConnect}
             onNodeDragStop={onNodeDragStop}
             onNodesMove={onNodesMove}
+            onNodesReassign={onNodesReassign}
             onDeleteNodes={deleteNodes}
             onUpdateConnection={updateConn}
             onDeleteConnection={deleteConn}
