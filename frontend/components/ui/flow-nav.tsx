@@ -59,11 +59,14 @@ function useContentBounds(nodes: Node[]) {
 // The main hook. Call INSIDE a <ReactFlowProvider>. Spread `flowProps` onto <ReactFlow>; the
 // caller keeps ownership of its own handlers, node/edge types and zoom limits.
 export function useFlowNav(nodes: Node[], opts?: { marquee?: boolean }) {
-  // Touch devices always one-finger pan (no marquee, no scrollbars) so the canvas is never stuck.
+  // Touch devices always one-finger pan (no marquee, no scrollbars) and a tap drills into a node.
+  // We detect touch by CAPABILITY, not the primary pointer: on an iPad the primary pointer reads
+  // as "fine" when a trackpad/keyboard is attached (and iPadOS can identify as desktop), which
+  // made single-tap-to-open fail. `(any-pointer: coarse)` and maxTouchPoints stay truthful there.
   const [isTouch, setIsTouch] = useState(false)
   useEffect(() => {
-    const mq = window.matchMedia('(pointer: coarse)')
-    const on = () => setIsTouch(mq.matches)
+    const mq = window.matchMedia('(any-pointer: coarse)')
+    const on = () => setIsTouch(mq.matches || (navigator.maxTouchPoints ?? 0) > 0)
     on()
     mq.addEventListener?.('change', on)
     return () => mq.removeEventListener?.('change', on)
