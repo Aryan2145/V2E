@@ -167,26 +167,22 @@ export function buildSwimlane(
     if (r !== Infinity) rowOf.set(n.id, r)
   }
 
-  // ── Horizontal placement: honour a hand-dragged x, but never overlap or fall behind. Walk the
-  // steps left→right (flow-column order); each sits at max(its desired x, a floor). The floor is
-  // the furthest of its lane's running edge (so two steps in a lane can't overlap or cross) and
-  // every incoming step's edge (so a node can't slip behind a predecessor — same lane = past its
-  // right, another lane = not left of it). Dragging a node right just pushes the ones after it
-  // along; dragging it left stops when it would touch the one before. ──
-  const laneCursorX = new Map<string, number>()
+  // ── Horizontal placement: honour a hand-dragged x, but a node can't sit BEHIND a step that
+  // flows INTO it (same lane = past its right edge; another lane = not left of it). This is the
+  // only constraint — it applies to CONNECTED steps only. An unconnected node (a decision or a new
+  // task you haven't wired yet) is left exactly where you drop it, so you can freely drag one back
+  // to insert it between others. (Walk in flow-column order so a predecessor is placed first.) ──
   const xFinal = new Map<string, number>()
   for (const n of byCol) {
     const lane = bandKeyOf(n)
-    let floor = Math.max(CONTENT_X, laneCursorX.get(lane) ?? CONTENT_X)
+    let floor = CONTENT_X
     for (const e of (incoming.get(n.id) ?? [])) {
       const sx = xFinal.get(e.src)
       if (sx == null) continue // predecessor not placed yet (rare column inversion) — skip its floor
       const src = nodeById.get(e.src)!
       floor = Math.max(floor, bandKeyOf(src) === lane ? sx + sizeForKind(src.kind).w + COL_GAP : sx)
     }
-    const x = Math.max(desiredX(n.id), floor)
-    xFinal.set(n.id, x)
-    laneCursorX.set(lane, x + sizeForKind(n.kind).w + COL_GAP)
+    xFinal.set(n.id, Math.max(desiredX(n.id), floor))
   }
   const xOf = (id: string) => xFinal.get(id) ?? CONTENT_X
 
@@ -202,10 +198,31 @@ export function buildSwimlane(
   // A lane is as many rows tall as its deepest branch needs (≥1).
   const byBand = new Map<string, string[]>()
   for (const n of steps) { const k = bandKeyOf(n); (byBand.get(k) ?? byBand.set(k, []).get(k)!).push(n.id) }
+
+  // Estimate a step's rendered height so a lane can grow to CONTAIN a tall step (long name that
+  // wraps, a checklist line, doc chips) instead of the node spilling past the swimlane border.
+  // Biased to slightly over-estimate — extra whitespace is fine, a clipped node isn't.
+  const estStepHeight = (n: ProcessNode): number => {
+    const perLine = Math.max(10, Math.floor((sizeForKind(n.kind).w - 46) / 7)) // ~7px/char at 13px, less icon+padding
+    const nameLines = Math.max(1, Math.ceil((n.name?.length || 1) / perLine))
+    let h = 22 + nameLines * 18 // vertical padding + wrapped name
+    if (((n.inputs?.length ?? 0) + (n.outputs?.length ?? 0)) > 0 || DRILLABLE.has(n.kind) || n.linked_map_name) h += 20 // doc / open row
+    if ((n.checklist?.length ?? 0) > 0) h += 26 // checklist summary line
+    return Math.max(NODE_H, h)
+  }
+  // Per-lane row height: tall enough for the lane's biggest step, never below the baseline.
+  const ROW_GAP = 18
+  const rowHOf = new Map<string, number>()
+  for (const [key, ids] of Array.from(byBand)) {
+    const tallest = ids.length ? Math.max(...ids.map((id: string) => estStepHeight(nodeById.get(id)!))) : NODE_H
+    rowHOf.set(key, Math.max(ROW_H, tallest + ROW_GAP))
+  }
+  const rowHFor = (key: string) => rowHOf.get(key) ?? ROW_H
+
   const bandHeightOf = (b: Band) => {
     const ids = byBand.get(b.key) ?? []
     const rows = ids.length ? Math.max(...ids.map((id) => rowOf.get(id) ?? 0)) + 1 : 1
-    return rows * ROW_H + 2 * BAND_PAD
+    return rows * rowHFor(b.key) + 2 * BAND_PAD
   }
 
   // Stack bands top→bottom. Lanes inside the Company pool are flush; a gap separates the
@@ -264,11 +281,13 @@ export function buildSwimlane(
     // Containers float freely in the loose strip (honour their stored y). Every other lane-less
     // node is a flow step and locks to the loose row, exactly like a lane, so steps stay aligned.
     const looseTop = bandsBottom + LOOSE_GAP
-    const py = key === 'loose'
-      ? (n.kind === 'container' && (n.position_y ?? 0) > 0
-          ? (n.position_y as number)
-          : looseTop + BAND_PAD + (rowOf.get(n.id) ?? 0) * ROW_H + (ROW_H - NODE_H) / 2)
-      : (bandY.get(key) ?? 0) + BAND_PAD + (rowOf.get(n.id) ?? 0) * ROW_H + (ROW_H - NODE_H) / 2
+    // Centre the step in its (content-sized) row: all steps in a row share the same centre-line,
+    // so same-row connectors stay straight even when heights differ, and a tall step is contained.
+    const rowH = rowHFor(key)
+    const rowTop = (key === 'loose' ? looseTop : (bandY.get(key) ?? 0)) + BAND_PAD + (rowOf.get(n.id) ?? 0) * rowH
+    const py = key === 'loose' && n.kind === 'container' && (n.position_y ?? 0) > 0
+      ? (n.position_y as number)
+      : rowTop + (rowH - estStepHeight(n)) / 2
     meta[n.id] = { mapId: flow.map_id, realId: n.id }
     nodes.push({
       id: n.id, type: 'process', position: { x: px, y: py },

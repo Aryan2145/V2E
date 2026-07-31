@@ -59,17 +59,15 @@ function useContentBounds(nodes: Node[]) {
 // The main hook. Call INSIDE a <ReactFlowProvider>. Spread `flowProps` onto <ReactFlow>; the
 // caller keeps ownership of its own handlers, node/edge types and zoom limits.
 export function useFlowNav(nodes: Node[], opts?: { marquee?: boolean }) {
-  // Touch devices always one-finger pan (no marquee, no scrollbars) and a tap drills into a node.
-  // We detect touch by CAPABILITY, not the primary pointer: on an iPad the primary pointer reads
-  // as "fine" when a trackpad/keyboard is attached (and iPadOS can identify as desktop), which
-  // made single-tap-to-open fail. `(any-pointer: coarse)` and maxTouchPoints stay truthful there.
+  // "Touch device" here = a phone/TABLET where fingers are the input (view + drill, one-finger
+  // pan, no node dragging). NOT a laptop that merely has a touchscreen — those must still drag
+  // with their mouse/trackpad. So detect the OS, not raw touch capability: iPhone/Android, or an
+  // iPad — which on iPadOS 13+ reports as a Mac with >1 touch points (a real Mac reports 0).
   const [isTouch, setIsTouch] = useState(false)
   useEffect(() => {
-    const mq = window.matchMedia('(any-pointer: coarse)')
-    const on = () => setIsTouch(mq.matches || (navigator.maxTouchPoints ?? 0) > 0)
-    on()
-    mq.addEventListener?.('change', on)
-    return () => mq.removeEventListener?.('change', on)
+    const ua = navigator.userAgent || ''
+    const macLike = navigator.platform === 'MacIntel' || /Macintosh/i.test(ua)
+    setIsTouch(/iPhone|iPad|iPod|Android/i.test(ua) || (macLike && (navigator.maxTouchPoints ?? 0) > 1))
   }, [])
   const marquee = !!opts?.marquee && !isTouch
 
