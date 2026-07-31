@@ -50,7 +50,8 @@ function edgeParams(source: Box, target: Box) {
 // A connection makes ONE clean 90° turn: same row → straight across; another lane → leaves the
 // source's bottom/top (so a decision's branches drop out of its base) and, if the target is
 // offset, turns once into the target's near side. Never an S or a line that doubles back.
-function stepParams(source: Box, target: Box) {
+type StepGeom = { sx: number; sy: number; sourcePos: Position; tx: number; ty: number; targetPos: Position }
+function stepParams(source: Box, target: Box, opts?: { enterLeft?: boolean; exitRight?: boolean }): StepGeom {
   // Until both nodes are measured, fall back to a plain right→left link so the path always has a
   // real end point and the arrowhead orients (a degenerate 0-size box makes the marker vanish).
   if (!source.width || !source.height || !target.width || !target.height) {
@@ -70,22 +71,33 @@ function stepParams(source: Box, target: Box) {
   const tgtNearX = rightward ? target.x : target.x + target.width
   const tgtNearPos = rightward ? Position.Left : Position.Right
 
-  // Same lane/row → straight across. Use a shared Y (within both boxes) so a short step and a
-  // taller one — which have different centre heights — still connect with a dead-straight line.
+  let r: StepGeom
   if (sameRow) {
+    // Same lane/row → straight across. Use a shared Y (within both boxes) so a short step and a
+    // taller one — which have different centre heights — still connect with a dead-straight line.
     const y = Math.min(scy, tcy)
-    return { sx: srcSideX, sy: y, sourcePos: srcSidePos, tx: tgtNearX, ty: y, targetPos: tgtNearPos }
+    r = { sx: srcSideX, sy: y, sourcePos: srcSidePos, tx: tgtNearX, ty: y, targetPos: tgtNearPos }
+  } else if (dy >= 0) {
+    // Target in a LOWER lane → drop out the source's BOTTOM (so a decision's branch leaves its
+    // base): straight into the target's top if aligned, else one turn into its near side.
+    r = sameCol
+      ? { sx: scx, sy: source.y + source.height, sourcePos: Position.Bottom, tx: tcx, ty: target.y, targetPos: Position.Top }
+      : { sx: scx, sy: source.y + source.height, sourcePos: Position.Bottom, tx: tgtNearX, ty: tcy, targetPos: tgtNearPos }
+  } else {
+    // Target in a HIGHER lane → carry on forward out the source's SIDE and rise into the target's
+    // BOTTOM. Aligned → straight up.
+    r = sameCol
+      ? { sx: scx, sy: source.y, sourcePos: Position.Top, tx: tcx, ty: target.y + target.height, targetPos: Position.Bottom }
+      : { sx: srcSideX, sy: scy, sourcePos: Position.Top, tx: tcx, ty: target.y + target.height, targetPos: Position.Bottom }
   }
-  // Target in a LOWER lane → drop out the source's BOTTOM (so a decision's branch leaves its
-  // base): straight into the target's top if aligned, else one turn into its near side.
-  if (dy >= 0) {
-    if (sameCol) return { sx: scx, sy: source.y + source.height, sourcePos: Position.Bottom, tx: tcx, ty: target.y, targetPos: Position.Top }
-    return { sx: scx, sy: source.y + source.height, sourcePos: Position.Bottom, tx: tgtNearX, ty: tcy, targetPos: tgtNearPos }
-  }
-  // Target in a HIGHER lane → carry on forward out the source's SIDE and rise into the target's
-  // BOTTOM, so it doesn't merge with a line already entering the target's left. Aligned → straight up.
-  if (sameCol) return { sx: scx, sy: source.y, sourcePos: Position.Top, tx: tcx, ty: target.y + target.height, targetPos: Position.Bottom }
-  return { sx: srcSideX, sy: scy, sourcePos: srcSidePos, tx: tcx, ty: target.y + target.height, targetPos: Position.Bottom }
+
+  // Middle-node separation: a cross-lane node sandwiched between a predecessor and a successor
+  // (both in other lanes) sends its INBOUND line into its LEFT and its OUTBOUND line out its
+  // RIGHT — so A→B→C hopping through a lane reads as two distinct lines instead of overlapping
+  // into one. Ends (only in, or only out) keep the bottom/top routing chosen above.
+  if (opts?.exitRight) { r.sx = source.x + source.width; r.sy = scy; r.sourcePos = Position.Right }
+  if (opts?.enterLeft) { r.tx = target.x; r.ty = tcy; r.targetPos = Position.Left }
+  return r
 }
 
 // Arrowhead drawn explicitly (not via ReactFlow's shared marker, which failed to orient on
@@ -101,12 +113,12 @@ function arrowPoints(tx: number, ty: number, pos: Position) {
   }
 }
 
-export function FloatingStepEdge({ id, source, target, style, data }: EdgeProps<{ label?: string }>) {
+export function FloatingStepEdge({ id, source, target, style, data }: EdgeProps<{ label?: string; enterLeft?: boolean; exitRight?: boolean }>) {
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
   if (!sourceNode || !targetNode) return null
 
-  const { sx, sy, tx, ty, sourcePos, targetPos } = stepParams(boxOf(sourceNode), boxOf(targetNode))
+  const { sx, sy, tx, ty, sourcePos, targetPos } = stepParams(boxOf(sourceNode), boxOf(targetNode), { enterLeft: data?.enterLeft, exitRight: data?.exitRight })
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
     targetX: tx, targetY: ty, targetPosition: targetPos, borderRadius: 8,

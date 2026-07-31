@@ -309,6 +309,18 @@ export function buildSwimlane(
     })
   }
 
+  // A node is a cross-lane "middle" when it has BOTH a cross-lane (different band) incoming AND
+  // outgoing connection. Its inbound lines then enter its LEFT and outbound leave its RIGHT, so an
+  // A→B→C hopping through another lane never overlaps into one ambiguous line. A node at an end
+  // (only in, or only out) is not a middle node and keeps the default bottom/top routing.
+  const xIn = new Set<string>(), xOut = new Set<string>()
+  for (const c of flow.connections) {
+    const s = nodeById.get(c.source_node_id), t = nodeById.get(c.target_node_id)
+    if (!s || !t || bandKeyOf(s) === bandKeyOf(t)) continue
+    xOut.add(s.id); xIn.add(t.id)
+  }
+  const isMiddle = (id: string) => xIn.has(id) && xOut.has(id)
+
   // ── Edges: solid within a pool, dotted (message) across pools. The FloatingStepEdge picks the
   // sides that make one clean 90° turn from the live node geometry, so there's no manual handle
   // choice here (and no S-shapes / back-tracking lines). Yes/No rides as the edge label. ──
@@ -318,6 +330,7 @@ export function buildSwimlane(
     const t = nodeById.get(c.target_node_id)
     if (!s || !t) continue
     const crossPool = groupOf(s) !== groupOf(t)
+    const crossLane = bandKeyOf(s) !== bandKeyOf(t)
     const label = c.label || (c.condition_kind !== 'none' ? c.condition_kind.toUpperCase() : '')
     const color = crossPool ? '#64748B' : '#475569'
     edges.push({
@@ -325,7 +338,11 @@ export function buildSwimlane(
       source: c.source_node_id,
       target: c.target_node_id,
       type: 'floatingStep',
-      data: { label: label || undefined },
+      data: {
+        label: label || undefined,
+        enterLeft: crossLane && isMiddle(t.id), // this line goes INTO a middle node → enter its left
+        exitRight: crossLane && isMiddle(s.id), // this line comes OUT of a middle node → leave its right
+      },
       style: { stroke: color, strokeWidth: 1.6, ...(crossPool ? { strokeDasharray: '5 4' } : {}) },
       zIndex: 1,
     } as Edge)
