@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   Request,
   UseGuards,
 } from '@nestjs/common';
@@ -39,6 +40,15 @@ export class OrganizationsController {
   @SuperAdmin()
   create(@Body() dto: CreateOrgWithAdminDto) {
     return this.organizationsService.create(dto);
+  }
+
+  // Declared BEFORE @Get(':id') so it isn't captured as an :id. Lets the firm-creation
+  // form know if the admin email already has a login → show a password field only for a
+  // brand-new person, and none for an existing one.
+  @Get('check-account')
+  @SuperAdmin()
+  checkAccount(@Query('email') email: string) {
+    return this.organizationsService.checkAccount(email ?? '');
   }
 
   // Member-scoped: any member of the org (not just super admins) can read their

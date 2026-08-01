@@ -205,6 +205,21 @@ export class OrganizationsService {
     return candidate;
   }
 
+  /**
+   * Does a global login already exist for this email? Lets the firm-creation form
+   * show a password field ONLY for a brand-new admin, and none for an existing login
+   * (who keeps their password). Returns the existing name so the form can lock it.
+   */
+  async checkAccount(email: string) {
+    const trimmed = (email ?? '').trim();
+    if (!trimmed) return { exists: false };
+    const user = await this.prisma.user.findUnique({
+      where: { email: trimmed },
+      select: { name: true },
+    });
+    return user ? { exists: true, name: user.name } : { exists: false };
+  }
+
   async create(dto: CreateOrgWithAdminDto) {
     const { admin_name, admin_email, admin_password, existing_user_id, ...orgData } = dto;
 

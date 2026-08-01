@@ -28,9 +28,13 @@ export default function DashboardLayout({
     setDrawerOpen(false)
   }, [pathname])
 
-  const role: SidebarRole = sidebarRole ?? (
-    user?.isSuperAdmin ? 'super_admin' : user?.is_admin ? 'admin' : 'member'
-  )
+  // Inside the firm app (/dashboard) the shell is ALWAYS the firm shell — driven by
+  // the org role (admin/member), never the platform super-admin shell. The super-admin
+  // portal (/super-admin) passes sidebarRole="super_admin" explicitly. This is what
+  // lets one account be both a platform super admin AND a firm admin: super-admin is a
+  // property of the /super-admin portal, not something that hijacks the firm shell when
+  // `isSuperAdmin` is true (e.g. after a token refresh rehydrates it from the DB).
+  const role: SidebarRole = sidebarRole ?? (user?.is_admin ? 'admin' : 'member')
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">

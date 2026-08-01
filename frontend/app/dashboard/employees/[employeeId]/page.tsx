@@ -6,12 +6,13 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
-import { getEmployee, getEmployees, updateEmployee, updateEmployeeStatus, deleteEmployee } from '@/lib/api/employees'
+import { getEmployee, getEmployees, updateEmployee, updateEmployeeStatus, deleteEmployee, checkAccount } from '@/lib/api/employees'
 import { updateUser } from '@/lib/api/users'
 import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
 import { getRoles } from '@/lib/api/roles'
 import { getDepartments } from '@/lib/api/departments'
 import Button from '@/components/ui/Button'
+import StyledSelect from '@/components/ui/StyledSelect'
 import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissionsPanel'
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
 import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X, Eye, EyeOff, Trash2 } from 'lucide-react'
@@ -189,6 +190,15 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   const [showPassword, setShowPassword] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  // A password reset changes this person's ONE global login — used everywhere they
+  // work. We warn before saving, sized to how many orgs they belong to.
+  const [showPwWarning, setShowPwWarning] = useState(false)
+  const [orgCount, setOrgCount] = useState<number | null>(null)
+  useEffect(() => {
+    const email = employee.user?.email
+    if (!orgId || !email) return
+    checkAccount(orgId, email).then((r) => setOrgCount(r.org_count ?? null)).catch(() => {})
+  }, [orgId, employee.user?.email])
 
   // System roles carry access rights — required, and editable here just like on
   // the Add Employee form so the two stay consistent.
@@ -215,7 +225,7 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
     setForm((f) => ({ ...f, [field]: value }))
   }
 
-  async function handleSave() {
+  function handleSave() {
     setError('')
 
     if (!form.name.trim() || !form.email.trim()) {
@@ -235,6 +245,18 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
       return
     }
 
+    // Changing the password touches their ONE global login — confirm first (loudly
+    // if they belong to more than one firm).
+    if (form.password) {
+      setShowPwWarning(true)
+      return
+    }
+    doSave()
+  }
+
+  async function doSave() {
+    setShowPwWarning(false)
+    setError('')
     setSaving(true)
     try {
       // 1) User-level fields (name / email / password) — only what changed.
@@ -388,15 +410,19 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
               </select>
             </div>
 
-            {/* System Role — access-rights bundle (required) */}
+            {/* System Role — access-rights bundle (required). StyledSelect (not a native
+                <select>) so it can't be silently scroll-changed to another role. */}
             <div>
               <label className={labelClass}>System Role</label>
-              <select value={form.system_role_id} onChange={(e) => set('system_role_id', e.target.value)} className={selectClass}>
-                <option value="">— Select —</option>
-                {systemRoles.map((r) => (
-                  <option key={r.id} value={r.id}>{r.name}</option>
-                ))}
-              </select>
+              <StyledSelect
+                value={form.system_role_id}
+                onChange={(v) => set('system_role_id', v)}
+                placeholder="— Select —"
+                options={[
+                  { value: '', label: '— Select —' },
+                  ...systemRoles.map((r) => ({ value: r.id, label: r.name })),
+                ]}
+              />
             </div>
 
             {/* Employment Type */}
@@ -538,6 +564,48 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
           )}
         </div>
       </div>
+
+      {/* Password-change warning — a shared login is one password across all firms */}
+      {showPwWarning && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center px-4 bg-black/50">
+          <div className="bg-white w-full max-w-md rounded-[12px] shadow-xl p-6">
+            <h3 className="text-[17px] font-semibold text-[#0F172A]">
+              Change {employee.user?.name ?? 'this person'}’s password?
+            </h3>
+            <p className="mt-2 text-sm text-[#475569] leading-relaxed">
+              {orgCount && orgCount > 1 ? (
+                <>
+                  This is their <strong>one login password</strong> for{' '}
+                  <strong>all {orgCount} organizations</strong> they belong to — not just this
+                  firm. The new password will replace their current one{' '}
+                  <strong>everywhere they log in</strong>. Make sure to share it with them.
+                </>
+              ) : (
+                <>
+                  This changes {employee.user?.name ?? 'their'} login password. They’ll need the
+                  new password the next time they sign in — make sure to share it with them.
+                </>
+              )}
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowPwWarning(false)}
+                className="px-4 py-2 text-sm font-semibold text-[#475569] hover:text-[#0F172A] transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doSave}
+                disabled={saving}
+                className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] transition-colors disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]"
+              >
+                {saving && <Loader2 size={15} className="animate-spin" />}
+                {orgCount && orgCount > 1 ? 'Change password everywhere' : 'Change password'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>,
     document.body,
   )

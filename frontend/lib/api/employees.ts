@@ -36,7 +36,7 @@ export async function createEmployee(
   employeeData: {
     name: string;
     email: string;
-    password: string;
+    password?: string;
     role_id: string;
     department_id: string;
     system_role_id?: string;
@@ -52,6 +52,28 @@ export async function createEmployee(
   const { data } = await apiClient.post<ApiResponse<EmployeeProfile>>(
     `/api/v1/org/${orgId}/employees`,
     employeeData
+  );
+  return data.data;
+}
+
+export interface AccountCheck {
+  exists: boolean;
+  /** Existing global name — shown (locked) when the account already exists. */
+  name?: string;
+  /** True if they already have a profile in THIS org → block as a duplicate. */
+  already_in_org?: boolean;
+  /** How many orgs the login belongs to — for the "changes everywhere" warning. */
+  org_count?: number;
+}
+
+/**
+ * Does a global V2E login already exist for this email? Drives the Add-Employee form:
+ * an existing account is added without a new password (they keep their existing login).
+ */
+export async function checkAccount(orgId: string, email: string): Promise<AccountCheck> {
+  const { data } = await apiClient.get<ApiResponse<AccountCheck>>(
+    `/api/v1/org/${orgId}/employees/check-account`,
+    { params: { email } }
   );
   return data.data;
 }

@@ -94,6 +94,40 @@ export class EmployeesService {
     return { ...profile, reporting_chain: reportingChain };
   }
 
+  /**
+   * Does a global login already exist for this email? Drives the Add-Employee form:
+   * an existing account is added to this firm WITHOUT a new password (they keep the
+   * one login they use everywhere). Returns the existing name so the form can lock it,
+   * whether they're already an employee HERE (duplicate block), and how many orgs they
+   * belong to (for the "changes their password everywhere" messaging). Deliberately
+   * does NOT reveal which other firms — only the count. Admin-gated at the controller.
+   * (email today; extend to phone when mobile login lands.)
+   */
+  async checkAccount(orgId: string, email: string) {
+    const trimmed = (email ?? '').trim();
+    if (!trimmed) return { exists: false };
+    const user = await this.prisma.user.findUnique({
+      where: { email: trimmed },
+      select: { id: true, name: true },
+    });
+    if (!user) return { exists: false };
+    const [profileHere, orgCount] = await Promise.all([
+      this.prisma.employeeProfile.findFirst({
+        where: { user_id: user.id, organization_id: orgId },
+        select: { id: true },
+      }),
+      this.prisma.organizationMember.count({
+        where: { user_id: user.id, is_active: true },
+      }),
+    ]);
+    return {
+      exists: true,
+      name: user.name,
+      already_in_org: !!profileHere,
+      org_count: orgCount,
+    };
+  }
+
   async create(orgId: string, dto: CreateEmployeeDto) {
     const { name, email, password, make_dep_head, ...profileData } = dto;
 
@@ -143,8 +177,6 @@ export class EmployeesService {
       }
     }
 
-    const password_hash = await bcrypt.hash(password, 12);
-
     const { profile, createdUserId, userWasCreated } = await this.prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { email } });
       let isExistingMember = false;
@@ -162,7 +194,18 @@ export class EmployeesService {
           where: { user_id: user.id, organization_id: orgId },
         });
         isExistingMember = !!member;
+        // Existing global account: we NEVER set/overwrite its password or name here.
+        // The person keeps the one login they already use across their other firms;
+        // this firm only adds a membership + profile. (Password can still be reset
+        // later from the edit screen, which warns it changes their login everywhere.)
       } else {
+        // Brand-new account — a password is required to create the login.
+        if (!password || password.length < 8) {
+          throw new BadRequestException(
+            'A password (min 8 characters) is required to create a new user account.',
+          );
+        }
+        const password_hash = await bcrypt.hash(password, 12);
         user = await tx.user.create({
           data: { name, email, password_hash, is_active: true },
         });
@@ -222,7 +265,8 @@ export class EmployeesService {
       });
       const firmName = org?.name ?? 'your organisation';
       if (userWasCreated) {
-        await this.mail.sendWelcomeCredentials({ to: email, name, firmName, password });
+        // password is guaranteed present here — new accounts are validated above.
+        await this.mail.sendWelcomeCredentials({ to: email, name, firmName, password: password! });
       } else {
         await this.mail.sendAddedToFirm({ to: email, name, firmName });
       }

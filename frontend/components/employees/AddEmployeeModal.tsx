@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Eye, EyeOff, Loader2, Plus } from 'lucide-react'
-import { createEmployee } from '@/lib/api/employees'
+import { createEmployee, checkAccount, type AccountCheck } from '@/lib/api/employees'
 import { getUsers } from '@/lib/api/users'
 import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
 import { useToast } from '@/components/ui/Toast'
@@ -85,6 +85,15 @@ export default function AddEmployeeModal({
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
 
+  // Live "does this email already have a V2E login?" check. An existing account is
+  // added to this firm WITHOUT a new password (they keep the one login they use
+  // everywhere), so the password box is hidden and the name is locked to their
+  // existing name. `already_in_org` blocks adding the same person to this firm twice.
+  const [account, setAccount] = useState<AccountCheck | null>(null)
+  const [checkingAccount, setCheckingAccount] = useState(false)
+  const existingAccount = !!account?.exists
+  const duplicateInOrg = !!account?.already_in_org
+
   // Roles can be created inline via the role drawer, so keep a local copy we can
   // append to.
   const [localRoles, setLocalRoles] = useState<Role[]>(roles)
@@ -157,6 +166,39 @@ export default function AddEmployeeModal({
   const set = (k: keyof typeof form, v: any) =>
     setForm((f) => ({ ...f, [k]: v }))
 
+  // Debounced check on the entered email. When a login already exists we lock the
+  // name to that account's real name (name is one global value, like the password).
+  useEffect(() => {
+    if (prefillSelf) return
+    const email = form.email.trim()
+    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+    if (!looksLikeEmail) {
+      setAccount(null)
+      setCheckingAccount(false)
+      return
+    }
+    let cancelled = false
+    setCheckingAccount(true)
+    const t = setTimeout(() => {
+      checkAccount(orgId, email)
+        .then((res) => {
+          if (cancelled) return
+          setAccount(res)
+          if (res.exists && res.name) setForm((f) => ({ ...f, name: res.name!, password: '' }))
+        })
+        .catch(() => {
+          if (!cancelled) setAccount(null)
+        })
+        .finally(() => {
+          if (!cancelled) setCheckingAccount(false)
+        })
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [form.email, orgId, prefillSelf])
+
   // Roles are scoped to the chosen department.
   const deptRoles = useMemo(
     () => localRoles.filter((r) => r.department_id === form.department_id),
@@ -199,13 +241,25 @@ export default function AddEmployeeModal({
     e.preventDefault()
     setError('')
 
-    if (!form.name.trim() || !form.email.trim() || !form.password) {
-      setError('Name, email and password are required.')
+    if (duplicateInOrg) {
+      setError('This person is already an employee in this firm.')
       return
     }
-    if (form.password.length < 8) {
-      setError('Password must be at least 8 characters.')
+    if (!form.name.trim() || !form.email.trim()) {
+      setError('Name and email are required.')
       return
+    }
+    // A password is required ONLY for a brand-new login. An existing account keeps
+    // the password it already uses across its other firms.
+    if (!existingAccount) {
+      if (!form.password) {
+        setError('Password is required for a new user.')
+        return
+      }
+      if (form.password.length < 8) {
+        setError('Password must be at least 8 characters.')
+        return
+      }
     }
     if (!form.department_id || !form.role_id) {
       setError('Please select a department and job role.')
@@ -225,7 +279,8 @@ export default function AddEmployeeModal({
       await createEmployee(orgId, {
         name: form.name.trim(),
         email: form.email.trim(),
-        password: form.password,
+        // Omit the password entirely for an existing account — they keep their login.
+        password: existingAccount ? undefined : form.password,
         role_id: form.role_id,
         department_id: form.department_id,
         system_role_id: form.system_role_id,
@@ -282,8 +337,11 @@ export default function AddEmployeeModal({
                   onChange={(e) => set('name', e.target.value)}
                   placeholder="Jane Doe"
                   className={inputClass}
-                  disabled={prefillSelf}
+                  disabled={prefillSelf || existingAccount}
                 />
+                {existingAccount && (
+                  <p className="mt-1 text-xs text-[#64748B]">Name comes from their existing account.</p>
+                )}
               </div>
               <div>
                 <label className={labelClass}>Email *</label>
@@ -295,11 +353,24 @@ export default function AddEmployeeModal({
                   className={inputClass}
                   disabled={prefillSelf}
                 />
+                {!prefillSelf && checkingAccount && (
+                  <p className="mt-1 text-xs text-[#94A3B8]">Checking…</p>
+                )}
+                {!prefillSelf && duplicateInOrg && (
+                  <p className="mt-1 text-xs text-[#DC2626]">
+                    This person is already an employee in this firm.
+                  </p>
+                )}
+                {!prefillSelf && existingAccount && !duplicateInOrg && (
+                  <p className="mt-1 text-xs text-[#059669]">
+                    Existing V2E account — they’ll use their current password. No password needed here.
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {!prefillSelf && (
+              {!prefillSelf && !existingAccount && (
                 <div>
                   <label className={labelClass}>Password *</label>
                   <div className="relative">
@@ -321,7 +392,7 @@ export default function AddEmployeeModal({
                   </div>
                 </div>
               )}
-              <div className={prefillSelf ? 'sm:col-span-2' : ''}>
+              <div className={prefillSelf || existingAccount ? 'sm:col-span-2' : ''}>
                 <label className={labelClass}>Department *</label>
                 <DepartmentSelect
                   value={form.department_id}
@@ -486,11 +557,11 @@ export default function AddEmployeeModal({
           <div className="flex items-center justify-end px-6 py-4 border-t border-[#E2E8F0]">
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || duplicateInOrg || checkingAccount}
               className="inline-flex items-center gap-2 px-5 py-2.5 rounded-[8px] text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed transition-colors"
             >
               {saving && <Loader2 size={15} className="animate-spin" />}
-              {saving ? 'Adding…' : 'Add Employee'}
+              {saving ? 'Adding…' : existingAccount ? 'Add to firm' : 'Add Employee'}
             </button>
           </div>
         </form>

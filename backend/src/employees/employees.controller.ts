@@ -94,6 +94,13 @@ export class EmployeesController {
     return this.employeesService.updateMine(orgId, userId, body);
   }
 
+  @Get('check-account')
+  @RequirePermission('employees.profile.manage', PermissionAction.write)
+  @ApiOperation({ summary: 'Does a global login already exist for this email? (drives the add form)' })
+  checkAccount(@Param('orgId') orgId: string, @Query('email') email: string) {
+    return this.employeesService.checkAccount(orgId, email ?? '');
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get full employee profile with reporting chain' })
   findOne(@Param('orgId') orgId: string, @Param('id') id: string) {

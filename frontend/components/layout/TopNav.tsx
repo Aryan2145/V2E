@@ -134,7 +134,11 @@ export default function TopNav() {
     ? user.name.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase()
     : '?'
 
-  const roleLabel = user?.isSuperAdmin
+  // "Super Admin" is a property of the /super-admin portal, not of the firm app.
+  // In the firm app the same account shows as its firm role (Administrator/Member),
+  // so a super-admin who is also a firm admin gets the normal firm chrome + settings.
+  const inSuperAdminPortal = pathname.startsWith('/super-admin')
+  const roleLabel = inSuperAdminPortal
     ? 'Super Admin'
     : user?.is_admin
       ? 'Administrator'
@@ -146,7 +150,7 @@ export default function TopNav() {
   // Settings (gear) is shown to anyone who owns at least the Organization Setup module.
   // System Configuration inside it is separately gated server-side + in the Settings sidebar.
   const canAccessSettings =
-    !!user && !user.isSuperAdmin && (user.is_admin)
+    !!user && !inSuperAdminPortal && (user.is_admin)
 
   const employeesStep = steps.find((s) => s.id === 'employees')
   const employeesCreated = employeesStep ? employeesStep.completed : false

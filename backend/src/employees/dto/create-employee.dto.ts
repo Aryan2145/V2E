@@ -23,11 +23,14 @@ export class CreateEmployeeDto {
   @IsNotEmpty()
   email: string;
 
-  @ApiProperty({ minLength: 8 })
+  // Optional: only a BRAND-NEW account needs a password. When the email already
+  // belongs to an existing V2E login (the person is in other firms), no password is
+  // sent — they keep their existing one. The service enforces "required for new user".
+  @ApiPropertyOptional({ minLength: 8 })
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @MinLength(8)
-  password: string;
+  password?: string;
 
   @ApiProperty({ description: 'Job role (title / designation)' })
   @IsUUID()

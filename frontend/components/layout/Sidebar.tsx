@@ -56,12 +56,14 @@ export default function Sidebar({ role, mobileOpen = false, onMobileClose }: Sid
 
   const navItems = navByRole[role] ?? superAdminNav
 
-  // Eagerly load orgs so the current org name is visible without opening the switcher
+  // Eagerly load orgs so the current org name is visible without opening the switcher.
+  // Gate on the FIRM shell (role !== super_admin) + a current org — not on isSuperAdmin,
+  // so a super-admin who is also a firm member still sees their firm name and switcher.
   useEffect(() => {
-    if (user && !user.isSuperAdmin && user.organizationId) {
+    if (user && role !== 'super_admin' && user.organizationId) {
       getMyOrgs().then(setOrgs).catch(() => setOrgs([]))
     }
-  }, [user?.organizationId])
+  }, [user?.organizationId, role])
 
   const isActive = (href: string): boolean => {
     if (href === '/dashboard' || href === '/super-admin') return pathname === href
@@ -128,8 +130,8 @@ export default function Sidebar({ role, mobileOpen = false, onMobileClose }: Sid
         })}
       </nav>
 
-      {/* Org Switcher (only for org members, not super_admin) */}
-      {user && !user.isSuperAdmin && user.organizationId && (
+      {/* Org Switcher — shown in the firm shell (not the super-admin portal) */}
+      {user && role !== 'super_admin' && user.organizationId && (
         <div className="shrink-0 border-t border-white/10">
           <button
             onClick={handleOrgSwitcherOpen}

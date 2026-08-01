@@ -67,6 +67,19 @@ export interface SubjectEligibility {
 export class PermissionsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // A "vendor-only" principal is a platform super admin who has NO presence in
+  // THIS org — no System Role and not an org admin here. Such a principal is
+  // metadata-only: it never reads client content (record data stays in the org).
+  //
+  // But a super admin who is ALSO a genuine member of this org (e.g. the operator
+  // whose own company is a client) is a real actor here and is judged by their org
+  // role, exactly like any other member. Without this, a super-admin/firm-admin on
+  // the same email would be denied all content in their own firm — Tasks, Process
+  // maps, everything — despite being that firm's Administrator.
+  private isVendorOnly(principal: Principal): boolean {
+    return principal.isSuperAdmin && !principal.isAdmin && !principal.systemRoleId;
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
   // FOUR-LAYER RESOLUTION
   // effective = entitlement ∩ ( jobRole_permissions ∪ user_grants − user_revokes )
@@ -126,8 +139,9 @@ export class PermissionsService {
     if (kindOf(leafKey) === 'admin') return principal.isAdmin || principal.isSuperAdmin;
 
     // Vendor superadmin is METADATA-ONLY: never content/feature access. Record content
-    // stays inside the org. (Metadata leaves, when they exist, are allowed above/here.)
-    if (principal.isSuperAdmin) return false;
+    // stays inside the org. (A super admin who is a MEMBER of this org falls through
+    // and is judged by their org role — see isVendorOnly.)
+    if (this.isVendorOnly(principal)) return false;
 
     // Layer 1 — entitlement ceiling (module key, or a sub-module's finer key).
     if (isEntitlementControlled(leafKey)) {
@@ -211,7 +225,7 @@ export class PermissionsService {
         ? this.ceilingFromMap(entByModule, entitlementKeyOf(leaf.key)!)
         : 'full';
       result[leaf.key] = this.permsFromActions(leaf.actions, (action) => {
-        if (principal.isSuperAdmin) return false; // metadata-only: no content/feature
+        if (this.isVendorOnly(principal)) return false; // metadata-only: no content/feature
         if (!this.ceilingAllows(state, action)) return false;
         if (principal.isAdmin) return true; // org admin ⇒ full within the entitlement ceiling
         const ov = overrideEffect.get(`${leaf.key}:${action}`);
@@ -245,7 +259,7 @@ export class PermissionsService {
     action: PermissionAction,
   ): Promise<DataScope | null> {
     if (rowScopeOf(leafKey) !== 'scopable') return null; // self_scoped / org_default / non-content
-    if (principal.isSuperAdmin) return null; // vendor never reads content
+    if (this.isVendorOnly(principal)) return null; // vendor (non-member) never reads content
     if (!(await this.hasEffective(orgId, principal, leafKey, action))) return null;
     if (principal.isAdmin) return DataScope.org;
 

@@ -43,6 +43,24 @@ export async function createOrganization(orgData: {
   return data.data;
 }
 
+export interface OrgAdminAccountCheck {
+  exists: boolean;
+  /** Existing global name — shown (locked) when the login already exists. */
+  name?: string;
+}
+
+/**
+ * Does a global login already exist for this email? Lets the firm-creation form show
+ * a password field only for a brand-new admin and hide it for an existing account.
+ */
+export async function checkOrgAdminAccount(email: string): Promise<OrgAdminAccountCheck> {
+  const { data } = await apiClient.get<ApiResponse<OrgAdminAccountCheck>>(
+    '/api/v1/organizations/check-account',
+    { params: { email } }
+  );
+  return data.data;
+}
+
 export async function updateOrganization(
   id: string,
   orgData: Partial<Omit<Organization, 'id' | 'created_at' | 'updated_at'>>

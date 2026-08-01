@@ -321,13 +321,24 @@ export class AuthService {
     isSuperAdmin: boolean,
   ) {
     let isTestOrg = false;
+    let effectiveIsAdmin = isAdmin;
     if (organizationId) {
-      const org = await this.prisma.organization.findUnique({
-        where: { id: organizationId },
-        select: { is_test: true },
-      });
+      const [org, profile] = await Promise.all([
+        this.prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: { is_test: true },
+        }),
+        this.prisma.employeeProfile.findFirst({
+          where: { user_id: user.id, organization_id: organizationId },
+          select: { system_role: { select: { is_admin: true } } },
+        }),
+      ]);
       isTestOrg = org?.is_test ?? false;
+      // Mirror JwtStrategy: admin = the membership's admin flag OR the System Role's
+      // is_admin. A user made Administrator via System Role (not org-owner) must get
+      // the admin shell, so the frontend doesn't render them as a plain member.
+      effectiveIsAdmin = isAdmin || (profile?.system_role?.is_admin ?? false);
     }
-    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, is_admin: isAdmin, isTestOrg };
+    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, is_admin: effectiveIsAdmin, isTestOrg };
   }
 }

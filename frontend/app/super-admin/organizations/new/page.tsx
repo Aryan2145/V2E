@@ -5,13 +5,12 @@ import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Eye, EyeOff, ChevronLeft, Search, Check } from 'lucide-react'
-import { createOrganization } from '@/lib/api/organizations'
-import { getGroups, getGroupUsers } from '@/lib/api/groups'
+import { Eye, EyeOff, ChevronLeft, Check } from 'lucide-react'
+import { createOrganization, checkOrgAdminAccount, type OrgAdminAccountCheck } from '@/lib/api/organizations'
+import { getGroups } from '@/lib/api/groups'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 import type { OrganizationGroup } from '@/lib/types'
-import type { GroupUser } from '@/lib/api/groups'
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
 
@@ -67,16 +66,8 @@ export default function NewOrganizationPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [serverError, setServerError] = useState<string | null>(null)
 
-  // Admin tab state: 'new' | 'existing'
-  const [adminTab, setAdminTab] = useState<'new' | 'existing'>('new')
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(null)
-  const [selectedUserName, setSelectedUserName] = useState<string>('')
-
-  // Groups
+  // Groups (for assigning the org to a group — not for picking the admin)
   const [groups, setGroups] = useState<OrganizationGroup[]>([])
-  const [groupUsers, setGroupUsers] = useState<GroupUser[]>([])
-  const [loadingGroupUsers, setLoadingGroupUsers] = useState(false)
-  const [userSearch, setUserSearch] = useState('')
 
   useEffect(() => {
     getGroups().then(setGroups).catch(() => setGroups([]))
@@ -86,53 +77,59 @@ export default function NewOrganizationPage() {
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { timezone: 'Asia/Kolkata' },
   })
 
-  const selectedGroupId = watch('group_id')
-
-  // Load group users whenever selected group changes
+  // Live "does this admin email already have a V2E login?" check. If it exists, we hide
+  // the password field (they keep their login) and lock the name to their existing name
+  // — the firm creator can't know this on their own, so we detect it and tell them.
+  const adminEmail = watch('admin_email')
+  const [adminAccount, setAdminAccount] = useState<OrgAdminAccountCheck | null>(null)
+  const [checkingAdmin, setCheckingAdmin] = useState(false)
+  const adminExists = !!adminAccount?.exists
   useEffect(() => {
-    if (!selectedGroupId) {
-      setGroupUsers([])
-      setSelectedUserId(null)
-      setSelectedUserName('')
-      setAdminTab('new')
+    const email = (adminEmail ?? '').trim()
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setAdminAccount(null)
+      setCheckingAdmin(false)
       return
     }
-    setLoadingGroupUsers(true)
-    getGroupUsers(selectedGroupId)
-      .then(setGroupUsers)
-      .catch(() => setGroupUsers([]))
-      .finally(() => setLoadingGroupUsers(false))
-  }, [selectedGroupId])
-
-  const filteredUsers = groupUsers.filter((u) => {
-    const q = userSearch.toLowerCase()
-    return u.name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)
-  })
+    let cancelled = false
+    setCheckingAdmin(true)
+    const t = setTimeout(() => {
+      checkOrgAdminAccount(email)
+        .then((res) => {
+          if (cancelled) return
+          setAdminAccount(res)
+          if (res.exists && res.name) setValue('admin_name', res.name)
+        })
+        .catch(() => { if (!cancelled) setAdminAccount(null) })
+        .finally(() => { if (!cancelled) setCheckingAdmin(false) })
+    }, 400)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [adminEmail, setValue])
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
 
-    // Validate admin section
-    if (adminTab === 'existing') {
-      if (!selectedUserId) {
-        setServerError('Please select an existing user as admin.')
-        return
-      }
-    } else {
-      if (!values.admin_email) {
-        setServerError('Admin email is required.')
-        return
-      }
-      if (!values.admin_name) {
-        setServerError('Admin name is required.')
-        return
-      }
+    // Validate admin section — single email-driven flow.
+    if (!values.admin_email) {
+      setServerError('Admin email is required.')
+      return
+    }
+    if (!values.admin_name) {
+      setServerError('Admin name is required.')
+      return
+    }
+    // A password is required only for a brand-new login. An existing account keeps the
+    // password it already uses across its other firms.
+    if (!adminExists && (!values.admin_password || values.admin_password.length < 8)) {
+      setServerError('Set a password (min 8 characters) for this new admin.')
+      return
     }
 
     try {
@@ -143,14 +140,10 @@ export default function NewOrganizationPage() {
         timezone: values.timezone || undefined,
         group_id: values.group_id || undefined,
         is_test: values.is_test || undefined,
-      }
-
-      if (adminTab === 'existing' && selectedUserId) {
-        payload.existing_user_id = selectedUserId
-      } else {
-        payload.admin_name = values.admin_name
-        payload.admin_email = values.admin_email
-        payload.admin_password = values.admin_password || undefined
+        admin_name: values.admin_name,
+        admin_email: values.admin_email,
+        // Omit the password for an existing login — they keep the one they already use.
+        admin_password: adminExists ? undefined : values.admin_password || undefined,
       }
 
       await createOrganization(payload)
@@ -267,43 +260,32 @@ export default function NewOrganizationPage() {
         <Card>
           <h2 className="text-[16px] font-semibold text-[#0F172A] mb-1 pb-4 border-b border-[#E2E8F0]">First Admin Account</h2>
 
-          {/* Tabs — only show "Existing User" tab when a group is selected */}
-          <div className="flex gap-0 mt-4 mb-5 border border-[#E2E8F0] rounded-[8px] overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setAdminTab('new')}
-              className={[
-                'flex-1 px-4 py-2 text-sm font-medium transition-colors',
-                adminTab === 'new' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F8FAFC]',
-              ].join(' ')}
-            >
-              New User
-            </button>
-            <button
-              type="button"
-              onClick={() => setAdminTab('existing')}
-              disabled={!selectedGroupId}
-              className={[
-                'flex-1 px-4 py-2 text-sm font-medium transition-colors border-l border-[#E2E8F0]',
-                !selectedGroupId ? 'bg-[#F8FAFC] text-[#94A3B8] cursor-not-allowed' :
-                  adminTab === 'existing' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F8FAFC]',
-              ].join(' ')}
-            >
-              Existing User {!selectedGroupId && <span className="text-[11px]">(select a group first)</span>}
-            </button>
-          </div>
-
-          {adminTab === 'new' && (
-            <div className="flex flex-col gap-5">
-              <div className="grid grid-cols-2 gap-4">
-                <Field label="Admin Name" error={errors.admin_name?.message} required>
-                  <input {...register('admin_name')} placeholder="" className={inputCls(!!errors.admin_name)} />
-                </Field>
-                <Field label="Admin Email" error={errors.admin_email?.message} required>
-                  <input {...register('admin_email')} type="email" placeholder="" className={inputCls(!!errors.admin_email)} />
-                </Field>
+          {/* One flow — just enter the admin's email. If it already has a V2E login we
+              add them with their existing password (name locked, no password field);
+              otherwise it's a brand-new person and you set a name + password. No more
+              "new vs existing" choice — the email decides. */}
+          <div className="flex flex-col gap-5 mt-4">
+            <Field label="Admin Email" error={errors.admin_email?.message} required
+              hint={checkingAdmin ? 'Checking…' : adminExists ? 'Existing V2E account — no password needed' : 'They’ll sign in with this email'}>
+              <input {...register('admin_email')} type="email" placeholder="name@company.com" className={inputCls(!!errors.admin_email)} />
+            </Field>
+            <Field label="Admin Name" error={errors.admin_name?.message} required
+              hint={adminExists ? 'From their existing account' : undefined}>
+              <input {...register('admin_name')} placeholder="" disabled={adminExists}
+                className={[inputCls(!!errors.admin_name), adminExists ? 'bg-[#F8FAFC] text-[#64748B]' : ''].join(' ')} />
+            </Field>
+            {/* Password shown ONLY for a brand-new login. An existing account keeps the
+                one password it uses across its other firms. */}
+            {adminExists ? (
+              <div className="flex items-start gap-2 p-3 rounded-[8px] bg-[#F0FDF4] border border-[#BBF7D0]">
+                <Check size={16} className="text-[#16A34A] shrink-0 mt-0.5" />
+                <p className="text-sm text-[#166534]">
+                  This email already has a V2E login. They’ll be added as this firm’s admin
+                  using their <strong>existing password</strong> — nothing to set here.
+                </p>
               </div>
-              <Field label="Password" error={errors.admin_password?.message} hint="Leave blank if this email already has an account">
+            ) : (
+              <Field label="Password" error={errors.admin_password?.message} required>
                 <div className="relative">
                   <input
                     {...register('admin_password')}
@@ -321,75 +303,8 @@ export default function NewOrganizationPage() {
                   </button>
                 </div>
               </Field>
-            </div>
-          )}
-
-          {adminTab === 'existing' && selectedGroupId && (
-            <div className="flex flex-col gap-3">
-              {selectedUserId && (
-                <div className="flex items-center gap-2 p-3 rounded-[8px] bg-[#F0FDF4] border border-[#BBF7D0]">
-                  <Check size={16} className="text-[#16A34A] shrink-0" />
-                  <p className="text-sm font-medium text-[#16A34A]">{selectedUserName} selected as admin</p>
-                  <button
-                    type="button"
-                    onClick={() => { setSelectedUserId(null); setSelectedUserName('') }}
-                    className="ml-auto text-xs text-[#475569] hover:text-[#DC2626] transition-colors"
-                  >
-                    Change
-                  </button>
-                </div>
-              )}
-
-              {!selectedUserId && (
-                <>
-                  <div className="relative">
-                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-                    <input
-                      value={userSearch}
-                      onChange={(e) => setUserSearch(e.target.value)}
-                      placeholder="Search by name or email…"
-                      className="w-full rounded-[8px] bg-white border border-[#CBD5E1] pl-9 pr-3 py-[10px] text-sm text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-2 focus:border-[#2563EB] transition-colors"
-                    />
-                  </div>
-
-                  {loadingGroupUsers ? (
-                    <div className="flex flex-col gap-2">
-                      {Array.from({ length: 3 }).map((_, i) => (
-                        <div key={i} className="h-14 rounded-[8px] bg-[#F1F5F9] animate-pulse" />
-                      ))}
-                    </div>
-                  ) : filteredUsers.length === 0 ? (
-                    <p className="text-sm text-[#94A3B8] text-center py-4">
-                      {groupUsers.length === 0 ? 'No users in this group yet.' : 'No users match your search.'}
-                    </p>
-                  ) : (
-                    <div className="flex flex-col gap-1 max-h-60 overflow-y-auto rounded-[8px] border border-[#E2E8F0]">
-                      {filteredUsers.map((u) => (
-                        <button
-                          key={u.user_id}
-                          type="button"
-                          onClick={() => { setSelectedUserId(u.user_id); setSelectedUserName(u.name) }}
-                          className="flex items-center gap-3 px-4 py-3 hover:bg-[#EFF6FF] text-left transition-colors border-b border-[#E2E8F0] last:border-0"
-                        >
-                          <div className="w-8 h-8 rounded-full bg-[#2563EB] flex items-center justify-center shrink-0">
-                            <span className="text-white text-xs font-semibold">{u.name.charAt(0).toUpperCase()}</span>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-[#0F172A] truncate">{u.name}</p>
-                            <p className="text-xs text-[#475569] truncate">{u.email}</p>
-                            <p className="text-[11px] text-[#94A3B8]">
-                              Member of: {u.orgs.map((o) => o.name).join(', ')}
-                            </p>
-                          </div>
-                          <span className="text-xs text-[#2563EB] font-medium shrink-0">Select</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </Card>
 
         {/* Actions */}
