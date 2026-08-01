@@ -52,5 +52,8 @@ CODEBASE_MAP.md
 SECURITY_AUDIT.md
 TASK_REVIEW*.md
 
-# Claude Code local settings
-.claude/settings.json
+# Claude Code local settings (root and any nested workspace, e.g. frontend/.claude)
+**/.claude/settings.json
+
+# One-off brand asset exports (logos) — not used by the app
+brand-exports/
