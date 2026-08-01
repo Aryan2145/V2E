@@ -473,6 +473,9 @@ export class ProcessHierarchyService {
         department_id: departmentId,
         position_x: dto.position_x ?? 0,
         position_y: dto.position_y ?? 0,
+        // A node created WITH a position is already placed — freeze it so it never re-flows.
+        // One created without (e.g. straight into a lane) stays auto-placed until the client bakes it.
+        layout_frozen: dto.position_x != null && dto.position_y != null,
         sort_order: (maxSort._max.sort_order ?? -1) + 1,
         linked_map_id: linkedMapId,
         created_by_user_id: principal.userId,
@@ -762,6 +765,8 @@ export class ProcessHierarchyService {
         ...(laneUpdate ? { pool: laneUpdate.pool, department_id: laneUpdate.department_id } : {}),
         ...(dto.position_x !== undefined ? { position_x: dto.position_x } : {}),
         ...(dto.position_y !== undefined ? { position_y: dto.position_y } : {}),
+        // Any explicit position move (e.g. dragging onto another lane) places the node → freeze it.
+        ...(dto.position_x !== undefined || dto.position_y !== undefined ? { layout_frozen: true } : {}),
         ...(dto.linked_map_id !== undefined ? { linked_map_id: dto.linked_map_id } : {}),
         ...(reparent ? reparent : {}),
       },
@@ -822,7 +827,8 @@ export class ProcessHierarchyService {
       updates.push(
         this.prisma.processNode.update({
           where: { id: p.id },
-          data: { position_x: p.position_x, position_y: p.position_y },
+          // Saving a position places the node — freeze it so the auto-layout never moves it again.
+          data: { position_x: p.position_x, position_y: p.position_y, layout_frozen: true },
         }),
       );
     }

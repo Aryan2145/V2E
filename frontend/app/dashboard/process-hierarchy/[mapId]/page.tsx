@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth/context'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import StyledSelect from '@/components/ui/StyledSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import {
   processHierarchyApi,
   type FlowLevel,
@@ -90,6 +91,8 @@ export default function ProcessMapExplorerPage() {
   const [comparing, setComparing] = useState<{ base: string; target: string; baseLabel: string; targetLabel: string } | null>(null)
   const [docPreview, setDocPreview] = useState<ProcessArtifact | null>(null)
   const spawnCenterRef = useRef<(() => { x: number; y: number }) | null>(null)
+  const autoPositionsRef = useRef<Record<string, { x: number; y: number }> | null>(null)
+  const bakedLevels = useRef<Set<string>>(new Set()) // levels whose legacy layout we've already frozen
   const exportPngRef = useRef<(() => void) | null>(null)
   // Cascades repeat pastes at the same spot so they don't stack on top of each other.
   const pasteSeqRef = useRef<{ key: string; n: number }>({ key: '', n: 0 })
@@ -179,6 +182,35 @@ export default function ProcessMapExplorerPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [canEditHere, history.undo, history.redo])
+
+  // One-time "bake": the moment an editable level with legacy (unfrozen) nodes loads, write each
+  // node's CURRENT on-screen position into storage and mark it frozen. Nothing moves (we save
+  // exactly what's shown) — but from then on the auto-layout never re-flows these boxes, so adding
+  // or deleting a connection can't shuffle them. Runs once per level; new nodes are born frozen.
+  useEffect(() => {
+    if (!canEditHere || !flow) return
+    const levelKey = `${mapId}:${parentId ?? 'root'}`
+    if (bakedLevels.current.has(levelKey)) return
+    const unfrozen = flow.nodes.filter((n) => !n.layout_frozen && !n.id.includes('::'))
+    if (!unfrozen.length) { bakedLevels.current.add(levelKey); return }
+
+    let tries = 0, raf = 0
+    const attempt = () => {
+      const auto = autoPositionsRef.current
+      if (!auto || !unfrozen.every((n) => auto[n.id])) {
+        if (tries++ < 8) { raf = requestAnimationFrame(attempt) } // wait for the canvas to compute positions
+        return
+      }
+      bakedLevels.current.add(levelKey)
+      const positions = unfrozen.map((n) => ({ id: n.id, position_x: Math.round(auto[n.id].x), position_y: Math.round(auto[n.id].y) }))
+      // bulkPosition freezes each node; reload with loadFlow (not refresh) so the bake isn't an undo step.
+      processHierarchyApi.bulkPosition(orgId, mapId, positions)
+        .then(() => loadFlow(parentId))
+        .catch(() => bakedLevels.current.delete(levelKey))
+    }
+    raf = requestAnimationFrame(attempt)
+    return () => cancelAnimationFrame(raf)
+  }, [flow, canEditHere, mapId, parentId, orgId, loadFlow])
 
   // Core: place a node in the flow (anchor on selected/right-most, auto-connect), with
   // optional composition (build-in-place child map, or reference an existing map).
@@ -504,15 +536,19 @@ export default function ProcessMapExplorerPage() {
     <div className="flex items-center gap-1.5">
       {/* Undo / redo — greyed when there's nothing to step to, or while a restore is in flight. */}
       <div className="inline-flex h-[30px] rounded-[8px] border border-[#E2E8F0] bg-white overflow-hidden shadow-sm">
-        <button onClick={history.undo} disabled={!history.canUndo || history.busy} title="Undo (Ctrl+Z)"
-          className="inline-flex items-center px-2 text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-          <Undo2 size={15} />
-        </button>
+        <Tooltip label="Undo (Ctrl+Z)">
+          <button onClick={history.undo} disabled={!history.canUndo || history.busy} aria-label="Undo (Ctrl+Z)"
+            className="inline-flex items-center px-2 text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <Undo2 size={15} />
+          </button>
+        </Tooltip>
         <span className="w-px bg-[#E2E8F0]" />
-        <button onClick={history.redo} disabled={!history.canRedo || history.busy} title="Redo (Ctrl+Y)"
-          className="inline-flex items-center px-2 text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-          <Redo2 size={15} />
-        </button>
+        <Tooltip label="Redo (Ctrl+Y)">
+          <button onClick={history.redo} disabled={!history.canRedo || history.busy} aria-label="Redo (Ctrl+Y)"
+            className="inline-flex items-center px-2 text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+            <Redo2 size={15} />
+          </button>
+        </Tooltip>
       </div>
       <div className="relative">
       <button onClick={() => { setShowAdd((v) => !v); setAddLanePick(false) }}
@@ -627,23 +663,29 @@ export default function ProcessMapExplorerPage() {
         <div className="flex items-center gap-1.5 shrink-0">
           {map.can_edit && (
             <div className="inline-flex h-8 rounded-[8px] border border-[#E2E8F0] overflow-hidden">
-              <button onClick={() => setMode('view')} title="View"
-                className={`inline-flex items-center gap-1.5 px-2.5 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2563EB] ${mode === 'view' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F1F5F9]'}`}>
-                <Eye size={14} /> <span className="hidden md:inline">View</span>
-              </button>
-              <button onClick={() => setMode('edit')} title="Edit"
-                className={`inline-flex items-center gap-1.5 px-2.5 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2563EB] ${mode === 'edit' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F1F5F9]'}`}>
-                <Pencil size={14} /> <span className="hidden md:inline">Edit</span>
-              </button>
+              <Tooltip label="View">
+                <button onClick={() => setMode('view')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2563EB] ${mode === 'view' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F1F5F9]'}`}>
+                  <Eye size={14} /> <span className="hidden md:inline">View</span>
+                </button>
+              </Tooltip>
+              <Tooltip label="Edit">
+                <button onClick={() => setMode('edit')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#2563EB] ${mode === 'edit' ? 'bg-[#2563EB] text-white' : 'bg-white text-[#475569] hover:bg-[#F1F5F9]'}`}>
+                  <Pencil size={14} /> <span className="hidden md:inline">Edit</span>
+                </button>
+              </Tooltip>
             </div>
           )}
 
           {/* Visibility filter */}
           <div className="relative">
-            <button onClick={() => setShowFilter((v) => !v)} title={visible ? `Showing ${visible.size}` : 'View all'}
-              className={`inline-flex items-center gap-1.5 h-8 px-2.5 text-[13px] font-medium rounded-[8px] border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1 ${visible ? 'border-[#2563EB] text-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] text-[#475569] bg-white hover:bg-[#F1F5F9]'}`}>
-              <Filter size={14} /> <span className="hidden md:inline">{visible ? `Showing ${visible.size}` : 'Filter'}</span>
-            </button>
+            <Tooltip label={visible ? `Showing ${visible.size}` : 'View all'}>
+              <button onClick={() => setShowFilter((v) => !v)}
+                className={`inline-flex items-center gap-1.5 h-8 px-2.5 text-[13px] font-medium rounded-[8px] border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1 ${visible ? 'border-[#2563EB] text-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0] text-[#475569] bg-white hover:bg-[#F1F5F9]'}`}>
+                <Filter size={14} /> <span className="hidden md:inline">{visible ? `Showing ${visible.size}` : 'Filter'}</span>
+              </button>
+            </Tooltip>
             {showFilter && (
               <VisibilityPanel flow={flow} visible={visible} onChange={setVisible} onClose={() => setShowFilter(false)} />
             )}
@@ -651,10 +693,12 @@ export default function ProcessMapExplorerPage() {
 
           {/* More (secondary tools) + Versions popover anchor */}
           <div className="relative">
-            <button onClick={() => setShowMore((v) => !v)} title="More"
-              className="inline-flex items-center gap-1.5 h-8 px-2.5 text-[13px] font-medium rounded-[8px] border border-[#E2E8F0] text-[#475569] bg-white hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1">
-              <MoreHorizontal size={14} /> <span className="hidden md:inline">More</span>
-            </button>
+            <Tooltip label="More">
+              <button onClick={() => setShowMore((v) => !v)}
+                className="inline-flex items-center gap-1.5 h-8 px-2.5 text-[13px] font-medium rounded-[8px] border border-[#E2E8F0] text-[#475569] bg-white hover:bg-[#F1F5F9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1">
+                <MoreHorizontal size={14} /> <span className="hidden md:inline">More</span>
+              </button>
+            </Tooltip>
             {showMore && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowMore(false)} />
@@ -748,6 +792,7 @@ export default function ProcessMapExplorerPage() {
             onOpenMap={(mid) => router.push(`/dashboard/process-hierarchy/${mid}`)}
             onOpenDoc={openDoc}
             spawnCenterRef={spawnCenterRef}
+            autoPositionsRef={autoPositionsRef}
             exportPngRef={exportPngRef}
             onCopyNodes={copyNodes}
             onPaste={pasteClipboard}
@@ -1199,10 +1244,12 @@ function VersionsPanel({ orgId, mapId, canEdit, onClose, onRestored, onCompare }
                   <p className="text-[11px] text-[#64748B]">{new Date(s.created_at).toLocaleDateString()}</p>
                 </div>
                 {canEdit && (
-                  <button onClick={() => setConfirmRestore(s)} title="Restore this version"
-                    className="text-[#475569] hover:text-[#2563EB] shrink-0 inline-flex items-center gap-1 text-[12px] font-medium">
-                    <RotateCcw size={13} /> Restore
-                  </button>
+                  <Tooltip label="Restore this version">
+                    <button onClick={() => setConfirmRestore(s)}
+                      className="text-[#475569] hover:text-[#2563EB] shrink-0 inline-flex items-center gap-1 text-[12px] font-medium">
+                      <RotateCcw size={13} /> Restore
+                    </button>
+                  </Tooltip>
                 )}
               </div>
             ))}

@@ -62,6 +62,7 @@ export interface ProcessNode {
   department_id?: string | null // the lane within the Company pool
   position_x: number
   position_y: number
+  layout_frozen?: boolean // true = keep its stored (x,y) verbatim; false = still auto-placed
   sort_order: number
   child_count?: number
   linked_map_id?: string | null // cross-map link

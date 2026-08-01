@@ -3892,6 +3892,10 @@ model ProcessNode {
   department_id       String?
   position_x          Float             @default(0) // free-form ReactFlow placement
   position_y          Float             @default(0)
+  // Once true, the node keeps its stored (x,y) verbatim — the auto-layout never re-flows it.
+  // Set when a node is created with a position, dragged, or baked from the legacy auto-layout,
+  // so changing connections (add/delete a line) never moves any box. false = still auto-placed.
+  layout_frozen       Boolean           @default(false)
   sort_order          Int               @default(0)
   linked_map_id       String? // cross-map link: drilling this node opens another ProcessMap
   is_deleted          Boolean           @default(false)

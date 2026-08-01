@@ -30,6 +30,7 @@ import { buildNested, type NodeMeta, type SubDesc } from './nested-render'
 import { buildSwimlane, CONTENT_X, type LaneBand } from './swimlane-layout'
 import StyledSelect from '@/components/ui/StyledSelect'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import { useFlowNav, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
 
 const edgeTypes = { floating: FloatingEdge, floatingStep: FloatingStepEdge }
@@ -68,6 +69,9 @@ interface Props {
   // Filled by the canvas with a fn that returns the flow-coords at the centre of what's
   // on screen right now — so a newly added node lands where the user is looking.
   spawnCenterRef?: React.MutableRefObject<(() => { x: number; y: number }) | null>
+  // Filled with the auto-layout position every node WOULD get, so the page can bake unfrozen
+  // (legacy) nodes into stored positions once — freezing the layout so edits never re-flow it.
+  autoPositionsRef?: React.MutableRefObject<Record<string, { x: number; y: number }> | null>
   // Lets the page trigger a PNG export from its ⋯ menu (the button no longer sits on the canvas).
   exportPngRef?: React.MutableRefObject<(() => void) | null>
   // Copy the given nodes to the clipboard (from the multi-select action bar).
@@ -93,7 +97,7 @@ const LOD_THRESHOLD = 0.5
 function Inner({
   flow, canEdit, swimlane = false, onAddInLane, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
   onSelectNode, onDrill, onConnect, onNodeDragStop, onUpdateConnection, onDeleteConnection,
-  onNodesMove, onNodesReassign, onDeleteNodes, topRightExtra, loadFlowAt, onOpenMap, onOpenDoc, spawnCenterRef, onCopyNodes, onPaste, exportPngRef,
+  onNodesMove, onNodesReassign, onDeleteNodes, topRightExtra, loadFlowAt, onOpenMap, onOpenDoc, spawnCenterRef, autoPositionsRef, onCopyNodes, onPaste, exportPngRef,
 }: Props) {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
@@ -134,6 +138,7 @@ function Inner({
       })
       metaRef.current = built.meta
       laneBandsRef.current = built.laneBands
+      if (autoPositionsRef) autoPositionsRef.current = built.autoPositions
       return { rfNodes: built.nodes, rfEdges: built.edges }
     }
     laneBandsRef.current = []
@@ -512,10 +517,12 @@ function Inner({
       <Panel position="top-right">
         <div className="flex items-center gap-1.5">
           {!swimlane && topAreas.length > 0 && (
-            <button onClick={toggleAll} title={anyExpanded ? 'Collapse all areas' : 'Unfold all areas in place'} aria-pressed={anyExpanded}
-              className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-[8px] border shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1 ${anyExpanded ? 'bg-[#EFF6FF] border-[#2563EB] text-[#2563EB]' : 'bg-white border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1]'}`}>
-              {anyExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />} <span className="hidden md:inline">{anyExpanded ? 'Grouped' : 'Whole'}</span>
-            </button>
+            <Tooltip label={anyExpanded ? 'Collapse all areas' : 'Unfold all areas in place'}>
+              <button onClick={toggleAll} aria-pressed={anyExpanded}
+                className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] font-medium rounded-[8px] border shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1 ${anyExpanded ? 'bg-[#EFF6FF] border-[#2563EB] text-[#2563EB]' : 'bg-white border-[#E2E8F0] text-[#475569] hover:text-[#0F172A] hover:border-[#CBD5E1]'}`}>
+                {anyExpanded ? <Minimize2 size={13} /> : <Maximize2 size={13} />} <span className="hidden md:inline">{anyExpanded ? 'Grouped' : 'Whole'}</span>
+              </button>
+            </Tooltip>
           )}
           {topRightExtra}
         </div>
