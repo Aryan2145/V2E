@@ -7,6 +7,7 @@ import { parseLocalDate, dateOnly } from '@/lib/date'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
+import Tooltip from '@/components/ui/Tooltip'
 
 const TYPE_COLORS: Record<HolidayType, string> = {
   national: 'bg-[#E0F2FE] text-[#0369A1] border-[#BAE6FD]',
@@ -126,13 +127,15 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
             className="group flex items-center gap-3 py-2.5 px-1 rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
           >
             {selectable && h.inherited && (
-              <input
-                type="checkbox"
-                className="shrink-0 w-4 h-4 accent-[#2563EB] cursor-pointer"
-                checked={selectedIds?.has(h.id) ?? false}
-                onChange={() => onToggleSelect?.(h)}
-                title="Select for bulk removal"
-              />
+              <Tooltip label="Select for bulk removal">
+                <input
+                  type="checkbox"
+                  className="shrink-0 w-4 h-4 accent-[#2563EB] cursor-pointer"
+                  checked={selectedIds?.has(h.id) ?? false}
+                  onChange={() => onToggleSelect?.(h)}
+                  aria-label="Select for bulk removal"
+                />
+              </Tooltip>
             )}
 
             {/* Date chip — weekday over day/month (start date) */}
@@ -159,10 +162,12 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
                 </span>
               )}
               {!h.inherited && (h.cascade_target_count ?? 0) > 0 && (
-                <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-[#475569]" title="Cascaded to sub-departments">
-                  <GitBranch size={11} className="text-[#94A3B8]" />
-                  Shared with {h.cascade_target_count} sub-department{h.cascade_target_count === 1 ? '' : 's'}
-                </span>
+                <Tooltip label="Cascaded to sub-departments">
+                  <span className="mt-0.5 inline-flex items-center gap-1 text-[11px] font-medium text-[#475569]">
+                    <GitBranch size={11} className="text-[#94A3B8]" />
+                    Shared with {h.cascade_target_count} sub-department{h.cascade_target_count === 1 ? '' : 's'}
+                  </span>
+                </Tooltip>
               )}
             </div>
 
@@ -175,40 +180,48 @@ export default function OrgHolidayList({ holidays, onDelete, onUpdate, emptyText
               </span>
             )}
             {h.is_recurring_yearly && (
-              <span title="Repeats yearly" className="shrink-0">
-                <RefreshCw size={13} className="text-[#94A3B8]" />
-              </span>
+              <Tooltip label="Repeats yearly">
+                <span aria-label="Repeats yearly" className="shrink-0">
+                  <RefreshCw size={13} className="text-[#94A3B8]" />
+                </span>
+              </Tooltip>
             )}
 
             {h.inherited ? (
               onOptOut && (
-                <button
-                  type="button"
-                  onClick={() => onOptOut(h)}
-                  className="p-1.5 rounded-[6px] hover:bg-[#FEF3C7] text-[#475569] hover:text-[#D97706] transition-colors shrink-0"
-                  title="Opt out (remove for this department and its sub-departments)"
-                >
-                  <Unlink size={13} />
-                </button>
+                <Tooltip label="Opt out (remove for this department and its sub-departments)">
+                  <button
+                    type="button"
+                    onClick={() => onOptOut(h)}
+                    className="p-1.5 rounded-[6px] hover:bg-[#FEF3C7] text-[#475569] hover:text-[#D97706] transition-colors shrink-0"
+                    aria-label="Opt out (remove for this department and its sub-departments)"
+                  >
+                    <Unlink size={13} />
+                  </button>
+                </Tooltip>
               )
             ) : (
               <>
-                <button
-                  type="button"
-                  onClick={() => startEdit(h)}
-                  className="p-1.5 rounded-[6px] hover:bg-[#EFF6FF] text-[#475569] hover:text-[#2563EB] transition-colors shrink-0"
-                  title="Edit"
-                >
-                  <Pencil size={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setToDelete(h)}
-                  className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#475569] hover:text-[#DC2626] transition-colors shrink-0"
-                  title="Delete"
-                >
-                  <Trash2 size={13} />
-                </button>
+                <Tooltip label="Edit">
+                  <button
+                    type="button"
+                    onClick={() => startEdit(h)}
+                    className="p-1.5 rounded-[6px] hover:bg-[#EFF6FF] text-[#475569] hover:text-[#2563EB] transition-colors shrink-0"
+                    aria-label="Edit"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                </Tooltip>
+                <Tooltip label="Delete">
+                  <button
+                    type="button"
+                    onClick={() => setToDelete(h)}
+                    className="p-1.5 rounded-[6px] hover:bg-[#FEE2E2] text-[#475569] hover:text-[#DC2626] transition-colors shrink-0"
+                    aria-label="Delete"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </Tooltip>
               </>
             )}
           </div>

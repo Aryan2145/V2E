@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { getNow } from '@/lib/clock'
 import { parseLocalDate } from '@/lib/date'
 import type { CalendarHoliday } from '@/lib/types/holidays'
+import Tooltip from '@/components/ui/Tooltip'
 
 const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -94,24 +95,24 @@ export default function OrgHolidayCalendar({ workingDays, holidays }: Props) {
           const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear()
 
           return (
-            <div
-              key={i}
-              title={holiday ? holiday.name : isWeekend ? 'Weekend' : undefined}
-              className={[
-                'relative flex items-center justify-center h-8 rounded-[6px] text-xs cursor-default transition-colors',
-                holiday
-                  ? 'bg-[#FEE2E2] text-[#DC2626] font-semibold'
-                  : isWeekend
-                    ? 'bg-[#F1F5F9] text-[#94A3B8]'
-                    : 'text-[#475569] hover:bg-[#F8FAFC]',
-                isToday ? 'ring-2 ring-[#2563EB] ring-inset' : '',
-              ].join(' ')}
-            >
-              {day}
-              {holiday && (
-                <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[#DC2626]" />
-              )}
-            </div>
+            <Tooltip key={i} label={holiday ? holiday.name : isWeekend ? 'Weekend' : undefined}>
+              <div
+                className={[
+                  'relative flex items-center justify-center h-8 rounded-[6px] text-xs cursor-default transition-colors',
+                  holiday
+                    ? 'bg-[#FEE2E2] text-[#DC2626] font-semibold'
+                    : isWeekend
+                      ? 'bg-[#F1F5F9] text-[#94A3B8]'
+                      : 'text-[#475569] hover:bg-[#F8FAFC]',
+                  isToday ? 'ring-2 ring-[#2563EB] ring-inset' : '',
+                ].join(' ')}
+              >
+                {day}
+                {holiday && (
+                  <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[#DC2626]" />
+                )}
+              </div>
+            </Tooltip>
           )
         })}
       </div>

@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { CheckSquare, Check, Ban, ShieldCheck, RotateCcw, Users, X, ChevronDown } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
+import Tooltip from '@/components/ui/Tooltip'
 import { useToast } from '@/components/ui/Toast'
 import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
@@ -207,32 +208,35 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
     const canAct = !isTerminal && (iAmWorker || canEdit) && !isFutureTask
     return (
       <div key={item.id} className="flex items-start gap-3">
-        <button
-          type="button"
-          disabled={!canAct || busy === key}
-          onClick={() =>
-            run(key, () =>
-              done
-                ? tasksApi.uncheckChecklistItem(orgId, taskId, item.id)
-                : tasksApi.checkChecklistItem(orgId, taskId, item.id),
-            )
-          }
-          title={
+        <Tooltip
+          label={
             !canAct
               ? (disabledReason() ?? 'Only an assignee can tick this item.')
               : cantDo ? 'Marked can’t-do — click to tick as done' : done ? 'Done — click to untick' : 'Tick when done'
           }
-          className={[
-            'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
-            done ? 'bg-[#16A34A] border-[#16A34A]' : cantDo ? 'bg-[#D97706] border-[#D97706]' : 'border-[#CBD5E1] hover:border-[#2563EB]',
-            !canAct ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
-          ].join(' ')}
-          role="checkbox"
-          aria-checked={done}
         >
-          {done && <Check size={11} className="text-white" strokeWidth={3} />}
-          {cantDo && <Ban size={10} className="text-white" strokeWidth={2.5} />}
-        </button>
+          <button
+            type="button"
+            disabled={!canAct || busy === key}
+            onClick={() =>
+              run(key, () =>
+                done
+                  ? tasksApi.uncheckChecklistItem(orgId, taskId, item.id)
+                  : tasksApi.checkChecklistItem(orgId, taskId, item.id),
+              )
+            }
+            className={[
+              'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
+              done ? 'bg-[#16A34A] border-[#16A34A]' : cantDo ? 'bg-[#D97706] border-[#D97706]' : 'border-[#CBD5E1] hover:border-[#2563EB]',
+              !canAct ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+            ].join(' ')}
+            role="checkbox"
+            aria-checked={done}
+          >
+            {done && <Check size={11} className="text-white" strokeWidth={3} />}
+            {cantDo && <Ban size={10} className="text-white" strokeWidth={2.5} />}
+          </button>
+        </Tooltip>
 
         <div className="flex-1 min-w-0">
           <span className={`text-sm ${done ? 'line-through text-[#64748B]' : cantDo ? 'line-through text-[#B45309]' : 'text-[#1E293B]'}`}>
@@ -257,15 +261,16 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
               Clear can’t-do
             </button>
           ) : !done ? (
-            <button
-              type="button"
-              onClick={() => { setSkipItem(item); setSkipReason('') }}
-              title="Can’t do this"
-              aria-label="Can’t do this"
-              className="shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center rounded-[6px] text-[#B45309] hover:bg-[#FEF3C7] transition-colors"
-            >
-              <X size={14} strokeWidth={2.5} />
-            </button>
+            <Tooltip label="Can’t do this">
+              <button
+                type="button"
+                onClick={() => { setSkipItem(item); setSkipReason('') }}
+                aria-label="Can’t do this"
+                className="shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center rounded-[6px] text-[#B45309] hover:bg-[#FEF3C7] transition-colors"
+              >
+                <X size={14} strokeWidth={2.5} />
+              </button>
+            </Tooltip>
           ) : null
         )}
       </div>
@@ -293,38 +298,43 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
         <div className="flex items-start gap-3 px-2 py-1.5">
           {/* Personal checkbox / state — only working assignees act here */}
           {iAmWorker ? (
-            <button
-              type="button"
-              disabled={isTerminal || !!rowBusy || isFutureTask}
-              onClick={() =>
-                run(`amust:${item.id}:self`, () =>
-                  my === 'done'
-                    ? tasksApi.uncheckChecklistItem(orgId, taskId, item.id)
-                    : tasksApi.checkChecklistItem(orgId, taskId, item.id),
-                )
-              }
-              title={
+            <Tooltip
+              label={
                 (isTerminal || isFutureTask)
                   ? (disabledReason() ?? '')
                   : my === 'done' ? 'Done — click to untick' : my === 'skipped' ? 'You marked this can’t-do' : 'Tick when you’ve done it'
               }
-              className={[
-                'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
-                my === 'done'
-                  ? 'bg-[#16A34A] border-[#16A34A]'
-                  : my === 'skipped'
-                    ? 'bg-[#D97706] border-[#D97706]'
-                    : 'border-[#CBD5E1] hover:border-[#2563EB]',
-                isTerminal || isFutureTask ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
-              ].join(' ')}
-              role="checkbox"
-              aria-checked={my === 'done'}
             >
-              {my === 'done' && <Check size={11} className="text-white" strokeWidth={3} />}
-              {my === 'skipped' && <Ban size={10} className="text-white" strokeWidth={2.5} />}
-            </button>
+              <button
+                type="button"
+                disabled={isTerminal || !!rowBusy || isFutureTask}
+                onClick={() =>
+                  run(`amust:${item.id}:self`, () =>
+                    my === 'done'
+                      ? tasksApi.uncheckChecklistItem(orgId, taskId, item.id)
+                      : tasksApi.checkChecklistItem(orgId, taskId, item.id),
+                  )
+                }
+                className={[
+                  'mt-0.5 w-4 h-4 rounded border-2 shrink-0 flex items-center justify-center transition-colors',
+                  my === 'done'
+                    ? 'bg-[#16A34A] border-[#16A34A]'
+                    : my === 'skipped'
+                      ? 'bg-[#D97706] border-[#D97706]'
+                      : 'border-[#CBD5E1] hover:border-[#2563EB]',
+                  isTerminal || isFutureTask ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
+                ].join(' ')}
+                role="checkbox"
+                aria-checked={my === 'done'}
+              >
+                {my === 'done' && <Check size={11} className="text-white" strokeWidth={3} />}
+                {my === 'skipped' && <Ban size={10} className="text-white" strokeWidth={2.5} />}
+              </button>
+            </Tooltip>
           ) : (
-            <span className="mt-0.5 w-4 h-4 rounded border-2 border-dashed border-[#CBD5E1] shrink-0" title="You’re not a working assignee on this task" />
+            <Tooltip label="You’re not a working assignee on this task">
+              <span className="mt-0.5 w-4 h-4 rounded border-2 border-dashed border-[#CBD5E1] shrink-0" />
+            </Tooltip>
           )}
 
           <div className="flex-1 min-w-0">
@@ -361,15 +371,16 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
           {/* Personal "can't do" / clear — pinned to the right end of the line */}
           {iAmWorker && !isTerminal && !isFutureTask && (
             my !== 'skipped' ? (
-              <button
-                type="button"
-                onClick={() => { setSkipItem(item); setSkipReason('') }}
-                title="Can’t do this"
-                aria-label="Can’t do this"
-                className="shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center rounded-[6px] text-[#B45309] hover:bg-[#FEF3C7] transition-colors"
-              >
-                <X size={14} strokeWidth={2.5} />
-              </button>
+              <Tooltip label="Can’t do this">
+                <button
+                  type="button"
+                  onClick={() => { setSkipItem(item); setSkipReason('') }}
+                  aria-label="Can’t do this"
+                  className="shrink-0 mt-0.5 w-5 h-5 flex items-center justify-center rounded-[6px] text-[#B45309] hover:bg-[#FEF3C7] transition-colors"
+                >
+                  <X size={14} strokeWidth={2.5} />
+                </button>
+              </Tooltip>
             ) : (
               <button
                 type="button"
@@ -384,25 +395,27 @@ export default function TaskChecklistCard({ task, orgId, taskId, currentUserId, 
           {/* Assigner override control */}
           {canEdit && !isTerminal && !isFutureTask && (
             overridden ? (
-              <button
-                type="button"
-                disabled={!!rowBusy}
-                onClick={() => run(`amust:${item.id}:clearoverride`, () => tasksApi.clearChecklistOverride(orgId, taskId, item.id))}
-                className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-[#475569] hover:text-[#0F172A] px-2 py-1 rounded-[6px] hover:bg-[#F1F5F9]"
-                title="Undo done-for-everyone"
-              >
-                <RotateCcw size={12} /> Undo override
-              </button>
+              <Tooltip label="Undo done-for-everyone">
+                <button
+                  type="button"
+                  disabled={!!rowBusy}
+                  onClick={() => run(`amust:${item.id}:clearoverride`, () => tasksApi.clearChecklistOverride(orgId, taskId, item.id))}
+                  className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-[#475569] hover:text-[#0F172A] px-2 py-1 rounded-[6px] hover:bg-[#F1F5F9]"
+                >
+                  <RotateCcw size={12} /> Undo override
+                </button>
+              </Tooltip>
             ) : (
-              <button
-                type="button"
-                disabled={!!rowBusy}
-                onClick={() => run(`amust:${item.id}:override`, () => tasksApi.overrideChecklistItem(orgId, taskId, item.id))}
-                className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-[#2563EB] hover:text-[#1D4ED8] px-2 py-1 rounded-[6px] hover:bg-[#EFF6FF]"
-                title="Mark done for everyone"
-              >
-                <ShieldCheck size={12} /> Done for all
-              </button>
+              <Tooltip label="Mark done for everyone">
+                <button
+                  type="button"
+                  disabled={!!rowBusy}
+                  onClick={() => run(`amust:${item.id}:override`, () => tasksApi.overrideChecklistItem(orgId, taskId, item.id))}
+                  className="shrink-0 inline-flex items-center gap-1 text-[12px] font-medium text-[#2563EB] hover:text-[#1D4ED8] px-2 py-1 rounded-[6px] hover:bg-[#EFF6FF]"
+                >
+                  <ShieldCheck size={12} /> Done for all
+                </button>
+              </Tooltip>
             )
           )}
         </div>
@@ -437,21 +450,24 @@ function PersonRow({
           {state.is_override ? `Done for all${state.marked_by_name ? ` · ${state.marked_by_name}` : ''}` : 'Done'}
         </span>
       ) : state?.state === 'skipped' ? (
-        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#B45309]" title={state.reason ?? undefined}>
-          <Ban size={12} /> Can’t do{state.reason ? ` · ${state.reason}` : ''}
-        </span>
+        <Tooltip label={state.reason ?? ''}>
+          <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#B45309]">
+            <Ban size={12} /> Can’t do{state.reason ? ` · ${state.reason}` : ''}
+          </span>
+        </Tooltip>
       ) : (
         <span className="text-[11px] font-medium text-[#94A3B8]">Pending</span>
       )}
       {canChallenge && (
-        <button
-          type="button"
-          onClick={onChallenge}
-          className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-[#2563EB] hover:text-[#1D4ED8] px-1.5 py-0.5 rounded-[6px] hover:bg-[#EFF6FF] shrink-0"
-          title="Reopen this person’s item"
-        >
-          <RotateCcw size={11} /> Challenge
-        </button>
+        <Tooltip label="Reopen this person’s item">
+          <button
+            type="button"
+            onClick={onChallenge}
+            className="ml-1 inline-flex items-center gap-1 text-[11px] font-medium text-[#2563EB] hover:text-[#1D4ED8] px-1.5 py-0.5 rounded-[6px] hover:bg-[#EFF6FF] shrink-0"
+          >
+            <RotateCcw size={11} /> Challenge
+          </button>
+        </Tooltip>
       )}
     </div>
   )

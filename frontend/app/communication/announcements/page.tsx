@@ -6,6 +6,7 @@ import { getAnnouncements, markAnnouncementRead, togglePinAnnouncement, deleteAn
 import type { Announcement } from '@/lib/types/communication'
 import Link from 'next/link'
 import { Bell, Pin, Plus, Trash2, Eye } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 const PRIORITY_BADGE: Record<string, string> = {
   urgent: 'bg-[#FEE2E2] text-[#DC2626]',
@@ -173,30 +174,36 @@ function AnnouncementCard({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {!hasRead && (
+            <Tooltip label="Mark as read">
             <button
               onClick={() => onRead(ann.id)}
+              aria-label="Mark as read"
               className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
-              title="Mark as read"
             >
               <Eye size={15} />
             </button>
+            </Tooltip>
           )}
           {isHR && (
             <>
+              <Tooltip label={ann.is_pinned ? 'Unpin' : 'Pin'}>
               <button
                 onClick={() => onPin(ann.id)}
+                aria-label={ann.is_pinned ? 'Unpin' : 'Pin'}
                 className={`p-1.5 rounded-[6px] transition-colors ${ann.is_pinned ? 'text-[#2563EB] hover:bg-[#EFF6FF]' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}
-                title={ann.is_pinned ? 'Unpin' : 'Pin'}
               >
                 <Pin size={15} />
               </button>
+              </Tooltip>
+              <Tooltip label="Delete">
               <button
                 onClick={() => onDelete(ann.id)}
+                aria-label="Delete"
                 className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#FEF2F2] hover:text-[#DC2626] transition-colors"
-                title="Delete"
               >
                 <Trash2 size={15} />
               </button>
+              </Tooltip>
             </>
           )}
         </div>

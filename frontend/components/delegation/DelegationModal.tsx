@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2, Loader2, Target } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
+import Tooltip from '@/components/ui/Tooltip'
 import DatePicker from '@/components/ui/DatePicker'
 import EmployeePicker from '@/components/ui/EmployeePicker'
 import { useToast } from '@/components/ui/Toast'
@@ -185,14 +186,16 @@ export default function DelegationModal({
             <label className={`${labelClass} mb-0 flex items-center gap-1.5`}>
               <Target size={14} className="text-[#2563EB]" /> Success criteria
             </label>
+            <Tooltip label="Add criterion">
             <button
               type="button"
               onClick={() => setCriteria((r) => [...r, emptyRow()])}
+              aria-label="Add criterion"
               className="w-7 h-7 flex items-center justify-center rounded-[8px] bg-[#2563EB] text-white hover:bg-[#1D4ED8] transition-colors"
-              title="Add criterion"
             >
               <Plus size={15} />
             </button>
+            </Tooltip>
           </div>
           <p className="text-xs text-[#64748B] mb-2">What does “done” look like — measurably?</p>
           <div className="flex flex-col gap-2">
@@ -212,14 +215,16 @@ export default function DelegationModal({
                   placeholder="Target"
                   maxLength={200}
                 />
+                <Tooltip label="Remove">
                 <button
                   type="button"
                   onClick={() => setCriteria((r) => (r.length > 1 ? r.filter((_, idx) => idx !== i) : [emptyRow()]))}
+                  aria-label="Remove"
                   className="w-9 h-9 flex items-center justify-center rounded-[8px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition-colors shrink-0"
-                  title="Remove"
                 >
                   <Trash2 size={15} />
                 </button>
+                </Tooltip>
               </div>
             ))}
           </div>

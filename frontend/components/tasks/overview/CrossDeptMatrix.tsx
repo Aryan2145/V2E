@@ -2,6 +2,7 @@
 
 import React, { useMemo } from 'react'
 import type { FlowMatrix } from '@/lib/types/tasks'
+import Tooltip from '@/components/ui/Tooltip'
 
 /**
  * Cross-department work-flow heatmap: rows = giving department, columns = receiving department,
@@ -54,16 +55,17 @@ export default function CrossDeptMatrix({
                       const color = a > 0.5 ? '#FFFFFF' : '#475569'
                       return (
                         <td key={ci} className="p-0.5">
-                          <button
-                            type="button"
-                            disabled={v === 0}
-                            onClick={() => v && onCell(row.from, from?.name ?? '', to.id, to.name, v)}
-                            title={`${from?.name} → ${to.name}: ${v}`}
-                            className={`w-7 h-7 rounded-[4px] grid place-items-center font-semibold tabular-nums ${v ? 'cursor-pointer' : 'cursor-default'}`}
-                            style={{ background: bg, color }}
-                          >
-                            {v || ''}
-                          </button>
+                          <Tooltip label={`${from?.name} → ${to.name}: ${v}`}>
+                            <button
+                              type="button"
+                              disabled={v === 0}
+                              onClick={() => v && onCell(row.from, from?.name ?? '', to.id, to.name, v)}
+                              className={`w-7 h-7 rounded-[4px] grid place-items-center font-semibold tabular-nums ${v ? 'cursor-pointer' : 'cursor-default'}`}
+                              style={{ background: bg, color }}
+                            >
+                              {v || ''}
+                            </button>
+                          </Tooltip>
                         </td>
                       )
                     })}

@@ -14,6 +14,7 @@ import ItemTypeBadge from './ItemTypeBadge'
 import MaterialViewer from './MaterialViewer'
 import { toEmbeddableVideoUrl } from '@/lib/learning/video-embed'
 import LinkEmbed from './LinkEmbed'
+import Tooltip from '@/components/ui/Tooltip'
 
 const TYPE_ICONS: Record<ContentType, any> = {
   video: Play, file: FileIcon, document: FileText, url: Link2, article: BookOpen,
@@ -152,13 +153,15 @@ export default function CourseViewer({
                 <ArrowLeft size={13} />
                 {backLabel}
               </Link>
-              <button
-                onClick={() => setNavOpen(false)}
-                title="Collapse"
-                className="p-1 -mr-1 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors"
-              >
-                <PanelLeftClose size={16} />
-              </button>
+              <Tooltip label="Collapse">
+                <button
+                  onClick={() => setNavOpen(false)}
+                  aria-label="Collapse"
+                  className="p-1 -mr-1 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors"
+                >
+                  <PanelLeftClose size={16} />
+                </button>
+              </Tooltip>
             </div>
             {preview && (
               <div className="mb-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-[#FEF9C3] text-[#CA8A04] text-[11px] font-semibold">
@@ -311,15 +314,17 @@ export default function CourseViewer({
                 <div>
                   {/* Plays inline — just a small "open in new tab" logo, top-right */}
                   <div className="flex items-center justify-end mb-3">
-                    <a
-                      href={activeItem.content_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title="Open in a new tab"
-                      className="p-1.5 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
-                    >
-                      <ExternalLink size={16} />
-                    </a>
+                    <Tooltip label="Open in a new tab">
+                      <a
+                        href={activeItem.content_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="Open in a new tab"
+                        className="p-1.5 text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
+                      >
+                        <ExternalLink size={16} />
+                      </a>
+                    </Tooltip>
                   </div>
                   <div className="w-full aspect-video rounded-[8px] overflow-hidden bg-black">
                     <iframe src={toEmbeddableVideoUrl(activeItem.content_url)} className="w-full h-full" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowFullScreen title={activeItem.title} />
@@ -405,13 +410,14 @@ export default function CourseViewer({
                   <Download size={15} /> Download
                 </button>
               )}
-              <button
-                onClick={() => setExpanded(false)}
-                title="Exit fullscreen (Esc)"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
-              >
-                <Minimize2 size={15} /> Exit
-              </button>
+              <Tooltip label="Exit fullscreen (Esc)">
+                <button
+                  onClick={() => setExpanded(false)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
+                >
+                  <Minimize2 size={15} /> Exit
+                </button>
+              </Tooltip>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-4">

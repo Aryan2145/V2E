@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { Check, Loader2 } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 // S M T W T F S — index 0 = Sunday … 6 = Saturday
 const DAY_PILLS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
@@ -55,23 +56,23 @@ export default function WorkingWeekStrip({ value, onSave, disabled }: Props) {
         {DAY_PILLS.map((label, index) => {
           const active = days.includes(index)
           return (
-            <button
-              key={index}
-              type="button"
-              onClick={() => toggle(index)}
-              disabled={disabled}
-              title={DAY_NAMES[index]}
-              aria-pressed={active}
-              className={[
-                'h-8 w-8 rounded-full text-xs font-semibold border transition-colors duration-150',
-                disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
-                active
-                  ? 'bg-[#2563EB] text-white border-[#2563EB]'
-                  : 'bg-white text-[#94A3B8] border-[#E2E8F0] hover:border-[#2563EB] hover:text-[#2563EB]',
-              ].join(' ')}
-            >
-              {label}
-            </button>
+            <Tooltip key={index} label={DAY_NAMES[index]}>
+              <button
+                type="button"
+                onClick={() => toggle(index)}
+                disabled={disabled}
+                aria-pressed={active}
+                className={[
+                  'h-8 w-8 rounded-full text-xs font-semibold border transition-colors duration-150',
+                  disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer',
+                  active
+                    ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                    : 'bg-white text-[#94A3B8] border-[#E2E8F0] hover:border-[#2563EB] hover:text-[#2563EB]',
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            </Tooltip>
           )
         })}
       </div>

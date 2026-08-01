@@ -15,6 +15,7 @@ import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
+import Tooltip from '@/components/ui/Tooltip'
 
 function cadence(r: MeetingRhythm): string {
   const e = r.schedule_entries?.[0]
@@ -126,11 +127,13 @@ export default function RhythmsPage() {
                 <Link href={`/dashboard/governance/meetings/rhythms/${r.id}`} className="text-sm font-medium text-[#2563EB] hover:underline">View details &amp; history</Link>
                 {r.can_manage && (
                   <div className="ml-auto flex items-center gap-1">
-                    <button onClick={() => setEditing(r)} title="Edit" className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]"><Pencil size={16} /></button>
-                    <button onClick={() => toggle(r)} title={r.is_active ? 'Pause' : 'Resume'} className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]">
+                    <Tooltip label="Edit"><button onClick={() => setEditing(r)} aria-label="Edit" className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]"><Pencil size={16} /></button></Tooltip>
+                    <Tooltip label={r.is_active ? 'Pause' : 'Resume'}>
+                    <button onClick={() => toggle(r)} aria-label={r.is_active ? 'Pause' : 'Resume'} className="p-1.5 text-[#475569] hover:bg-[#F1F5F9] rounded-[8px]">
                       {r.is_active ? <Pause size={16} /> : <Play size={16} />}
                     </button>
-                    <button onClick={() => setStopping(r)} title="Stop" className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px]"><Square size={16} /></button>
+                    </Tooltip>
+                    <Tooltip label="Stop"><button onClick={() => setStopping(r)} aria-label="Stop" className="p-1.5 text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px]"><Square size={16} /></button></Tooltip>
                   </div>
                 )}
               </div>

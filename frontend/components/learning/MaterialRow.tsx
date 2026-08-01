@@ -13,6 +13,7 @@ import {
 import { ACCEPT_ATTR, validateFile, formatBytes, fileKindLabel, extensionOf } from '@/lib/attachments'
 import type { ContentType, LearningItem, MaterialViewData } from '@/lib/types/learning'
 import MaterialViewer from './MaterialViewer'
+import Tooltip from '@/components/ui/Tooltip'
 
 const TYPE_META: Record<ContentType, { icon: any; label: string }> = {
   file: { icon: FileText, label: 'File' },
@@ -120,15 +121,16 @@ export default function MaterialRow({
     <div className="rounded-[10px] border border-[#E2E8F0] bg-white">
       <div className="flex items-start gap-3 p-3.5">
         {onGripPointerDown && (
-          <button
-            type="button"
-            onPointerDown={onGripPointerDown}
-            title="Drag to reorder"
-            aria-label="Drag to reorder"
-            className="shrink-0 mt-1.5 p-0.5 -ml-1 text-[#CBD5E1] hover:text-[#64748B] cursor-grab active:cursor-grabbing touch-none"
-          >
-            <GripVertical size={16} />
-          </button>
+          <Tooltip label="Drag to reorder">
+            <button
+              type="button"
+              onPointerDown={onGripPointerDown}
+              aria-label="Drag to reorder"
+              className="shrink-0 mt-1.5 p-0.5 -ml-1 text-[#CBD5E1] hover:text-[#64748B] cursor-grab active:cursor-grabbing touch-none"
+            >
+              <GripVertical size={16} />
+            </button>
+          </Tooltip>
         )}
         <span className="text-xs text-[#94A3B8] w-5 text-center shrink-0 mt-2">{index + 1}</span>
         <div className="w-8 h-8 rounded-[8px] bg-[#EFF6FF] flex items-center justify-center shrink-0 mt-0.5">
@@ -227,31 +229,37 @@ export default function MaterialRow({
           {saving && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
           {item.content_type === 'file' && item.file_name && (
             <>
-              <button
-                onClick={openPreview}
-                disabled={previewLoading}
-                title="Preview"
-                className="p-1.5 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors"
-              >
-                {previewLoading ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
-              </button>
-              <label
-                title="Replace file"
-                className="p-1.5 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors cursor-pointer"
-              >
-                {replacing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                <input type="file" accept={ACCEPT_ATTR} className="hidden"
-                  onChange={(e) => { handleReplace(e.target.files?.[0]); e.target.value = '' }} />
-              </label>
+              <Tooltip label="Preview">
+                <button
+                  onClick={openPreview}
+                  disabled={previewLoading}
+                  aria-label="Preview"
+                  className="p-1.5 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors"
+                >
+                  {previewLoading ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
+                </button>
+              </Tooltip>
+              <Tooltip label="Replace file">
+                <label
+                  aria-label="Replace file"
+                  className="p-1.5 text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[6px] transition-colors cursor-pointer"
+                >
+                  {replacing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                  <input type="file" accept={ACCEPT_ATTR} className="hidden"
+                    onChange={(e) => { handleReplace(e.target.files?.[0]); e.target.value = '' }} />
+                </label>
+              </Tooltip>
             </>
           )}
-          <button
-            onClick={handleDelete}
-            title="Remove"
-            className="p-1.5 text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[6px] transition-colors"
-          >
-            <Trash2 size={14} />
-          </button>
+          <Tooltip label="Remove">
+            <button
+              onClick={handleDelete}
+              aria-label="Remove"
+              className="p-1.5 text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[6px] transition-colors"
+            >
+              <Trash2 size={14} />
+            </button>
+          </Tooltip>
         </div>
       </div>
 

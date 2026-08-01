@@ -15,6 +15,7 @@ import EditRecurringModal from '@/components/tasks/EditRecurringModal'
 import ManageAccessModal from '@/components/tasks/ManageAccessModal'
 import type { EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import StyledSelect from '@/components/ui/StyledSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import { FILE_TYPE_GROUPS, groupsFromExtensions } from '@/lib/attachments'
 import {
   ArrowLeft, RotateCcw, Play, Pause, Edit2, Zap,
@@ -132,15 +133,15 @@ function PerformanceCard({ stats, onOpenInstance }: { stats: RecurringStats; onO
               {stats.recent.map((r) => {
                 const meta = TIMING_META[r.timing]
                 return (
-                  <button
-                    key={r.task_id}
-                    type="button"
-                    onClick={() => onOpenInstance(r.task_id)}
-                    title={`${formatDate(r.date)} — ${meta.label}`}
-                    className="w-7 h-7 rounded-[6px] border transition-transform hover:scale-110"
-                    style={{ backgroundColor: meta.bg, borderColor: meta.color }}
-                    aria-label={`${formatDate(r.date)} — ${meta.label}`}
-                  />
+                  <Tooltip key={r.task_id} label={`${formatDate(r.date)} — ${meta.label}`}>
+                    <button
+                      type="button"
+                      onClick={() => onOpenInstance(r.task_id)}
+                      className="w-7 h-7 rounded-[6px] border transition-transform hover:scale-110"
+                      style={{ backgroundColor: meta.bg, borderColor: meta.color }}
+                      aria-label={`${formatDate(r.date)} — ${meta.label}`}
+                    />
+                  </Tooltip>
                 )
               })}
             </div>
@@ -166,15 +167,16 @@ function PerformanceCard({ stats, onOpenInstance }: { stats: RecurringStats; onO
                 const seg = (n: number) => `${(n / trendMax) * 100}%`
                 return (
                   <div key={m.month} className="flex-1 flex flex-col items-center gap-1 h-full">
+                    <Tooltip label={`${label} ${y}: ${m.total} task${m.total !== 1 ? 's' : ''} — ${m.on_time} on time, ${m.late} late, ${m.missed} missed, ${m.open} open`}>
                     <div
                       className="w-full max-w-[44px] flex-1 flex flex-col-reverse rounded-[4px] overflow-hidden bg-[#F8FAFC] border border-[#F1F5F9]"
-                      title={`${label} ${y}: ${m.total} task${m.total !== 1 ? 's' : ''} — ${m.on_time} on time, ${m.late} late, ${m.missed} missed, ${m.open} open`}
                     >
                       <div style={{ height: seg(m.on_time), backgroundColor: '#16A34A' }} />
                       <div style={{ height: seg(m.late), backgroundColor: '#D97706' }} />
                       <div style={{ height: seg(m.missed), backgroundColor: '#DC2626' }} />
                       <div style={{ height: seg(m.open), backgroundColor: '#CBD5E1' }} />
                     </div>
+                    </Tooltip>
                     <span className="text-[10px] text-[#64748B]">{label}</span>
                     <span className="text-[10px] font-semibold text-[#0F172A] tabular-nums -mt-1">{m.total > 0 ? m.total : ''}</span>
                   </div>
@@ -414,34 +416,37 @@ export default function RecurringDetailPage() {
     <div className="space-y-6 lg:h-full lg:flex lg:flex-col lg:overflow-hidden">
       {/* Header */}
       <div className="flex items-start gap-2">
-        <button
-          onClick={() => router.back()}
-          aria-label="Back"
-          title="Back"
-          className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
-        >
-          <ArrowLeft size={16} />
-        </button>
+        <Tooltip label="Back">
+          <button
+            onClick={() => router.back()}
+            aria-label="Back"
+            className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
+          >
+            <ArrowLeft size={16} />
+          </button>
+        </Tooltip>
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2 min-w-0 flex-1">
             <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight min-w-0">{template.title}</h1>
-            <button
-              onClick={() => setShowEditModal(true)}
-              aria-label="Edit template"
-              title="Edit template"
-              className="mt-1 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
-            >
-              <Edit2 size={14} />
-            </button>
-            {template.can_manage && (
+            <Tooltip label="Edit template">
               <button
-                onClick={() => setShowManageAccess(true)}
-                aria-label="Manage access"
-                title="Manage who can see this"
+                onClick={() => setShowEditModal(true)}
+                aria-label="Edit template"
                 className="mt-1 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
               >
-                <Shield size={14} />
+                <Edit2 size={14} />
               </button>
+            </Tooltip>
+            {template.can_manage && (
+              <Tooltip label="Manage who can see this">
+                <button
+                  onClick={() => setShowManageAccess(true)}
+                  aria-label="Manage access"
+                  className="mt-1 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
+                >
+                  <Shield size={14} />
+                </button>
+              </Tooltip>
             )}
           </div>
           <div className="mt-2 flex items-center gap-2 flex-wrap text-xs text-[#475569]">
@@ -961,16 +966,16 @@ export default function RecurringDetailPage() {
               <div className="p-4">
                 <div className="space-y-1.5 max-h-56 overflow-y-auto">
                   {attachments.map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      onClick={() => tasksApi.downloadRecurringAttachment(orgId, templateId, a.id)}
-                      className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
-                      title="Download"
-                    >
-                      <Download size={13} className="text-[#94A3B8] shrink-0" />
-                      <span className="text-sm text-[#2563EB] truncate">{a.file_name}</span>
-                    </button>
+                    <Tooltip key={a.id} label="Download">
+                      <button
+                        type="button"
+                        onClick={() => tasksApi.downloadRecurringAttachment(orgId, templateId, a.id)}
+                        className="w-full flex items-center gap-2 text-left px-2 py-1.5 rounded-[8px] hover:bg-[#F8FAFC] transition-colors"
+                      >
+                        <Download size={13} className="text-[#94A3B8] shrink-0" />
+                        <span className="text-sm text-[#2563EB] truncate">{a.file_name}</span>
+                      </button>
+                    </Tooltip>
                   ))}
                 </div>
                 <p className="text-[11px] text-[#94A3B8] mt-2">Copied onto every new instance.</p>

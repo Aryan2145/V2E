@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface Props {
   tasks: Task[]
@@ -157,18 +158,18 @@ export default function CalendarView({ tasks, priorities, onTaskClick }: Props) 
                       : priority?.color ?? '#2563EB'
 
                     return (
-                      <div
-                        key={task.id}
-                        className="flex items-center gap-1 px-1 py-0.5 rounded-[4px]"
-                        style={{ backgroundColor: dotColor + '15' }}
-                        onClick={(e) => { e.stopPropagation(); onTaskClick(task.id) }}
-                        title={task.title}
-                      >
-                        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
-                        <span className="text-[10px] font-medium truncate" style={{ color: dotColor }}>
-                          {task.title}
-                        </span>
-                      </div>
+                      <Tooltip key={task.id} label={task.title}>
+                        <div
+                          className="flex items-center gap-1 px-1 py-0.5 rounded-[4px] cursor-pointer"
+                          style={{ backgroundColor: dotColor + '15' }}
+                          onClick={(e) => { e.stopPropagation(); onTaskClick(task.id) }}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
+                          <span className="text-[10px] font-medium truncate" style={{ color: dotColor }}>
+                            {task.title}
+                          </span>
+                        </div>
+                      </Tooltip>
                     )
                   })}
                 </div>

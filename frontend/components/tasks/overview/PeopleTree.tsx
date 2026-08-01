@@ -4,6 +4,7 @@ import React, { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronRight, ChevronDown, AlertTriangle, CheckCircle2, Send, Users } from 'lucide-react'
 import type { PeopleTree as PeopleTreeData, PersonNode } from '@/lib/types/tasks'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface TreeNode extends PersonNode { children: TreeNode[] }
 
@@ -34,9 +35,11 @@ function initials(name: string) {
 
 function Stat({ icon, value, color, title }: { icon: React.ReactNode; value: number; color: string; title: string }) {
   return (
-    <span title={title} className="inline-flex items-center gap-1 text-[12px] font-medium tabular-nums" style={{ color }}>
-      {icon}{value}
-    </span>
+    <Tooltip label={title}>
+      <span className="inline-flex items-center gap-1 text-[12px] font-medium tabular-nums" style={{ color }}>
+        {icon}{value}
+      </span>
+    </Tooltip>
   )
 }
 

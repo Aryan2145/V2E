@@ -5,6 +5,7 @@ import { Users, FileText, ChevronRight, MessageSquare } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
 import { workLogApi } from '@/lib/api/workLogs'
 import WorkLogRemarkThread from '@/components/work-logs/WorkLogRemarkThread'
+import Tooltip from '@/components/ui/Tooltip'
 import type { DailyUpdate, ReadableWriter, WorkLogRemark, WorkLogSubmission } from '@/lib/types/workLogs'
 
 const cardCls = 'bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)]'
@@ -135,7 +136,7 @@ export default function WorkLogReviewPage() {
                         }`}
                       >
                         <span className="text-sm text-[#0F172A]">{prettyDate(d.log_date)}</span>
-                        {d.submitted_at && <span className="w-2 h-2 rounded-full bg-[#16A34A] shrink-0" title="Submitted" />}
+                        {d.submitted_at && <Tooltip label="Submitted"><span className="w-2 h-2 rounded-full bg-[#16A34A] shrink-0" aria-label="Submitted" /></Tooltip>}
                       </button>
                     </li>
                   ))}

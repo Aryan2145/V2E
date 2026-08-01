@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ExternalLink, Loader2, RotateCcw } from 'lucide-react'
 import { toEmbeddableVideoUrl, toEmbeddablePageUrl } from '@/lib/learning/video-embed'
+import Tooltip from '@/components/ui/Tooltip'
 
 /**
  * Shows a link inline automatically — no creator toggle. It tries to embed the page
@@ -45,16 +46,17 @@ export default function LinkEmbed({
   const reload = () => setReloadKey((k) => k + 1)
 
   const openTab = (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={onOpen}
-      title="Open in a new tab"
-      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
-    >
-      <ExternalLink size={14} /> Open in new tab
-    </a>
+    <Tooltip label="Open in a new tab">
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={onOpen}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] rounded-[8px] hover:bg-[#DBEAFE] transition-colors"
+      >
+        <ExternalLink size={14} /> Open in new tab
+      </a>
+    </Tooltip>
   )
 
   // Blocked → a clean Open button instead of a dead blank frame (+ a retry).
@@ -88,13 +90,14 @@ export default function LinkEmbed({
   return (
     <div>
       <div className="flex items-center justify-end gap-2 mb-2">
-        <button
-          onClick={reload}
-          title="Reload / back to start"
-          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
-        >
-          <RotateCcw size={14} /> Reload
-        </button>
+        <Tooltip label="Reload / back to start">
+          <button
+            onClick={reload}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-[#475569] bg-white border border-[#E2E8F0] rounded-[8px] hover:text-[#2563EB] hover:border-[#2563EB] transition-colors"
+          >
+            <RotateCcw size={14} /> Reload
+          </button>
+        </Tooltip>
         {openTab}
       </div>
       <div

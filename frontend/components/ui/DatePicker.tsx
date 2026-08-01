@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Calendar, ChevronLeft, ChevronRight, X } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface DatePickerProps {
   value: string // ISO yyyy-mm-dd, '' = empty
@@ -243,12 +244,11 @@ export default function DatePicker({
                     const off = isDisabledDay(d)
                     const marked = markedSet.has(toIso(d))
                     return (
+                      <Tooltip key={i} label={marked ? (markedHint ?? 'On leave') : undefined}>
                       <button
-                        key={i}
                         type="button"
                         disabled={!!off}
                         onClick={() => pick(d)}
-                        title={marked ? (markedHint ?? 'On leave') : undefined}
                         className={[
                           'relative h-9 rounded-[8px] text-sm flex items-center justify-center transition-colors',
                           off
@@ -268,6 +268,7 @@ export default function DatePicker({
                           />
                         )}
                       </button>
+                      </Tooltip>
                     )
                   })}
                 </div>

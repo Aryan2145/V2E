@@ -1,6 +1,7 @@
 'use client'
 
 import { Check, Loader2 } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 const DAY_PILLS = ['S', 'M', 'T', 'W', 'T', 'F', 'S']
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -45,25 +46,25 @@ export default function WorkingDaysStrip({
         {DAY_PILLS.map((label, index) => {
           const active = days.includes(index)
           return (
-            <button
-              key={index}
-              type="button"
-              onClick={() => onToggleDay(index)}
-              disabled={pillsDisabled}
-              title={DAY_NAMES[index]}
-              aria-pressed={active}
-              className={[
-                'h-8 w-8 rounded-full text-xs font-semibold border transition-colors duration-150',
-                pillsDisabled ? 'cursor-not-allowed' : 'cursor-pointer',
-                active
-                  ? pillsDisabled
-                    ? 'bg-[#BFDBFE] text-white border-[#BFDBFE]'
-                    : 'bg-[#2563EB] text-white border-[#2563EB]'
-                  : 'bg-white text-[#94A3B8] border-[#E2E8F0] ' + (pillsDisabled ? '' : 'hover:border-[#2563EB] hover:text-[#2563EB]'),
-              ].join(' ')}
-            >
-              {label}
-            </button>
+            <Tooltip key={index} label={DAY_NAMES[index]}>
+              <button
+                type="button"
+                onClick={() => onToggleDay(index)}
+                disabled={pillsDisabled}
+                aria-pressed={active}
+                className={[
+                  'h-8 w-8 rounded-full text-xs font-semibold border transition-colors duration-150',
+                  pillsDisabled ? 'cursor-not-allowed' : 'cursor-pointer',
+                  active
+                    ? pillsDisabled
+                      ? 'bg-[#BFDBFE] text-white border-[#BFDBFE]'
+                      : 'bg-[#2563EB] text-white border-[#2563EB]'
+                    : 'bg-white text-[#94A3B8] border-[#E2E8F0] ' + (pillsDisabled ? '' : 'hover:border-[#2563EB] hover:text-[#2563EB]'),
+                ].join(' ')}
+              >
+                {label}
+              </button>
+            </Tooltip>
           )
         })}
       </div>

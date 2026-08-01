@@ -19,6 +19,7 @@ import { getDepartments } from '@/lib/api/departments'
 import { getRoles } from '@/lib/api/roles'
 import { getEmployees } from '@/lib/api/employees'
 import ChecklistAccessEditor, { type LocalRule, newRuleKey } from '@/components/tasks/ChecklistAccessEditor'
+import Tooltip from '@/components/ui/Tooltip'
 import type {
   TicketMasterConfig,
   TicketType,
@@ -358,7 +359,7 @@ function PrioritiesTab({ orgId }: { orgId: string }) {
               onDrop={(e) => { e.preventDefault(); handleDrop(idx) }}
               className={`bg-white border rounded-[8px] pl-2 pr-3 py-3 flex items-center gap-2.5 transition-colors ${isDropTarget ? 'border-[#2563EB] bg-[#EFF6FF]' : 'border-[#E2E8F0]'} ${dragIndex === idx ? 'opacity-50' : ''}`}
             >
-              <span className="cursor-grab active:cursor-grabbing text-[#94A3B8] hover:text-[#475569] shrink-0" aria-label="Drag to reorder" title="Drag to reorder"><GripVertical size={16} /></span>
+              <Tooltip label="Drag to reorder"><span className="cursor-grab active:cursor-grabbing text-[#94A3B8] hover:text-[#475569] shrink-0" aria-label="Drag to reorder"><GripVertical size={16} /></span></Tooltip>
               <span className="w-7 h-7 shrink-0 flex items-center justify-center rounded-full bg-[#EFF6FF] text-[#2563EB] text-xs font-bold">{idx + 1}</span>
               <div className="w-4 h-4 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
               <span className="flex-1 min-w-0 truncate text-sm font-semibold text-[#0F172A]">{item.label}</span>
@@ -504,7 +505,7 @@ function StatusesTab({ orgId }: { orgId: string }) {
         )}
         <button type="button" onClick={() => startEdit(item)} aria-label="Rename" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"><Pencil size={13} /></button>
         {stage && (
-          <button type="button" onClick={() => handleDelete(item.id)} disabled={inProgress.length <= 1} aria-label="Remove stage" title={inProgress.length <= 1 ? 'At least one In Progress stage is required' : 'Remove stage'} className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors shrink-0"><Trash2 size={13} /></button>
+          <Tooltip label={inProgress.length <= 1 ? 'At least one In Progress stage is required' : 'Remove stage'}><button type="button" onClick={() => handleDelete(item.id)} disabled={inProgress.length <= 1} aria-label="Remove stage" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] disabled:text-[#E2E8F0] disabled:hover:bg-transparent transition-colors shrink-0"><Trash2 size={13} /></button></Tooltip>
         )}
       </div>
     )
@@ -1848,7 +1849,7 @@ function TktTemplatesTab({ orgId }: { orgId: string }) {
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={() => openEdit(item)} aria-label="Edit" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"><Pencil size={13} /></button>
                 {item.is_active && (
-                  <button onClick={() => handleArchive(item.id)} className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors" title="Archive"><Trash2 size={13} /></button>
+                  <Tooltip label="Archive"><button onClick={() => handleArchive(item.id)} aria-label="Archive" className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"><Trash2 size={13} /></button></Tooltip>
                 )}
               </div>
             </div>

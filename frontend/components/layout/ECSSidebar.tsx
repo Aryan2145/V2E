@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { FileText, ChevronLeft, ChevronRight, User, CalendarOff, CheckSquare } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface ECSSidebarProps {
   collapsed: boolean
@@ -39,13 +40,15 @@ export default function ECSSidebar({ collapsed, onToggle }: ECSSidebarProps) {
             </span>
           </div>
         )}
-        <button
-          onClick={onToggle}
-          className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
+        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <button
+            onClick={onToggle}
+            className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+        </Tooltip>
       </div>
 
       {/* Nav items */}
@@ -53,10 +56,9 @@ export default function ECSSidebar({ collapsed, onToggle }: ECSSidebarProps) {
         {NAV_ITEMS.map(({ label, href, Icon }) => {
           const active = pathname.startsWith(href)
           return (
+            <Tooltip key={href} label={collapsed ? label : undefined}>
             <Link
-              key={href}
               href={href}
-              title={collapsed ? label : undefined}
               className={[
                 'flex items-center rounded-[8px] py-2.5 text-sm font-medium transition-colors duration-150 whitespace-nowrap',
                 collapsed ? 'justify-center px-2' : 'gap-3 px-3',
@@ -68,6 +70,7 @@ export default function ECSSidebar({ collapsed, onToggle }: ECSSidebarProps) {
               <Icon size={18} className="shrink-0" />
               {!collapsed && <span>{label}</span>}
             </Link>
+            </Tooltip>
           )
         })}
       </nav>

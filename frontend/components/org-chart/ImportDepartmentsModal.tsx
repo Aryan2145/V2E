@@ -18,6 +18,7 @@ import { createDepartment, listImportBatches, createImportBatch, undoImport } fr
 import { placeUnderParent } from '@/lib/org-chart-layout'
 import { useToast } from '@/components/ui/Toast'
 import type { Department, User } from '@/lib/types'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface Props {
   orgId: string
@@ -486,13 +487,15 @@ export default function ImportDepartmentsModal({
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
           <div className="flex items-center gap-3">
             {phase === 'history' && (
+              <Tooltip label="Back to upload">
               <button
                 onClick={() => setPhase('upload')}
                 className="p-1 hover:bg-[#F1F5F9] rounded transition-colors text-[#64748B] hover:text-[#0F172A]"
-                title="Back to upload"
+                aria-label="Back to upload"
               >
                 <ArrowLeft size={16} />
               </button>
+              </Tooltip>
             )}
             <h2 className="text-[18px] font-semibold text-[#0F172A]">Import Departments</h2>
           </div>

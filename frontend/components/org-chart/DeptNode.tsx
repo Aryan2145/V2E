@@ -2,6 +2,7 @@
 import { memo } from 'react';
 import { Handle, Position } from 'reactflow';
 import { Users, Pencil } from 'lucide-react';
+import Tooltip from '@/components/ui/Tooltip';
 
 export interface DeptNodeData {
   name: string;
@@ -49,14 +50,18 @@ function DeptNode({ data, selected }: { data: DeptNodeData; selected: boolean })
         </button>
       )}
 
-      <div className="font-semibold text-sm pr-6 line-clamp-2 break-words" title={data.name}>
+      <Tooltip label={data.name}>
+      <div className="font-semibold text-sm pr-6 line-clamp-2 break-words">
         {data.name}
       </div>
+      </Tooltip>
       {/* Always reserve the head line so a box with no head is the same height
           as one with a head. */}
-      <div className="text-xs mt-1 h-4 truncate" style={{ opacity: 0.8 }} title={data.headName || undefined}>
+      <Tooltip label={data.headName || undefined}>
+      <div className="text-xs mt-1 h-4 truncate" style={{ opacity: 0.8 }}>
         {data.headName || ''}
       </div>
+      </Tooltip>
       <div className="flex items-center gap-1 mt-auto pt-2">
         <Users size={12} style={{ opacity: 0.75 }} />
         <span className="text-xs" style={{ opacity: 0.85 }}>

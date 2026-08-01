@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { tasksApi } from '@/lib/api/tasks'
 import { useToast } from '@/components/ui/Toast'
+import Tooltip from '@/components/ui/Tooltip'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { flattenTree } from '@/lib/dept-tree'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
@@ -405,10 +406,12 @@ function UpwardSection({ orgId, view, onChange, apiError }: { orgId: string; vie
               <div className="flex items-center gap-2 shrink-0">
                 {busy === dept.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
                 {covered ? (
-                  <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]" title={`Locked — merged into ${covered.name}`}>
-                    <Lock size={12} />
-                    <Toggle on disabled onChange={() => {}} />
-                  </span>
+                  <Tooltip label={`Locked — merged into ${covered.name}`}>
+                    <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]">
+                      <Lock size={12} />
+                      <Toggle on disabled onChange={() => {}} />
+                    </span>
+                  </Tooltip>
                 ) : (
                   <Toggle on={d.assignee_allow_upward} disabled={busy === dept.id} onChange={() => toggle(dept.id, !d.assignee_allow_upward)} />
                 )}
@@ -599,10 +602,12 @@ function UnifySection({ orgId, view, onChange, apiError }: { orgId: string; view
                     <div className="flex items-center gap-2 shrink-0">
                       {busy === dept.id && <Loader2 size={13} className="animate-spin text-[#94A3B8]" />}
                       {covered ? (
-                        <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]" title={`Locked — controlled by ${covered.name}`}>
-                          <Lock size={12} />
-                          <Toggle on disabled onChange={() => {}} />
-                        </span>
+                        <Tooltip label={`Locked — controlled by ${covered.name}`}>
+                          <span className="flex items-center gap-1.5 text-[11px] text-[#94A3B8]">
+                            <Lock size={12} />
+                            <Toggle on disabled onChange={() => {}} />
+                          </span>
+                        </Tooltip>
                       ) : parent ? (
                         <Toggle on={d.assignee_unify_subtree} disabled={busy === dept.id} onChange={() => toggle(dept.id, !d.assignee_unify_subtree)} />
                       ) : (
@@ -772,10 +777,8 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
                 )}
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                <div
-                  className="flex items-center gap-1.5"
-                  title={bothWays ? 'Both directions open — turn off to remove the reverse entry' : 'One-directional — turn on to also create the reverse entry (B → A)'}
-                >
+                <Tooltip label={bothWays ? 'Both directions open — turn off to remove the reverse entry' : 'One-directional — turn on to also create the reverse entry (B → A)'}>
+                <div className="flex items-center gap-1.5">
                   <span className="text-[11px] font-medium text-[#475569] hidden sm:inline">Both ways</span>
                   {bothBusy === b.id ? (
                     <Loader2 size={14} className="animate-spin text-[#94A3B8]" />
@@ -783,6 +786,7 @@ function BridgeSection({ orgId, view, deptName, onChange, apiError }: { orgId: s
                     <Toggle on={bothWays} disabled={bothBusy === b.id} onChange={() => setBidirectional(b, !bothWays)} />
                   )}
                 </div>
+                </Tooltip>
                 <button type="button" onClick={() => remove(b)} className="p-1.5 rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEF2F2] transition-colors">
                   <Trash2 size={15} />
                 </button>

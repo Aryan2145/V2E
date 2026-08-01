@@ -9,6 +9,7 @@ import { getNow } from '@/lib/clock'
 import type { Task, TaskStatus, TaskComment, TaskAttachment } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from '@/components/tasks/AssigneeAvatars'
 import StyledSelect from '@/components/ui/StyledSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import { useAuth } from '@/lib/auth/context'
 import FileDropzone from '@/components/ui/FileDropzone'
 import { AttachmentList, AttachmentChips, PendingFileList } from '@/components/ui/AttachmentList'
@@ -323,13 +324,15 @@ export default function TaskDrawer({
                     <CheckCircle2 size={15} /> Complete
                   </button>
                 )}
-                <button
-                  onClick={() => router.push(`/dashboard/tasks/${taskId}`)}
-                  title="Open full task page"
-                  className="shrink-0 w-[42px] h-[42px] rounded-[8px] border border-[#E2E8F0] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
-                >
-                  <ExternalLink size={16} />
-                </button>
+                <Tooltip label="Open full task page">
+                  <button
+                    onClick={() => router.push(`/dashboard/tasks/${taskId}`)}
+                    aria-label="Open full task page"
+                    className="shrink-0 w-[42px] h-[42px] rounded-[8px] border border-[#E2E8F0] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
+                  >
+                    <ExternalLink size={16} />
+                  </button>
+                </Tooltip>
               </div>
               {/* Comment box */}
               <div className="flex items-end gap-2">

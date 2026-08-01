@@ -15,6 +15,7 @@ import EditTaskModal from '@/components/tasks/EditTaskModal'
 import TaskChecklistCard from '@/components/tasks/TaskChecklistCard'
 import ProofOfCompletionCard from '@/components/tasks/ProofOfCompletionCard'
 import StyledSelect from '@/components/ui/StyledSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import { AttachmentChips } from '@/components/ui/AttachmentList'
 import { formatBytes } from '@/lib/attachments'
 import {
@@ -228,15 +229,15 @@ function CommentItem({
             proofAllowedExtensions.includes((a.file_name.split('.').pop() ?? '').toLowerCase())
           if (!mine || a.is_proof || !extOk) return null
           return (
-            <button
-              key={`mp-${a.id}`}
-              onClick={() => onMarkProof(a.id)}
-              disabled={markingProofId === a.id}
-              className="mt-1 mr-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] disabled:opacity-60 transition-colors"
-              title={`Use "${a.file_name}" as your proof of completion`}
-            >
-              <ShieldCheck size={12} /> Mark “{a.file_name}” as proof
-            </button>
+            <Tooltip key={`mp-${a.id}`} label={`Use "${a.file_name}" as your proof of completion`}>
+              <button
+                onClick={() => onMarkProof(a.id)}
+                disabled={markingProofId === a.id}
+                className="mt-1 mr-2 inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] disabled:opacity-60 transition-colors"
+              >
+                <ShieldCheck size={12} /> Mark “{a.file_name}” as proof
+              </button>
+            </Tooltip>
           )
         })}
         {canSubmitProof && (comment.attachments ?? []).some((a) => a.is_proof) && (
@@ -244,13 +245,15 @@ function CommentItem({
         )}
       </div>
       {comment.user_id === currentUserId && (
-        <button
-          onClick={() => setConfirmOpen(true)}
-          className="text-[#64748B] hover:text-[#DC2626] transition-colors shrink-0"
-          title="Delete comment"
-        >
-          <Trash2 size={13} />
-        </button>
+        <Tooltip label="Delete comment">
+          <button
+            onClick={() => setConfirmOpen(true)}
+            aria-label="Delete comment"
+            className="text-[#64748B] hover:text-[#DC2626] transition-colors shrink-0"
+          >
+            <Trash2 size={13} />
+          </button>
+        </Tooltip>
       )}
 
       {/* Our own confirmation dialog (no browser confirm) */}
@@ -866,25 +869,27 @@ export default function TaskDetailPage() {
       {/* Header — a small, unobtrusive back arrow, then the title; actions on the right */}
       <div className="flex items-start justify-between gap-4 flex-wrap shrink-0">
         <div className="flex items-start gap-2 min-w-0 flex-1">
-          <button
-            onClick={() => router.back()}
-            aria-label="Back"
-            title="Back"
-            className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
-          >
-            <ArrowLeft size={16} />
-          </button>
+          <Tooltip label="Back">
+            <button
+              onClick={() => router.back()}
+              aria-label="Back"
+              className="mt-1.5 w-6 h-6 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors shrink-0"
+            >
+              <ArrowLeft size={16} />
+            </button>
+          </Tooltip>
           <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight min-w-0">{task.title}</h1>
           {/* Edit — a pencil right beside the title */}
           {canEdit && (
-            <button
-              onClick={() => setShowEditModal(true)}
-              aria-label="Edit task"
-              title="Edit task"
-              className="mt-1.5 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
-            >
-              <Pencil size={16} />
-            </button>
+            <Tooltip label="Edit task">
+              <button
+                onClick={() => setShowEditModal(true)}
+                aria-label="Edit task"
+                className="mt-1.5 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
+              >
+                <Pencil size={16} />
+              </button>
+            </Tooltip>
           )}
         </div>
         <div className="flex items-start gap-2 shrink-0">
@@ -914,15 +919,16 @@ export default function TaskDetailPage() {
                 )}
                 {/* Owner override — close the whole task for everyone (heads-up if pending). */}
                 {canEdit && (
-                  <button
-                    onClick={() => (pendingNames.length > 0 ? setConfirmCompleteAll(true) : handleCompleteWholeTask())}
-                    disabled={actionLoading === 'complete'}
-                    title="Complete the whole task for everyone"
-                    className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#16A34A] border border-[#BBF7D0] bg-white rounded-[8px] hover:bg-[#F0FDF4] disabled:opacity-60 transition-colors"
-                  >
-                    <CheckCircle2 size={15} />
-                    Complete task
-                  </button>
+                  <Tooltip label="Complete the whole task for everyone">
+                    <button
+                      onClick={() => (pendingNames.length > 0 ? setConfirmCompleteAll(true) : handleCompleteWholeTask())}
+                      disabled={actionLoading === 'complete'}
+                      className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#16A34A] border border-[#BBF7D0] bg-white rounded-[8px] hover:bg-[#F0FDF4] disabled:opacity-60 transition-colors"
+                    >
+                      <CheckCircle2 size={15} />
+                      Complete task
+                    </button>
+                  </Tooltip>
                 )}
               </div>
             ) : (
@@ -943,15 +949,16 @@ export default function TaskDetailPage() {
             reopenSecondsLeft > 0 ? (
               // Undo window open — a frictionless, reason-free revert for any participant,
               // so an accidental Complete/Incomplete can be taken back. Locks when it ends.
-              <button
-                onClick={() => handleReopen()}
-                disabled={actionLoading === 'reopen'}
-                title="Undo — revert this task to open (no reason needed while the window is open)"
-                className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
-              >
-                <RotateCcw size={15} />
-                {actionLoading === 'reopen' ? 'Undoing…' : `Undo (${formatCountdown(reopenSecondsLeft)})`}
-              </button>
+              <Tooltip label="Undo — revert this task to open (no reason needed while the window is open)">
+                <button
+                  onClick={() => handleReopen()}
+                  disabled={actionLoading === 'reopen'}
+                  className="flex items-center gap-2 px-4 py-[8px] text-sm font-semibold text-[#D97706] border border-[#FDE68A] bg-[#FEF9C3] rounded-[8px] hover:bg-[#FDE68A] disabled:opacity-60 transition-colors"
+                >
+                  <RotateCcw size={15} />
+                  {actionLoading === 'reopen' ? 'Undoing…' : `Undo (${formatCountdown(reopenSecondsLeft)})`}
+                </button>
+              </Tooltip>
             ) : isCreator ? (
               // After the window it's locked — only the creator can reopen, with a reason.
               <button
@@ -988,16 +995,17 @@ export default function TaskDetailPage() {
           {/* Overflow menu — holds the Activity log and the (destructive) Delete
               action, so neither gets a prominent primary button. */}
           <div ref={actionsMenuRef} className="relative">
-            <button
-              onClick={() => setShowActionsMenu((v) => !v)}
-              aria-label="More actions"
-              aria-haspopup="menu"
-              aria-expanded={showActionsMenu}
-              title="More"
-              className="w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] hover:text-[#0F172A] transition-colors"
-            >
-              <MoreVertical size={16} />
-            </button>
+            <Tooltip label="More">
+              <button
+                onClick={() => setShowActionsMenu((v) => !v)}
+                aria-label="More actions"
+                aria-haspopup="menu"
+                aria-expanded={showActionsMenu}
+                className="w-9 h-9 rounded-[8px] flex items-center justify-center text-[#475569] border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] hover:text-[#0F172A] transition-colors"
+              >
+                <MoreVertical size={16} />
+              </button>
+            </Tooltip>
             {showActionsMenu && (
               <div
                 role="menu"
@@ -1276,16 +1284,17 @@ export default function TaskDetailPage() {
                         <FileText size={12} className="shrink-0" />
                         <span className="truncate">{f.name}</span>
                         <span className="text-[#64748B] shrink-0">{formatBytes(f.size)}</span>
-                        <button
-                          type="button"
-                          onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== i))}
-                          disabled={sendingComment}
-                          className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[#2563EB] hover:bg-[#BFDBFE] hover:text-[#1D4ED8] disabled:opacity-50 transition-colors"
-                          title="Remove file"
-                          aria-label={`Remove ${f.name}`}
-                        >
-                          <X size={11} />
-                        </button>
+                        <Tooltip label="Remove file">
+                          <button
+                            type="button"
+                            onClick={() => setCommentFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                            disabled={sendingComment}
+                            className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-[#2563EB] hover:bg-[#BFDBFE] hover:text-[#1D4ED8] disabled:opacity-50 transition-colors"
+                            aria-label={`Remove ${f.name}`}
+                          >
+                            <X size={11} />
+                          </button>
+                        </Tooltip>
                       </span>
                     ))}
                   </div>
@@ -1320,25 +1329,27 @@ export default function TaskDetailPage() {
                     className="flex-1 min-w-0 border-0 bg-transparent px-1 py-[6px] text-sm text-[#0F172A] placeholder:text-[#64748B] focus:outline-none resize-none max-h-[120px] overflow-y-auto"
                   />
                   {/* Attach files — sits right before Send */}
-                  <button
-                    type="button"
-                    onClick={() => commentFileInputRef.current?.click()}
-                    disabled={sendingComment || isFutureTask}
-                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#2563EB] disabled:text-[#CBD5E1] disabled:cursor-not-allowed transition-colors"
-                    title="Attach files"
-                    aria-label="Attach files"
-                  >
-                    <Paperclip size={16} className="-rotate-45" />
-                  </button>
-                  <button
-                    onClick={handleSendComment}
-                    disabled={sendingComment || isFutureTask || (!commentText.trim() && commentFiles.length === 0)}
-                    title="Send"
-                    aria-label="Send"
-                    className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#64748B] disabled:cursor-not-allowed transition-colors"
-                  >
-                    <Send size={15} />
-                  </button>
+                  <Tooltip label="Attach files">
+                    <button
+                      type="button"
+                      onClick={() => commentFileInputRef.current?.click()}
+                      disabled={sendingComment || isFutureTask}
+                      className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-[#475569] hover:bg-[#F1F5F9] hover:text-[#2563EB] disabled:text-[#CBD5E1] disabled:cursor-not-allowed transition-colors"
+                      aria-label="Attach files"
+                    >
+                      <Paperclip size={16} className="-rotate-45" />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label="Send">
+                    <button
+                      onClick={handleSendComment}
+                      disabled={sendingComment || isFutureTask || (!commentText.trim() && commentFiles.length === 0)}
+                      aria-label="Send"
+                      className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center text-white bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#64748B] disabled:cursor-not-allowed transition-colors"
+                    >
+                      <Send size={15} />
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
               {commentError && (
@@ -1686,17 +1697,18 @@ export default function TaskDetailPage() {
                 </div>
                 {/* Only the assigner / admin may add files here — solid blue + button. */}
                 {canEdit && (
-                  <button
-                    type="button"
-                    onClick={() => attachInputRef.current?.click()}
-                    disabled={uploadingAttachment}
-                    aria-label="Add attachment"
-                    title="Add attachment"
-                    className="flex items-center gap-1 text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[6px] pl-1.5 pr-2 py-1 disabled:opacity-60 transition-colors"
-                  >
-                    <Plus size={14} />
-                    Add
-                  </button>
+                  <Tooltip label="Add attachment">
+                    <button
+                      type="button"
+                      onClick={() => attachInputRef.current?.click()}
+                      disabled={uploadingAttachment}
+                      aria-label="Add attachment"
+                      className="flex items-center gap-1 text-xs font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[6px] pl-1.5 pr-2 py-1 disabled:opacity-60 transition-colors"
+                    >
+                      <Plus size={14} />
+                      Add
+                    </button>
+                  </Tooltip>
                 )}
               </div>
               <div className="p-4">
@@ -1707,23 +1719,26 @@ export default function TaskDetailPage() {
                     {allAttachments.map((a) => (
                       <div key={a.id} className="flex items-start gap-2.5">
                         {/* Download */}
-                        <button
-                          type="button"
-                          onClick={() => tasksApi.downloadAttachment(orgId, taskId, a.id)}
-                          title="Download"
-                          className="w-7 h-7 rounded-[6px] bg-[#EFF6FF] flex items-center justify-center shrink-0 hover:bg-[#DBEAFE] transition-colors"
-                        >
-                          <Download size={13} className="text-[#2563EB]" />
-                        </button>
-                        <div className="min-w-0 flex-1">
+                        <Tooltip label="Download">
                           <button
                             type="button"
                             onClick={() => tasksApi.downloadAttachment(orgId, taskId, a.id)}
-                            className="block max-w-full text-left text-sm font-medium text-[#0F172A] hover:text-[#2563EB] truncate transition-colors"
-                            title={a.file_name}
+                            aria-label="Download"
+                            className="w-7 h-7 rounded-[6px] bg-[#EFF6FF] flex items-center justify-center shrink-0 hover:bg-[#DBEAFE] transition-colors"
                           >
-                            {a.file_name}
+                            <Download size={13} className="text-[#2563EB]" />
                           </button>
+                        </Tooltip>
+                        <div className="min-w-0 flex-1">
+                          <Tooltip label={a.file_name}>
+                            <button
+                              type="button"
+                              onClick={() => tasksApi.downloadAttachment(orgId, taskId, a.id)}
+                              className="block max-w-full text-left text-sm font-medium text-[#0F172A] hover:text-[#2563EB] truncate transition-colors"
+                            >
+                              {a.file_name}
+                            </button>
+                          </Tooltip>
                           {/* Who shared it + where + when */}
                           <p className="text-[11px] text-[#64748B] truncate">
                             {a.uploaded_by_name ?? 'Unknown'}
@@ -1732,14 +1747,16 @@ export default function TaskDetailPage() {
                         </div>
                         {/* Remove — uploader only */}
                         {a.uploaded_by_user_id === user?.id && !isFutureTask && (
-                          <button
-                            type="button"
-                            onClick={() => setAttachmentToDelete(a)}
-                            title="Remove"
-                            className="text-[#64748B] hover:text-[#DC2626] shrink-0 transition-colors"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          <Tooltip label="Remove">
+                            <button
+                              type="button"
+                              onClick={() => setAttachmentToDelete(a)}
+                              aria-label="Remove"
+                              className="text-[#64748B] hover:text-[#DC2626] shrink-0 transition-colors"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </Tooltip>
                         )}
                       </div>
                     ))}
@@ -1865,13 +1882,14 @@ export default function TaskDetailPage() {
                                       <CheckCircle2 size={12} /> Completed
                                     </span>
                                     {canEdit && reopenPartTarget !== a.user_id && (
-                                      <button
-                                        onClick={() => { setReopenPartReason(''); setReopenPartTarget(a.user_id) }}
-                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
-                                        title={`Reopen ${name}'s part for rework`}
-                                      >
-                                        <RotateCcw size={11} /> Reopen
-                                      </button>
+                                      <Tooltip label={`Reopen ${name}'s part for rework`}>
+                                        <button
+                                          onClick={() => { setReopenPartReason(''); setReopenPartTarget(a.user_id) }}
+                                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+                                        >
+                                          <RotateCcw size={11} /> Reopen
+                                        </button>
+                                      </Tooltip>
                                     )}
                                   </div>
                                 ) : a.cannot_complete ? (
@@ -1882,13 +1900,14 @@ export default function TaskDetailPage() {
                                       <XCircle size={12} /> Incomplete
                                     </span>
                                     {canEdit && reopenPartTarget !== a.user_id && (
-                                      <button
-                                        onClick={() => { setReopenPartReason(''); setReopenPartTarget(a.user_id) }}
-                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
-                                        title={`Reopen ${name}'s part`}
-                                      >
-                                        <RotateCcw size={11} /> Reopen
-                                      </button>
+                                      <Tooltip label={`Reopen ${name}'s part`}>
+                                        <button
+                                          onClick={() => { setReopenPartReason(''); setReopenPartTarget(a.user_id) }}
+                                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:text-[#1D4ED8] transition-colors"
+                                        >
+                                          <RotateCcw size={11} /> Reopen
+                                        </button>
+                                      </Tooltip>
                                     )}
                                   </div>
                                 ) : !editable ? (
@@ -1913,14 +1932,15 @@ export default function TaskDetailPage() {
                                 options={openStatuses.map((s) => ({ value: s.id, label: s.label, color: s.color }))}
                                 wrapperClassName="flex-1 min-w-0"
                               />
-                              <button
-                                onClick={() => handleCompleteAssignee(a.user_id)}
-                                disabled={actionLoading === `complete-${a.user_id}`}
-                                title={`Mark ${name}'s part complete`}
-                                className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2.5 py-1 hover:bg-[#DCFCE7] disabled:opacity-60 transition-colors"
-                              >
-                                <CheckCircle2 size={12} /> Done
-                              </button>
+                              <Tooltip label={`Mark ${name}'s part complete`}>
+                                <button
+                                  onClick={() => handleCompleteAssignee(a.user_id)}
+                                  disabled={actionLoading === `complete-${a.user_id}`}
+                                  className="shrink-0 flex items-center gap-1 text-[11px] font-semibold text-[#16A34A] bg-[#F0FDF4] border border-[#BBF7D0] rounded-full px-2.5 py-1 hover:bg-[#DCFCE7] disabled:opacity-60 transition-colors"
+                                >
+                                  <CheckCircle2 size={12} /> Done
+                                </button>
+                              </Tooltip>
                             </div>
                           )}
 

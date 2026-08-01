@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useAuth } from '@/lib/auth/context'
 import { ticketsApi } from '@/lib/api/tickets'
+import HoverTip from '@/components/ui/Tooltip'
 import type {
   TicketReportResolutionTime,
   TicketReportBreakdown,
@@ -551,7 +552,7 @@ const backlogColumns: ResponsiveColumn<BacklogRow>[] = [
     cellClassName: 'text-[#0F172A] font-medium',
     render: (t) => (
       <span className="flex items-center gap-2">
-        {t.sla_breached && <span className="w-2 h-2 rounded-full bg-[#DC2626] shrink-0" title="SLA breached" />}
+        {t.sla_breached && <HoverTip label="SLA breached"><span className="w-2 h-2 rounded-full bg-[#DC2626] shrink-0" /></HoverTip>}
         <span className="truncate">{t.title}</span>
       </span>
     ),

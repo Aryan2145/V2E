@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bold, Italic, Heading, List } from 'lucide-react'
 import { renderMarkdown } from '@/lib/markdown'
+import Tooltip from '@/components/ui/Tooltip'
 
 // A true WYSIWYG editor. Clicking Bold makes the selected text bold ON SCREEN —
 // no symbols shown to the user. Stores plain markdown under the hood (so the
@@ -115,10 +116,10 @@ export default function RichEditor({
     <div className="border border-[#CBD5E1] rounded-[8px] focus-within:border-[#2563EB] focus-within:ring-1 focus-within:ring-[#2563EB] overflow-hidden">
       <div className="flex items-center gap-0.5 px-1.5 py-1 border-b border-[#E2E8F0] bg-[#F8FAFC]">
         {/* preventDefault keeps the text selection while the button is pressed */}
-        <button type="button" title="Bold" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('bold')} className={toolBtn}><Bold size={15} /></button>
-        <button type="button" title="Italic" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('italic')} className={toolBtn}><Italic size={15} /></button>
-        <button type="button" title="Heading" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('formatBlock', 'H3')} className={toolBtn}><Heading size={15} /></button>
-        <button type="button" title="Bullet list" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('insertUnorderedList')} className={toolBtn}><List size={15} /></button>
+        <Tooltip label="Bold"><button type="button" aria-label="Bold" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('bold')} className={toolBtn}><Bold size={15} /></button></Tooltip>
+        <Tooltip label="Italic"><button type="button" aria-label="Italic" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('italic')} className={toolBtn}><Italic size={15} /></button></Tooltip>
+        <Tooltip label="Heading"><button type="button" aria-label="Heading" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('formatBlock', 'H3')} className={toolBtn}><Heading size={15} /></button></Tooltip>
+        <Tooltip label="Bullet list"><button type="button" aria-label="Bullet list" onMouseDown={(e) => e.preventDefault()} onClick={() => cmd('insertUnorderedList')} className={toolBtn}><List size={15} /></button></Tooltip>
       </div>
       <div className="relative">
         <div

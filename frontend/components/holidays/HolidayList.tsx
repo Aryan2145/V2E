@@ -5,6 +5,7 @@ import { Pencil, Trash2, RefreshCw, Check, X } from 'lucide-react'
 import type { OrgHoliday, DepartmentHoliday, IndividualHoliday, HolidayType } from '@/lib/types/holidays'
 import { parseLocalDate, dateOnly } from '@/lib/date'
 import DatePicker from '@/components/ui/DatePicker'
+import Tooltip from '@/components/ui/Tooltip'
 
 type AnyHoliday = OrgHoliday | DepartmentHoliday | IndividualHoliday
 
@@ -105,9 +106,11 @@ export default function HolidayList({ holidays, onDelete, onUpdate, emptyText = 
                   </span>
                 )}
                 {h.is_recurring_yearly && (
-                  <span title="Repeats yearly" className="shrink-0">
-                    <RefreshCw size={13} className="text-[#94A3B8]" />
-                  </span>
+                  <Tooltip label="Repeats yearly">
+                    <span aria-label="Repeats yearly" className="shrink-0">
+                      <RefreshCw size={13} className="text-[#94A3B8]" />
+                    </span>
+                  </Tooltip>
                 )}
                 <button
                   type="button"

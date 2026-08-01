@@ -15,6 +15,7 @@ import {
 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import { useToast } from '@/components/ui/Toast'
 import { delegationsApi, type Delegation } from '@/lib/api/delegations'
 import { StatusPill, fmtDate } from './delegationUtils'
@@ -136,12 +137,13 @@ export default function DelegationDetailModal({
               <ul className="flex flex-col gap-1.5">
                 {delegation.criteria.map((c) => (
                   <li key={c.id} className="flex items-start gap-2.5">
+                    <Tooltip label={c.is_met ? 'Mark not met' : 'Mark met'}>
                     <button
                       type="button"
                       onClick={() => toggleCriterion(c.id, !c.is_met)}
                       disabled={!isActive}
+                      aria-label={c.is_met ? 'Mark not met' : 'Mark met'}
                       className="mt-0.5 shrink-0 disabled:cursor-not-allowed"
-                      title={c.is_met ? 'Mark not met' : 'Mark met'}
                     >
                       {c.is_met ? (
                         <CheckCircle2 size={18} className="text-[#16A34A]" />
@@ -149,6 +151,7 @@ export default function DelegationDetailModal({
                         <Circle size={18} className="text-[#CBD5E1]" />
                       )}
                     </button>
+                    </Tooltip>
                     <div className="min-w-0">
                       <p className={`text-sm ${c.is_met ? 'text-[#94A3B8] line-through' : 'text-[#1E293B]'}`}>
                         {c.description}

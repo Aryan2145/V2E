@@ -5,6 +5,7 @@ import { ChevronRight, ExternalLink } from 'lucide-react'
 import { addTiming, emptyTiming, type PersonNode, type TimingCounts } from '@/lib/types/tasks'
 import TimingMiniBar from './TimingMiniBar'
 import TimingLegend from './TimingLegend'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface PersonStat {
   user_id: string
@@ -107,9 +108,11 @@ export default function PeopleLeaderboard({
                   <span className="text-xs tabular-nums whitespace-nowrap" style={{ color: s.teamOverdueRate >= 25 ? '#DC2626' : '#475569' }}>
                     <span className="font-bold">{s.teamOverdueRate}%</span> overdue{s.isManager ? ' (team)' : ''}
                   </span>
-                  <button onClick={() => onOpenReport(s.user_id)} title="Open report" className="text-[#94A3B8] hover:text-[#2563EB]">
-                    <ExternalLink size={13} />
-                  </button>
+                  <Tooltip label="Open report">
+                    <button onClick={() => onOpenReport(s.user_id)} aria-label="Open report" className="text-[#94A3B8] hover:text-[#2563EB]">
+                      <ExternalLink size={13} />
+                    </button>
+                  </Tooltip>
                 </div>
               </div>
               <div className="grid items-center gap-x-2.5 gap-y-1" style={{ gridTemplateColumns: '58px 1fr auto' }}>

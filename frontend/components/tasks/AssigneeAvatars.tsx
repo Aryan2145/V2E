@@ -1,6 +1,7 @@
 'use client'
 
 import React from 'react'
+import Tooltip from '@/components/ui/Tooltip'
 
 export interface AvatarPerson {
   id: string
@@ -38,8 +39,9 @@ const SIZES = {
 } as const
 
 /**
- * Overlapping initials avatars with a rich hover tooltip
- * (full name, role · department, Assignee/CC). CC avatars render muted.
+ * Overlapping initials avatars with a rich hover tooltip (full name, role · department,
+ * Assignee/CC). The tooltip is portaled (see Tooltip) so it renders above the sidebar and
+ * is never clipped by the scrolling task list. CC avatars render muted.
  */
 export default function AssigneeAvatars({
   people,
@@ -58,22 +60,12 @@ export default function AssigneeAvatars({
   return (
     <div className={`flex ${s.overlap}`}>
       {visible.map((p) => (
-        <div key={p.id} className="relative group/avatar">
-          <div
-            className={[
-              `${s.circle} rounded-full flex items-center justify-center font-bold border-2 border-white cursor-default`,
-              p.isCC
-                ? 'bg-[#F1F5F9] text-[#64748B] ring-1 ring-[#CBD5E1]'
-                : `${avatarColor(p.name)} text-white`,
-            ].join(' ')}
-          >
-            {getInitials(p.name)}
-          </div>
-          {/* Tooltip */}
-          <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/avatar:block z-50">
-            <div className="rounded-[8px] bg-[#0F172A] px-3 py-2 shadow-[0_4px_16px_rgba(0,0,0,0.25)] text-left w-max max-w-[240px]">
-              <div className="flex items-center gap-2">
-                <p className="text-xs font-semibold text-white whitespace-nowrap">{p.name}</p>
+        <Tooltip
+          key={p.id}
+          label={
+            <span className="block text-left">
+              <span className="flex items-center gap-2">
+                <span className="font-semibold text-white whitespace-nowrap">{p.name}</span>
                 <span
                   className={[
                     'inline-flex items-center rounded-[999px] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide',
@@ -82,25 +74,33 @@ export default function AssigneeAvatars({
                 >
                   {p.isCC ? 'CC' : 'Assignee'}
                 </span>
-              </div>
+              </span>
               {(p.role || p.department) && (
-                <p className="text-[11px] text-[#94A3B8] mt-0.5 whitespace-nowrap">
+                <span className="mt-0.5 block text-[10px] text-[#94A3B8] whitespace-nowrap">
                   {[p.role, p.department].filter(Boolean).join(' · ')}
-                </p>
+                </span>
               )}
-            </div>
-            {/* Arrow */}
-            <div className="mx-auto w-2 h-2 -mt-1 rotate-45 bg-[#0F172A]" />
+            </span>
+          }
+        >
+          <div
+            className={[
+              `${s.circle} rounded-full flex items-center justify-center font-bold border-2 border-white cursor-default`,
+              p.isCC ? 'bg-[#F1F5F9] text-[#64748B] ring-1 ring-[#CBD5E1]' : `${avatarColor(p.name)} text-white`,
+            ].join(' ')}
+          >
+            {getInitials(p.name)}
           </div>
-        </div>
+        </Tooltip>
       ))}
       {extra > 0 && (
-        <div
-          className={`${s.circle} rounded-full bg-[#E2E8F0] flex items-center justify-center text-[#475569] font-bold border-2 border-white`}
-          title={people.slice(max).map((p) => p.name).join(', ')}
-        >
-          +{extra}
-        </div>
+        <Tooltip label={people.slice(max).map((p) => p.name).join(', ')}>
+          <div
+            className={`${s.circle} rounded-full bg-[#E2E8F0] flex items-center justify-center text-[#475569] font-bold border-2 border-white cursor-default`}
+          >
+            +{extra}
+          </div>
+        </Tooltip>
       )}
     </div>
   )

@@ -18,6 +18,7 @@ import { useAuth } from '@/lib/auth/context'
 import { useToast } from '@/components/ui/Toast'
 import Button from '@/components/ui/Button'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import { clearPermissionsCache } from '@/lib/auth/use-permissions'
 import {
   getPermissionRegistry,
@@ -171,12 +172,13 @@ function ScopeSelect({
 }
 
 const BroadenedBadge = () => (
+  <Tooltip label="Broader than the default above it">
   <span
-    title="Broader than the default above it"
     className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#D97706] bg-[#FEF3C7] border border-[#FDE68A] rounded-[999px] px-1.5 py-0.5"
   >
     <ArrowUp size={10} /> broadened
   </span>
+  </Tooltip>
 )
 
 function deriveFromMatrix(m: RoleMatrix): Derived {
@@ -675,12 +677,13 @@ export default function AccessControlPage() {
   }
 
   const BroadenedBadge = () => (
+    <Tooltip label="Broader than the default above it">
     <span
-      title="Broader than the default above it"
       className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#D97706] bg-[#FEF3C7] border border-[#FDE68A] rounded-[999px] px-1.5 py-0.5"
     >
       <ArrowUp size={10} /> broadened
     </span>
+    </Tooltip>
   )
 
   // ─── Render ────────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Calendar, Check, Loader2, RefreshCw, X } from 'lucide-react'
 import { meetingsApi, type GoogleSyncStatus } from '@/lib/api/meetings'
+import Tooltip from '@/components/ui/Tooltip'
 
 // Per-user Google Calendar connection control for the meetings header.
 // Controlled by the page (status + onChanged) so the calendar's reverse view and
@@ -95,10 +96,10 @@ export default function GoogleCalendarConnect({
   return (
     <>
       {renderTrigger && (
+        <Tooltip label={connected ? 'Google Calendar — connected' : 'Connect Google Calendar'}>
         <button
           onClick={() => setOpen(true)}
           className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]"
-          title={connected ? 'Google Calendar — connected' : 'Connect Google Calendar'}
         >
           <span
             className="w-2 h-2 rounded-full shrink-0"
@@ -107,6 +108,7 @@ export default function GoogleCalendarConnect({
           <Calendar size={16} />
           <span className="hidden sm:inline">Google Calendar</span>
         </button>
+        </Tooltip>
       )}
 
       {mounted &&

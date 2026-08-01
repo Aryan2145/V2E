@@ -5,6 +5,7 @@ import { Handle, Position } from 'reactflow'
 import { Zap } from 'lucide-react'
 import { levelColors } from '@/lib/role-levels'
 import { NODE_W } from '@/lib/employee-tree'
+import Tooltip from '@/components/ui/Tooltip'
 import type { EmployeeStatus, RoleLevel } from '@/lib/types'
 
 export interface EmployeeNodeData {
@@ -45,18 +46,20 @@ function EmployeeNode({ data }: { data: EmployeeNodeData }) {
       {/* Hidden-neighbour markers: a dot above means this person reports to
           someone filtered out; a dot below means they have reports filtered out. */}
       {hiddenManager && (
+        <Tooltip label="Reports to someone hidden by the current filter">
         <span
-          title="Reports to someone hidden by the current filter"
           className="pointer-events-none absolute -top-[7px] left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
           style={{ backgroundColor: color }}
         />
+        </Tooltip>
       )}
       {hiddenReports && (
+        <Tooltip label="Has reports hidden by the current filter">
         <span
-          title="Has reports hidden by the current filter"
           className="pointer-events-none absolute -bottom-[7px] left-1/2 -translate-x-1/2 w-2.5 h-2.5 rounded-full border-2 border-white shadow-sm"
           style={{ backgroundColor: color }}
         />
+        </Tooltip>
       )}
 
       {/* Hover details card */}

@@ -32,6 +32,7 @@ import {
   NODE_H,
 } from '@/lib/employee-tree'
 import EmployeeNode, { type EmployeeNodeData } from './EmployeeNode'
+import Tooltip from '@/components/ui/Tooltip'
 import type { Department, EmployeeProfile, EmployeeStatus } from '@/lib/types'
 
 interface Props {
@@ -299,18 +300,20 @@ function EmpCard({
       }`}
     >
       {hidden?.hiddenManager && (
+        <Tooltip label="Reports to someone hidden by the current filter">
         <span
-          title="Reports to someone hidden by the current filter"
           className="pointer-events-none absolute -top-[6px] left-6 w-2 h-2 rounded-full border-2 border-white shadow-sm"
           style={{ backgroundColor: color }}
         />
+        </Tooltip>
       )}
       {hidden?.hiddenReports && (
+        <Tooltip label="Has reports hidden by the current filter">
         <span
-          title="Has reports hidden by the current filter"
           className="pointer-events-none absolute -bottom-[6px] left-6 w-2 h-2 rounded-full border-2 border-white shadow-sm"
           style={{ backgroundColor: color }}
         />
+        </Tooltip>
       )}
       <span
         className="w-9 h-9 shrink-0 rounded-full inline-flex items-center justify-center text-[11px] font-bold text-white"

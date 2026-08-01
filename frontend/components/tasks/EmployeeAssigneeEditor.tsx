@@ -6,6 +6,7 @@ import { tasksApi } from '@/lib/api/tasks'
 import { getEmployees } from '@/lib/api/employees'
 import { useToast } from '@/components/ui/Toast'
 import Modal from '@/components/ui/Modal'
+import Tooltip from '@/components/ui/Tooltip'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { flattenTree } from '@/lib/dept-tree'
 import type { Department } from '@/lib/types'
@@ -397,12 +398,11 @@ export default function EmployeeAssigneeEditor({
                       {preview.employee.role_title}
                       {preview.employee.department_name ? ` · ${preview.employee.department_name}` : ''}
                     </span>
-                    <span
-                      title={`Can assign to ${memberCount} of ${totalActive}`}
-                      className="shrink-0 font-semibold text-[#0F172A] tabular-nums"
-                    >
-                      · {memberCount}/{totalActive}
-                    </span>
+                    <Tooltip label={`Can assign to ${memberCount} of ${totalActive}`}>
+                      <span className="shrink-0 font-semibold text-[#0F172A] tabular-nums">
+                        · {memberCount}/{totalActive}
+                      </span>
+                    </Tooltip>
                   </div>
                 </div>
                 {/* Why + Save */}
@@ -413,11 +413,11 @@ export default function EmployeeAssigneeEditor({
                 >
                   <HelpCircle size={15} /> Why?
                 </button>
+                <Tooltip label={dirty ? 'Save changes' : 'All changes saved'}>
                 <button
                   type="button"
                   onClick={save}
                   disabled={!dirty || saving}
-                  title={dirty ? 'Save changes' : 'All changes saved'}
                   aria-label="Save"
                   className={`w-9 h-9 flex items-center justify-center rounded-[8px] transition-colors shrink-0 ${
                     !dirty || saving ? 'bg-[#E2E8F0] text-[#94A3B8] cursor-not-allowed' : 'bg-[#2563EB] text-white hover:bg-[#1D4ED8]'
@@ -425,6 +425,7 @@ export default function EmployeeAssigneeEditor({
                 >
                   {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={18} strokeWidth={3} />}
                 </button>
+                </Tooltip>
               </div>
 
               {/* Controls */}

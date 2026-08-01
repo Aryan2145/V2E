@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react'
 import { GitBranch, Play, Edit2, MoreVertical, Archive, Users, Calendar, Zap, CheckCircle2 } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 import type { WorkflowTemplate } from '@/lib/types/workflows'
 
 const avatarColors = [
@@ -112,13 +113,13 @@ export default function WorkflowCard({ workflow, onTrigger, onEdit, onArchive, c
         {workflow.triggers && workflow.triggers.length > 0 && (
           <div className="flex items-center gap-1">
             {workflow.triggers.map((t) => (
+              <Tooltip key={t.id} label={t.type.replace(/_/g, ' ')}>
               <span
-                key={t.id}
-                title={t.type.replace(/_/g, ' ')}
                 className="text-[13px] px-1.5 py-0.5 rounded-[4px] bg-[#F1F5F9] text-[#475569]"
               >
                 {TRIGGER_ICONS[t.type] ?? '🔧'}
               </span>
+              </Tooltip>
             ))}
           </div>
         )}

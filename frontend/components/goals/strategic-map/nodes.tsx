@@ -4,6 +4,7 @@ import { createContext, useContext } from 'react'
 import { ChevronRight, User, CalendarDays, Target, GitBranch } from 'lucide-react'
 import { PERSPECTIVE_META, type Goal } from '@/lib/types/goals'
 import { GoalStatusBadge, ProgressBar, formatDate } from '../shared'
+import Tooltip from '@/components/ui/Tooltip'
 
 // Slate accent for objectives.
 const OBJECTIVE_STYLE = { accent: '#334155', text: '#334155' }
@@ -93,20 +94,21 @@ export function GoalCard({
           <GoalStatusBadge status={goal.status} />
         </div>
         {subCount > 0 && (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onToggle(goal.id) }}
-            disabled={!toggleable}
-            className={`mt-2 inline-flex items-center gap-1 rounded-[6px] border px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
-              expanded
-                ? 'border-[#BFDBFE] bg-[#EFF6FF] text-[#2563EB]'
-                : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-[#F8FAFC]'
-            } ${toggleable ? '' : 'cursor-default opacity-90'}`}
-            title={toggleable ? (expanded ? 'Hide sub-goals' : 'Show sub-goals') : 'Use the master switch to toggle all'}
-          >
-            <ChevronRight size={11} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
-            {subCount} sub-goal{subCount === 1 ? '' : 's'}
-          </button>
+          <Tooltip label={toggleable ? (expanded ? 'Hide sub-goals' : 'Show sub-goals') : 'Use the master switch to toggle all'}>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onToggle(goal.id) }}
+              disabled={!toggleable}
+              className={`mt-2 inline-flex items-center gap-1 rounded-[6px] border px-1.5 py-0.5 text-[11px] font-medium transition-colors ${
+                expanded
+                  ? 'border-[#BFDBFE] bg-[#EFF6FF] text-[#2563EB]'
+                  : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-[#F8FAFC]'
+              } ${toggleable ? '' : 'cursor-default opacity-90'}`}
+            >
+              <ChevronRight size={11} className={`transition-transform ${expanded ? 'rotate-90' : ''}`} />
+              {subCount} sub-goal{subCount === 1 ? '' : 's'}
+            </button>
+          </Tooltip>
         )}
       </div>
     </div>
@@ -132,12 +134,11 @@ export function SubGoalCard({ goal, crossPerspective }: { goal: Goal; crossPersp
             Sub-goal
           </span>
           {crossPerspective && (
-            <span
-              className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[#94A3B8]"
-              title={`Different perspective from its parent goal · ${PERSPECTIVE_META[p].label}`}
-            >
-              <GitBranch size={10} /> {PERSPECTIVE_META[p].short}
-            </span>
+            <Tooltip label={`Different perspective from its parent goal · ${PERSPECTIVE_META[p].label}`}>
+              <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-[#94A3B8]">
+                <GitBranch size={10} /> {PERSPECTIVE_META[p].short}
+              </span>
+            </Tooltip>
           )}
         </div>
         <p className="text-[13px] font-medium text-[#0F172A] leading-snug line-clamp-2">{goal.title}</p>

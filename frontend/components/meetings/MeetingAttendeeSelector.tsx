@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Search, Plus, Check } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 export interface PersonOption {
   user_id: string
@@ -68,16 +69,17 @@ function AttendeeChip({
       </div>
       <span className="text-xs font-medium text-[#0F172A] truncate">{person.name.split(' ')[0]}</span>
       {showToggle && (
-        <button
-          type="button"
-          onClick={onToggleOptional}
-          title={isOptional ? 'Click to make Required' : 'Click to make Optional'}
-          className={`text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 transition-colors shrink-0 border ${
-            isOptional ? 'bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]' : 'bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]'
-          }`}
-        >
-          {isOptional ? 'Optional' : 'Required'}
-        </button>
+        <Tooltip label={isOptional ? 'Click to make Required' : 'Click to make Optional'}>
+          <button
+            type="button"
+            onClick={onToggleOptional}
+            className={`text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 transition-colors shrink-0 border ${
+              isOptional ? 'bg-[#F1F5F9] text-[#64748B] border-[#E2E8F0]' : 'bg-[#EFF6FF] text-[#2563EB] border-[#BFDBFE]'
+            }`}
+          >
+            {isOptional ? 'Optional' : 'Required'}
+          </button>
+        </Tooltip>
       )}
       <button type="button" onClick={onRemove} className="w-4 h-4 flex items-center justify-center text-[#94A3B8] hover:text-[#DC2626] transition-colors shrink-0" aria-label={`Remove ${person.name}`}>
         <X size={11} />
@@ -220,12 +222,11 @@ export default function MeetingAttendeeSelector({
                   const reason = ineligibleReasons[p.user_id]
                   const blocked = !!reason && !selected
                   return (
+                    <Tooltip key={p.user_id} label={blocked ? reason : undefined}>
                     <button
-                      key={p.user_id}
                       type="button"
                       onClick={() => toggle(p.user_id)}
                       disabled={blocked}
-                      title={blocked ? reason : undefined}
                       className={`w-full flex items-center gap-3 px-3 py-2.5 text-left transition-colors ${
                         blocked ? 'opacity-55 cursor-not-allowed' : selected ? 'bg-[#EFF6FF]' : 'hover:bg-[#F8FAFC]'
                       }`}
@@ -249,6 +250,7 @@ export default function MeetingAttendeeSelector({
                         </span>
                       )}
                     </button>
+                    </Tooltip>
                   )
                 })
               )}

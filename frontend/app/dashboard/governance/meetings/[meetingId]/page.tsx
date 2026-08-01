@@ -18,6 +18,7 @@ import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { LINK_TYPE_LABEL, TYPE_LABEL, type Meeting, type MeetingAnalytics, type MeetingRhythm } from '@/lib/types/meetings'
 import { StatusBadge, ResponseBadge, fmtDate, fmtDateTime, fmtTime, useMeetingPermissions } from '@/components/meetings/shared'
+import Tooltip from '@/components/ui/Tooltip'
 import MeetingRecordTab from '@/components/meetings/MeetingRecordTab'
 import BusyTimesPanel from '@/components/meetings/BusyTimesPanel'
 import EditMeetingModal from '@/components/meetings/EditMeetingModal'
@@ -324,7 +325,7 @@ function PeopleCard({ meeting, orgId, canManage, onChanged, nameOf }: { meeting:
           <div key={a.id} className="flex items-center justify-between gap-2 border border-[#E2E8F0] rounded-[8px] px-2.5 py-2">
             <div className="flex items-center gap-2 min-w-0">
               {canMarkAttendance ? (
-                <button onClick={() => toggleAttended(a.user_id, !a.attended)} className="text-[#475569] shrink-0" aria-label="Toggle attended" title="Mark attended">{a.attended ? <CheckCircle2 size={17} className="text-[#16A34A]" /> : <Circle size={17} className="text-[#CBD5E1]" />}</button>
+                <Tooltip label="Mark attended"><button onClick={() => toggleAttended(a.user_id, !a.attended)} className="text-[#475569] shrink-0" aria-label="Toggle attended">{a.attended ? <CheckCircle2 size={17} className="text-[#16A34A]" /> : <Circle size={17} className="text-[#CBD5E1]" />}</button></Tooltip>
               ) : a.attended ? <CheckCircle2 size={17} className="text-[#16A34A] shrink-0" /> : null}
               <div className="min-w-0">
                 <span className="text-[14px] text-[#0F172A]">

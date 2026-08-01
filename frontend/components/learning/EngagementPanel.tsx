@@ -5,6 +5,7 @@ import { BarChart3, Eye, CheckCircle2, Users } from 'lucide-react'
 import { getEngagement } from '@/lib/api/learning'
 import type { PathEngagement } from '@/lib/types/learning'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import Tooltip from '@/components/ui/Tooltip'
 
 /**
  * "Who accessed what" for a path: per-material open/complete counts and a
@@ -105,14 +106,17 @@ export default function EngagementPanel({ orgId, pathId }: { orgId: string; path
       render: (l) => (
         <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
           {l.items.map((it) => (
-            <span
+            <Tooltip
               key={it.item_id}
-              title={it.completed ? 'Completed' : it.viewed ? `Opened ${it.views}×` : 'Not opened'}
-              className={[
-                'w-3 h-3 rounded-sm',
-                it.completed ? 'bg-[#16A34A]' : it.viewed ? 'bg-[#2563EB]' : 'bg-[#E2E8F0]',
-              ].join(' ')}
-            />
+              label={it.completed ? 'Completed' : it.viewed ? `Opened ${it.views}×` : 'Not opened'}
+            >
+              <span
+                className={[
+                  'w-3 h-3 rounded-sm',
+                  it.completed ? 'bg-[#16A34A]' : it.viewed ? 'bg-[#2563EB]' : 'bg-[#E2E8F0]',
+                ].join(' ')}
+              />
+            </Tooltip>
           ))}
         </div>
       ),

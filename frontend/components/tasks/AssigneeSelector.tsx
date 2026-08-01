@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { Search, X, Plus, Check, Zap, Briefcase, UserPlus } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 import { tasksApi } from '@/lib/api/tasks'
 import type { EligibleAssigneesResponse, EligibleAssigneeUser, SelectedAssignee } from '@/lib/types/tasks'
 
@@ -73,12 +74,11 @@ function UserRow({
       {/* Badges */}
       <div className="flex items-center gap-1.5 shrink-0">
         {user.on_leave_today && (
-          <span
-            title={user.leave_until ? `On leave until ${user.leave_until}` : 'On leave'}
-            className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E]"
-          >
-            On leave
-          </span>
+          <Tooltip label={user.leave_until ? `On leave until ${user.leave_until}` : 'On leave'}>
+            <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E]">
+              On leave
+            </span>
+          </Tooltip>
         )}
         {user.is_frequent && (
           <span className="flex items-center gap-0.5 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-[#EFF6FF] text-[#2563EB]">
@@ -86,13 +86,12 @@ function UserRow({
             Frequent
           </span>
         )}
-        <span
-          title="Active tasks"
-          className="flex items-center gap-0.5 text-[10px] font-medium text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded-full"
-        >
-          <Briefcase size={9} />
-          {user.active_task_count}
-        </span>
+        <Tooltip label="Active tasks">
+          <span className="flex items-center gap-0.5 text-[10px] font-medium text-[#64748B] bg-[#F1F5F9] px-1.5 py-0.5 rounded-full">
+            <Briefcase size={9} />
+            {user.active_task_count}
+          </span>
+        </Tooltip>
         {selected && (
           <span className="w-4 h-4 flex items-center justify-center bg-[#2563EB] rounded-full shrink-0">
             <Check size={10} className="text-white" strokeWidth={3} />
@@ -123,18 +122,19 @@ function AssigneeChip({
       </div>
       <span className="text-xs font-medium text-[#0F172A] truncate hidden sm:inline">{assignee.name.split(' ')[0]}</span>
       <span className="text-xs font-medium text-[#0F172A] truncate sm:hidden">{assignee.name.split(' ')[0]}</span>
-      <button
-        type="button"
-        onClick={onToggleCC}
-        title={assignee.is_cc ? 'Click to make Assignee' : 'Click to make CC'}
-        className={`text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 transition-colors shrink-0 ${
-          assignee.is_cc
-            ? 'bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A]'
-            : 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
-        }`}
-      >
-        {assignee.is_cc ? 'CC' : 'Assignee'}
-      </button>
+      <Tooltip label={assignee.is_cc ? 'Click to make Assignee' : 'Click to make CC'}>
+        <button
+          type="button"
+          onClick={onToggleCC}
+          className={`text-[10px] font-semibold rounded-[4px] px-1.5 py-0.5 transition-colors shrink-0 ${
+            assignee.is_cc
+              ? 'bg-[#FEF9C3] text-[#D97706] border border-[#FDE68A]'
+              : 'bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]'
+          }`}
+        >
+          {assignee.is_cc ? 'CC' : 'Assignee'}
+        </button>
+      </Tooltip>
       <button
         type="button"
         onClick={onRemove}

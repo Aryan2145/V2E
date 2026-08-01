@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import Tooltip from '@/components/ui/Tooltip'
 import {
   X,
   Download,
@@ -572,15 +573,16 @@ export default function ImportChecklistsModal({ orgId, onClose, onImported }: Pr
                         {b.status !== 'committed' && <SummaryChip color="amber" label={b.status === 'undone' ? 'undone' : 'partly undone'} />}
                       </div>
                     </div>
+                    <Tooltip label={b.can_undo ? 'Remove the still-inactive checklists from this import' : 'Nothing left to undo'}>
                     <button
                       onClick={() => handleUndo(b.id)}
                       disabled={!b.can_undo || undoingId === b.id}
-                      title={b.can_undo ? 'Remove the still-inactive checklists from this import' : 'Nothing left to undo'}
                       className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-[13px] font-semibold text-[#DC2626] bg-white border border-[#FECACA] hover:bg-[#FEF2F2] disabled:text-[#CBD5E1] disabled:border-[#E2E8F0] disabled:hover:bg-white transition-colors"
                     >
                       {undoingId === b.id ? <Loader2 size={14} className="animate-spin" /> : <Undo2 size={14} />}
                       Undo
                     </button>
+                    </Tooltip>
                   </div>
                 </div>
               ))}

@@ -9,6 +9,7 @@ import { BRANCH_PALETTE } from '@/lib/org-chart-colors'
 import Button from '@/components/ui/Button'
 import EmployeePicker from '@/components/ui/EmployeePicker'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import type { Department, User } from '@/lib/types'
 
 export type DeptFormTarget =
@@ -226,10 +227,10 @@ export default function DeptFormDrawer({
           <div>
             <label className={labelCls}>Node Color</label>
             <div className="flex flex-wrap items-center gap-2">
+              <Tooltip label="Default (inherit branch color)">
               <button
                 type="button"
                 onClick={() => setColor(null)}
-                title="Default (inherit branch color)"
                 className={`h-7 px-2.5 rounded-[7px] text-xs font-medium border transition-colors ${
                   color === null
                     ? 'border-[#2563EB] bg-[#EFF6FF] text-[#2563EB]'
@@ -238,12 +239,12 @@ export default function DeptFormDrawer({
               >
                 Default
               </button>
+              </Tooltip>
               {BRANCH_PALETTE.map((c) => (
+                <Tooltip key={c} label={c}>
                 <button
-                  key={c}
                   type="button"
                   onClick={() => setColor(c)}
-                  title={c}
                   className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
                     color?.toLowerCase() === c.toLowerCase()
                       ? 'border-[#0F172A] ring-2 ring-offset-1 ring-[#0F172A]/20'
@@ -252,6 +253,7 @@ export default function DeptFormDrawer({
                   style={{ backgroundColor: c }}
                   aria-label={`Use color ${c}`}
                 />
+                </Tooltip>
               ))}
             </div>
             <p className="text-xs text-[#94A3B8] mt-1.5">
@@ -272,15 +274,17 @@ export default function DeptFormDrawer({
             </div>
 
             {isEdit && !confirmDelete && (
-              <button
-                type="button"
-                onClick={() => canDelete && setConfirmDelete(true)}
-                disabled={!canDelete}
-                title={
+              <Tooltip
+                label={
                   canDelete
                     ? 'Delete this department'
                     : `Reassign its ${blockers.join(', ')} first`
                 }
+              >
+              <button
+                type="button"
+                onClick={() => canDelete && setConfirmDelete(true)}
+                disabled={!canDelete}
                 className={`flex items-center gap-1.5 text-sm font-medium self-start transition-colors ${
                   canDelete
                     ? 'text-[#DC2626] hover:text-[#B91C1C]'
@@ -289,6 +293,7 @@ export default function DeptFormDrawer({
               >
                 <Trash2 size={14} /> Delete department
               </button>
+              </Tooltip>
             )}
 
             {isEdit && !canDelete && (

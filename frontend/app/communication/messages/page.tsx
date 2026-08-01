@@ -11,6 +11,7 @@ import type { EmployeeProfile } from '@/lib/types'
 import { MessageSquare, Plus, Send, X, Users, Search } from 'lucide-react'
 import { io, Socket } from 'socket.io-client'
 import { refreshAccessToken } from '@/lib/api/refresh'
+import Tooltip from '@/components/ui/Tooltip'
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_WS_URL || 'http://localhost:3001'
 
@@ -235,13 +236,15 @@ export default function MessagesPage() {
       <div className="w-72 bg-white border-r border-[#E2E8F0] flex flex-col shrink-0">
         <div className="p-4 border-b border-[#E2E8F0] flex items-center justify-between">
           <h2 className="text-sm font-semibold text-[#0F172A]">Messages</h2>
+          <Tooltip label="New conversation">
           <button
             onClick={() => setShowNewConv(true)}
+            aria-label="New conversation"
             className="w-8 h-8 rounded-[6px] bg-[#EFF6FF] text-[#2563EB] flex items-center justify-center hover:bg-[#DBEAFE] transition-colors"
-            title="New conversation"
           >
             <Plus size={16} />
           </button>
+          </Tooltip>
         </div>
 
         <div className="flex-1 overflow-y-auto">

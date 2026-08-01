@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { holidaysApi } from '@/lib/api/holidays'
 import { getNow } from '@/lib/clock'
 import type { NonWorkingDate } from '@/lib/types/holidays'
+import Tooltip from '@/components/ui/Tooltip'
 
 const DOW = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -89,20 +90,20 @@ export default function HolidayCalendar({ orgId, deptId, userId, refreshKey }: P
           const nw = nonWorkingMap.get(dateStr)
           const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear()
           return (
-            <div
-              key={i}
-              title={nw ? nw.name : undefined}
-              className={[
-                'relative flex items-center justify-center h-8 rounded-[6px] text-xs cursor-default transition-colors',
-                nw ? 'bg-[#FEE2E2] text-[#DC2626] font-medium' : 'text-[#475569] hover:bg-[#F8FAFC]',
-                isToday ? 'ring-2 ring-[#2563EB] ring-inset' : '',
-              ].join(' ')}
-            >
-              {day}
-              {nw && (
-                <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[#DC2626]" />
-              )}
-            </div>
+            <Tooltip key={i} label={nw ? nw.name : undefined}>
+              <div
+                className={[
+                  'relative flex items-center justify-center h-8 rounded-[6px] text-xs cursor-default transition-colors',
+                  nw ? 'bg-[#FEE2E2] text-[#DC2626] font-medium' : 'text-[#475569] hover:bg-[#F8FAFC]',
+                  isToday ? 'ring-2 ring-[#2563EB] ring-inset' : '',
+                ].join(' ')}
+              >
+                {day}
+                {nw && (
+                  <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-[#DC2626]" />
+                )}
+              </div>
+            </Tooltip>
           )
         })}
       </div>

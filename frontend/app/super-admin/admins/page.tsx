@@ -5,6 +5,7 @@ import { useAuth } from '@/lib/auth/context'
 import apiClient from '@/lib/api/client'
 import { ShieldCheck, Plus, PowerOff, Power, X, Eye, EyeOff, Loader2, Pencil, Trash2 } from 'lucide-react'
 import ResponsiveTable from '@/components/ui/ResponsiveTable'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface AdminUser {
   id: string
@@ -433,30 +434,41 @@ export default function AdminsPage() {
                   return (
                     <div className="flex items-center gap-1 md:justify-start justify-end">
                       {!isSelf && (
+                        <Tooltip label={admin.is_active ? 'Deactivate' : 'Activate'}>
                         <button
                           type="button"
                           disabled={busy}
                           onClick={() => handleToggle(admin)}
-                          title={admin.is_active ? 'Deactivate' : 'Activate'}
+                          aria-label={admin.is_active ? 'Deactivate' : 'Activate'}
                           className="p-1.5 rounded-[6px] hover:bg-[#F1F5F9] text-[#475569] disabled:opacity-40 transition-colors"
                         >
                           {busy ? <Loader2 size={14} className="animate-spin" /> : admin.is_active ? <PowerOff size={14} /> : <Power size={14} />}
                         </button>
+                        </Tooltip>
                       )}
+                      <Tooltip label="Edit admin">
                       <button
                         type="button"
                         disabled={busy}
                         onClick={() => openEdit(admin)}
-                        title="Edit admin"
+                        aria-label="Edit admin"
                         className="p-1.5 rounded-[6px] hover:bg-[#EFF6FF] text-[#2563EB] disabled:opacity-40 transition-colors"
                       >
                         <Pencil size={14} />
                       </button>
+                      </Tooltip>
+                      <Tooltip label={
+                          isSelf
+                            ? 'You cannot revoke your own super admin access'
+                            : admins.length <= 1
+                              ? 'At least one super administrator account is required'
+                              : 'Remove admin access'
+                        }>
                       <button
                         type="button"
                         disabled={busy || isSelf || admins.length <= 1}
                         onClick={() => handleRevoke(admin)}
-                        title={
+                        aria-label={
                           isSelf
                             ? 'You cannot revoke your own super admin access'
                             : admins.length <= 1
@@ -467,6 +479,7 @@ export default function AdminsPage() {
                       >
                         <Trash2 size={14} />
                       </button>
+                      </Tooltip>
                     </div>
                   )
                 },

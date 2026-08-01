@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEntitlements } from '@/lib/auth/use-entitlements'
 import { GOVERNANCE_NAV } from '@/lib/governance-nav'
+import Tooltip from '@/components/ui/Tooltip'
 
 const COLLAPSE_KEY = 'governance-sidebar-collapsed'
 
@@ -54,23 +55,24 @@ export default function GovernanceSidebar() {
         >
           Governance
         </span>
-        <button
-          onClick={toggleCollapsed}
-          className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
+        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <button
+            onClick={toggleCollapsed}
+            className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+        </Tooltip>
       </div>
 
       <nav className="sidebar-scroll flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
         {navItems.map(({ label, href, Icon }) => {
           const active = isActive(href)
           return (
+            <Tooltip key={href} label={collapsed ? label : undefined}>
             <Link
-              key={href}
               href={href}
-              title={collapsed ? label : undefined}
               className={[
                 'flex items-center rounded-[8px] py-2.5 text-sm font-medium transition-colors duration-150 whitespace-nowrap',
                 collapsed ? 'justify-center px-2' : 'justify-center px-2 md:justify-start md:gap-3 md:px-3',
@@ -82,6 +84,7 @@ export default function GovernanceSidebar() {
               <Icon size={18} className="shrink-0" />
               {!collapsed && <span className="hidden md:inline">{label}</span>}
             </Link>
+            </Tooltip>
           )
         })}
       </nav>

@@ -11,6 +11,7 @@ import { getMyOrgs } from '@/lib/api/auth'
 import type { OrgMembership } from '@/lib/types'
 import NotificationBell from './NotificationBell'
 import { useSetupProgress } from '@/lib/hooks/useSetupProgress'
+import Tooltip from '@/components/ui/Tooltip'
 
 // `module` maps a nav item to its entitlement key. Items with no module are always
 // shown (Dashboard). An `off` module is hidden; `preview` is shown with a badge.
@@ -218,22 +219,23 @@ export default function TopNav() {
       {/* Settings gear — persistent on every page, separate from the top nav */}
       {canAccessSettings && (
         <div className="relative shrink-0" ref={settingsContainerRef}>
-          <Link
-            href="/settings"
-            aria-label="Settings"
-            title="Settings"
-            className={[
-              'w-10 h-10 flex items-center justify-center rounded-[8px] transition-colors relative z-50',
-              isActive('/settings')
-                ? 'text-[#2563EB] bg-[#EFF6FF]'
-                : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]',
-            ].join(' ')}
-          >
-            <Settings size={19} />
-            {showSpotlight && (
-              <span className="absolute inset-0 rounded-[8px] border-2 border-[#2563EB] animate-ping opacity-75 pointer-events-none" />
-            )}
-          </Link>
+          <Tooltip label="Settings">
+            <Link
+              href="/settings"
+              aria-label="Settings"
+              className={[
+                'w-10 h-10 flex items-center justify-center rounded-[8px] transition-colors relative z-50',
+                isActive('/settings')
+                  ? 'text-[#2563EB] bg-[#EFF6FF]'
+                  : 'text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9]',
+              ].join(' ')}
+            >
+              <Settings size={19} />
+              {showSpotlight && (
+                <span className="absolute inset-0 rounded-[8px] border-2 border-[#2563EB] animate-ping opacity-75 pointer-events-none" />
+              )}
+            </Link>
+          </Tooltip>
 
           {/* Onboarding Spotlight Popover */}
           {showSpotlight && (
@@ -341,10 +343,10 @@ export default function TopNav() {
                       </div>
                     ) : currentOrg ? (
                       canAccessSettings ? (
+                        <Tooltip label="Open organization settings">
                         <Link
                           href="/settings/organization/company"
                           onClick={() => setOpen(false)}
-                          title="Open organization settings"
                           className="flex items-center gap-2.5 py-1.5 -mx-1 px-1 rounded-[6px] hover:bg-[#F8FAFC] transition-colors"
                         >
                           <div className="w-6 h-6 rounded-[5px] bg-[#EFF6FF] flex items-center justify-center shrink-0">
@@ -356,6 +358,7 @@ export default function TopNav() {
                           </div>
                           <Settings size={14} className="text-[#94A3B8] shrink-0" />
                         </Link>
+                        </Tooltip>
                       ) : (
                         <div className="flex items-center gap-2.5 py-1">
                           <div className="w-6 h-6 rounded-[5px] bg-[#EFF6FF] flex items-center justify-center shrink-0">

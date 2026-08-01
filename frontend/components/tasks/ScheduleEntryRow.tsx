@@ -6,6 +6,7 @@ import type { RecurringScheduleType, RecurringEndCondition, YearlyDate } from '@
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import MonthDayPicker from '@/components/ui/MonthDayPicker'
+import Tooltip from '@/components/ui/Tooltip'
 import { getNow } from '@/lib/clock'
 
 const DOW_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -91,11 +92,12 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-[#94A3B8] uppercase tracking-wider">Entry #{index + 1}</span>
+        <Tooltip label={canDelete ? 'Remove entry' : 'Cannot remove last entry'}>
         <button
           type="button"
           onClick={onDelete}
           disabled={!canDelete}
-          title={canDelete ? 'Remove entry' : 'Cannot remove last entry'}
+          aria-label={canDelete ? 'Remove entry' : 'Cannot remove last entry'}
           className={[
             'w-7 h-7 rounded-[6px] flex items-center justify-center transition-colors',
             canDelete
@@ -105,6 +107,7 @@ export default function ScheduleEntryRow({ entry, index, onUpdate, onDelete, can
         >
           <X size={14} />
         </button>
+        </Tooltip>
       </div>
 
       {/* Type tabs */}

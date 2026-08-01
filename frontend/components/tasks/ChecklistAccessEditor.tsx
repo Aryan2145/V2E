@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, useEffect } from 'react'
 import { Plus, X, Search, CornerDownRight, ChevronRight } from 'lucide-react'
 import DepartmentSelect from '@/components/employees/DepartmentSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import { descendantsOf } from '@/lib/dept-tree'
 import type { Department, Role, EmployeeProfile } from '@/lib/types'
 import type { ChecklistAccessMode, ChecklistAccessRuleInput } from '@/lib/types/tasks'
@@ -120,15 +121,16 @@ function AddPicker({
 
   return (
     <div ref={wrapRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={label}
-        title={label}
-        className="w-7 h-7 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white flex items-center justify-center transition-colors shrink-0"
-      >
-        <Plus size={16} />
-      </button>
+      <Tooltip label={label}>
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-label={label}
+          className="w-7 h-7 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white flex items-center justify-center transition-colors shrink-0"
+        >
+          <Plus size={16} />
+        </button>
+      </Tooltip>
       {open && (
         // Absolute panel anchored under the top-right trigger; right-aligned so it
         // stays within the card and overlays the body (card isn't overflow-hidden,
@@ -370,16 +372,17 @@ export default function ChecklistAccessEditor({
                 <span className="text-xs font-semibold uppercase tracking-wide text-[#64748B]">Departments</span>
                 <CountBadge n={deptRules.length} />
               </div>
+              <Tooltip label={hasEmptyDept ? 'Select a department in the blank row first' : 'Add department'}>
               <button
                 type="button"
                 disabled={hasEmptyDept}
                 onClick={() => add({ kind: 'department', department_id: '', include_sub_departments: true })}
-                title={hasEmptyDept ? 'Select a department in the blank row first' : 'Add department'}
                 aria-label="Add department"
                 className="w-7 h-7 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white flex items-center justify-center transition-colors shrink-0 disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] disabled:cursor-not-allowed"
               >
                 <Plus size={16} />
               </button>
+              </Tooltip>
             </div>
             <div className="mt-2 space-y-2 flex-1">
             {deptRules.length === 0 && <p className="text-xs text-[#94A3B8]">No departments added.</p>}
@@ -454,9 +457,8 @@ export default function ChecklistAccessEditor({
             <div className="flex flex-wrap gap-1.5">
               {inScopeRoles.length === 0 && <p className="text-xs text-[#94A3B8]">Pick a department to fill in its roles, or add one.</p>}
               {inScopeRoles.map(({ role, via }) => (
+                <Tooltip key={role.id} label={`via ${via}`}>
                 <span
-                  key={role.id}
-                  title={`via ${via}`}
                   className="inline-flex items-center gap-1.5 bg-white border border-[#E2E8F0] rounded-[999px] pl-2.5 pr-1.5 py-1 text-xs text-[#0F172A]"
                 >
                   {role.title}
@@ -464,6 +466,7 @@ export default function ChecklistAccessEditor({
                     <X size={12} />
                   </button>
                 </span>
+                </Tooltip>
               ))}
             </div>
             {excludedRolesList.length > 0 && (

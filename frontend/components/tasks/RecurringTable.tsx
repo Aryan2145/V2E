@@ -4,6 +4,7 @@ import React from 'react'
 import { RotateCcw, Pause, Shield } from 'lucide-react'
 import type { RecurringTemplate, TaskCategory, TaskPriority } from '@/lib/types/tasks'
 import { scheduleLabel, formatDate } from '@/lib/tasks/recurrence-label'
+import Tooltip from '@/components/ui/Tooltip'
 
 function peopleSummary(names: string[] | undefined): string {
   if (!names || names.length === 0) return '—'
@@ -68,7 +69,9 @@ export default function RecurringTable({
                     {t.description && <p className="text-[12px] text-[#94A3B8] truncate">{t.description}</p>}
                   </td>
                   <td className={`${TD} whitespace-nowrap`}>{t.created_by_name ?? '—'}</td>
-                  <td className={`${TD} whitespace-nowrap`} title={(t.assignee_names ?? []).join(', ')}>{peopleSummary(t.assignee_names)}</td>
+                  <Tooltip label={(t.assignee_names ?? []).join(', ')}>
+                    <td className={`${TD} whitespace-nowrap`}>{peopleSummary(t.assignee_names)}</td>
+                  </Tooltip>
                   <td className={`${TD} whitespace-nowrap`}>{t.department_name ?? '—'}</td>
                   <td className={`${TD} whitespace-nowrap`}>
                     <span className="inline-flex items-center gap-1.5 text-[#475569]">
@@ -103,13 +106,15 @@ export default function RecurringTable({
                   <td className={`${TD} whitespace-nowrap`}>{t.next_run ? formatDate(t.next_run) : '—'}</td>
                   <td className={TD}>
                     {t.can_manage && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onManageAccess(t) }}
-                        title="Manage access"
-                        className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
-                      >
-                        <Shield size={14} />
-                      </button>
+                      <Tooltip label="Manage access">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onManageAccess(t) }}
+                          aria-label="Manage access"
+                          className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+                        >
+                          <Shield size={14} />
+                        </button>
+                      </Tooltip>
                     )}
                   </td>
                 </tr>

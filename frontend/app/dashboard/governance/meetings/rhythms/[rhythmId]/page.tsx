@@ -16,6 +16,7 @@ import CreateRhythmModal from '@/components/meetings/CreateRhythmModal'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
+import Tooltip from '@/components/ui/Tooltip'
 
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
@@ -204,10 +205,12 @@ export default function RhythmDetailPage() {
           {rhythm.can_manage && (
             <div className="flex items-center gap-2 shrink-0">
               <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"><Pencil size={15} /> Edit</button>
-              <button onClick={toggleActive} title={rhythm.is_active ? 'Pause' : 'Resume'} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9] rounded-[8px]">
+              <Tooltip label={rhythm.is_active ? 'Pause' : 'Resume'}>
+              <button onClick={toggleActive} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] hover:bg-[#F1F5F9] rounded-[8px]">
                 {rhythm.is_active ? <><Pause size={15} /> Pause</> : <><Play size={15} /> Resume</>}
               </button>
-              <button onClick={() => setStopping(true)} title="Stop" className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#DC2626] border border-[#FECACA] hover:bg-[#FEE2E2] rounded-[8px]"><Square size={15} /> Stop</button>
+              </Tooltip>
+              <Tooltip label="Stop"><button onClick={() => setStopping(true)} className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#DC2626] border border-[#FECACA] hover:bg-[#FEE2E2] rounded-[8px]"><Square size={15} /> Stop</button></Tooltip>
             </div>
           )}
         </div>

@@ -23,6 +23,7 @@ import { timeBlocksApi, type TimeBlock } from '@/lib/api/time-blocks'
 import { getNow, isSimActive } from '@/lib/clock'
 import type { PersonOption } from '@/components/meetings/MeetingAttendeeSelector'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import Tooltip from '@/components/ui/Tooltip'
 import StyledSelect from '@/components/ui/StyledSelect'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
 
@@ -257,9 +258,11 @@ export default function MeetingsPage() {
                 <Repeat size={16} /> Rhythms
               </Link>
               <span className="w-px self-stretch bg-[#E2E8F0]" aria-hidden />
-              <button onClick={() => { setEditBlock(null); setTbStart(undefined); setTbOpen(true) }} className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] hover:bg-[#F8FAFC]" title="Block your time (only you see the name; colleagues see Busy)">
+              <Tooltip label="Block your time (only you see the name; colleagues see Busy)">
+              <button onClick={() => { setEditBlock(null); setTbStart(undefined); setTbOpen(true) }} className="inline-flex items-center gap-2 px-3 py-2.5 text-sm font-medium text-[#475569] hover:bg-[#F8FAFC]">
                 <CalendarClock size={16} /> Time-Block
               </button>
+              </Tooltip>
               <span className="w-px self-stretch bg-[#E2E8F0]" aria-hidden />
               <button onClick={() => setMenuOpen((o) => !o)} aria-label="More options" aria-haspopup="menu" aria-expanded={menuOpen} className={`px-2.5 py-2.5 text-[#475569] hover:bg-[#F8FAFC] ${menuOpen ? 'bg-[#F1F5F9]' : ''}`}>
                 <MoreHorizontal size={18} />
@@ -304,13 +307,14 @@ export default function MeetingsPage() {
         </div>
         <div className="flex items-center gap-2">
           {view === 'week' && (
+            <Tooltip label="Toggle work week / full week">
             <button
               onClick={() => setWeekDaysPersist(weekDays === 5 ? 7 : 5)}
               className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-[#475569] border border-[#E2E8F0] rounded-[8px] hover:bg-[#F8FAFC]"
-              title="Toggle work week / full week"
             >
               <Columns3 size={15} /> {weekDays === 5 ? '5-day' : '7-day'}
             </button>
+            </Tooltip>
           )}
           <div className="flex rounded-[8px] border border-[#E2E8F0] overflow-hidden">
             {VIEWS.map((v) => (

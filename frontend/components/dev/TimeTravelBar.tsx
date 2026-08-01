@@ -5,6 +5,7 @@ import { Clock, ChevronLeft, ChevronRight, Play, RotateCcw, FlaskConical, X } fr
 import { useAuth } from '@/lib/auth/context'
 import { clockApi } from '@/lib/api/clock'
 import { syncClock, useNow } from '@/lib/clock'
+import Tooltip from '@/components/ui/Tooltip'
 
 function toLocalInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -155,18 +156,22 @@ export default function TimeTravelBar() {
             <div>
               <label className="block text-sm font-medium text-[#374151] mb-1.5">Simulated time</label>
               <div className="flex items-center gap-1.5">
-                <button type="button" onClick={() => nudgeDays(-1)} title="−1 day" className={arrowCls}>
+                <Tooltip label="−1 day">
+                <button type="button" onClick={() => nudgeDays(-1)} aria-label="−1 day" className={arrowCls}>
                   <ChevronLeft size={16} />
                 </button>
+                </Tooltip>
                 <input
                   type="datetime-local"
                   value={pending}
                   onChange={(e) => setPending(e.target.value)}
                   className={inputCls}
                 />
-                <button type="button" onClick={() => nudgeDays(1)} title="+1 day" className={arrowCls}>
+                <Tooltip label="+1 day">
+                <button type="button" onClick={() => nudgeDays(1)} aria-label="+1 day" className={arrowCls}>
                   <ChevronRight size={16} />
                 </button>
+                </Tooltip>
               </div>
               <div className="flex items-center gap-1.5 mt-2">
                 <button type="button" onClick={() => nudgeHours(-1)} className="px-2.5 h-8 rounded-[8px] bg-white border border-[#FBBF24] text-[#92400E] text-xs font-semibold hover:bg-[#FFFBEB] transition-colors">−1 hour</button>
@@ -204,12 +209,12 @@ export default function TimeTravelBar() {
       )}
 
       {/* Floating clock toggle — displays live-ticking date and time capsule */}
+      <Tooltip label="Test clock">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
         aria-label={expanded ? 'Collapse test clock' : 'Open test clock'}
         aria-expanded={expanded}
-        title="Test clock"
         className="flex items-center gap-2 px-4 h-10 rounded-full bg-[#D97706] text-white font-medium text-xs shadow-[0_4px_16px_rgba(0,0,0,0.20)] ring-2 ring-white hover:bg-[#B45309] transition-all duration-200 cursor-pointer"
       >
         <FlaskConical size={14} className="animate-pulse shrink-0" />
@@ -218,6 +223,7 @@ export default function TimeTravelBar() {
           <span className="w-1.5 h-1.5 rounded-full bg-[#16A34A] shrink-0" />
         )}
       </button>
+      </Tooltip>
     </div>
   )
 }

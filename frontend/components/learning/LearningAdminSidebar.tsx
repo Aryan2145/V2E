@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, BookOpen, BarChart2, GraduationCap, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface LearningAdminSidebarProps {
   collapsed: boolean
@@ -42,23 +43,24 @@ export default function LearningAdminSidebar({ collapsed, onToggle }: LearningAd
             Learning
           </span>
         )}
-        <button
-          onClick={onToggle}
-          className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
+        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <button
+            onClick={onToggle}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
+          >
+            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+        </Tooltip>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3 px-2 flex flex-col gap-0.5">
         {navItems.map(({ label, href, Icon, exact }) => {
           const active = exact ? pathname === href : pathname.startsWith(href)
-          return (
+          const link = (
             <Link
               key={href}
               href={href}
-              title={collapsed ? label : undefined}
               className={[
                 'flex items-center rounded-[8px] py-2.5 text-sm font-medium transition-colors duration-150 whitespace-nowrap',
                 collapsed ? 'justify-center px-2' : 'gap-3 px-3',
@@ -71,6 +73,10 @@ export default function LearningAdminSidebar({ collapsed, onToggle }: LearningAd
               {!collapsed && <span>{label}</span>}
             </Link>
           )
+          // Collapsed → icon-only rail, so surface the label as a hover tooltip.
+          return collapsed ? (
+            <Tooltip key={href} label={label}>{link}</Tooltip>
+          ) : link
         })}
       </nav>
     </aside>

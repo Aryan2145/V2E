@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import { createRole, listImportBatches, createImportBatch, undoImport } from '@/lib/api/roles'
 import { useToast } from '@/components/ui/Toast'
+import Tooltip from '@/components/ui/Tooltip'
 import type { Department, RoleLevel } from '@/lib/types'
 
 interface Props {
@@ -451,13 +452,15 @@ export default function ImportJobRolesModal({ orgId, departments, onClose, onImp
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
           <div className="flex items-center gap-3">
             {phase === 'history' && (
+              <Tooltip label="Back to upload">
               <button
                 onClick={() => setPhase('upload')}
+                aria-label="Back to upload"
                 className="p-1 hover:bg-[#F1F5F9] rounded transition-colors text-[#64748B] hover:text-[#0F172A]"
-                title="Back to upload"
               >
                 <ArrowLeft size={16} />
               </button>
+              </Tooltip>
             )}
             <h2 className="text-[18px] font-semibold text-[#0F172A]">Import Job Roles</h2>
           </div>

@@ -24,6 +24,7 @@ import AssigneeMultiSelect from '@/components/learning/AssigneeMultiSelect'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import MaterialPreviewModal from '@/components/learning/MaterialPreviewModal'
 import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import Tooltip from '@/components/ui/Tooltip'
 
 type Tab = 'materials' | 'assignments' | 'engagement'
 
@@ -245,13 +246,15 @@ export default function ManagePathPage() {
               Edit
             </Link>
             {path.status === 'published' && (
-              <button
-                onClick={handleArchive}
-                title="Archive"
-                className="p-2 text-[#475569] hover:text-[#D97706] hover:bg-[#FEF3C7] rounded-[8px] transition-colors"
-              >
-                <Archive size={16} />
-              </button>
+              <Tooltip label="Archive">
+                <button
+                  onClick={handleArchive}
+                  aria-label="Archive"
+                  className="p-2 text-[#475569] hover:text-[#D97706] hover:bg-[#FEF3C7] rounded-[8px] transition-colors"
+                >
+                  <Archive size={16} />
+                </button>
+              </Tooltip>
             )}
             {path.status === 'archived' && (
               <button
@@ -262,13 +265,15 @@ export default function ManagePathPage() {
               </button>
             )}
             {canDelete && (
-              <button
-                onClick={() => { setDeleteError(null); setDeleteOpen(true) }}
-                title="Delete"
-                className="p-2 text-[#475569] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px] transition-colors"
-              >
-                <Trash2 size={16} />
-              </button>
+              <Tooltip label="Delete">
+                <button
+                  onClick={() => { setDeleteError(null); setDeleteOpen(true) }}
+                  aria-label="Delete"
+                  className="p-2 text-[#475569] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px] transition-colors"
+                >
+                  <Trash2 size={16} />
+                </button>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -333,11 +338,10 @@ export default function ManagePathPage() {
             {items.map((item, idx) => {
               const TypeIcon = TYPE_ICONS[item.content_type] ?? BookOpen
               return (
+                <Tooltip key={item.id} label="Click to preview">
                 <button
-                  key={item.id}
                   type="button"
                   onClick={() => setPreviewItem(item)}
-                  title="Click to preview"
                   className="group text-left w-full bg-white border border-[#E2E8F0] rounded-[10px] px-4 py-3.5 flex items-center gap-3 cursor-pointer hover:border-[#2563EB] hover:bg-[#F8FAFF] transition-colors"
                 >
                   <span className="text-xs text-[#94A3B8] w-5 text-center shrink-0">{idx + 1}</span>
@@ -374,6 +378,7 @@ export default function ManagePathPage() {
                     <span className="hidden sm:inline">Preview</span>
                   </span>
                 </button>
+                </Tooltip>
               )
             })}
           </div>

@@ -6,6 +6,7 @@ import { ChevronRight, Loader2, ArrowUpRight, ListChecks } from 'lucide-react'
 import { goalsApi } from '@/lib/api/goals'
 import { LEVEL_META, type Goal, type GoalLevel } from '@/lib/types/goals'
 import { GoalStatusBadge, PerspectiveBadge, ProgressBar, formatDate } from './shared'
+import Tooltip from '@/components/ui/Tooltip'
 
 // Cascading, in-place drill-down for a goal hierarchy:
 //   Objective → Goals → Sub-goals → Tasks
@@ -178,15 +179,16 @@ function GoalNode({ orgId, goal, depth }: { orgId: string; goal: Goal; depth: nu
         </div>
 
         {/* Open full page */}
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); router.push(`/goals/${goal.id}`) }}
-          aria-label="Open"
-          title="Open full page"
-          className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-white shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-        >
-          <ArrowUpRight size={15} />
-        </button>
+        <Tooltip label="Open full page">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); router.push(`/goals/${goal.id}`) }}
+            aria-label="Open"
+            className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-white shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <ArrowUpRight size={15} />
+          </button>
+        </Tooltip>
       </div>
 
       {/* Expanded content — nested under the row with a connector spine */}

@@ -6,6 +6,7 @@ import { ChevronDown, Search, X, Check, Building2, Lock } from 'lucide-react'
 import { flattenTree, ancestorsOf } from '@/lib/dept-tree'
 import { computeNodeColors } from '@/lib/org-chart-colors'
 import { useAnchoredPanel } from '@/lib/hooks/useAnchoredPanel'
+import Tooltip from '@/components/ui/Tooltip'
 import type { Department } from '@/lib/types'
 
 interface Props {
@@ -99,9 +100,8 @@ export default function DepartmentSelect({
 
   // A department shown but not selectable, with the reason why (and an optional path).
   const lockedRow = (dept: Department, paddingLeft: number, reason: string, sub?: string) => (
+    <Tooltip key={dept.id} label={reason}>
     <div
-      key={dept.id}
-      title={reason}
       aria-disabled="true"
       style={{ paddingLeft }}
       className="w-full flex items-center gap-2.5 pr-3 py-2 cursor-not-allowed select-none"
@@ -113,6 +113,7 @@ export default function DepartmentSelect({
       </span>
       <Lock size={13} className="text-[#CBD5E1] shrink-0" />
     </div>
+    </Tooltip>
   )
 
   // Shared panel content (search header + department list) — identical in both

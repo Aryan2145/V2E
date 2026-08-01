@@ -12,6 +12,7 @@ import { useNotifications } from '@/lib/notifications/NotificationsProvider'
 import { useToast } from '@/components/ui/Toast'
 import { enablePush, disablePush, getPushStatus, PUSH_ERROR_MESSAGES, type PushStatus } from '@/lib/push'
 import type { AppNotification } from '@/lib/api/notifications'
+import Tooltip from '@/components/ui/Tooltip'
 
 const MODULE_COLORS: Record<string, string> = {
   tasks: 'bg-[#EFF6FF] text-[#2563EB]',
@@ -116,18 +117,20 @@ export default function NotificationBell() {
 
   return (
     <div className="relative shrink-0" ref={ref}>
-      <button
-        onClick={openPanel}
-        title="Notifications"
-        className="relative w-10 h-10 rounded-[8px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
-      >
-        {unreadCount > 0 ? <BellRing size={18} /> : <Bell size={18} />}
-        {unreadCount > 0 && (
-          <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1 rounded-full bg-[#DC2626] text-white text-[11px] font-bold flex items-center justify-center border-2 border-white tabular-nums">
-            {unreadCount > 99 ? '99+' : unreadCount}
-          </span>
-        )}
-      </button>
+      <Tooltip label="Notifications">
+        <button
+          onClick={openPanel}
+          aria-label="Notifications"
+          className="relative w-10 h-10 rounded-[8px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+        >
+          {unreadCount > 0 ? <BellRing size={18} /> : <Bell size={18} />}
+          {unreadCount > 0 && (
+            <span className="absolute -top-1 -right-1 min-w-[20px] h-[20px] px-1 rounded-full bg-[#DC2626] text-white text-[11px] font-bold flex items-center justify-center border-2 border-white tabular-nums">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
+        </button>
+      </Tooltip>
 
       {open && (
         <div className="absolute right-0 top-[calc(100%+8px)] w-[calc(100vw-1.5rem)] max-w-[380px] bg-white rounded-[10px] border border-[#E2E8F0] shadow-[0_8px_30px_rgba(0,0,0,0.12)] overflow-hidden z-50">

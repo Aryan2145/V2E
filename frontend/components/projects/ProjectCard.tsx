@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import type { Project, ProjectStatus } from '@/lib/types/projects'
 import ProjectProgressBar from './ProjectProgressBar'
+import Tooltip from '@/components/ui/Tooltip'
 
 const STATUS_BADGE: Record<ProjectStatus, { bg: string; text: string; border: string; label: string }> = {
   active:    { bg: '#DCFCE7', text: '#16A34A', border: '#BBF7D0', label: 'Active' },
@@ -58,14 +59,14 @@ export default function ProjectCard({ project, orgId }: ProjectCardProps) {
       <div className="mt-3 pt-3 border-t border-[#F1F5F9] flex items-center justify-between gap-2 flex-wrap">
         <div className="flex items-center gap-1">
           {(project.members ?? []).slice(0, 5).map((m, i) => (
+            <Tooltip key={m.id} label={m.user_id}>
             <div
-              key={m.id}
-              title={m.user_id}
               className="w-6 h-6 rounded-full bg-[#EFF6FF] border-2 border-white flex items-center justify-center text-[9px] font-semibold text-[#2563EB]"
               style={{ marginLeft: i > 0 ? -6 : 0 }}
             >
               {m.user_id.charAt(0).toUpperCase()}
             </div>
+            </Tooltip>
           ))}
           {(project._count?.members ?? 0) > 5 && (
             <span className="text-[10px] text-[#94A3B8] ml-1">+{(project._count?.members ?? 0) - 5}</span>

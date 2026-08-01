@@ -34,6 +34,7 @@ import {
 } from '@/lib/api/employees'
 import { listSystemRoles, type SystemRoleLite } from '@/lib/api/permissions'
 import { useToast } from '@/components/ui/Toast'
+import Tooltip from '@/components/ui/Tooltip'
 import type { Department, Role, EmployeeProfile } from '@/lib/types'
 
 interface Props {
@@ -1446,10 +1447,10 @@ function HistoryView({
         {batches.map((b) => {
           return (
             <div key={b.id} className="px-4 py-3 flex items-center gap-3">
+              <Tooltip label="Open this import’s details">
               <button
                 type="button"
                 onClick={() => onOpen(b.id)}
-                title="Open this import’s details"
                 className="flex-1 min-w-0 flex items-center gap-2 text-left group"
               >
                 <div className="flex-1 min-w-0">
@@ -1469,6 +1470,7 @@ function HistoryView({
                   className="shrink-0 text-[#94A3B8] group-hover:text-[#2563EB] transition-colors"
                 />
               </button>
+              </Tooltip>
               {b.can_undo ? (
                 <button
                   onClick={() => onUndo(b.id)}

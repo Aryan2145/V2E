@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { ShieldCheck, CheckCircle2, Clock, Download, Lock, Users, Trash2 } from 'lucide-react'
 import FileDropzone, { AttachmentErrorBox } from '@/components/ui/FileDropzone'
 import Modal from '@/components/ui/Modal'
+import Tooltip from '@/components/ui/Tooltip'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { extensionOf, fileKindLabel, formatBytes } from '@/lib/attachments'
@@ -151,24 +152,32 @@ export default function ProofOfCompletionCard({ task, assignees, reloadToken, lo
         <span className="shrink-0 inline-flex items-center justify-center w-8 h-5 rounded bg-[#EFF6FF] text-[#2563EB] text-[9px] font-bold">
           {fileKindLabel(a.file_name)}
         </span>
-        <button onClick={() => download(a)} className="min-w-0 truncate text-[#2563EB] hover:underline text-left" title={a.file_name}>
-          {a.file_name}
-        </button>
+        <Tooltip label={a.file_name}>
+          <button onClick={() => download(a)} className="min-w-0 truncate text-[#2563EB] hover:underline text-left">
+            {a.file_name}
+          </button>
+        </Tooltip>
         {showUploader && a.uploaded_by_name && <span className="shrink-0 text-[#64748B]">· {a.uploaded_by_name}</span>}
         <span className="shrink-0 text-[#94A3B8]">{formatBytes(a.size_bytes)}</span>
         <span className="shrink-0 text-[#94A3B8]">· {formatWhen(a.created_at)}</span>
         {a.proof_visibility === 'everyone' && (
-          <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-[#64748B]" title="Visible to everyone on the task">
-            <Users size={10} /> shared
-          </span>
+          <Tooltip label="Visible to everyone on the task">
+            <span className="shrink-0 inline-flex items-center gap-0.5 text-[10px] text-[#64748B]">
+              <Users size={10} /> shared
+            </span>
+          </Tooltip>
         )}
-        <button onClick={() => download(a)} className="ml-auto shrink-0 text-[#64748B] hover:text-[#2563EB]" title="Download">
-          <Download size={13} />
-        </button>
-        {mine && canManageMine && !a.comment_id && (
-          <button onClick={() => setProofToDelete(a)} className="shrink-0 text-[#64748B] hover:text-[#DC2626]" title="Remove this proof">
-            <Trash2 size={13} />
+        <Tooltip label="Download">
+          <button onClick={() => download(a)} aria-label="Download" className="ml-auto shrink-0 text-[#64748B] hover:text-[#2563EB]">
+            <Download size={13} />
           </button>
+        </Tooltip>
+        {mine && canManageMine && !a.comment_id && (
+          <Tooltip label="Remove this proof">
+            <button onClick={() => setProofToDelete(a)} aria-label="Remove this proof" className="shrink-0 text-[#64748B] hover:text-[#DC2626]">
+              <Trash2 size={13} />
+            </button>
+          </Tooltip>
         )}
       </div>
     )

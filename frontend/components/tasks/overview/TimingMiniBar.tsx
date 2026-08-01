@@ -2,6 +2,7 @@
 
 import React from 'react'
 import { TIMINGS, TIMING_META, type TimingCounts } from '@/lib/types/tasks'
+import Tooltip from '@/components/ui/Tooltip'
 
 /**
  * The stacked completion-timing bar used across the dashboard (leaderboards, breakdowns).
@@ -25,11 +26,11 @@ export default function TimingMiniBar({
     <div className={`flex w-full rounded-full overflow-hidden bg-[#F1F5F9] ${className}`} style={{ height }}>
       {TIMINGS.map((t) =>
         timing[t] > 0 ? (
-          <div
-            key={t}
-            title={`${TIMING_META[t].label}: ${timing[t]}`}
-            style={{ width: `${(timing[t] / total) * 100}%`, backgroundColor: TIMING_META[t].color }}
-          />
+          <Tooltip key={t} label={`${TIMING_META[t].label}: ${timing[t]}`}>
+            <div
+              style={{ width: `${(timing[t] / total) * 100}%`, backgroundColor: TIMING_META[t].color }}
+            />
+          </Tooltip>
         ) : null,
       )}
     </div>

@@ -26,6 +26,7 @@ import {
   Eye,
   ArrowRightLeft,
 } from 'lucide-react'
+import Tooltip from '@/components/ui/Tooltip'
 
 interface NavItem {
   label: string
@@ -199,13 +200,15 @@ export default function TaskModuleSidebar() {
         >
           Work
         </span>
-        <button
-          onClick={toggleCollapsed}
-          className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-        </button>
+        <Tooltip label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          <button
+            onClick={toggleCollapsed}
+            className="w-8 h-8 rounded-[6px] flex items-center justify-center text-[#94A3B8] hover:text-white hover:bg-[#1E293B] transition-colors shrink-0"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+          </button>
+        </Tooltip>
       </div>
 
       {/* Nav groups */}
@@ -247,9 +250,8 @@ export default function TaskModuleSidebar() {
               {visibleItems.map((item) => {
                 if (item.disabled) {
                   return (
+                    <Tooltip key={item.href} label={collapsed ? item.label : undefined}>
                     <span
-                      key={item.href}
-                      title={collapsed ? item.label : undefined}
                       className={[
                         'flex items-center rounded-[8px] py-2.5 text-sm font-medium text-[#334155] cursor-not-allowed',
                         collapsed ? 'justify-center px-2' : 'justify-center px-2 md:justify-start md:gap-3 md:px-3',
@@ -265,15 +267,15 @@ export default function TaskModuleSidebar() {
                         </>
                       )}
                     </span>
+                    </Tooltip>
                   )
                 }
 
                 const active = isActive(item.href)
                 return (
+                  <Tooltip key={item.href} label={collapsed ? item.label : undefined}>
                   <Link
-                    key={item.href}
                     href={item.href}
-                    title={collapsed ? item.label : undefined}
                     className={[
                       'flex items-center rounded-[8px] py-2.5 text-sm font-medium transition-colors duration-150 whitespace-nowrap',
                       collapsed ? 'justify-center px-2' : 'justify-center px-2 md:justify-start md:gap-3 md:px-3',
@@ -285,6 +287,7 @@ export default function TaskModuleSidebar() {
                     <item.Icon size={18} className="shrink-0" />
                     {!collapsed && <span className="hidden md:inline">{item.label}</span>}
                   </Link>
+                  </Tooltip>
                 )
               })}
             </React.Fragment>

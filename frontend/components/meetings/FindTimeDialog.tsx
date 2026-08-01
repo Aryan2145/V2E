@@ -7,6 +7,7 @@ import { meetingsApi } from '@/lib/api/meetings'
 import type { BusyView } from '@/lib/types/meetings'
 import DatePicker from '@/components/ui/DatePicker'
 import MeetingAttendeeSelector, { type PersonOption } from './MeetingAttendeeSelector'
+import Tooltip from '@/components/ui/Tooltip'
 
 // geometry
 const START_HOUR = 6
@@ -338,12 +339,12 @@ export default function FindTimeDialog({
                   {useAgg ? (
                     /* Large group → busy-density heatmap: darker = more people busy */
                     buckets.map((b) => (
+                      <Tooltip key={b.min} label={`${b.busy} of ${perPerson.length} busy`}>
                       <div
-                        key={b.min}
                         className="absolute left-0 right-0 pointer-events-none"
                         style={{ top: topFor(b.min), height: (BUCKET / 60) * PX_PER_HOUR, background: densityColor(b.busy, perPerson.length) }}
-                        title={`${b.busy} of ${perPerson.length} busy`}
                       />
+                      </Tooltip>
                     ))
                   ) : (
                     <div className="grid absolute inset-0" style={{ gridTemplateColumns: `repeat(${cols}, minmax(80px,1fr))` }}>
@@ -354,14 +355,14 @@ export default function FindTimeDialog({
                             const bg = isOOO ? 'rgba(100,116,139,0.16)' : p.required ? 'rgba(220,38,38,0.14)' : 'rgba(217,119,6,0.14)'
                             const bd = isOOO ? '#94A3B8' : p.required ? '#DC2626' : '#D97706'
                             return (
+                              <Tooltip key={i} label={`${p.name} · busy`}>
                               <div
-                                key={i}
                                 className="absolute left-0.5 right-0.5 rounded-[4px] border-l-2 pointer-events-none overflow-hidden"
                                 style={{ top: topFor(b.s), height: Math.max(6, ((b.e - b.s) / 60) * PX_PER_HOUR), background: bg, borderLeftColor: bd }}
-                                title={`${p.name} · busy`}
                               >
                                 {isOOO && <span className="text-[9px] text-[#475569] px-1 leading-tight">{b.kind === 'leave' ? 'Leave' : 'Holiday'}</span>}
                               </div>
+                              </Tooltip>
                             )
                           })}
                         </div>

@@ -14,6 +14,7 @@ import type { LearningItem, ContentType, MaterialViewData } from '@/lib/types/le
 import MaterialViewer from './MaterialViewer'
 import ItemTypeBadge from './ItemTypeBadge'
 import { toEmbeddableVideoUrl } from '@/lib/learning/video-embed'
+import Tooltip from '@/components/ui/Tooltip'
 
 const TYPE_ICONS: Record<ContentType, any> = {
   video: Play,
@@ -109,20 +110,24 @@ export default function MaterialPreviewModal({
                 <Download size={14} /> Download
               </button>
             )}
-            <button
-              onClick={() => setMaximized((m) => !m)}
-              title={maximized ? 'Restore' : 'Maximize'}
-              className="p-2 text-[#475569] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[8px] transition-colors"
-            >
-              {maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-            </button>
-            <button
-              onClick={onClose}
-              title="Close (Esc)"
-              className="p-2 text-[#475569] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px] transition-colors"
-            >
-              <X size={16} />
-            </button>
+            <Tooltip label={maximized ? 'Restore' : 'Maximize'}>
+              <button
+                onClick={() => setMaximized((m) => !m)}
+                aria-label={maximized ? 'Restore' : 'Maximize'}
+                className="p-2 text-[#475569] hover:text-[#2563EB] hover:bg-[#EFF6FF] rounded-[8px] transition-colors"
+              >
+                {maximized ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
+            </Tooltip>
+            <Tooltip label="Close (Esc)">
+              <button
+                onClick={onClose}
+                aria-label="Close (Esc)"
+                className="p-2 text-[#475569] hover:text-[#DC2626] hover:bg-[#FEE2E2] rounded-[8px] transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </Tooltip>
           </div>
         </div>
 
