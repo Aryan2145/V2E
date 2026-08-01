@@ -13,6 +13,7 @@ import {
   type ProcessArtifactDirection,
 } from '@/lib/api/process-hierarchy'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import { useToast } from '@/components/ui/Toast'
 import { useAuth } from '@/lib/auth/context'
 import MaterialViewer from '@/components/learning/MaterialViewer'
@@ -173,10 +174,12 @@ function DirectionSection({
       <div className="flex items-center justify-between mb-1.5">
         <p className="text-[11px] font-semibold text-[#374151] uppercase tracking-wide">{title}</p>
         {canEdit && mode === 'closed' && (
-          <button onClick={() => setMode('chooser')} title="Add" aria-label={`Add ${direction}`}
-            className="shrink-0 w-7 h-7 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] transition-colors">
-            <Plus size={14} />
-          </button>
+          <Tooltip label="Add">
+            <button onClick={() => setMode('chooser')} aria-label={`Add ${direction}`}
+              className="shrink-0 w-7 h-7 rounded-[8px] bg-[#2563EB] text-white flex items-center justify-center hover:bg-[#1D4ED8] transition-colors">
+              <Plus size={14} />
+            </button>
+          </Tooltip>
         )}
       </div>
 
@@ -262,7 +265,7 @@ function MaterialRow({ link, canEdit, onOpen, onDownload, onEdit, onDelete }: {
   return (
     <div className="flex items-center gap-2 text-[13px] bg-[#F8FAFC] border border-[#E2E8F0] rounded-[6px] px-2 py-1.5">
       <MaterialIcon type={a.content_type} />
-      <button onClick={onOpen} className="flex-1 min-w-0 truncate text-left text-[#0F172A] hover:text-[#2563EB]" title={a.name}>{a.name}</button>
+      <Tooltip label={a.name}><button onClick={onOpen} className="flex-1 min-w-0 truncate text-left text-[#0F172A] hover:text-[#2563EB]">{a.name}</button></Tooltip>
       {a.content_type === 'link' && <ExternalLink size={12} className="text-[#94A3B8] shrink-0" />}
       {a.content_type === 'file' && a.allow_download && (
         <button onClick={onDownload} aria-label="Download" className="text-[#475569] hover:text-[#2563EB] shrink-0"><Download size={13} /></button>

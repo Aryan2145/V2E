@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import { ChevronRight, Search, X, Workflow } from 'lucide-react'
 import { KIND_META } from './kind-meta'
+import Tooltip from '@/components/ui/Tooltip'
 import type { TreeNode } from '@/lib/api/process-hierarchy'
 
 const CONTAINER_KINDS = new Set(['container', 'subprocess'])
@@ -93,14 +94,15 @@ export default function HierarchyTree({ tree, mapName, currentParentId, selected
           >
             <ChevronRight size={13} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
           </button>
-          <button
-            onClick={() => activate(n)}
-            className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
-            title={n.name}
-          >
-            <span className="shrink-0 text-[#2563EB]">{KIND_META[n.kind].icon}</span>
-            <span className={`flex-1 min-w-0 truncate text-[13px] ${isSelected || isCurrent ? 'text-[#1D4ED8] font-semibold' : 'text-[#0F172A]'}`}>{n.name}</span>
-          </button>
+          <Tooltip label={n.name}>
+            <button
+              onClick={() => activate(n)}
+              className="flex-1 min-w-0 flex items-center gap-1.5 text-left"
+            >
+              <span className="shrink-0 text-[#2563EB]">{KIND_META[n.kind].icon}</span>
+              <span className={`flex-1 min-w-0 truncate text-[13px] ${isSelected || isCurrent ? 'text-[#1D4ED8] font-semibold' : 'text-[#0F172A]'}`}>{n.name}</span>
+            </button>
+          </Tooltip>
         </div>
         {hasKids && isOpen && kids.map((c) => renderRow(c, depth + 1))}
       </div>

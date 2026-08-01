@@ -27,6 +27,7 @@ import DepartmentSelect from '@/components/employees/DepartmentSelect'
 import EmployeePicker, { type EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import RolePicker from '@/components/ui/RolePicker'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import NodeDocuments from './node-materials'
 import { useToast } from '@/components/ui/Toast'
 
@@ -330,10 +331,12 @@ export default function NodeDrawer({
                 so they're always reachable without a footer button. */}
             {node && canEdit && (
               <div className="relative">
-                <button onClick={() => setShowMenu((v) => !v)} aria-label="Actions" title="Actions" aria-haspopup="menu" aria-expanded={showMenu}
-                  className="text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-[6px] p-1 transition-colors">
-                  <Menu size={18} />
-                </button>
+                <Tooltip label="Actions">
+                  <button onClick={() => setShowMenu((v) => !v)} aria-label="Actions" aria-haspopup="menu" aria-expanded={showMenu}
+                    className="text-[#94A3B8] hover:text-[#0F172A] hover:bg-[#F1F5F9] rounded-[6px] p-1 transition-colors">
+                    <Menu size={18} />
+                  </button>
+                </Tooltip>
                 {showMenu && (
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
@@ -521,10 +524,12 @@ export default function NodeDrawer({
                       options={mapOptions} disabled={!canEdit} placeholder="— None —" />
                   </div>
                   {node.linked_map && (
-                    <button onClick={() => onDrill(nodeId)} title="Open linked map"
-                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF]">
-                      <ExternalLink size={13} /> Open
-                    </button>
+                    <Tooltip label="Open linked map">
+                      <button onClick={() => onDrill(nodeId)}
+                        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF]">
+                        <ExternalLink size={13} /> Open
+                      </button>
+                    </Tooltip>
                   )}
                 </div>
                 {node.linked_map && (
@@ -551,10 +556,12 @@ export default function NodeDrawer({
                           : 'Turn this into its own map you can drop as a line item in any other map.'}
                       </p>
                     </div>
-                    <button onClick={makeReusable} disabled={makingReusable} title="Make reusable"
-                      className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-50">
-                      {makingReusable ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />} Make reusable
-                    </button>
+                    <Tooltip label="Make reusable">
+                      <button onClick={makeReusable} disabled={makingReusable}
+                        className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-semibold rounded-[8px] border border-[#2563EB] text-[#2563EB] hover:bg-[#EFF6FF] disabled:opacity-50">
+                        {makingReusable ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />} Make reusable
+                      </button>
+                    </Tooltip>
                   </div>
                 )}
               </div>

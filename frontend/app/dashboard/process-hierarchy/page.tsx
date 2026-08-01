@@ -7,6 +7,7 @@ import { useAuth } from '@/lib/auth/context'
 import { usePermissions } from '@/lib/auth/use-permissions'
 import { useToast } from '@/components/ui/Toast'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import { processHierarchyApi, type ProcessMapSummary, type ProcessTemplateSummary } from '@/lib/api/process-hierarchy'
 import { Workflow, Plus, ChevronRight, X, Loader2, Layers, Trash2, Search, Star, FolderPlus } from 'lucide-react'
 
@@ -92,27 +93,37 @@ export default function ProcessHierarchyListPage() {
             className={`shrink-0 w-5 h-5 flex items-center justify-center rounded ${kids.length ? 'text-[#64748B] hover:bg-[#E2E8F0]' : 'opacity-0 pointer-events-none'}`}>
             <ChevronRight size={14} className={`transition-transform ${isOpen ? 'rotate-90' : ''}`} />
           </button>
-          <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} className="flex-1 min-w-0 flex items-center gap-2 py-2 text-left" title={m.name}>
-            <Workflow size={16} className="shrink-0 text-[#2563EB]" />
-            <span className="truncate text-[14px] font-medium text-[#0F172A]">{m.name}</span>
-            {m.node_count > 0 && (
-              <span title={`${m.node_count} step${m.node_count !== 1 ? 's' : ''}`}
-                className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold tabular-nums">{m.node_count}</span>
-            )}
-            {kids.length > 0 && (
-              <span title={`${kids.length} sub-map${kids.length !== 1 ? 's' : ''}`}
-                className="shrink-0 text-[11px] text-[#64748B]">· {kids.length} inside</span>
-            )}
-            {m.is_owner && <span className="shrink-0 text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-[#E0F2FE] text-[#0369A1]">Owner</span>}
-          </button>
-          <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-            <button onClick={() => togglePin(m)} title={m.is_pinned ? 'Unpin' : 'Pin to top'} aria-label="Pin"
-              className={`w-7 h-7 flex items-center justify-center rounded-[6px] hover:bg-[#E2E8F0] ${m.is_pinned ? 'text-[#D97706]' : 'text-[#94A3B8] hover:text-[#0F172A]'}`}>
-              <Star size={14} fill={m.is_pinned ? '#D97706' : 'none'} />
+          <Tooltip label={m.name}>
+            <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} className="flex-1 min-w-0 flex items-center gap-2 py-2 text-left">
+              <Workflow size={16} className="shrink-0 text-[#2563EB]" />
+              <span className="truncate text-[14px] font-medium text-[#0F172A]">{m.name}</span>
+              {m.node_count > 0 && (
+                <Tooltip label={`${m.node_count} step${m.node_count !== 1 ? 's' : ''}`}>
+                  <span
+                    className="shrink-0 inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold tabular-nums">{m.node_count}</span>
+                </Tooltip>
+              )}
+              {kids.length > 0 && (
+                <Tooltip label={`${kids.length} sub-map${kids.length !== 1 ? 's' : ''}`}>
+                  <span
+                    className="shrink-0 text-[11px] text-[#64748B]">· {kids.length} inside</span>
+                </Tooltip>
+              )}
+              {m.is_owner && <span className="shrink-0 text-[10px] font-semibold rounded-full px-1.5 py-0.5 bg-[#E0F2FE] text-[#0369A1]">Owner</span>}
             </button>
+          </Tooltip>
+          <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+            <Tooltip label={m.is_pinned ? 'Unpin' : 'Pin to top'}>
+              <button onClick={() => togglePin(m)} aria-label="Pin"
+                className={`w-7 h-7 flex items-center justify-center rounded-[6px] hover:bg-[#E2E8F0] ${m.is_pinned ? 'text-[#D97706]' : 'text-[#94A3B8] hover:text-[#0F172A]'}`}>
+                <Star size={14} fill={m.is_pinned ? '#D97706' : 'none'} />
+              </button>
+            </Tooltip>
             {canCreate && (
-              <button onClick={() => setCreateParent(m.id)} title="Add a sub-map here" aria-label="Add sub-map"
-                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#E2E8F0]"><FolderPlus size={14} /></button>
+              <Tooltip label="Add a sub-map here">
+                <button onClick={() => setCreateParent(m.id)} aria-label="Add sub-map"
+                  className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#E2E8F0]"><FolderPlus size={14} /></button>
+              </Tooltip>
             )}
           </div>
         </div>
@@ -128,13 +139,17 @@ export default function ProcessHierarchyListPage() {
     return (
       <div key={m.id} className="group relative flex flex-col bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] hover:border-[#93C5FD] hover:shadow-md transition-all">
         <div className="absolute top-2.5 right-2.5 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
-          <button onClick={() => togglePin(m)} title={m.is_pinned ? 'Unpin' : 'Pin to top'} aria-label="Pin"
-            className={`w-7 h-7 flex items-center justify-center rounded-[6px] hover:bg-[#F1F5F9] ${m.is_pinned ? 'text-[#D97706]' : 'text-[#94A3B8] hover:text-[#0F172A]'}`}>
-            <Star size={15} fill={m.is_pinned ? '#D97706' : 'none'} />
-          </button>
+          <Tooltip label={m.is_pinned ? 'Unpin' : 'Pin to top'}>
+            <button onClick={() => togglePin(m)} aria-label="Pin"
+              className={`w-7 h-7 flex items-center justify-center rounded-[6px] hover:bg-[#F1F5F9] ${m.is_pinned ? 'text-[#D97706]' : 'text-[#94A3B8] hover:text-[#0F172A]'}`}>
+              <Star size={15} fill={m.is_pinned ? '#D97706' : 'none'} />
+            </button>
+          </Tooltip>
           {canCreate && (
-            <button onClick={() => setCreateParent(m.id)} title="Add a sub-map here" aria-label="Add sub-map"
-              className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#F1F5F9]"><FolderPlus size={15} /></button>
+            <Tooltip label="Add a sub-map here">
+              <button onClick={() => setCreateParent(m.id)} aria-label="Add sub-map"
+                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#F1F5F9]"><FolderPlus size={15} /></button>
+            </Tooltip>
           )}
         </div>
         {/* Header — icon + name open the map; the meta row keeps a fixed shape so every
@@ -143,9 +158,11 @@ export default function ProcessHierarchyListPage() {
           <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} aria-label={`Open ${m.name}`}
             className="shrink-0 w-10 h-10 rounded-[10px] bg-[#EFF6FF] flex items-center justify-center hover:bg-[#DBEAFE] transition-colors"><Workflow size={20} className="text-[#2563EB]" /></button>
           <div className="min-w-0 flex-1 pr-8">
-            <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} className="block w-full text-left" title={m.name}>
-              <span className="block text-[15px] font-semibold text-[#0F172A] truncate">{m.name}</span>
-            </button>
+            <Tooltip label={m.name}>
+              <button onClick={() => router.push(`/dashboard/process-hierarchy/${m.id}`)} className="block w-full text-left">
+                <span className="block text-[15px] font-semibold text-[#0F172A] truncate">{m.name}</span>
+              </button>
+            </Tooltip>
             <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
               {m.node_count > 0 && (
                 <span className="inline-flex items-center gap-1 text-[12px] font-medium text-[#475569]">
@@ -371,8 +388,10 @@ function TemplatePickerModal({ orgId, onClose, onInstantiated }: {
                       className="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-semibold rounded-[8px] bg-[#2563EB] text-white hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8]">
                       {busy === t.id ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Use
                     </button>
-                    <button onClick={() => setConfirmDelete(t)} title="Delete template"
-                      className="shrink-0 text-[#94A3B8] hover:text-[#DC2626]"><Trash2 size={15} /></button>
+                    <Tooltip label="Delete template">
+                      <button onClick={() => setConfirmDelete(t)} aria-label="Delete template"
+                        className="shrink-0 text-[#94A3B8] hover:text-[#DC2626]"><Trash2 size={15} /></button>
+                    </Tooltip>
                   </div>
                 ))}
               </div>

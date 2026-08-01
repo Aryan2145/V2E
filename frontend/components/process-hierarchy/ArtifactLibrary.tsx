@@ -6,6 +6,7 @@ import { X, Plus, Upload, Trash2, Download, FileText, Loader2, Paperclip } from 
 import { processHierarchyApi, type ProcessArtifact, type ProcessArtifactType } from '@/lib/api/process-hierarchy'
 import StyledSelect from '@/components/ui/StyledSelect'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
+import Tooltip from '@/components/ui/Tooltip'
 import { useToast } from '@/components/ui/Toast'
 
 const TYPES: ProcessArtifactType[] = ['document', 'form', 'report', 'data', 'other']
@@ -116,10 +117,14 @@ export default function ArtifactLibrary({ orgId, mapId, canEdit, onClose }: {
                     <p className="text-[12px] text-[#64748B] capitalize">{a.artifact_type}{a.storage_key ? ' · file attached' : ' · reference only'}</p>
                   </div>
                   {a.storage_key && (
-                    <button onClick={() => download(a.id)} title="Download" className="text-[#475569] hover:text-[#2563EB] shrink-0"><Download size={15} /></button>
+                    <Tooltip label="Download">
+                      <button onClick={() => download(a.id)} aria-label="Download" className="text-[#475569] hover:text-[#2563EB] shrink-0"><Download size={15} /></button>
+                    </Tooltip>
                   )}
                   {canEdit && (
-                    <button onClick={() => setConfirmDel(a)} title="Delete document" className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><Trash2 size={15} /></button>
+                    <Tooltip label="Delete document">
+                      <button onClick={() => setConfirmDel(a)} aria-label="Delete document" className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"><Trash2 size={15} /></button>
+                    </Tooltip>
                   )}
                 </div>
               ))}
