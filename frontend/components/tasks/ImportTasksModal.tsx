@@ -45,6 +45,9 @@ interface Props {
   orgId: string
   onClose: () => void
   onImported: () => void
+  /** Render inline inside another modal (the Create Task modal's "Bulk upload" tab):
+      no own portal/overlay, no close-X, no full-page preview breakout. */
+  embedded?: boolean
 }
 
 /** Glue for combined dropdown values, e.g. "Jane Doe · Sales · Manager". Must match the backend. */
@@ -251,17 +254,19 @@ function normName(s: string): string {
   return s.trim().toLowerCase()
 }
 
-export default function ImportTasksModal({ orgId, onClose, onImported }: Props) {
+export default function ImportTasksModal({ orgId, onClose, onImported, embedded = false }: Props) {
   const { addToast } = useToast()
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
   useEffect(() => {
+    // Embedded inside another modal — the host already locks body scroll.
+    if (embedded) return
     const prev = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = prev }
-  }, [])
+  }, [embedded])
 
   const [options, setOptions] = useState<TaskImportOptions | null>(null)
   const [loadingOptions, setLoadingOptions] = useState(true)
@@ -774,53 +779,65 @@ export default function ImportTasksModal({ orgId, onClose, onImported }: Props) 
 
   if (!mounted) return null
 
-  const isFullPage = phase === 'preview'
+  // Full-page preview only makes sense as a standalone overlay; when embedded the host
+  // modal owns the frame, so the preview stays within it and scrolls internally.
+  const isFullPage = phase === 'preview' && !embedded
 
-  return createPortal(
-    <div className={`fixed inset-0 z-[60] flex justify-center bg-black/40 ${isFullPage ? 'items-stretch p-0' : 'items-end sm:items-center p-0 sm:p-4'}`}>
-      <div className={`bg-white shadow-xl flex flex-col ${isFullPage ? 'w-full h-full max-h-none rounded-none' : 'w-full sm:max-w-3xl sm:rounded-[12px] rounded-t-[16px] max-h-[92vh]'}`}>
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
-          <div className="flex items-center gap-3">
-            {(phase === 'history' || phase === 'batch-detail') && (
-              <button
-                onClick={phase === 'history' ? resetToUpload : detailOrigin === 'import' ? resetToUpload : openHistory}
-                className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
-                aria-label="Back"
-              >
-                <ArrowLeft size={18} />
-              </button>
-            )}
-            <h2 className="text-[18px] font-semibold text-[#0F172A]">
-              {phase === 'preview' ? 'Review before importing'
-                : phase === 'history' ? 'Import history'
-                : phase === 'batch-detail' ? 'Import details'
-                : 'Import Tasks'}
-            </h2>
+  const shell = (
+    <>
+      <div className={embedded
+        ? 'flex flex-col flex-1 min-h-0 bg-white'
+        : `bg-white shadow-xl flex flex-col ${isFullPage ? 'w-full h-full max-h-none rounded-none' : 'w-full sm:max-w-3xl sm:rounded-[12px] rounded-t-[16px] max-h-[92vh]'}`}>
+        {/* Header — hidden on the upload step when embedded (the host modal's "Create
+            task" header + the Bulk-upload tab already frame it, and History now lives in
+            the Step 1 card), so it doesn't waste a whole row. */}
+        {!(embedded && phase === 'upload') && (
+          <div className="flex items-center justify-between px-6 py-4 border-b border-[#E2E8F0]">
+            <div className="flex items-center gap-3">
+              {(phase === 'history' || phase === 'batch-detail') && (
+                <button
+                  onClick={phase === 'history' ? resetToUpload : detailOrigin === 'import' ? resetToUpload : openHistory}
+                  className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
+                  aria-label="Back"
+                >
+                  <ArrowLeft size={18} />
+                </button>
+              )}
+              <h2 className="text-[18px] font-semibold text-[#0F172A]">
+                {phase === 'preview' ? 'Review before importing'
+                  : phase === 'history' ? 'Import history'
+                  : phase === 'batch-detail' ? 'Import details'
+                  : 'Import Tasks'}
+              </h2>
+            </div>
+            <div className="flex items-center gap-1">
+              {/* Standalone upload keeps History here; embedded upload hides this whole
+                  header, so History is surfaced in the Step 1 card instead. */}
+              {phase === 'upload' && !embedded && (
+                <button
+                  onClick={openHistory}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[6px] text-[13px] font-medium text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
+                >
+                  <History size={15} /> History
+                </button>
+              )}
+              {!embedded && (
+                <button onClick={onClose} className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors" aria-label="Close">
+                  <X size={18} />
+                </button>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            {phase === 'upload' && (
-              <button
-                onClick={openHistory}
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[6px] text-[13px] font-medium text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors"
-              >
-                <History size={15} /> History
-              </button>
-            )}
-            <button onClick={onClose} className="p-1.5 rounded-[6px] text-[#475569] hover:bg-[#F1F5F9] hover:text-[#0F172A] transition-colors" aria-label="Close">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
+        )}
 
         {/* Body */}
-        <div className={`px-6 py-5 overflow-y-auto space-y-5 ${isFullPage ? 'flex-1 min-h-0' : ''}`}>
+        <div className={`px-6 py-5 overflow-y-auto space-y-5 ${isFullPage || embedded ? 'flex-1 min-h-0' : ''}`}>
           {/* ── Upload ── */}
           {phase === 'upload' && (
             <>
               <div className="flex items-start gap-3 p-4 rounded-[10px] bg-[#EFF6FF] border border-[#BFDBFE]">
                 <FileText size={18} className="text-[#2563EB] mt-0.5 shrink-0" />
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold text-[#0F172A]">Step 1 — Download the Excel template</p>
                   <p className="text-[13px] text-[#475569] mt-0.5">
                     Required columns (<span className="font-semibold text-[#2563EB]">blue header, marked *</span>): title,
@@ -859,7 +876,19 @@ export default function ImportTasksModal({ orgId, onClose, onImported }: Props) 
               </div>
 
               <div>
-                <p className="text-sm font-semibold text-[#0F172A] mb-2">Step 2 — Upload the filled file to review</p>
+                {/* Step 2 heading row — History sits on the right (embedded only; the
+                    standalone modal keeps History in its own header). */}
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-[#0F172A]">Step 2 — Upload the filled file to review</p>
+                  {embedded && (
+                    <button
+                      onClick={openHistory}
+                      className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-[6px] text-[13px] font-medium text-[#2563EB] hover:bg-[#DBEAFE] transition-colors"
+                    >
+                      <History size={15} /> History
+                    </button>
+                  )}
+                </div>
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -1149,6 +1178,13 @@ export default function ImportTasksModal({ orgId, onClose, onImported }: Props) 
           </div>
         </div>
       )}
+    </>
+  )
+
+  if (embedded) return shell
+  return createPortal(
+    <div className={`fixed inset-0 z-[60] flex justify-center bg-black/40 ${isFullPage ? 'items-stretch p-0' : 'items-end sm:items-center p-0 sm:p-4'}`}>
+      {shell}
     </div>,
     document.body,
   )

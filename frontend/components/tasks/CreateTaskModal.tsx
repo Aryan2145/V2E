@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
-import { X, Plus, Calendar, RotateCcw, CheckCircle2 } from 'lucide-react'
+import { X, Plus, Calendar, RotateCcw, CheckCircle2, FilePlus2, Table } from 'lucide-react'
 import DatePicker from '@/components/ui/DatePicker'
 import TimeField from '@/components/ui/TimeField'
 import StyledSelect from '@/components/ui/StyledSelect'
@@ -30,6 +30,7 @@ import type { SelectedAssignee } from '@/lib/types/tasks'
 import type { HolidayCheckResult } from '@/lib/types/holidays'
 // import QuadrantBadge from './QuadrantBadge'
 import AssigneeSelector from './AssigneeSelector'
+import ImportTasksModal from './ImportTasksModal'
 import ProofRequirementField from './ProofRequirementField'
 import HolidayWarningBadge from '@/components/holidays/HolidayWarningBadge'
 import LeaveWarningBadge from '@/components/leave/LeaveWarningBadge'
@@ -69,6 +70,12 @@ interface CreateTaskModalProps {
   /** Hide the One-time/Recurring toggle — used by the Recurring page so its
       create button always produces a recurring task. */
   lockMode?: boolean
+  /** Show the "Single task | Bulk upload" tab (bulk = the Excel import flow).
+      Defaults on; the Recurring page (lockMode) never shows it. */
+  allowBulk?: boolean
+  /** Refresh-only callback fired after a bulk import commits — unlike onCreated it
+      must NOT close the modal (the import flow shows its own result/undo screen). */
+  onImported?: () => void
 }
 
 // const quadrants: { value: TaskQuadrant; label: string; sublabel: string }[] = [
@@ -94,10 +101,17 @@ export default function CreateTaskModal({
   statuses,
   initialMode = 'one_time',
   lockMode = false,
+  allowBulk = true,
+  onImported,
 }: CreateTaskModalProps) {
   const { user } = useAuth()
   const router = useRouter()
   const orgId = user?.organizationId ?? ''
+
+  // Single task (this form) vs Bulk upload (the Excel import flow). The recurring
+  // page locks the mode, so bulk is never offered there.
+  const showBulkTab = allowBulk && !lockMode
+  const [tab, setTab] = useState<'single' | 'bulk'>('single')
 
   // One-time vs recurring. One-time is the default.
   const [mode, setMode] = useState<TaskMode>(initialMode)
@@ -242,6 +256,7 @@ export default function CreateTaskModal({
   }, [deadlineDate, orgId])
 
   const reset = useCallback(() => {
+    setTab('single')
     setTitle('')
     setDescription('')
     // setQuadrant('Q2')
@@ -512,7 +527,10 @@ export default function CreateTaskModal({
       role="dialog"
       aria-modal="true"
     >
-      <div className="relative w-full max-w-2xl bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] max-h-[92vh] flex flex-col">
+      {/* When the Bulk-upload tab exists, the card is a FIXED size so switching tabs only
+          swaps the inner content — the frame never resizes (no width/height glitch). The
+          recurring/lock-mode modal (no bulk tab) keeps its natural content-driven height. */}
+      <div className={`relative w-full bg-white rounded-t-[16px] sm:rounded-[12px] shadow-[0_8px_32px_rgba(0,0,0,0.16)] border border-[#E2E8F0] flex flex-col ${showBulkTab ? 'max-w-3xl h-[88vh]' : 'max-w-2xl max-h-[92vh]'}`}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-[#E2E8F0] shrink-0">
           <h2 className="text-[22px] font-semibold text-[#0F172A]">
@@ -527,6 +545,45 @@ export default function CreateTaskModal({
           </button>
         </div>
 
+        {/* Single task | Bulk upload — bulk swaps the whole body to the Excel import flow. */}
+        {showBulkTab && (
+          <div className="shrink-0 px-6 pt-4">
+            <div className="grid grid-cols-2 gap-1 p-1 rounded-[10px] bg-[#F8FAFC] border border-[#E2E8F0]">
+              {([
+                { value: 'single' as const, label: 'Single task', icon: FilePlus2 },
+                { value: 'bulk' as const, label: 'Bulk upload', icon: Table },
+              ]).map((opt) => {
+                const active = tab === opt.value
+                const Icon = opt.icon
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setTab(opt.value)}
+                    aria-pressed={active}
+                    className={[
+                      'flex items-center justify-center gap-2 px-3 py-2 rounded-[8px] text-sm font-semibold transition-colors',
+                      active ? 'bg-white text-[#0F172A] shadow-sm border border-[#E2E8F0]' : 'text-[#475569] hover:text-[#0F172A]',
+                    ].join(' ')}
+                  >
+                    <Icon size={16} className={active ? 'text-[#2563EB]' : 'text-[#94A3B8]'} />
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
+        {tab === 'bulk' ? (
+          <ImportTasksModal
+            embedded
+            orgId={orgId}
+            onClose={handleClose}
+            onImported={onImported ?? onCreated}
+          />
+        ) : (
+        <>
         {/* Body */}
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
           {/* Title */}
@@ -883,6 +940,8 @@ export default function CreateTaskModal({
             </button>
           </div>
         </div>
+        </>
+        )}
       </div>
     </div>,
     document.body,

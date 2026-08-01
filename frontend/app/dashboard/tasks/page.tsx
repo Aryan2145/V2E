@@ -13,7 +13,6 @@ import type {
 import { TIMING_META } from '@/lib/types/tasks'
 import { buildDeptForest, subtreeIds, pathTo } from '@/lib/tasks/dept-tree'
 import CreateTaskModal from '@/components/tasks/CreateTaskModal'
-import ImportTasksModal from '@/components/tasks/ImportTasksModal'
 import ScopeSwitcher from '@/components/tasks/overview/ScopeSwitcher'
 import ViewToggle, { type View } from '@/components/tasks/overview/ViewToggle'
 import LensToggle, { type Lens } from '@/components/tasks/overview/LensToggle'
@@ -39,7 +38,7 @@ import StyledSelect from '@/components/ui/StyledSelect'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
 import { usePermissions } from '@/lib/auth/use-permissions'
-import { Plus, Search, SlidersHorizontal, X, BarChart3, Download, ListChecks, CheckSquare, UploadCloud } from 'lucide-react'
+import { Plus, Search, SlidersHorizontal, X, BarChart3, Download, ListChecks, CheckSquare } from 'lucide-react'
 
 const PAGE_SIZE = 25
 
@@ -106,7 +105,6 @@ export default function TasksOverviewPage() {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [openTaskId, setOpenTaskId] = useState<string | null>(null)
   const [showCreate, setShowCreate] = useState(false)
-  const [showImport, setShowImport] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [segment, setSegment] = useState<{ title: string; subtitle: string; query: WorkQuery } | null>(null)
 
@@ -376,16 +374,13 @@ export default function TasksOverviewPage() {
     <div className="space-y-5 pb-24">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Work Overview</h1>
           <p className="mt-1 text-[15px] text-[#475569]">{SCOPE_BLURB[appliedScope]}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <ScopeSwitcher maxScope={maxScope} value={appliedScope} onChange={(s) => setRequestedScope(s)} />
-          <button onClick={() => setShowImport(true)} className="flex items-center gap-2 px-4 py-[10px] bg-white text-[#2563EB] border-2 border-[#2563EB] rounded-[8px] text-sm font-semibold hover:bg-[#EFF6FF] transition-colors shrink-0">
-            <UploadCloud size={16} /> Bulk import
-          </button>
-          <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors shrink-0">
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 px-3.5 py-[7px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors shrink-0">
             <Plus size={16} /> Create Task
           </button>
         </div>
@@ -537,12 +532,14 @@ export default function TasksOverviewPage() {
             placeholder="All priorities"
             options={[{ value: '', label: 'All priorities' }, ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color }))]}
           />
-          <StyledSelect
-            value={categoryId}
-            onChange={setCategoryId}
-            placeholder="All categories"
-            options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color }))]}
-          />
+          {categories.length > 0 && (
+            <StyledSelect
+              value={categoryId}
+              onChange={setCategoryId}
+              placeholder="All categories"
+              options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color }))]}
+            />
+          )}
           <StyledSelect
             value={departmentId}
             onChange={setDepartmentId}
@@ -680,18 +677,11 @@ export default function TasksOverviewPage() {
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
         onCreated={() => { setShowCreate(false); refreshAll() }}
+        onImported={refreshAll}
         categories={categories}
         priorities={priorities}
         statuses={statuses}
       />
-
-      {showImport && (
-        <ImportTasksModal
-          orgId={orgId}
-          onClose={() => setShowImport(false)}
-          onImported={refreshAll}
-        />
-      )}
     </div>
   )
 }
