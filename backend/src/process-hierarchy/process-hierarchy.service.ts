@@ -1234,10 +1234,48 @@ export class ProcessHierarchyService {
       where: { id: snapshotId, map_id: mapId, organization_id: orgId },
     });
     if (!snap) throw new NotFoundException('Snapshot not found');
-    const tree = snap.tree_json as any;
+    await this.applyTree(orgId, mapId, snap.tree_json as any);
+    return { success: true };
+  }
+
+  // ─── Undo/redo state (session history) ─────────────────────────────────────────
+  // The editor keeps a client-side undo stack of serialized map states; these two
+  // endpoints let it capture the current state and rebuild the map from a captured
+  // one WITHOUT creating a user-facing snapshot/version row.
+
+  /** Serialize the whole map to a JSON blob the client can hold for undo/redo. */
+  async exportState(orgId: string, principal: Principal, mapId: string) {
+    await this.access.assertCanEditMap(orgId, principal, mapId);
+    return this.serializeMap(orgId, mapId);
+  }
+
+  /** Rebuild the map from a client-held state blob (undo/redo step). */
+  async restoreState(orgId: string, principal: Principal, mapId: string, tree: any) {
+    await this.access.assertCanEditMap(orgId, principal, mapId);
+    if (!tree || typeof tree !== 'object' || !Array.isArray(tree.nodes)) {
+      throw new BadRequestException('Invalid map state');
+    }
+    await this.applyTree(orgId, mapId, tree);
+    return { success: true };
+  }
+
+  /** Wipe a map's working tree and rebuild it from a serialized state (ids preserved so
+   *  relations resolve). org/map are FORCED on every row, so a supplied tree can only ever
+   *  write into THIS map — never cross-org/map — regardless of what the blob claims. */
+  private async applyTree(orgId: string, mapId: string, tree: any) {
+    const withOrgMap = (rows: any[] | undefined) =>
+      (rows ?? []).map((r) => ({ ...r, organization_id: orgId, map_id: mapId }));
+    const withOrg = (rows: any[] | undefined) =>
+      (rows ?? []).map((r) => ({ ...r, organization_id: orgId }));
+    const artifacts = withOrgMap(tree.artifacts);
+    const nodes = withOrgMap(tree.nodes);
+    const connections = withOrgMap(tree.connections);
+    const links = tree.links ?? []; // node_id + artifact_id only — scoped via the node it hangs off
+    const checklist = tree.checklist ?? []; // node_id only
+    const access = withOrg(tree.access);
 
     await this.prisma.$transaction(async (tx) => {
-      // Wipe the working tree (hard delete — the snapshot is the source of truth).
+      // Wipe the working tree (hard delete — the supplied state is the source of truth).
       await tx.processConnection.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
       await tx.processNodeArtifact.deleteMany({ where: { node: { organization_id: orgId, map_id: mapId } } });
       await tx.processChecklistItem.deleteMany({ where: { node: { organization_id: orgId, map_id: mapId } } });
@@ -1245,15 +1283,14 @@ export class ProcessHierarchyService {
       await tx.processNode.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
       await tx.processArtifact.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
 
-      // Recreate from the snapshot (ids preserved so relations resolve).
-      if (tree.artifacts?.length) await tx.processArtifact.createMany({ data: tree.artifacts });
-      if (tree.nodes?.length) await tx.processNode.createMany({ data: tree.nodes });
-      if (tree.connections?.length) await tx.processConnection.createMany({ data: tree.connections });
-      if (tree.links?.length) await tx.processNodeArtifact.createMany({ data: tree.links });
-      if (tree.checklist?.length) await tx.processChecklistItem.createMany({ data: tree.checklist });
-      if (tree.access?.length) await tx.processNodeAccess.createMany({ data: tree.access });
+      // Recreate (ids preserved so relations resolve).
+      if (artifacts.length) await tx.processArtifact.createMany({ data: artifacts });
+      if (nodes.length) await tx.processNode.createMany({ data: nodes });
+      if (connections.length) await tx.processConnection.createMany({ data: connections });
+      if (links.length) await tx.processNodeArtifact.createMany({ data: links });
+      if (checklist.length) await tx.processChecklistItem.createMany({ data: checklist });
+      if (access.length) await tx.processNodeAccess.createMany({ data: access });
     });
-    return { success: true };
   }
 
   // ─── Diff (as-is vs to-be) ─────────────────────────────────────────────────────

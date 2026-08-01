@@ -43,7 +43,9 @@ import {
   Eye, Pencil, Filter, History, Plus, Check, X, Loader2, RotateCcw,
   GitCompare, FolderOpen, Save, MoreHorizontal, PanelLeft, Trash2,
   Link2 as LinkIcon, Search, Workflow, ClipboardPaste, Download, Rows3,
+  Undo2, Redo2,
 } from 'lucide-react'
+import { useMapHistory } from '@/components/process-hierarchy/useMapHistory'
 
 const ADD_KINDS: ProcessNodeKind[] = ['task', 'decision', 'subprocess', 'container', 'start_event', 'end_event']
 // Inside a swimlane there are no containers (folders) — a lane holds flow steps and
@@ -130,8 +132,15 @@ export default function ProcessMapExplorerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId, mapId])
 
-  // Reload the current level and refresh the outline tree after any structural change.
-  const refresh = useCallback(async () => { await loadFlow(parentId); loadTree() }, [loadFlow, parentId, loadTree])
+  // Reload the current level and refresh the outline tree after any structural change, then push
+  // a new undo/redo history entry. refresh() is called ONLY by mutations (navigation uses loadFlow
+  // directly), so this is the single chokepoint that records every change. The record goes through
+  // a ref to break the chicken-and-egg with the history hook (which itself calls refresh on undo —
+  // the hook suppresses recording during its own restore).
+  const historyRecordRef = useRef<() => void>(() => {})
+  const refresh = useCallback(async () => { await loadFlow(parentId); loadTree(); historyRecordRef.current() }, [loadFlow, parentId, loadTree])
+  const history = useMapHistory(orgId, mapId, refresh)
+  useEffect(() => { historyRecordRef.current = history.record }, [history.record])
 
   const drill = useCallback(async (nodeId: string) => {
     const node = flow?.nodes.find((n) => n.id === nodeId)
@@ -155,6 +164,21 @@ export default function ProcessMapExplorerPage() {
   }, [goTo])
 
   const canEditHere = !comparing && mode === 'edit' && !!flow?.can_edit
+
+  // Undo / redo keyboard shortcuts: Ctrl/⌘+Z undo, Ctrl+Y or Ctrl/⌘+Shift+Z redo. Only in edit
+  // mode, and ignored while typing in a field (so it never clobbers text undo).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!canEditHere || !(e.ctrlKey || e.metaKey)) return
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      const k = e.key.toLowerCase()
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); history.undo() }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); history.redo() }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [canEditHere, history.undo, history.redo])
 
   // Core: place a node in the flow (anchor on selected/right-most, auto-connect), with
   // optional composition (build-in-place child map, or reference an existing map).
@@ -336,8 +360,8 @@ export default function ProcessMapExplorerPage() {
       parent_node_id: parentId, source_node_id: source, target_node_id: target,
       condition_kind: cond, label: cond === 'yes' ? 'Yes' : 'No',
       ...(sourceSide ? { source_side: sourceSide } : {}),
-    }).then(() => loadFlow(parentId)).catch(() => addToast('Could not connect those steps.', 'error'))
-  }, [outputRuleFor, orgId, mapId, parentId, loadFlow, addToast])
+    }).then(() => refresh()).catch(() => addToast('Could not connect those steps.', 'error'))
+  }, [outputRuleFor, orgId, mapId, parentId, refresh, addToast])
   const chooseBranch = useCallback(async (cond: 'yes' | 'no') => {
     const bp = branchPick
     setBranchPick(null)
@@ -352,18 +376,18 @@ export default function ProcessMapExplorerPage() {
       } else {
         await processHierarchyApi.updateConnection(orgId, mapId, bp.connId, { condition_kind: cond, label })
       }
-      await loadFlow(parentId)
+      await refresh()
     } catch { addToast('Could not set the branch.', 'error') }
-  }, [branchPick, orgId, mapId, parentId, loadFlow, addToast])
+  }, [branchPick, orgId, mapId, parentId, refresh, addToast])
   const cancelBranch = useCallback(async () => {
     const bp = branchPick
     setBranchPick(null)
     if (!bp) return
     // "Nothing chosen → break the connection." (In create mode nothing was created yet.)
     if (bp.mode === 'set') {
-      try { await processHierarchyApi.deleteConnection(orgId, mapId, bp.connId); await loadFlow(parentId) } catch { /* ignore */ }
+      try { await processHierarchyApi.deleteConnection(orgId, mapId, bp.connId); await refresh() } catch { /* ignore */ }
     }
-  }, [branchPick, orgId, mapId, parentId, loadFlow])
+  }, [branchPick, orgId, mapId, parentId, refresh])
 
   // Build-in-place: containers / sub-processes instantly become their own child map.
   const addNode = useCallback((kind: ProcessNodeKind) => {
@@ -387,16 +411,16 @@ export default function ProcessMapExplorerPage() {
         condition_kind: cond, label: cond === 'yes' ? 'Yes' : cond === 'no' ? 'No' : undefined,
         ...(sourceSide ? { source_side: sourceSide } : {}),
       })
-      await loadFlow(parentId)
+      await refresh()
     } catch { addToast('Could not connect those steps.', 'error') }
-  }, [orgId, mapId, parentId, loadFlow, addToast, outputRuleFor])
+  }, [orgId, mapId, parentId, refresh, addToast, outputRuleFor])
 
   const onNodeDragStop = useCallback(async (nodeId: string, x: number, y: number) => {
     // Update local state too, so a later expand/collapse rebuilds at the new spot
     // (not the stale stored position) — otherwise the node appears to jump.
     setFlow((f) => f ? { ...f, nodes: f.nodes.map((n) => (n.id === nodeId ? { ...n, position_x: x, position_y: y } : n)) } : f)
-    await processHierarchyApi.bulkPosition(orgId, mapId, [{ id: nodeId, position_x: x, position_y: y }])
-      .catch(() => addToast('Could not save the new position.', 'error'))
+    try { await processHierarchyApi.bulkPosition(orgId, mapId, [{ id: nodeId, position_x: x, position_y: y }]); historyRecordRef.current() }
+    catch { addToast('Could not save the new position.', 'error') }
   }, [orgId, mapId, addToast])
 
   // Open a document clicked straight on the canvas: links jump out, files/articles preview.
@@ -419,7 +443,8 @@ export default function ProcessMapExplorerPage() {
       const p = positions.find((x) => x.id === n.id)
       return p ? { ...n, position_x: p.position_x, position_y: p.position_y } : n
     }) } : f)
-    await processHierarchyApi.bulkPosition(orgId, mapId, positions).catch(() => addToast('Could not save the new positions.', 'error'))
+    try { await processHierarchyApi.bulkPosition(orgId, mapId, positions); historyRecordRef.current() }
+    catch { addToast('Could not save the new positions.', 'error') }
   }, [orgId, mapId, addToast])
 
   // Delete a box-selected group (cascades handled server-side; ignore per-node races).
@@ -441,14 +466,14 @@ export default function ProcessMapExplorerPage() {
 
 
   const updateConn = useCallback(async (id: string, dto: { label?: string; condition_kind?: ProcessConditionKind }) => {
-    try { await processHierarchyApi.updateConnection(orgId, mapId, id, dto); await loadFlow(parentId) }
+    try { await processHierarchyApi.updateConnection(orgId, mapId, id, dto); await refresh() }
     catch { addToast('Could not update the connection.', 'error') }
-  }, [orgId, mapId, parentId, loadFlow, addToast])
+  }, [orgId, mapId, parentId, refresh, addToast])
 
   const deleteConn = useCallback(async (id: string) => {
-    try { await processHierarchyApi.deleteConnection(orgId, mapId, id); await loadFlow(parentId) }
+    try { await processHierarchyApi.deleteConnection(orgId, mapId, id); await refresh() }
     catch { addToast('Could not delete the connection.', 'error') }
-  }, [orgId, mapId, parentId, loadFlow, addToast])
+  }, [orgId, mapId, parentId, refresh, addToast])
 
   const runCompare = useCallback(async (base: string, target: string, baseLabel: string, targetLabel: string) => {
     try {
@@ -476,7 +501,20 @@ export default function ProcessMapExplorerPage() {
   // Floating "Add step" primary — rendered over the canvas (top-right cluster). In swimlane
   // work a lane is often the FIRST thing you add, so "New swimlane" lives right in this menu.
   const addStepControl = canEditHere ? (
-    <div className="relative">
+    <div className="flex items-center gap-1.5">
+      {/* Undo / redo — greyed when there's nothing to step to, or while a restore is in flight. */}
+      <div className="inline-flex h-[30px] rounded-[8px] border border-[#E2E8F0] bg-white overflow-hidden shadow-sm">
+        <button onClick={history.undo} disabled={!history.canUndo || history.busy} title="Undo (Ctrl+Z)"
+          className="inline-flex items-center px-2 text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          <Undo2 size={15} />
+        </button>
+        <span className="w-px bg-[#E2E8F0]" />
+        <button onClick={history.redo} disabled={!history.canRedo || history.busy} title="Redo (Ctrl+Y)"
+          className="inline-flex items-center px-2 text-[#475569] hover:bg-[#F1F5F9] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          <Redo2 size={15} />
+        </button>
+      </div>
+      <div className="relative">
       <button onClick={() => { setShowAdd((v) => !v); setAddLanePick(false) }}
         className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-semibold rounded-[8px] bg-[#2563EB] text-white hover:bg-[#1D4ED8] shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] focus-visible:ring-offset-1">
         <Plus size={14} /> Add step
@@ -551,6 +589,7 @@ export default function ProcessMapExplorerPage() {
           </div>
         </>
       )}
+      </div>
     </div>
   ) : null
 

@@ -33,7 +33,7 @@ import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
 import { CreateLaneDto } from './dto/lane.dto';
 import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
-import { CreateSnapshotDto } from './dto/snapshot.dto';
+import { CreateSnapshotDto, RestoreStateDto } from './dto/snapshot.dto';
 import { DecideStatusDto, RequestReviewDto } from './dto/status.dto';
 import { InstantiateTemplateDto, SaveAsTemplateDto } from './dto/template.dto';
 
@@ -417,6 +417,21 @@ export class ProcessHierarchyController {
   @ApiOperation({ summary: 'Replace the working map from a saved version' })
   restoreSnapshot(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Param('snapshotId') snapshotId: string, @Request() req: any) {
     return this.service.restoreSnapshot(orgId, principalFromUser(req.user), mapId, snapshotId);
+  }
+
+  // ─── Undo/redo (session history) — capture + restore state without a version row ─
+  @Get('maps/:mapId/state')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Serialize the current map (for the editor undo stack)' })
+  exportState(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any) {
+    return this.service.exportState(orgId, principalFromUser(req.user), mapId);
+  }
+
+  @Post('maps/:mapId/restore-state')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Rebuild the map from a captured state (undo/redo step)' })
+  restoreState(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: RestoreStateDto) {
+    return this.service.restoreState(orgId, principalFromUser(req.user), mapId, dto.tree_json);
   }
 
   // ─── Diff (as-is vs to-be) ────────────────────────────────────────────────────

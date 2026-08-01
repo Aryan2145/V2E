@@ -390,6 +390,14 @@ export const processHierarchyApi = {
     await apiClient.post(`${base(orgId)}/maps/${mapId}/snapshots/${snapshotId}/restore`, {})
   },
 
+  // Undo/redo session history — capture the whole map state, and rebuild from a captured one
+  // (no version row created). Powers the editor's Ctrl+Z / Ctrl+Y.
+  exportState: async (orgId: string, mapId: string): Promise<unknown> =>
+    unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/state`)),
+  restoreState: async (orgId: string, mapId: string, tree: unknown): Promise<void> => {
+    await apiClient.post(`${base(orgId)}/maps/${mapId}/restore-state`, { tree_json: tree })
+  },
+
   // Diff
   diff: async (orgId: string, mapId: string, baseRef: string, targetRef: string): Promise<MapDiff> =>
     unwrap(await apiClient.get(`${base(orgId)}/maps/${mapId}/diff?base=${baseRef}&target=${targetRef}`)),
