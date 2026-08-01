@@ -921,6 +921,7 @@ export class ProcessHierarchyService {
         label: dto.label ?? null,
         condition_kind: cond,
         source_side: dto.source_side ?? null,
+        target_side: dto.target_side ?? null,
       },
     });
   }
@@ -937,6 +938,8 @@ export class ProcessHierarchyService {
       data: {
         ...(dto.label !== undefined ? { label: dto.label } : {}),
         ...(dto.condition_kind !== undefined ? { condition_kind: dto.condition_kind } : {}),
+        ...(dto.source_side !== undefined ? { source_side: dto.source_side } : {}),
+        ...(dto.target_side !== undefined ? { target_side: dto.target_side } : {}),
       },
     });
   }

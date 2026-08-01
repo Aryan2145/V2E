@@ -16,6 +16,7 @@ import ReactFlow, {
   ReactFlowProvider,
   BackgroundVariant,
   MarkerType,
+  ConnectionMode,
   type Node,
   type Edge,
   type Connection,
@@ -42,14 +43,14 @@ interface Props {
   swimlane?: boolean // render the pool/lane layout instead of the free-form canvas
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void // lane "+" in swimlane view
   onAppendFromNode?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => void // click a node's exit dot → append a connected step
-  onDecisionConnect?: (source: string, target: string, sourceSide?: string) => void // drag FROM a decision → choose Yes/No in a pop-up
+  onDecisionConnect?: (source: string, target: string, sourceSide?: string, targetSide?: string) => void // drag FROM a decision → choose Yes/No in a pop-up
   onReassignLane?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, positionX: number) => void // drag a node onto another lane → change its pool/department (null pool = dropped in the no-lane area)
   selectedNodeId: string | null
   visibleNodeIds: Set<string> | null // null = show all
   diffStatus?: Record<string, DiffChangeKind> | null // when comparing versions
   onSelectNode: (nodeId: string) => void
   onDrill: (nodeId: string) => void
-  onConnect: (source: string, target: string, condition: ProcessConditionKind, sourceSide?: string) => void
+  onConnect: (source: string, target: string, condition: ProcessConditionKind, sourceSide?: string, targetSide?: string) => void
   onNodeDragStop: (nodeId: string, x: number, y: number) => void
   onUpdateConnection?: (id: string, dto: { label?: string; condition_kind?: ProcessConditionKind }) => void
   onDeleteConnection?: (id: string) => void
@@ -304,12 +305,13 @@ function Inner({
   const madeConnRef = useRef(false)
   const appendGuardRef = useRef(0) // timestamp — suppresses the node click that can follow a dot click
   // Route a source→target connection: from a decision it asks Yes/No (created in the pop-up),
-  // otherwise it's a plain sequence flow created immediately.
-  const connectNodes = useCallback((source: string, target: string, side?: string) => {
+  // otherwise it's a plain sequence flow created immediately. sourceSide/targetSide = the dots the
+  // designer dragged from / dropped on (remembered so they choose how the line attaches).
+  const connectNodes = useCallback((source: string, target: string, sourceSide?: string, targetSide?: string) => {
     if (!source || !target || source === target) return
     const src = flow.nodes.find((n) => n.id === source)
-    if (src?.kind === 'decision' && onDecisionConnect) { onDecisionConnect(source, target, side); return }
-    onConnect(source, target, 'none', side)
+    if (src?.kind === 'decision' && onDecisionConnect) { onDecisionConnect(source, target, sourceSide, targetSide); return }
+    onConnect(source, target, 'none', sourceSide, targetSide)
   }, [onConnect, onDecisionConnect, flow.nodes])
   const handleConnectStart = useCallback((e: any, params: { nodeId: string | null; handleId: string | null }) => {
     madeConnRef.current = false
@@ -336,7 +338,8 @@ function Inner({
     const el = document.elementFromPoint(p?.clientX ?? 0, p?.clientY ?? 0) as HTMLElement | null
     const targetId = el?.closest('.react-flow__node')?.getAttribute('data-id') ?? null
     if (!targetId || targetId === start.nodeId || targetId.startsWith('band::') || targetId.includes('::')) return
-    connectNodes(start.nodeId, targetId, start.handleId ?? undefined)
+    // Dropped on the node body (not a specific dot) → target side is auto.
+    connectNodes(start.nodeId, targetId, start.handleId ?? undefined, undefined)
   }, [swimlane, onAppendFromNode, flow.nodes, connectNodes])
 
   // A tap on a drillable node (container / sub-process / linked map) goes *inside*
@@ -429,9 +432,15 @@ function Inner({
   const handleConnect = useCallback(
     (c: Connection) => {
       madeConnRef.current = true // a real connection was drawn on a handle — not a dot click
-      connectNodes(c.source ?? '', c.target ?? '', c.sourceHandle ?? undefined)
+      connectNodes(c.source ?? '', c.target ?? '', c.sourceHandle ?? undefined, c.targetHandle ?? undefined)
     },
     [connectNodes],
+  )
+  // The flow reads left→right, so a line can't LEAVE a left dot (that's an input) or ENTER a
+  // right dot (that's an output). Blocks those; top/bottom stay free (loops route over them).
+  const isValidConnection = useCallback(
+    (c: Connection) => c.sourceHandle !== 'left' && c.targetHandle !== 'right',
+    [],
   )
 
   const edgeFromDecision = edgeEdit ? kindById.get(edgeEdit.conn.source_node_id) === 'decision' : false
@@ -460,6 +469,10 @@ function Inner({
       onConnect={handleConnect}
       onConnectStart={handleConnectStart}
       onConnectEnd={handleConnectEnd}
+      isValidConnection={isValidConnection}
+      // Loose: any of a node's four dots can be an input OR an output (the input/output rule is
+      // enforced in isValidConnection), so the designer picks how each line attaches.
+      connectionMode={ConnectionMode.Loose}
       onPaneClick={() => setEdgeEdit(null)}
       fitView
       fitViewOptions={FIT_OPTIONS}

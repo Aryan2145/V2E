@@ -377,6 +377,9 @@ export function buildSwimlane(
         label: label || undefined,
         enterLeft: crossLane && isMiddle(t.id), // this line goes INTO a middle node → enter its left
         exitRight: crossLane && isMiddle(s.id), // this line comes OUT of a middle node → leave its right
+        // A dot the designer explicitly picked wins over the auto rules above.
+        sourceSide: (c.source_side ?? undefined) as ('top' | 'right' | 'bottom' | 'left' | undefined),
+        targetSide: (c.target_side ?? undefined) as ('top' | 'right' | 'bottom' | 'left' | undefined),
       },
       style: { stroke: color, strokeWidth: 1.6, ...(crossPool ? { strokeDasharray: '5 4' } : {}) },
       zIndex: 1,

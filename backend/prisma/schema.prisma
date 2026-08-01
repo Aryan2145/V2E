@@ -3930,6 +3930,7 @@ model ProcessConnection {
   label           String? // e.g. "Yes"/"No" off a decision
   condition_kind  ProcessConditionKind @default(none)
   source_side     String? // swimlane: which side of the source the line exits — right|bottom|top|left (the dot the user dragged from). null = auto.
+  target_side     String? // which side of the target the line enters — right|bottom|top|left (the dot the user dropped on). null = auto.
   created_at      DateTime             @default(now())
 
   map ProcessMap @relation(fields: [map_id], references: [id], onDelete: Cascade)

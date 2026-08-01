@@ -81,6 +81,7 @@ export interface ProcessConnection {
   label: string | null
   condition_kind: ProcessConditionKind
   source_side?: string | null // swimlane: which dot of the source the line exits (right|bottom|top|left)
+  target_side?: string | null // which dot of the target the line enters (right|bottom|top|left)
 }
 
 export interface ProcessLane {
@@ -300,13 +301,13 @@ export const processHierarchyApi = {
   createConnection: async (
     orgId: string,
     mapId: string,
-    dto: { parent_node_id?: string | null; source_node_id: string; target_node_id: string; label?: string; condition_kind?: ProcessConditionKind; source_side?: string },
+    dto: { parent_node_id?: string | null; source_node_id: string; target_node_id: string; label?: string; condition_kind?: ProcessConditionKind; source_side?: string; target_side?: string },
   ): Promise<ProcessConnection> => unwrap(await apiClient.post(`${base(orgId)}/maps/${mapId}/connections`, dto)),
   updateConnection: async (
     orgId: string,
     mapId: string,
     connId: string,
-    dto: { label?: string; condition_kind?: ProcessConditionKind },
+    dto: { label?: string; condition_kind?: ProcessConditionKind; source_side?: string; target_side?: string },
   ): Promise<ProcessConnection> => unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/connections/${connId}`, dto)),
   deleteConnection: async (orgId: string, mapId: string, connId: string): Promise<void> => {
     await apiClient.delete(`${base(orgId)}/maps/${mapId}/connections/${connId}`)

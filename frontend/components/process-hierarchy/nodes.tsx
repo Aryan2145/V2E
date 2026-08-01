@@ -5,6 +5,7 @@ import { Handle, Position, type NodeProps } from 'reactflow'
 import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote, ListChecks, Square, Plus } from 'lucide-react'
 import type { ProcessNodeKind, DiffChangeKind, ProcessArtifactContentType } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
+import Tooltip from '@/components/ui/Tooltip'
 
 export { KIND_META }
 
@@ -38,21 +39,39 @@ export function borderColor(data: ProcessNodeData, accent: string): string {
 
 const handleStyle: React.CSSProperties = { width: 7, height: 7, background: '#2563EB', border: '2px solid #fff' }
 
+// Four connection dots (top / right / bottom / left), each usable as input OR output — the canvas
+// runs in connectionMode="loose", and enforces the rule "left = input only, right = output only"
+// on connect. Drag from any dot to start a line; the dot you leave and the dot you drop on are
+// remembered as the connection's source_side / target_side so YOU choose how a line attaches.
+function FourHandles({ hidden }: { hidden?: Set<'top' | 'right' | 'bottom' | 'left'> }) {
+  const sides: Array<['top' | 'right' | 'bottom' | 'left', Position]> = [
+    ['top', Position.Top], ['right', Position.Right], ['bottom', Position.Bottom], ['left', Position.Left],
+  ]
+  return (
+    <>
+      {sides.map(([id, pos]) => (hidden?.has(id) ? null : (
+        <Handle key={id} id={id} type="source" position={pos} style={handleStyle} />
+      )))}
+    </>
+  )
+}
+
 /** Small top-right pencil — opens the side panel to edit this node's details.
     Stops propagation so it never triggers the node's click-to-enter. */
 function EditButton({ data }: { data: ProcessNodeData }) {
   if (!data.onEdit) return null
   return (
-    <button
-      type="button"
-      onClick={(e) => { e.stopPropagation(); data.onEdit!() }}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onEdit!() } }}
-      className="nodrag absolute top-1 right-1 w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
-      aria-label={`Edit ${data.name}`}
-      title="Edit details"
-    >
-      <Pencil size={12} />
-    </button>
+    <Tooltip label="Edit details">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); data.onEdit!() }}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onEdit!() } }}
+        className="nodrag absolute top-1 right-1 w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+        aria-label={`Edit ${data.name}`}
+      >
+        <Pencil size={12} />
+      </button>
+    </Tooltip>
   )
 }
 
@@ -64,7 +83,7 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
   const [showChecks, setShowChecks] = useState(false)
   return (
     <>
-      <Handle type="target" position={Position.Left} style={handleStyle} />
+      <FourHandles />
       <div
         className={`relative bg-white rounded-[8px] px-2.5 py-1.5 shadow-sm flex flex-col justify-center ${canOpen ? 'cursor-pointer' : ''}`}
         style={{ border: `2px solid ${borderColor(data, accent)}`, width: isContainer ? 220 : 170, minHeight: isContainer ? 88 : 60 }}
@@ -72,12 +91,14 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
         {/* Drillable nodes: pencil edits; the body itself opens the level. */}
         {canOpen && <EditButton data={data} />}
         {data.canExpand && (
-          <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggleExpand?.() }}
-            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onToggleExpand?.() } }}
-            className="nodrag absolute top-1 right-7 w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
-            aria-label="Expand in place" title="Expand in place">
-            <Maximize2 size={11} />
-          </button>
+          <Tooltip label="Expand in place">
+            <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggleExpand?.() }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); e.preventDefault(); data.onToggleExpand?.() } }}
+              className="nodrag absolute top-1 right-7 w-5 h-5 inline-flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors"
+              aria-label="Expand in place">
+              <Maximize2 size={11} />
+            </button>
+          </Tooltip>
         )}
         <div className={`flex items-start gap-1.5 ${data.canExpand ? 'pr-11' : canOpen ? 'pr-5' : ''}`}>
           <span style={{ color: '#2563EB' }} className="shrink-0 mt-0.5">{KIND_META[data.kind].icon}</span>
@@ -91,11 +112,12 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
         {(canOpen || !!data.docCount) && (
           <div className="mt-1 flex items-center gap-2">
             {!!data.docCount && (
-              <button onClick={(e) => { e.stopPropagation(); data.onEdit?.() }}
-                className="nodrag inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#475569] hover:text-[#2563EB]"
-                title={`${data.docCount} document${data.docCount > 1 ? 's' : ''}`}>
-                <FileText size={11} /> {data.docCount}
-              </button>
+              <Tooltip label={`${data.docCount} document${data.docCount > 1 ? 's' : ''}`}>
+                <button onClick={(e) => { e.stopPropagation(); data.onEdit?.() }}
+                  className="nodrag inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#475569] hover:text-[#2563EB]">
+                  <FileText size={11} /> {data.docCount}
+                </button>
+              </Tooltip>
             )}
             {canOpen && (
               <span className="ml-auto inline-flex items-center gap-0.5 text-[10px] font-semibold text-[#2563EB]">
@@ -107,12 +129,14 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
         {/* Checklist — a line under the box; the chevron loads the items onto the canvas. */}
         {checks.length > 0 && (
           <div className="mt-1 border-t border-[#F1F5F9] pt-1">
-            <button type="button" onClick={(e) => { e.stopPropagation(); setShowChecks((v) => !v) }}
-              className="nodrag inline-flex items-center gap-1 text-[10px] font-semibold text-[#475569] hover:text-[#2563EB]"
-              aria-expanded={showChecks} title={showChecks ? 'Hide checklist' : 'Show checklist'}>
-              <ChevronRight size={11} className={`transition-transform ${showChecks ? 'rotate-90' : ''}`} />
-              <ListChecks size={11} /> {checks.length} checklist item{checks.length !== 1 ? 's' : ''}
-            </button>
+            <Tooltip label={showChecks ? 'Hide checklist' : 'Show checklist'}>
+              <button type="button" onClick={(e) => { e.stopPropagation(); setShowChecks((v) => !v) }}
+                className="nodrag inline-flex items-center gap-1 text-[10px] font-semibold text-[#475569] hover:text-[#2563EB]"
+                aria-expanded={showChecks}>
+                <ChevronRight size={11} className={`transition-transform ${showChecks ? 'rotate-90' : ''}`} />
+                <ListChecks size={11} /> {checks.length} checklist item{checks.length !== 1 ? 's' : ''}
+              </button>
+            </Tooltip>
             {showChecks && (
               <ul className="mt-1 space-y-0.5">
                 {checks.map((c) => (
@@ -126,7 +150,6 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
           </div>
         )}
       </div>
-      <Handle type="source" position={Position.Right} style={handleStyle} />
     </>
   )
 }
@@ -134,7 +157,7 @@ function StepNode({ data }: NodeProps<ProcessNodeData>) {
 function DecisionNode({ data }: NodeProps<ProcessNodeData>) {
   return (
     <div className="relative" style={{ width: 96, height: 96 }}>
-      <Handle type="target" position={Position.Left} style={handleStyle} />
+      <FourHandles />
       <div
         className="absolute bg-white shadow-sm"
         style={{
@@ -150,11 +173,6 @@ function DecisionNode({ data }: NodeProps<ProcessNodeData>) {
       <div className="absolute inset-0 flex items-center justify-center px-3 text-center">
         <span className="line-clamp-3 text-[10px] font-medium text-[#0F172A] leading-tight">{data.name}</span>
       </div>
-      {/* Exit dots are directional, NOT Yes/No — the branch meaning is chosen in a pop-up
-          when the connection is drawn, so the line can leave from whichever side faces the target. */}
-      <Handle type="source" position={Position.Right} style={handleStyle} id="right" />
-      <Handle type="source" position={Position.Bottom} style={handleStyle} id="bottom" />
-      <Handle type="source" position={Position.Top} style={handleStyle} id="top" />
     </div>
   )
 }
@@ -164,22 +182,23 @@ function EventNode({ data }: NodeProps<ProcessNodeData>) {
   const accent = isStart ? '#16A34A' : '#DC2626'
   return (
     <>
-      {!isStart && <Handle type="target" position={Position.Left} style={handleStyle} />}
+      {/* Start has no input (hide the left dot); End has no output (hide the right dot). */}
+      <FourHandles hidden={new Set([isStart ? 'left' as const : 'right' as const])} />
       {/* 44px circle keeps the node bounds (so handles stay centered); the label is
           absolutely positioned below so you can read it on the canvas. */}
-      <div
-        className="relative flex items-center justify-center rounded-full bg-white shadow-sm"
-        style={{ width: 44, height: 44, border: `3px solid ${borderColor(data, accent)}`, color: accent }}
-        title={data.name}
-        aria-label={data.name}
-      >
-        {isStart ? <Play size={18} /> : <Flag size={18} />}
-        <span className="absolute top-[calc(100%+4px)] left-1/2 -translate-x-1/2 w-[120px] text-center text-[11px] font-semibold leading-tight break-words pointer-events-none"
-          style={{ color: accent }}>
-          {data.name}
-        </span>
-      </div>
-      {isStart && <Handle type="source" position={Position.Right} style={handleStyle} />}
+      <Tooltip label={data.name}>
+        <div
+          className="relative flex items-center justify-center rounded-full bg-white shadow-sm"
+          style={{ width: 44, height: 44, border: `3px solid ${borderColor(data, accent)}`, color: accent }}
+          aria-label={data.name}
+        >
+          {isStart ? <Play size={18} /> : <Flag size={18} />}
+          <span className="absolute top-[calc(100%+4px)] left-1/2 -translate-x-1/2 w-[120px] text-center text-[11px] font-semibold leading-tight break-words pointer-events-none"
+            style={{ color: accent }}>
+            {data.name}
+          </span>
+        </div>
+      </Tooltip>
     </>
   )
 }
@@ -193,9 +212,11 @@ function BandNode({ data }: NodeProps<ProcessNodeData>) {
       <div className="absolute top-0 left-0 right-0 h-7 flex items-center gap-1.5 px-2 bg-[#EFF6FF] border-b border-[#BFDBFE] rounded-t-[10px]">
         <Folder size={13} className="text-[#2563EB] shrink-0" />
         <span className="flex-1 min-w-0 truncate text-[12px] font-semibold text-[#0F172A]">{data.name}</span>
-        <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggleExpand?.() }}
-          className="nodrag shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-[#64748B] hover:text-[#0F172A] hover:bg-white"
-          aria-label="Collapse" title="Collapse"><Minimize2 size={12} /></button>
+        <Tooltip label="Collapse">
+          <button type="button" onClick={(e) => { e.stopPropagation(); data.onToggleExpand?.() }}
+            className="nodrag shrink-0 w-5 h-5 inline-flex items-center justify-center rounded text-[#64748B] hover:text-[#0F172A] hover:bg-white"
+            aria-label="Collapse"><Minimize2 size={12} /></button>
+        </Tooltip>
       </div>
       <Handle type="source" position={Position.Right} style={handleStyle} />
     </div>
@@ -251,15 +272,17 @@ function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
       {/* Per-lane add (top-right): the band itself is click-through (pointer-events off in the
           layout), but this button re-enables pointer events. It opens a picker for WHAT to add. */}
       {data.onAdd && (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); data.onAdd!() }}
-          title="Add a step to this lane"
-          style={{ pointerEvents: 'auto' }}
-          className="nodrag absolute top-2 right-2 w-6 h-6 inline-flex items-center justify-center rounded-[6px] text-[#2563EB] hover:bg-[#EFF6FF] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
-        >
-          <Plus size={16} />
-        </button>
+        <Tooltip label="Add a step to this lane">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); data.onAdd!() }}
+            aria-label="Add a step to this lane"
+            style={{ pointerEvents: 'auto' }}
+            className="nodrag absolute top-2 right-2 w-6 h-6 inline-flex items-center justify-center rounded-[6px] text-[#2563EB] hover:bg-[#EFF6FF] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+          >
+            <Plus size={16} />
+          </button>
+        </Tooltip>
       )}
     </div>
   )
@@ -290,17 +313,18 @@ function DocNode({ data }: NodeProps<DocNodeData>) {
     <>
       {/* One handle on the side facing the node, so the dotted line meets it cleanly. */}
       <Handle type="source" position={isInput ? Position.Bottom : Position.Top} style={{ opacity: 0 }} />
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); data.onOpen() }}
-        title={`${isInput ? 'Input' : 'Output'} document — ${data.name}`}
-        style={{ width: DOC_CHIP_W, height: DOC_CHIP_H }}
-        className="nodrag group flex items-center gap-1.5 px-2 rounded-[7px] border border-dashed border-[#CBD5E1] bg-white shadow-sm text-left transition-colors hover:border-[#2563EB]"
-      >
-        <span className="w-[3px] self-stretch my-1 rounded-full shrink-0" style={{ background: isInput ? '#0EA5E9' : '#8B5CF6' }} />
-        <Icon size={13} className="shrink-0" style={{ color: isInput ? '#0EA5E9' : '#8B5CF6' }} />
-        <span className="flex-1 min-w-0 truncate text-[11px] font-medium text-[#334155] group-hover:text-[#0F172A]">{data.name}</span>
-      </button>
+      <Tooltip label={`${isInput ? 'Input' : 'Output'} document — ${data.name}`}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); data.onOpen() }}
+          style={{ width: DOC_CHIP_W, height: DOC_CHIP_H }}
+          className="nodrag group flex items-center gap-1.5 px-2 rounded-[7px] border border-dashed border-[#CBD5E1] bg-white shadow-sm text-left transition-colors hover:border-[#2563EB]"
+        >
+          <span className="w-[3px] self-stretch my-1 rounded-full shrink-0" style={{ background: isInput ? '#0EA5E9' : '#8B5CF6' }} />
+          <Icon size={13} className="shrink-0" style={{ color: isInput ? '#0EA5E9' : '#8B5CF6' }} />
+          <span className="flex-1 min-w-0 truncate text-[11px] font-medium text-[#334155] group-hover:text-[#0F172A]">{data.name}</span>
+        </button>
+      </Tooltip>
     </>
   )
 }

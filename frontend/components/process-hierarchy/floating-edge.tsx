@@ -51,7 +51,19 @@ function edgeParams(source: Box, target: Box) {
 // source's bottom/top (so a decision's branches drop out of its base) and, if the target is
 // offset, turns once into the target's near side. Never an S or a line that doubles back.
 type StepGeom = { sx: number; sy: number; sourcePos: Position; tx: number; ty: number; targetPos: Position }
-function stepParams(source: Box, target: Box, opts?: { enterLeft?: boolean; exitRight?: boolean }): StepGeom {
+type Side = 'top' | 'right' | 'bottom' | 'left'
+// The attachment point (and Position) at a given side of a box — used when the designer has
+// explicitly picked which dot a line uses.
+function sidePoint(b: Box, side: Side): { x: number; y: number; pos: Position } {
+  switch (side) {
+    case 'left': return { x: b.x, y: b.y + b.height / 2, pos: Position.Left }
+    case 'right': return { x: b.x + b.width, y: b.y + b.height / 2, pos: Position.Right }
+    case 'top': return { x: b.x + b.width / 2, y: b.y, pos: Position.Top }
+    default: return { x: b.x + b.width / 2, y: b.y + b.height, pos: Position.Bottom } // bottom
+  }
+}
+
+function stepParams(source: Box, target: Box, opts?: { enterLeft?: boolean; exitRight?: boolean; sourceSide?: Side; targetSide?: Side }): StepGeom {
   // Until both nodes are measured, fall back to a plain right→left link so the path always has a
   // real end point and the arrowhead orients (a degenerate 0-size box makes the marker vanish).
   if (!source.width || !source.height || !target.width || !target.height) {
@@ -97,6 +109,11 @@ function stepParams(source: Box, target: Box, opts?: { enterLeft?: boolean; exit
   // into one. Ends (only in, or only out) keep the bottom/top routing chosen above.
   if (opts?.exitRight) { r.sx = source.x + source.width; r.sy = scy; r.sourcePos = Position.Right }
   if (opts?.enterLeft) { r.tx = target.x; r.ty = tcy; r.targetPos = Position.Left }
+
+  // Designer's explicit choice wins over any auto rule: leave the source from the dot they dragged
+  // from, enter the target at the dot they dropped on.
+  if (opts?.sourceSide) { const p = sidePoint(source, opts.sourceSide); r.sx = p.x; r.sy = p.y; r.sourcePos = p.pos }
+  if (opts?.targetSide) { const p = sidePoint(target, opts.targetSide); r.tx = p.x; r.ty = p.y; r.targetPos = p.pos }
   return r
 }
 
@@ -113,12 +130,12 @@ function arrowPoints(tx: number, ty: number, pos: Position) {
   }
 }
 
-export function FloatingStepEdge({ id, source, target, style, data }: EdgeProps<{ label?: string; enterLeft?: boolean; exitRight?: boolean }>) {
+export function FloatingStepEdge({ id, source, target, style, data }: EdgeProps<{ label?: string; enterLeft?: boolean; exitRight?: boolean; sourceSide?: Side; targetSide?: Side }>) {
   const sourceNode = useStore((s) => s.nodeInternals.get(source))
   const targetNode = useStore((s) => s.nodeInternals.get(target))
   if (!sourceNode || !targetNode) return null
 
-  const { sx, sy, tx, ty, sourcePos, targetPos } = stepParams(boxOf(sourceNode), boxOf(targetNode), { enterLeft: data?.enterLeft, exitRight: data?.exitRight })
+  const { sx, sy, tx, ty, sourcePos, targetPos } = stepParams(boxOf(sourceNode), boxOf(targetNode), { enterLeft: data?.enterLeft, exitRight: data?.exitRight, sourceSide: data?.sourceSide, targetSide: data?.targetSide })
   const [path, labelX, labelY] = getSmoothStepPath({
     sourceX: sx, sourceY: sy, sourcePosition: sourcePos,
     targetX: tx, targetY: ty, targetPosition: targetPos, borderRadius: 8,

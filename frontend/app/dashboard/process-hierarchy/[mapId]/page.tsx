@@ -85,7 +85,7 @@ export default function ProcessMapExplorerPage() {
   const [departments, setDepartments] = useState<Department[]>([]) // for the New-swimlane picker
   const [addLanePick, setAddLanePick] = useState(false) // Add-step menu is showing its lane picker
   const [laneAdd, setLaneAdd] = useState<{ pool: ProcessPool | null; departmentId: string | null; fromNodeId?: string | null; side?: string; autoCond?: ProcessConditionKind; ask?: boolean } | null>(null) // lane "+" / node-dot "add next" kind picker
-  const [branchPick, setBranchPick] = useState<{ mode: 'create'; source: string; target: string; side?: string } | { mode: 'set'; connId: string } | null>(null) // Yes/No chooser for a decision connection
+  const [branchPick, setBranchPick] = useState<{ mode: 'create'; source: string; target: string; side?: string; tside?: string } | { mode: 'set'; connId: string } | null>(null) // Yes/No chooser for a decision connection
   const [modeInitialized, setModeInitialized] = useState(false)
   const [diff, setDiff] = useState<MapDiff | null>(null)
   const [comparing, setComparing] = useState<{ base: string; target: string; baseLabel: string; targetLabel: string } | null>(null)
@@ -382,16 +382,17 @@ export default function ProcessMapExplorerPage() {
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not move those to that lane.', 'error') }
   }, [orgId, mapId, refresh, addToast])
 
-  const onDecisionConnect = useCallback((source: string, target: string, sourceSide?: string) => {
+  const onDecisionConnect = useCallback((source: string, target: string, sourceSide?: string, targetSide?: string) => {
     const rule = outputRuleFor(source)
     if (!rule.ok) { addToast(rule.reason!, 'error'); return }
-    if (rule.ask) { setBranchPick({ mode: 'create', source, target, side: sourceSide }); return }
+    if (rule.ask) { setBranchPick({ mode: 'create', source, target, side: sourceSide, tside: targetSide }); return }
     // One branch already used → this is automatically the other one; no pop-up.
     const cond = rule.condition!
     processHierarchyApi.createConnection(orgId, mapId, {
       parent_node_id: parentId, source_node_id: source, target_node_id: target,
       condition_kind: cond, label: cond === 'yes' ? 'Yes' : 'No',
       ...(sourceSide ? { source_side: sourceSide } : {}),
+      ...(targetSide ? { target_side: targetSide } : {}),
     }).then(() => refresh()).catch(() => addToast('Could not connect those steps.', 'error'))
   }, [outputRuleFor, orgId, mapId, parentId, refresh, addToast])
   const chooseBranch = useCallback(async (cond: 'yes' | 'no') => {
@@ -404,6 +405,7 @@ export default function ProcessMapExplorerPage() {
         await processHierarchyApi.createConnection(orgId, mapId, {
           parent_node_id: parentId, source_node_id: bp.source, target_node_id: bp.target, condition_kind: cond, label,
           ...(bp.side ? { source_side: bp.side } : {}),
+          ...(bp.tside ? { target_side: bp.tside } : {}),
         })
       } else {
         await processHierarchyApi.updateConnection(orgId, mapId, bp.connId, { condition_kind: cond, label })
@@ -433,7 +435,7 @@ export default function ProcessMapExplorerPage() {
     return spawnNode('subprocess', { name: map.name, linkedMapId: map.id })
   }, [spawnNode])
 
-  const onConnect = useCallback(async (source: string, target: string, _condition: ProcessConditionKind, sourceSide?: string) => {
+  const onConnect = useCallback(async (source: string, target: string, _condition: ProcessConditionKind, sourceSide?: string, targetSide?: string) => {
     const rule = outputRuleFor(source)
     if (!rule.ok) { addToast(rule.reason!, 'error'); return }
     const cond = rule.condition ?? 'none'
@@ -442,6 +444,7 @@ export default function ProcessMapExplorerPage() {
         parent_node_id: parentId, source_node_id: source, target_node_id: target,
         condition_kind: cond, label: cond === 'yes' ? 'Yes' : cond === 'no' ? 'No' : undefined,
         ...(sourceSide ? { source_side: sourceSide } : {}),
+        ...(targetSide ? { target_side: targetSide } : {}),
       })
       await refresh()
     } catch { addToast('Could not connect those steps.', 'error') }

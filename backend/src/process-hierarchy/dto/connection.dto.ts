@@ -27,6 +27,11 @@ export class CreateConnectionDto {
   @IsOptional()
   @IsIn(SIDES)
   source_side?: string;
+
+  // Which dot of the target the line enters (what the user dropped on).
+  @IsOptional()
+  @IsIn(SIDES)
+  target_side?: string;
 }
 
 export class UpdateConnectionDto {
@@ -38,4 +43,13 @@ export class UpdateConnectionDto {
   @IsOptional()
   @IsEnum(ProcessConditionKind)
   condition_kind?: ProcessConditionKind;
+
+  // Re-drag either end of a line to a different dot → update the stored sides.
+  @IsOptional()
+  @IsIn(SIDES)
+  source_side?: string;
+
+  @IsOptional()
+  @IsIn(SIDES)
+  target_side?: string;
 }
