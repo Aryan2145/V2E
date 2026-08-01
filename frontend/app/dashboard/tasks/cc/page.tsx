@@ -5,8 +5,13 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
-import TaskCard from '@/components/tasks/TaskCard'
-import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
+import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
+import TaskListRow from '@/components/tasks/TaskListRow'
+import TaskListToolbar from '@/components/tasks/TaskListToolbar'
+import { useTaskListView, GroupedTaskList } from '@/components/tasks/taskListView'
+import { type TaskSort, DEFAULT_TASK_SORT } from '@/components/tasks/TaskSortControl'
+import { useSessionState } from '@/lib/tasks/useSessionState'
+import { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
 import { Eye } from 'lucide-react'
 
 export default function CCTasksPage() {
@@ -19,7 +24,9 @@ export default function CCTasksPage() {
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [loading, setLoading] = useState(true)
-  const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
+  const [filters, setFilters] = useSessionState<TaskFilters>('tasks:cc:filters', { ...EMPTY_TASK_FILTERS })
+  const [search, setSearch] = useSessionState('tasks:cc:search', '')
+  const [sort, setSort] = useSessionState<TaskSort>('tasks:cc:sort', { ...DEFAULT_TASK_SORT })
 
   const loadData = useCallback(() => {
     if (!orgId) { setLoading(false); return }
@@ -42,6 +49,20 @@ export default function CCTasksPage() {
   const filtered = useMemo(() => applyTaskFilters(tasks, filters, statuses), [tasks, filters, statuses])
   const isFiltered = isTaskFiltered(filters)
 
+  // Header summary — across ALL CC'd tasks (independent of the active filters).
+  const openCount = useMemo(
+    () => tasks.filter((t) => {
+      const type = statuses.find((s) => s.id === t.status_id)?.type ?? t.status?.type
+      return !!type && !TERMINAL_STATUS_PHASES.includes(type)
+    }).length,
+    [tasks, statuses],
+  )
+  const overdueCount = useMemo(() => tasks.filter((t) => t.is_overdue).length, [tasks])
+
+  // Same shared pipeline as the other task lists. CC is a read-only view of the overall
+  // status, so no per-track mapping.
+  const { sortedTasks, groups } = useTaskListView(filtered, { search, sort, priorities, statuses })
+
   if (!orgId) {
     return (
       <div className="flex flex-col items-center justify-center h-64">
@@ -58,49 +79,71 @@ export default function CCTasksPage() {
     )
   }
 
+  // Read-only row — CC'd users view and comment, but can't change status or complete,
+  // so no action handlers are passed (TaskListRow then shows a read-only status pill).
+  const renderRow = (task: Task, deadlineDisplay: 'time' | 'date') => (
+    <TaskListRow
+      key={task.id}
+      task={task}
+      onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
+      priorities={priorities}
+      statuses={statuses}
+      categories={categories}
+      currentUserId={user?.id}
+      deadlineDisplay={deadlineDisplay}
+    />
+  )
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">CC&apos;d Tasks</h1>
-        <p className="mt-1 text-[15px] text-[#475569]">Tasks you&apos;re copied on — view and comment, but not complete.</p>
+        <p className="mt-1 text-[15px] text-[#475569]">
+          {openCount} open
+          {overdueCount > 0 && (
+            <>
+              {' · '}
+              <span className="text-[#DC2626] font-medium">{overdueCount} overdue</span>
+            </>
+          )}
+        </p>
       </div>
 
-      <TaskFilterBar
+      <TaskListToolbar
+        search={search}
+        onSearch={setSearch}
+        filters={filters}
+        onFilters={setFilters}
+        sort={sort}
+        onSort={setSort}
+        showSort
         tasks={tasks}
         statuses={statuses}
         priorities={priorities}
         categories={categories}
-        filters={filters}
-        onChange={setFilters}
+        currentUserId={user?.id}
       />
 
-      <p className="text-sm text-[#475569]">
-        {filtered.length} task{filtered.length !== 1 ? 's' : ''}
-        {isFiltered && ` (filtered from ${tasks.length})`}
-      </p>
+      {(isFiltered || search.trim()) && (
+        <p className="text-sm text-[#475569]">
+          Showing {sortedTasks.length} of {tasks.length} task{tasks.length !== 1 ? 's' : ''}
+        </p>
+      )}
 
-      {filtered.length === 0 ? (
+      {sortedTasks.length === 0 ? (
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
           <div className="w-14 h-14 rounded-full bg-[#FFFBEB] flex items-center justify-center mb-4">
             <Eye size={24} className="text-[#D97706]" />
           </div>
-          <p className="font-semibold text-[#0F172A]">{isFiltered ? 'No tasks match your filters' : 'No CC’d tasks'}</p>
-          <p className="text-sm text-[#475569] mt-1">{isFiltered ? 'Try adjusting your filters.' : 'Tasks where you’re CC’d will appear here.'}</p>
+          <p className="font-semibold text-[#0F172A]">
+            {search.trim() ? 'No tasks match your search' : isFiltered ? 'No tasks match your filters' : 'No CC’d tasks'}
+          </p>
+          <p className="text-sm text-[#475569] mt-1">
+            {search.trim() ? 'Try a different search term.' : isFiltered ? 'Try adjusting your filters.' : 'Tasks where you’re CC’d will appear here.'}
+          </p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {filtered.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
-              priorities={priorities}
-              statuses={statuses}
-              categories={categories}
-              currentUserId={user?.id}
-            />
-          ))}
-        </div>
+        <GroupedTaskList groups={groups} sortedTasks={sortedTasks} renderRow={renderRow} />
       )}
     </div>
   )

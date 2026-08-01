@@ -5,13 +5,19 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import type { Task, TaskCategory, TaskPriority, TaskStatus } from '@/lib/types/tasks'
-import TaskCard from '@/components/tasks/TaskCard'
+import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
+import TaskListRow from '@/components/tasks/TaskListRow'
+import TaskListToolbar from '@/components/tasks/TaskListToolbar'
+import { useTaskListView, GroupedTaskList } from '@/components/tasks/taskListView'
+import { type TaskSort, DEFAULT_TASK_SORT } from '@/components/tasks/TaskSortControl'
+import { useSessionState } from '@/lib/tasks/useSessionState'
 import KanbanView from '@/components/tasks/KanbanView'
 import CalendarView from '@/components/tasks/CalendarView'
-import TaskFilterBar, { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
+import CreateTaskModal from '@/components/tasks/CreateTaskModal'
+import { type TaskFilters, EMPTY_TASK_FILTERS, isTaskFiltered, applyTaskFilters } from '@/components/tasks/TaskFilterBar'
 import Modal from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
-import { CheckSquare, LayoutList, Columns, CalendarDays, AlertCircle } from 'lucide-react'
+import { CheckSquare, LayoutList, Columns, CalendarDays, AlertCircle, Plus } from 'lucide-react'
 
 // Read the backend's real message (the completion gate, an already-closed task, etc.)
 // instead of a generic failure — same convention as the task detail page.
@@ -51,7 +57,10 @@ export default function MyTasksPage() {
     router.replace(`/dashboard/tasks/my?${params.toString()}`)
   }
 
-  const [filters, setFilters] = useState<TaskFilters>({ ...EMPTY_TASK_FILTERS })
+  const [filters, setFilters] = useSessionState<TaskFilters>('tasks:my:filters', { ...EMPTY_TASK_FILTERS })
+  const [search, setSearch] = useSessionState('tasks:my:search', '')
+  const [sort, setSort] = useSessionState<TaskSort>('tasks:my:sort', { ...DEFAULT_TASK_SORT })
+  const [showCreateModal, setShowCreateModal] = useState(false)
 
   // Mark-incomplete flow — a reason is required, captured in a popup right here on
   // My Tasks (no drill-in). Completion, by contrast, may need checklist/proof, which
@@ -77,6 +86,28 @@ export default function MyTasksPage() {
 
   const filtered = useMemo(() => applyTaskFilters(tasks, filters, statuses), [tasks, filters, statuses])
   const isFiltered = isTaskFiltered(filters)
+
+  // Header summary — computed across ALL my tasks (independent of the active filters),
+  // so the count is a stable "here's your load" reading.
+  const openCount = useMemo(
+    () => tasks.filter((t) => {
+      const type = statuses.find((s) => s.id === t.status_id)?.type ?? t.status?.type
+      return !!type && !TERMINAL_STATUS_PHASES.includes(type)
+    }).length,
+    [tasks, statuses],
+  )
+  const overdueCount = useMemo(() => tasks.filter((t) => t.is_overdue).length, [tasks])
+
+  // Filters + search + sort + day-grouping, all in one shared pipeline (identical to
+  // Assigned). mapMyTrack shows MY status track in all_must mode.
+  const { sortedTasks, groups } = useTaskListView(filtered, {
+    search,
+    sort,
+    priorities,
+    statuses,
+    currentUserId: user?.id,
+    mapMyTrack: true,
+  })
 
   async function handleStatusChange(taskId: string, newStatusId: string) {
     const task = tasks.find((t) => t.id === taskId)
@@ -171,27 +202,44 @@ export default function MyTasksPage() {
     )
   }
 
+  // A single compact row. `task` here is already the display copy (per-track status in
+  // all_must mode); its id + completion_mode are preserved, so the handlers still target
+  // the real task.
+  const renderRow = (task: Task, deadlineDisplay: 'time' | 'date') => (
+    <TaskListRow
+      key={task.id}
+      task={task}
+      onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
+      priorities={priorities}
+      statuses={statuses}
+      categories={categories}
+      onStatusChange={(sid) => handleStatusChange(task.id, sid)}
+      onComplete={() => handleComplete(task)}
+      onMarkIncomplete={() => { setIncompleteReason(''); setIncompleteTask(task) }}
+      currentUserId={user?.id}
+      deadlineDisplay={deadlineDisplay}
+    />
+  )
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">My Tasks</h1>
-        <p className="mt-1 text-[15px] text-[#475569]">Tasks assigned to you.</p>
-      </div>
+      {/* Title row — summary lead + view switcher */}
+      <div className="flex items-end justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">My Tasks</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">
+            {openCount} open
+            {overdueCount > 0 && (
+              <>
+                {' · '}
+                <span className="text-[#DC2626] font-medium">{overdueCount} overdue</span>
+              </>
+            )}
+          </p>
+        </div>
 
-      {/* Toolbar */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between flex-wrap">
-        {viewMode !== 'calendar' && (
-          <TaskFilterBar
-            tasks={tasks}
-            statuses={statuses}
-            priorities={priorities}
-            categories={categories}
-            filters={filters}
-            onChange={setFilters}
-          />
-        )}
-
-        <div className="flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5 shrink-0 ml-auto sm:ml-0">
+        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5">
           {([
             { mode: 'list', icon: <LayoutList size={15} />, label: 'List' },
             { mode: 'kanban', icon: <Columns size={15} />, label: 'Kanban' },
@@ -211,55 +259,57 @@ export default function MyTasksPage() {
             </button>
           ))}
         </div>
+
+          <button
+            onClick={() => setShowCreateModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-[7px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors"
+          >
+            <Plus size={15} />
+            <span className="hidden sm:inline">Create Task</span>
+          </button>
+        </div>
       </div>
+
+      {/* Toolbar — search + filters + sort (the calendar filters by date itself) */}
+      {viewMode !== 'calendar' && (
+        <TaskListToolbar
+          search={search}
+          onSearch={setSearch}
+          filters={filters}
+          onFilters={setFilters}
+          sort={sort}
+          onSort={setSort}
+          showSort={viewMode === 'list'}
+          tasks={tasks}
+          statuses={statuses}
+          priorities={priorities}
+          categories={categories}
+          currentUserId={user?.id}
+        />
+      )}
 
       {/* Content */}
       {viewMode === 'list' && (
         <>
-          <p className="text-sm text-[#475569]">
-            {filtered.length} task{filtered.length !== 1 ? 's' : ''}
-            {isFiltered && ` (filtered from ${tasks.length})`}
-          </p>
-          {filtered.length === 0 ? (
+          {(isFiltered || search.trim()) && (
+            <p className="text-sm text-[#475569]">
+              Showing {sortedTasks.length} of {tasks.length} task{tasks.length !== 1 ? 's' : ''}
+            </p>
+          )}
+          {sortedTasks.length === 0 ? (
             <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
               <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">
                 <CheckSquare size={24} className="text-[#94A3B8]" />
               </div>
-              <p className="font-semibold text-[#0F172A]">{isFiltered ? 'No tasks match your filters' : 'No tasks assigned to you'}</p>
-              <p className="text-sm text-[#475569] mt-1">{isFiltered ? 'Try adjusting your filters.' : 'Tasks assigned to you will appear here.'}</p>
+              <p className="font-semibold text-[#0F172A]">
+                {search.trim() ? 'No tasks match your search' : isFiltered ? 'No tasks match your filters' : 'No tasks assigned to you'}
+              </p>
+              <p className="text-sm text-[#475569] mt-1">
+                {search.trim() ? 'Try a different search term.' : isFiltered ? 'Try adjusting your filters.' : 'Tasks assigned to you will appear here.'}
+              </p>
             </div>
           ) : (
-            <div className="flex flex-col gap-2">
-              {filtered.map((task) => {
-                // The pill must show what clicking it actually changes. In "everyone must
-                // finish" mode the control moves MY track, not the shared/overall status —
-                // so the card has to display MY track, or a change looks like it snapped
-                // back (it silently succeeded, just on a different field than what showed).
-                const mine = task.assignees?.find((a) => a.user_id === user?.id && !a.is_cc)
-                const displayTask =
-                  task.completion_mode === 'all_must_complete' && mine
-                    ? {
-                        ...task,
-                        status_id: mine.status_id ?? task.status_id,
-                        status: mine.status ?? task.status,
-                      }
-                    : task
-                return (
-                  <TaskCard
-                    key={task.id}
-                    task={displayTask}
-                    onClick={() => router.push(`/dashboard/tasks/${task.id}`)}
-                    priorities={priorities}
-                    statuses={statuses}
-                    categories={categories}
-                    onStatusChange={(sid) => handleStatusChange(task.id, sid)}
-                    onComplete={() => handleComplete(task)}
-                    onMarkIncomplete={() => { setIncompleteReason(''); setIncompleteTask(task) }}
-                    currentUserId={user?.id}
-                  />
-                )
-              })}
-            </div>
+            <GroupedTaskList groups={groups} sortedTasks={sortedTasks} renderRow={renderRow} />
           )}
         </>
       )}
@@ -267,7 +317,7 @@ export default function MyTasksPage() {
       {viewMode === 'kanban' && (
         <KanbanView
           orgId={orgId}
-          tasks={filtered}
+          tasks={sortedTasks}
           statuses={statuses}
           priorities={priorities}
           categories={categories}
@@ -342,6 +392,16 @@ export default function MyTasksPage() {
           </div>
         </div>
       </Modal>
+
+      <CreateTaskModal
+        isOpen={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        onCreated={() => { setShowCreateModal(false); loadData() }}
+        onImported={loadData}
+        categories={categories}
+        priorities={priorities}
+        statuses={statuses}
+      />
     </div>
   )
 }

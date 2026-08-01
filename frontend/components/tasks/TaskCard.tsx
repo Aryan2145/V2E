@@ -6,6 +6,7 @@ import { getNow } from '@/lib/clock'
 import type { Task, TaskPriority, TaskStatus, TaskCategory } from '@/lib/types/tasks'
 import { TERMINAL_STATUS_PHASES } from '@/lib/types/tasks'
 import AssigneeAvatars, { type AvatarPerson } from './AssigneeAvatars'
+import Tooltip from '@/components/ui/Tooltip'
 // import QuadrantBadge from './QuadrantBadge'
 
 interface TaskCardProps {
@@ -57,7 +58,7 @@ const PHASE_ORDER: Record<TaskStatus['type'], number> = {
 
 // ─── Status change control ──────────────────────────────────────────────────────
 
-function StatusControl({
+export function StatusControl({
   status,
   statuses,
   onChange,
@@ -256,42 +257,44 @@ export default function TaskCard({ task, onClick, priorities, statuses, categori
       <div className="shrink-0 flex items-center gap-3">
         {/* Chats / comments — total count beside the icon; the unread badge sits on
             the icon's corner (with a white ring) so it never overlaps the count. */}
-        <div
-          className="flex items-center gap-2 text-xs text-[#64748B]"
-          title={
+        <Tooltip
+          label={
             commentCount === 0
               ? 'No comments'
               : `${commentCount} comment${commentCount !== 1 ? 's' : ''}${unread > 0 ? ` · ${unread} unread` : ''}`
           }
         >
-          <span className="relative inline-flex shrink-0">
-            <MessageSquare size={14} className={unread > 0 ? 'text-[#2563EB]' : ''} />
-            {unread > 0 && (
-              <span className="absolute -top-2 -right-1.5 inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full bg-[#2563EB] text-white text-[9px] font-bold leading-none ring-2 ring-white">
-                {unread > 9 ? '9+' : unread}
-              </span>
-            )}
-          </span>
-          <span className={unread > 0 ? 'font-semibold text-[#2563EB]' : ''}>{commentCount}</span>
-        </div>
+          <div className="flex items-center gap-2 text-xs text-[#64748B]">
+            <span className="relative inline-flex shrink-0">
+              <MessageSquare size={14} className={unread > 0 ? 'text-[#2563EB]' : ''} />
+              {unread > 0 && (
+                <span className="absolute -top-2 -right-1.5 inline-flex items-center justify-center min-w-[15px] h-[15px] px-1 rounded-full bg-[#2563EB] text-white text-[9px] font-bold leading-none ring-2 ring-white">
+                  {unread > 9 ? '9+' : unread}
+                </span>
+              )}
+            </span>
+            <span className={unread > 0 ? 'font-semibold text-[#2563EB]' : ''}>{commentCount}</span>
+          </div>
+        </Tooltip>
 
         {/* Attachments — shows "None" when there are no files */}
-        <div
-          className="flex items-center gap-1 text-xs text-[#64748B]"
-          title={attachmentCount === 0 ? 'No attachments' : `${attachmentCount} attachment${attachmentCount !== 1 ? 's' : ''}`}
-        >
-          <Paperclip size={14} className={attachmentCount === 0 ? 'text-[#CBD5E1]' : ''} />
-          {attachmentCount === 0 ? <span className="text-[#94A3B8]">None</span> : <span>{attachmentCount}</span>}
-        </div>
+        <Tooltip label={attachmentCount === 0 ? 'No attachments' : `${attachmentCount} attachment${attachmentCount !== 1 ? 's' : ''}`}>
+          <div className="flex items-center gap-1 text-xs text-[#64748B]">
+            <Paperclip size={14} className={attachmentCount === 0 ? 'text-[#CBD5E1]' : ''} />
+            {attachmentCount === 0 ? <span className="text-[#94A3B8]">None</span> : <span>{attachmentCount}</span>}
+          </div>
+        </Tooltip>
       </div>
 
       {/* People — a single clean line: who assigned it (muted) + the assignee
           avatars, or a "Self" tag when it's a task you assigned to yourself. */}
       <div className="shrink-0 flex items-center gap-2 justify-end max-w-[240px]">
         {showAssigner && (
-          <span className="text-[11px] text-[#94A3B8] truncate max-w-[120px]" title={`Assigned by ${assignerName}`}>
-            by {assignerName}
-          </span>
+          <Tooltip label={`Assigned by ${assignerName}`}>
+            <span className="text-[11px] text-[#94A3B8] truncate max-w-[120px]">
+              by {assignerName}
+            </span>
+          </Tooltip>
         )}
         {otherPeople.length > 0 ? (
           <AssigneeAvatars people={otherPeople} max={3} size="sm" />

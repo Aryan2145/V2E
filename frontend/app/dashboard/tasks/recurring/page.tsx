@@ -5,8 +5,7 @@ import { createPortal } from 'react-dom'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
-import { getDepartments } from '@/lib/api/departments'
-import type { Department } from '@/lib/types'
+import { type DeptGroup } from '@/components/tasks/PeopleDeptFilter'
 import type {
   RecurringTemplate,
   TaskCategory,
@@ -22,12 +21,18 @@ import CreateTaskModal from '@/components/tasks/CreateTaskModal'
 import EditRecurringModal from '@/components/tasks/EditRecurringModal'
 import ManageAccessModal from '@/components/tasks/ManageAccessModal'
 import RecurringTable from '@/components/tasks/RecurringTable'
+import RecurringFilterToolbar, {
+  type RecurringFilters,
+  EMPTY_RECURRING_FILTERS,
+  isRecurringFiltered,
+} from '@/components/tasks/RecurringFilterToolbar'
+import { useSessionState } from '@/lib/tasks/useSessionState'
 import ScopeSwitcher from '@/components/tasks/overview/ScopeSwitcher'
-import StyledSelect from '@/components/ui/StyledSelect'
+import Tooltip from '@/components/ui/Tooltip'
 import { entryLabel, formatDate } from '@/lib/tasks/recurrence-label'
 import {
   RotateCcw, Play, Pause, Calendar, Users, Plus, Trash2, Edit2, Zap, Shield,
-  LayoutGrid, Table as TableIcon, Search, ArrowUpRight, ArrowDownLeft, Inbox,
+  LayoutGrid, Table as TableIcon, ArrowUpRight, ArrowDownLeft, Inbox,
 } from 'lucide-react'
 
 // ─── Delete flow ──────────────────────────────────────────────────────────────
@@ -183,20 +188,26 @@ function RecurringCard({
           </div>
           <div className="flex items-center gap-1 shrink-0">
             {template.can_manage && (
-              <button onClick={(e) => { e.stopPropagation(); onManageAccess() }} title="Manage access"
-                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
-                <Shield size={13} />
-              </button>
+              <Tooltip label="Manage access">
+                <button onClick={(e) => { e.stopPropagation(); onManageAccess() }} aria-label="Manage access"
+                  className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
+                  <Shield size={13} />
+                </button>
+              </Tooltip>
             )}
-            <button onClick={(e) => { e.stopPropagation(); onEdit() }} title="Edit template"
-              className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
-              <Edit2 size={13} />
-            </button>
-            {template.is_active && (
-              <button onClick={(e) => { e.stopPropagation(); handleSpawnToday() }} disabled={spawning} title="Spawn today's task now"
-                className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-[8px] text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] disabled:opacity-60 transition-colors">
-                <Zap size={11} />{spawning ? '...' : spawnMsg ?? 'Run Today'}
+            <Tooltip label="Edit template">
+              <button onClick={(e) => { e.stopPropagation(); onEdit() }} aria-label="Edit template"
+                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
+                <Edit2 size={13} />
               </button>
+            </Tooltip>
+            {template.is_active && (
+              <Tooltip label="Spawn today's task now">
+                <button onClick={(e) => { e.stopPropagation(); handleSpawnToday() }} disabled={spawning}
+                  className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-[8px] text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] disabled:opacity-60 transition-colors">
+                  <Zap size={11} />{spawning ? '...' : spawnMsg ?? 'Run Today'}
+                </button>
+              </Tooltip>
             )}
             <button onClick={(e) => { e.stopPropagation(); handleToggle() }} disabled={toggling}
               className={['flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[8px] transition-colors disabled:opacity-60',
@@ -295,19 +306,15 @@ export default function RecurringPage() {
   const [viewTouched, setViewTouched] = useState(false)
 
   // Filters
-  const [searchInput, setSearchInput] = useState('')
+  const [searchInput, setSearchInput] = useSessionState('tasks:recurring:search', '')
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'paused'>('')
-  const [categoryId, setCategoryId] = useState('')
-  const [priorityId, setPriorityId] = useState('')
-  const [departmentId, setDepartmentId] = useState('')
+  const [filters, setFilters] = useSessionState<RecurringFilters>('tasks:recurring:filters', { ...EMPTY_RECURRING_FILTERS })
 
   // Data
   const [templates, setTemplates] = useState<RecurringTemplate[]>([])
   const [categories, setCategories] = useState<TaskCategory[]>([])
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
-  const [departments, setDepartments] = useState<Department[]>([])
   const [userMap, setUserMap] = useState<Map<string, { name: string; department?: string; role?: string }>>(new Map())
   const [employees, setEmployees] = useState<EmployeePickerOption[]>([])
   const [loading, setLoading] = useState(true)
@@ -330,10 +337,9 @@ export default function RecurringPage() {
       tasksApi.getCategories(orgId).catch(() => [] as TaskCategory[]),
       tasksApi.getPriorities(orgId).catch(() => [] as TaskPriority[]),
       tasksApi.getStatuses(orgId).catch(() => [] as TaskStatus[]),
-      getDepartments(orgId).catch(() => [] as Department[]),
       tasksApi.getEligibleAssignees(orgId).catch(() => ({ departments: [], total: 0 } as EligibleAssigneesResponse)),
-    ]).then(([c, p, s, d, eligible]) => {
-      setCategories(c); setPriorities(p); setStatuses(s); setDepartments(d)
+    ]).then(([c, p, s, eligible]) => {
+      setCategories(c); setPriorities(p); setStatuses(s)
       const map = new Map<string, { name: string; department?: string; role?: string }>()
       const opts: EmployeePickerOption[] = []
       eligible.departments.forEach((dept) => dept.users.forEach((u) => {
@@ -344,16 +350,14 @@ export default function RecurringPage() {
     })
   }, [orgId])
 
+  // The filter sections (status / priority / category / assignee) are all applied
+  // client-side over the loaded set, so the server query only carries scope, relation
+  // and the text search.
   const query = useMemo(() => ({
     scope: requestedScope,
     relation: appliedScope === 'org' ? undefined : relation,
-    status: statusFilter || undefined,
-    category_id: categoryId || undefined,
-    priority_id: priorityId || undefined,
-    department_id: departmentId || undefined,
     search: search || undefined,
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [requestedScope, relation, appliedScope, statusFilter, categoryId, priorityId, departmentId, search])
+  }), [requestedScope, relation, appliedScope, search])
 
   const queryKey = JSON.stringify(query)
   const loadData = useCallback(() => {
@@ -370,6 +374,38 @@ export default function RecurringPage() {
   }, [orgId, queryKey])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // People actually assigned across the loaded templates, grouped by their department
+  // (with job role) — the source for the Assignee filter. Only present people appear.
+  const peopleGroups = useMemo<DeptGroup[]>(() => {
+    // Name falls back to the row's positional assignee_names when someone isn't in the
+    // eligible-assignees map (e.g. an org-scope template with people you can't assign to).
+    const nameById = new Map<string, string>()
+    templates.forEach((t) =>
+      (t.assignee_user_ids ?? []).forEach((id, i) => {
+        if (!nameById.has(id)) nameById.set(id, t.assignee_names?.[i] ?? '')
+      }),
+    )
+    const groups = new Map<string, { id: string; name: string; role?: string | null }[]>()
+    nameById.forEach((fallbackName, id) => {
+      const info = userMap.get(id)
+      const dept = info?.department || 'No department'
+      if (!groups.has(dept)) groups.set(dept, [])
+      groups.get(dept)!.push({ id, name: info?.name || fallbackName || '—', role: info?.role })
+    })
+    return Array.from(groups, ([department, people]) => ({ department, people }))
+  }, [templates, userMap])
+
+  // Apply all filter sections client-side over the server-filtered (scope/relation/search) set.
+  const visibleTemplates = useMemo(() => {
+    return templates.filter((t) => {
+      if (filters.statuses.length && !filters.statuses.some((s) => (s === 'active' ? t.is_active : !t.is_active))) return false
+      if (filters.priorityIds.length && !(t.priority_id && filters.priorityIds.includes(t.priority_id))) return false
+      if (filters.categoryIds.length && !(t.category_id && filters.categoryIds.includes(t.category_id))) return false
+      if (filters.assigneeIds.length && !(t.assignee_user_ids ?? []).some((id) => filters.assigneeIds.includes(id))) return false
+      return true
+    })
+  }, [templates, filters])
 
   function handleScopeChange(s: WorkScope) {
     setRequestedScope(s)
@@ -399,12 +435,15 @@ export default function RecurringPage() {
   }
 
   const showRelation = appliedScope !== 'org'
+  const filtersActive = isRecurringFiltered(filters) || !!search
   const relationEmpty = relation === 'outgoing'
     ? { icon: <ArrowUpRight size={24} className="text-[#94A3B8]" />, title: 'Nothing sent yet', sub: 'Recurring tasks you set up for others show here.' }
     : { icon: <Inbox size={24} className="text-[#94A3B8]" />, title: 'Nothing received', sub: 'Recurring tasks assigned to you show here.' }
-  const emptyState = appliedScope === 'org'
-    ? { icon: <RotateCcw size={24} className="text-[#94A3B8]" />, title: 'No recurring templates', sub: 'No templates match this view.' }
-    : relationEmpty
+  const emptyState = filtersActive
+    ? { icon: <RotateCcw size={24} className="text-[#94A3B8]" />, title: 'No templates match your filters', sub: 'Try adjusting or clearing the search and filters.' }
+    : appliedScope === 'org'
+      ? { icon: <RotateCcw size={24} className="text-[#94A3B8]" />, title: 'No recurring templates', sub: 'No templates match this view.' }
+      : relationEmpty
 
   return (
     <div className="space-y-5 pb-16">
@@ -414,7 +453,7 @@ export default function RecurringPage() {
           <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Recurring Tasks</h1>
           <p className="mt-1 text-[15px] text-[#475569]">{SCOPE_BLURB[appliedScope]}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <ScopeSwitcher maxScope={maxScope} value={appliedScope} onChange={handleScopeChange} />
           <button onClick={() => setShowCreate(true)}
             className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors shrink-0">
@@ -441,49 +480,56 @@ export default function RecurringPage() {
         </div>
       )}
 
-      {/* Toolbar: search + filters + view toggle */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-          <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)} placeholder="Search templates…"
-            className="w-full rounded-[8px] border border-[#CBD5E1] bg-white pl-9 pr-3 py-2.5 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]" />
-        </div>
-        <StyledSelect value={statusFilter} onChange={(v) => setStatusFilter(v as typeof statusFilter)} wrapperClassName="w-[130px]"
-          options={[{ value: '', label: 'All status' }, { value: 'active', label: 'Active' }, { value: 'paused', label: 'Paused' }]} />
-        <StyledSelect value={categoryId} onChange={setCategoryId} wrapperClassName="w-[150px]"
-          options={[{ value: '', label: 'All categories' }, ...categories.map((c) => ({ value: c.id, label: c.name, color: c.color }))]} />
-        <StyledSelect value={priorityId} onChange={setPriorityId} wrapperClassName="w-[150px]"
-          options={[{ value: '', label: 'All priorities' }, ...priorities.map((p) => ({ value: p.id, label: p.label, color: p.color }))]} />
-        <StyledSelect value={departmentId} onChange={setDepartmentId} wrapperClassName="w-[160px]"
-          options={[{ value: '', label: 'All departments' }, ...departments.map((d) => ({ value: d.id, label: d.name }))]} />
-        <div className="inline-flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5">
-          <button onClick={() => switchView('cards')} title="Cards"
-            className={`flex items-center justify-center w-8 h-8 rounded-[6px] transition-colors ${view === 'cards' ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}><LayoutGrid size={15} /></button>
-          <button onClick={() => switchView('table')} title="Table"
-            className={`flex items-center justify-center w-8 h-8 rounded-[6px] transition-colors ${view === 'table' ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}><TableIcon size={15} /></button>
-        </div>
-      </div>
+      {/* Toolbar: search + collapsed Filters popover + chips (matches My Tasks / Assigned) */}
+      <RecurringFilterToolbar
+        search={searchInput}
+        onSearch={setSearchInput}
+        filters={filters}
+        onFilters={setFilters}
+        priorities={priorities}
+        categories={categories}
+        peopleGroups={peopleGroups}
+      />
 
-      {/* Count */}
-      {!loading && templates.length > 0 && (
-        <p className="text-sm text-[#475569]"><span className="font-semibold text-[#0F172A] tabular-nums">{templates.length}</span> template{templates.length !== 1 ? 's' : ''}</p>
+      {/* Count + view toggle */}
+      {!loading && visibleTemplates.length > 0 && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-[#475569]"><span className="font-semibold text-[#0F172A] tabular-nums">{visibleTemplates.length}</span> template{visibleTemplates.length !== 1 ? 's' : ''}</p>
+          <div className="inline-flex items-center border border-[#E2E8F0] rounded-[8px] bg-white p-0.5 gap-0.5 shrink-0">
+            <Tooltip label="Cards">
+              <button onClick={() => switchView('cards')} aria-label="Cards"
+                className={`flex items-center justify-center w-8 h-8 rounded-[6px] transition-colors ${view === 'cards' ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}><LayoutGrid size={15} /></button>
+            </Tooltip>
+            <Tooltip label="Table">
+              <button onClick={() => switchView('table')} aria-label="Table"
+                className={`flex items-center justify-center w-8 h-8 rounded-[6px] transition-colors ${view === 'table' ? 'bg-[#2563EB] text-white' : 'text-[#475569] hover:bg-[#F1F5F9]'}`}><TableIcon size={15} /></button>
+            </Tooltip>
+          </div>
+        </div>
       )}
 
       {/* Body */}
       {loading ? (
         <div className="flex items-center justify-center h-64"><div className="w-8 h-8 border-2 border-[#2563EB] border-t-transparent rounded-full animate-spin" /></div>
-      ) : templates.length === 0 ? (
+      ) : visibleTemplates.length === 0 ? (
         <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] flex flex-col items-center justify-center py-20">
           <div className="w-14 h-14 rounded-full bg-[#F1F5F9] flex items-center justify-center mb-4">{emptyState.icon}</div>
           <p className="font-semibold text-[#0F172A]">{emptyState.title}</p>
           <p className="text-sm text-[#475569] mt-1 mb-5">{emptyState.sub}</p>
-          <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors">
-            <Plus size={16} /> New Recurring Task
-          </button>
+          {filtersActive ? (
+            <button onClick={() => { setSearchInput(''); setFilters({ ...EMPTY_RECURRING_FILTERS }) }}
+              className="px-5 py-[10px] text-sm font-semibold text-[#2563EB] bg-white border-2 border-[#2563EB] rounded-[8px] hover:bg-[#EFF6FF] transition-colors">
+              Clear filters
+            </button>
+          ) : (
+            <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-5 py-[10px] bg-[#2563EB] text-white rounded-[8px] text-sm font-semibold hover:bg-[#1D4ED8] transition-colors">
+              <Plus size={16} /> New Recurring Task
+            </button>
+          )}
         </div>
       ) : view === 'table' ? (
         <RecurringTable
-          rows={templates}
+          rows={visibleTemplates}
           categories={categories}
           priorities={priorities}
           onOpen={(id) => router.push(`/dashboard/tasks/recurring/${id}`)}
@@ -491,7 +537,7 @@ export default function RecurringPage() {
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {templates.map((t) => (
+          {visibleTemplates.map((t) => (
             <RecurringCard
               key={t.id}
               template={t}
