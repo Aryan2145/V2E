@@ -1223,14 +1223,22 @@ export class ProcessHierarchyService {
   }
 
   private async serializeMap(orgId: string, mapId: string) {
-    const [nodes, connections, artifacts, links, checklist, access] = await Promise.all([
-      this.prisma.processNode.findMany({ where: { organization_id: orgId, map_id: mapId, is_deleted: false } }),
+    // Only NON-deleted nodes go in the blob, so every sub-resource must be scoped to THAT set —
+    // otherwise a connection / link / checklist / access row that still references a soft-deleted
+    // node would be in the blob but its node wouldn't, and restore (wipe + recreate) would hit a
+    // foreign-key violation recreating that orphan. Scope everything to the included node ids.
+    const nodes = await this.prisma.processNode.findMany({ where: { organization_id: orgId, map_id: mapId, is_deleted: false } });
+    const nodeIds = nodes.map((n) => n.id);
+    const nodeIdSet = new Set(nodeIds);
+    const [connectionsAll, artifacts, links, checklist, access] = await Promise.all([
       this.prisma.processConnection.findMany({ where: { organization_id: orgId, map_id: mapId } }),
       this.prisma.processArtifact.findMany({ where: { organization_id: orgId, map_id: mapId } }),
-      this.prisma.processNodeArtifact.findMany({ where: { node: { organization_id: orgId, map_id: mapId } } }),
-      this.prisma.processChecklistItem.findMany({ where: { node: { organization_id: orgId, map_id: mapId } } }),
-      this.prisma.processNodeAccess.findMany({ where: { organization_id: orgId, node: { map_id: mapId } } }),
+      nodeIds.length ? this.prisma.processNodeArtifact.findMany({ where: { node_id: { in: nodeIds } } }) : [],
+      nodeIds.length ? this.prisma.processChecklistItem.findMany({ where: { node_id: { in: nodeIds } } }) : [],
+      nodeIds.length ? this.prisma.processNodeAccess.findMany({ where: { organization_id: orgId, node_id: { in: nodeIds } } }) : [],
     ]);
+    // Drop any connection whose endpoints aren't both in the (non-deleted) node set.
+    const connections = connectionsAll.filter((c) => nodeIdSet.has(c.source_node_id) && nodeIdSet.has(c.target_node_id));
     // JSON round-trip converts Date instances to ISO strings so the value satisfies
     // Prisma's Json input type (and restore feeds the strings straight back to createMany,
     // which accepts ISO-8601 for DateTime columns).
@@ -1278,10 +1286,18 @@ export class ProcessHierarchyService {
       (rows ?? []).map((r) => ({ ...r, organization_id: orgId }));
     const artifacts = withOrgMap(tree.artifacts);
     const nodes = withOrgMap(tree.nodes);
-    const connections = withOrgMap(tree.connections);
-    const links = tree.links ?? []; // node_id + artifact_id only — scoped via the node it hangs off
-    const checklist = tree.checklist ?? []; // node_id only
-    const access = withOrg(tree.access);
+    // Defensive: drop any child row that references a node/artifact NOT being recreated, so a stale
+    // or hand-built blob (e.g. an old snapshot with a dangling ref) can never break the whole
+    // restore with a foreign-key violation. Serialization now avoids these, but restore must be safe
+    // for ANY blob it's handed.
+    const nodeIdSet = new Set<string>(nodes.map((n) => n.id));
+    const artIdSet = new Set<string>(artifacts.map((a) => a.id));
+    const connections = withOrgMap(tree.connections).filter(
+      (c) => nodeIdSet.has(c.source_node_id) && nodeIdSet.has(c.target_node_id),
+    );
+    const links = (tree.links ?? []).filter((l: any) => nodeIdSet.has(l.node_id) && artIdSet.has(l.artifact_id)); // node_id + artifact_id only
+    const checklist = (tree.checklist ?? []).filter((c: any) => nodeIdSet.has(c.node_id)); // node_id only
+    const access = withOrg(tree.access).filter((a) => nodeIdSet.has(a.node_id));
 
     await this.prisma.$transaction(async (tx) => {
       // Wipe the working tree (hard delete — the supplied state is the source of truth).
@@ -1778,6 +1794,10 @@ export class ProcessHierarchyService {
         parent_node_id: isRoot ? targetParent : newNodeId.get(n.parent_node_id!) ?? targetParent,
         kind: n.kind, name: n.name, description: n.description, status: n.status,
         responsible_role_id: n.responsible_role_id, responsible_user_id: n.responsible_user_id,
+        // Swimlane placement (pool + department lane) MUST be copied — without it the paste lands
+        // in no lane and no swimlane is drawn. layout_frozen is copied too so the cluster keeps its
+        // exact shape (positions honoured, not re-flowed).
+        pool: n.pool, department_id: n.department_id, layout_frozen: n.layout_frozen,
         position_x: isRoot ? baseX + (n.position_x - minX) : n.position_x,
         position_y: isRoot ? baseY + (n.position_y - minY) : n.position_y,
         sort_order: n.sort_order, linked_map_id: n.linked_map_id, created_by_user_id: principal.userId,
@@ -1788,6 +1808,8 @@ export class ProcessHierarchyService {
       parent_node_id: c.parent_node_id && newNodeId.has(c.parent_node_id) ? newNodeId.get(c.parent_node_id)! : targetParent,
       source_node_id: newNodeId.get(c.source_node_id)!, target_node_id: newNodeId.get(c.target_node_id)!,
       label: c.label, condition_kind: c.condition_kind,
+      // Keep the designer's chosen connection dots so lines paste attached exactly as drawn.
+      source_side: c.source_side, target_side: c.target_side,
     }));
     const linkRows = links.map((l) => ({ id: randomUUID(), node_id: newNodeId.get(l.node_id)!, artifact_id: newArtifactId.get(l.artifact_id) ?? l.artifact_id, direction: l.direction }));
     const checklistRows = checklist.map((c) => ({ id: randomUUID(), node_id: newNodeId.get(c.node_id)!, text: c.text, sort_order: c.sort_order }));
@@ -1805,6 +1827,19 @@ export class ProcessHierarchyService {
       if (checklistRows.length) await tx.processChecklistItem.createMany({ data: checklistRows });
       if (accessRows.length) await tx.processNodeAccess.createMany({ data: accessRows });
     });
+
+    // A pasted Company node needs its department lane to exist at its new level, or the swimlane
+    // band won't be drawn. Ensure one per distinct (level, department) among the pasted nodes.
+    const lanePairs = new Map<string, { parent: string | null; dept: string }>();
+    for (const r of nodeRows) {
+      if (r.pool === ProcessPool.company && r.department_id) {
+        lanePairs.set(`${r.parent_node_id ?? 'root'}:${r.department_id}`, { parent: r.parent_node_id ?? null, dept: r.department_id });
+      }
+    }
+    for (const { parent, dept } of lanePairs.values()) {
+      await this.ensureAutoLane(orgId, principal.userId, targetMapId, parent, dept);
+    }
+
     return { pasted_node_ids: roots.map((id) => newNodeId.get(id)!) };
   }
 }
