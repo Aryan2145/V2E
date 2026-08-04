@@ -403,7 +403,7 @@ function Inner({
   const snapAlignY = useCallback((node: Node): number => {
     const h = node.height ?? 96
     const cy = node.position.y + h / 2
-    const THRESH = 18
+    const THRESH = 30 // how close two nodes' centres must get before they snap level
     let bestCentre: number | null = null, bestDiff = THRESH
     for (const n of nodes) {
       if (n.id === node.id || n.id.includes('::') || n.id.startsWith('band::')) continue

@@ -39,6 +39,21 @@ export const FLOW_NAV_CSS = `
 .flow-nav .react-flow__handle {
   cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='18'%20height='18'%3E%3Cpath%20d='M9%201V17M1%209H17'%20stroke='%23000'%20stroke-width='1.75'/%3E%3C/svg%3E") 9 9, crosshair;
 }
+/* Bigger, easier grab target for the connection dots: an invisible hit area expanded mostly
+   OUTWARD from the node edge (only a hair inward) so it's easy to start a line without stealing
+   clicks meant for the node body. The dot itself stays small. */
+.flow-nav .react-flow__handle::before { content: ''; position: absolute; }
+.flow-nav .react-flow__handle-right::before  { top: -11px; bottom: -11px; left: -4px; right: -16px; }
+.flow-nav .react-flow__handle-left::before   { top: -11px; bottom: -11px; right: -4px; left: -16px; }
+.flow-nav .react-flow__handle-top::before    { left: -11px; right: -11px; bottom: -4px; top: -16px; }
+.flow-nav .react-flow__handle-bottom::before { left: -11px; right: -11px; top: -4px; bottom: -16px; }
+/* The OS cursor theme can be white/light → invisible on the white node body. Force a visible dark
+   arrow (black fill, white outline, so it shows on any background) over nodes — including drillable
+   nodes whose Tailwind cursor-pointer would otherwise use the same invisible OS cursor. */
+.flow-nav .react-flow__node,
+.flow-nav .react-flow__node .cursor-pointer {
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='20'%20height='24'%3E%3Cpath%20d='M2%202L2%2018L6.5%2014L9.2%2020L11.6%2019L9%2013L14%2013Z'%20fill='%23000'%20stroke='%23fff'%20stroke-width='1.3'%20stroke-linejoin='round'/%3E%3C/svg%3E") 2 2, auto;
+}
 `
 
 export function FlowNavStyles() {

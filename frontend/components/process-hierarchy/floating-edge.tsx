@@ -114,6 +114,14 @@ function stepParams(source: Box, target: Box, opts?: { enterLeft?: boolean; exit
   // from, enter the target at the dot they dropped on.
   if (opts?.sourceSide) { const p = sidePoint(source, opts.sourceSide); r.sx = p.x; r.sy = p.y; r.sourcePos = p.pos }
   if (opts?.targetSide) { const p = sidePoint(target, opts.targetSide); r.tx = p.x; r.ty = p.y; r.targetPos = p.pos }
+
+  // Auto-straighten a near-level side-to-side hop: if the line leaves one horizontal side and enters
+  // the opposite horizontal side and the two ends are within ~a node height of each other, share a
+  // single Y so it's a clean straight line — a tiny center mismatch could otherwise never be
+  // nudged away by hand, leaving a small step (as with a decision → task "No" branch).
+  const horiz = (r.sourcePos === Position.Left || r.sourcePos === Position.Right)
+    && (r.targetPos === Position.Left || r.targetPos === Position.Right)
+  if (horiz && Math.abs(r.sy - r.ty) <= 60) { const y = Math.round((r.sy + r.ty) / 2); r.sy = y; r.ty = y }
   return r
 }
 
