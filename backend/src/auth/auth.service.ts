@@ -280,7 +280,7 @@ export class AuthService {
 
   private async issueFullTokens(
     userId: string,
-    email: string,
+    email: string | null, // a phone-only account has no email
     organizationId: string | null,
     isSuperAdmin: boolean,
     opts?: { demotePrevHash?: string | null },
@@ -315,7 +315,7 @@ export class AuthService {
   }
 
   private async buildUserPayload(
-    user: { id: string; name: string; email: string },
+    user: { id: string; name: string; email: string | null },
     organizationId: string | null,
     isAdmin: boolean,
     isSuperAdmin: boolean,

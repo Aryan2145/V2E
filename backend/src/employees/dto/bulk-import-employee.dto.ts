@@ -157,7 +157,7 @@ export interface BulkImportResult {
 
 export interface UndoKeptRow {
   name: string;
-  email: string;
+  email: string | null;
   reason: string;
 }
 

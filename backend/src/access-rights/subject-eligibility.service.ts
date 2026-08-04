@@ -5,7 +5,7 @@ import { LEAF_BY_KEY } from './permission-registry';
 export interface EligibleSubjectItem {
   userId: string;
   name: string;
-  email?: string;
+  email?: string | null;
   department?: string | null;
   eligible: boolean;
   reason?: string;

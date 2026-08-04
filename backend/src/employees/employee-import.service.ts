@@ -541,7 +541,7 @@ export class EmployeeImportService {
     const orgUserByEmail = new Map<string, { id: string; name: string }>();
     const orgUserByName = new Map<string, string[]>();
     for (const m of members) {
-      orgUserByEmail.set(m.user.email.toLowerCase(), { id: m.user.id, name: m.user.name });
+      if (m.user.email) orgUserByEmail.set(m.user.email.toLowerCase(), { id: m.user.id, name: m.user.name }); // phone-only users can't be matched by email
       const k = m.user.name.trim().toLowerCase();
       orgUserByName.set(k, [...(orgUserByName.get(k) ?? []), m.user.id]);
     }
