@@ -290,10 +290,11 @@ export function buildSwimlane(
     nodes.push({
       id: n.id, type: 'process', position: { x: px, y: py },
       draggable: opts.canEdit, selectable: true, zIndex: 2,
-      // minHeight (not a fixed height) keeps short steps uniform at NODE_H yet lets a step with a
-      // checklist / docs grow, so its measured box — and the arrowhead drawn at its bottom — matches
-      // what's on screen instead of clipping at 96.
-      style: { minHeight: NODE_H, display: 'flex', alignItems: 'center' },
+      // No wrapper min-height: the react-flow node hugs its real content, so the four connection
+      // dots — and a line entering/leaving the top or bottom — sit exactly on the visible box's
+      // edges for every node kind. (A forced 96px floor with the box centred inside left short
+      // boxes with their top/bottom dots and bottom-entry lines floating ~18px off the box.)
+      // Each node component already carries its own min height (task 60, decision 96, event 44).
       data: {
         name: n.name, kind: n.kind, childCount: n.child_count ?? 0,
         docCount: (n.inputs?.length ?? 0) + (n.outputs?.length ?? 0),
