@@ -120,7 +120,7 @@ export default function AddEmployeeModal({
       setForm((f) => ({
         ...f,
         name: user.name,
-        email: user.email,
+        email: user.email ?? '',
         password: '•' + Math.random().toString(36).slice(-8) + 'A1!',
         system_role_id: adminRole?.id ?? '',
       }))
@@ -150,6 +150,7 @@ export default function AddEmployeeModal({
   const [form, setForm] = useState(() => ({
     name: '',
     email: '',
+    phone: '',
     password: '',
     department_id: '',
     role_id: '',
@@ -166,13 +167,15 @@ export default function AddEmployeeModal({
   const set = (k: keyof typeof form, v: any) =>
     setForm((f) => ({ ...f, [k]: v }))
 
-  // Debounced check on the entered email. When a login already exists we lock the
-  // name to that account's real name (name is one global value, like the password).
+  // Debounced check on the entered email OR phone. When a login already exists we lock
+  // the name to that account's real name (name is one global value, like the password).
+  const email = form.email.trim()
+  const phoneDigits = form.phone.replace(/\D/g, '')
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  // Prefer email when it's a valid email; otherwise use a phone with enough digits.
+  const identifierToCheck = looksLikeEmail ? email : phoneDigits.length >= 10 ? phoneDigits : ''
   useEffect(() => {
-    if (prefillSelf) return
-    const email = form.email.trim()
-    const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-    if (!looksLikeEmail) {
+    if (prefillSelf || !identifierToCheck) {
       setAccount(null)
       setCheckingAccount(false)
       return
@@ -180,7 +183,7 @@ export default function AddEmployeeModal({
     let cancelled = false
     setCheckingAccount(true)
     const t = setTimeout(() => {
-      checkAccount(orgId, email)
+      checkAccount(orgId, identifierToCheck)
         .then((res) => {
           if (cancelled) return
           setAccount(res)
@@ -197,7 +200,7 @@ export default function AddEmployeeModal({
       cancelled = true
       clearTimeout(t)
     }
-  }, [form.email, orgId, prefillSelf])
+  }, [identifierToCheck, orgId, prefillSelf])
 
   // Roles are scoped to the chosen department.
   const deptRoles = useMemo(
@@ -245,8 +248,17 @@ export default function AddEmployeeModal({
       setError('This person is already an employee in this firm.')
       return
     }
-    if (!form.name.trim() || !form.email.trim()) {
-      setError('Name and email are required.')
+    if (!form.name.trim()) {
+      setError('Name is required.')
+      return
+    }
+    // Email OR phone — at least one is required (both is fine).
+    if (!form.email.trim() && !form.phone.trim()) {
+      setError('Enter an email address or a phone number (at least one).')
+      return
+    }
+    if (form.phone.trim() && form.phone.replace(/\D/g, '').length < 10) {
+      setError('Enter a valid phone number (at least 10 digits).')
       return
     }
     // A password is required ONLY for a brand-new login. An existing account keeps
@@ -278,7 +290,8 @@ export default function AddEmployeeModal({
     try {
       await createEmployee(orgId, {
         name: form.name.trim(),
-        email: form.email.trim(),
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
         // Omit the password entirely for an existing account — they keep their login.
         password: existingAccount ? undefined : form.password,
         role_id: form.role_id,
@@ -344,7 +357,7 @@ export default function AddEmployeeModal({
                 )}
               </div>
               <div>
-                <label className={labelClass}>Email *</label>
+                <label className={labelClass}>Email <span className="font-normal text-[#94A3B8]">or phone</span></label>
                 <input
                   type="email"
                   value={form.email}
@@ -353,19 +366,38 @@ export default function AddEmployeeModal({
                   className={inputClass}
                   disabled={prefillSelf}
                 />
-                {!prefillSelf && checkingAccount && (
-                  <p className="mt-1 text-xs text-[#94A3B8]">Checking…</p>
-                )}
-                {!prefillSelf && duplicateInOrg && (
-                  <p className="mt-1 text-xs text-[#DC2626]">
-                    This person is already an employee in this firm.
-                  </p>
-                )}
-                {!prefillSelf && existingAccount && !duplicateInOrg && (
-                  <p className="mt-1 text-xs text-[#059669]">
-                    Existing V2E account — they’ll use their current password. No password needed here.
-                  </p>
-                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className={labelClass}>Phone number</label>
+                <input
+                  type="tel"
+                  value={form.phone}
+                  onChange={(e) => set('phone', e.target.value)}
+                  placeholder="10-digit mobile number"
+                  className={inputClass}
+                  disabled={prefillSelf}
+                />
+                <p className="mt-1 text-xs text-[#94A3B8]">Email or phone — at least one. They can sign in with either.</p>
+              </div>
+              <div className="flex items-start">
+                <div className="w-full">
+                  {!prefillSelf && checkingAccount && (
+                    <p className="mt-7 text-xs text-[#94A3B8]">Checking…</p>
+                  )}
+                  {!prefillSelf && duplicateInOrg && (
+                    <p className="mt-7 text-xs text-[#DC2626]">
+                      This person is already an employee in this firm.
+                    </p>
+                  )}
+                  {!prefillSelf && existingAccount && !duplicateInOrg && (
+                    <p className="mt-7 text-xs text-[#059669]">
+                      Existing V2E account — they’ll use their current login. No password needed here.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
 

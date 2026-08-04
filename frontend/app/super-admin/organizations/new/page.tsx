@@ -23,6 +23,7 @@ const schema = z.object({
   is_test: z.boolean().optional(),
   admin_name: z.string().optional(),
   admin_email: z.string().optional(),
+  admin_phone: z.string().optional(),
   admin_password: z.string().min(8, 'Password must be at least 8 characters').optional().or(z.literal('')),
 })
 
@@ -88,12 +89,16 @@ export default function NewOrganizationPage() {
   // the password field (they keep their login) and lock the name to their existing name
   // — the firm creator can't know this on their own, so we detect it and tell them.
   const adminEmail = watch('admin_email')
+  const adminPhone = watch('admin_phone')
   const [adminAccount, setAdminAccount] = useState<OrgAdminAccountCheck | null>(null)
   const [checkingAdmin, setCheckingAdmin] = useState(false)
   const adminExists = !!adminAccount?.exists
+  const email = (adminEmail ?? '').trim()
+  const phoneDigits = (adminPhone ?? '').replace(/\D/g, '')
+  const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+  const adminIdentifier = looksLikeEmail ? email : phoneDigits.length >= 10 ? phoneDigits : ''
   useEffect(() => {
-    const email = (adminEmail ?? '').trim()
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!adminIdentifier) {
       setAdminAccount(null)
       setCheckingAdmin(false)
       return
@@ -101,7 +106,7 @@ export default function NewOrganizationPage() {
     let cancelled = false
     setCheckingAdmin(true)
     const t = setTimeout(() => {
-      checkOrgAdminAccount(email)
+      checkOrgAdminAccount(adminIdentifier)
         .then((res) => {
           if (cancelled) return
           setAdminAccount(res)
@@ -111,14 +116,14 @@ export default function NewOrganizationPage() {
         .finally(() => { if (!cancelled) setCheckingAdmin(false) })
     }, 400)
     return () => { cancelled = true; clearTimeout(t) }
-  }, [adminEmail, setValue])
+  }, [adminIdentifier, setValue])
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
 
-    // Validate admin section — single email-driven flow.
-    if (!values.admin_email) {
-      setServerError('Admin email is required.')
+    // Validate admin section — single identity-driven flow (email OR phone).
+    if (!values.admin_email && !values.admin_phone) {
+      setServerError('Enter an admin email or phone number (at least one).')
       return
     }
     if (!values.admin_name) {
@@ -141,7 +146,8 @@ export default function NewOrganizationPage() {
         group_id: values.group_id || undefined,
         is_test: values.is_test || undefined,
         admin_name: values.admin_name,
-        admin_email: values.admin_email,
+        admin_email: values.admin_email || undefined,
+        admin_phone: values.admin_phone || undefined,
         // Omit the password for an existing login — they keep the one they already use.
         admin_password: adminExists ? undefined : values.admin_password || undefined,
       }
@@ -265,10 +271,15 @@ export default function NewOrganizationPage() {
               otherwise it's a brand-new person and you set a name + password. No more
               "new vs existing" choice — the email decides. */}
           <div className="flex flex-col gap-5 mt-4">
-            <Field label="Admin Email" error={errors.admin_email?.message} required
-              hint={checkingAdmin ? 'Checking…' : adminExists ? 'Existing V2E account — no password needed' : 'They’ll sign in with this email'}>
-              <input {...register('admin_email')} type="email" placeholder="name@company.com" className={inputCls(!!errors.admin_email)} />
-            </Field>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Admin Email" error={errors.admin_email?.message}
+                hint={checkingAdmin ? 'Checking…' : adminExists ? 'Existing account — no password needed' : undefined}>
+                <input {...register('admin_email')} type="email" placeholder="name@company.com" className={inputCls(!!errors.admin_email)} />
+              </Field>
+              <Field label="Admin Phone" error={errors.admin_phone?.message} hint="Email or phone — at least one">
+                <input {...register('admin_phone')} type="tel" placeholder="10-digit mobile number" className={inputCls(!!errors.admin_phone)} />
+              </Field>
+            </div>
             <Field label="Admin Name" error={errors.admin_name?.message} required
               hint={adminExists ? 'From their existing account' : undefined}>
               <input {...register('admin_name')} placeholder="" disabled={adminExists}

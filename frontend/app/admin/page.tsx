@@ -5,7 +5,7 @@ import { Eye, EyeOff, ShieldCheck, Loader2 } from 'lucide-react'
 import { adminLogin as apiAdminLogin, getMe } from '@/lib/api/auth'
 
 export default function AdminLoginPage() {
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -24,21 +24,21 @@ export default function AdminLoginPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!email.trim() || !password) {
-      setError('Please enter your email and password.')
+    if (!identifier.trim() || !password) {
+      setError('Please enter your email or phone number, and your password.')
       return
     }
     setError(null)
     setLoading(true)
     try {
-      const tokens = await apiAdminLogin(email.trim(), password)
+      const tokens = await apiAdminLogin(identifier.trim(), password)
       localStorage.setItem('access_token', tokens.access_token)
       localStorage.setItem('refresh_token', tokens.refresh_token)
       window.location.href = '/super-admin/organizations'
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message
-        ?? 'Invalid email or password.'
+        ?? 'Could not sign you in. Please check your details and try again.'
       setError(msg)
       setLoading(false)
     }
@@ -76,19 +76,19 @@ export default function AdminLoginPage() {
           )}
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
-            {/* Email */}
+            {/* Email or phone */}
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-[#CBD5E1] mb-1.5">
-                Email address
+              <label htmlFor="identifier" className="block text-sm font-medium text-[#CBD5E1] mb-1.5">
+                Email address / Phone number
               </label>
               <input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="identifier"
+                type="text"
+                autoComplete="username"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
                 disabled={loading}
-                placeholder="admin@example.com"
+                placeholder="admin@example.com or mobile number"
                 className="w-full h-11 px-3 rounded-[8px] border border-[#334155] bg-[#0F172A] text-white placeholder:text-[#475569] text-sm focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 disabled:opacity-50 transition-colors"
               />
             </div>

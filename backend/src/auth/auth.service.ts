@@ -14,6 +14,7 @@ import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 import { SwitchOrgDto } from './dto/switch-org.dto';
+import { classifyIdentifier } from '../common/identifier.util';
 
 @Injectable()
 export class AuthService {
@@ -41,12 +42,31 @@ export class AuthService {
     return this.issueFullTokens(user.id, user.email, null, false);
   }
 
+  // Resolve a login identity typed as either an email or a phone number.
+  private async findUserByIdentifier(identifier: string) {
+    const { kind, value } = classifyIdentifier(identifier);
+    let user = null as Awaited<ReturnType<typeof this.prisma.user.findUnique>>;
+    if (value) {
+      user =
+        kind === 'email'
+          ? await this.prisma.user.findUnique({ where: { email: value } })
+          : await this.prisma.user.findUnique({ where: { phone: value } });
+    }
+    return { user, kind };
+  }
+
+  private identifierNotFoundMessage(kind: 'email' | 'phone'): string {
+    return kind === 'phone'
+      ? 'Mobile number not found. Please try another number, or your email address.'
+      : 'Email address not found. Please try another email, or your phone number if registered.';
+  }
+
   async login(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user || !user.is_active) throw new UnauthorizedException('Invalid credentials');
+    const { user, kind } = await this.findUserByIdentifier(dto.identifier);
+    if (!user || !user.is_active) throw new UnauthorizedException(this.identifierNotFoundMessage(kind));
 
     const valid = await bcrypt.compare(dto.password, user.password_hash);
-    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!valid) throw new UnauthorizedException('Incorrect password. Please try again.');
 
     const memberships = await this.prisma.organizationMember.findMany({
       where: { user_id: user.id, is_active: true },
@@ -152,11 +172,11 @@ export class AuthService {
   }
 
   async adminLogin(dto: LoginDto) {
-    const user = await this.prisma.user.findUnique({ where: { email: dto.email } });
-    if (!user || !user.is_active) throw new UnauthorizedException('Invalid credentials');
+    const { user, kind } = await this.findUserByIdentifier(dto.identifier);
+    if (!user || !user.is_active) throw new UnauthorizedException(this.identifierNotFoundMessage(kind));
 
     const valid = await bcrypt.compare(dto.password, user.password_hash);
-    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!valid) throw new UnauthorizedException('Incorrect password. Please try again.');
 
     if (!user.is_super_admin) throw new UnauthorizedException('Access denied. Super administrator credentials required.');
 
@@ -280,7 +300,7 @@ export class AuthService {
 
   private async issueFullTokens(
     userId: string,
-    email: string,
+    email: string | null,
     organizationId: string | null,
     isSuperAdmin: boolean,
     opts?: { demotePrevHash?: string | null },
@@ -315,7 +335,7 @@ export class AuthService {
   }
 
   private async buildUserPayload(
-    user: { id: string; name: string; email: string },
+    user: { id: string; name: string; email: string | null; phone?: string | null },
     organizationId: string | null,
     isAdmin: boolean,
     isSuperAdmin: boolean,
@@ -339,6 +359,6 @@ export class AuthService {
       // the admin shell, so the frontend doesn't render them as a plain member.
       effectiveIsAdmin = isAdmin || (profile?.system_role?.is_admin ?? false);
     }
-    return { id: user.id, name: user.name, email: user.email, isSuperAdmin, organizationId, is_admin: effectiveIsAdmin, isTestOrg };
+    return { id: user.id, name: user.name, email: user.email, phone: user.phone ?? null, isSuperAdmin, organizationId, is_admin: effectiveIsAdmin, isTestOrg };
   }
 }

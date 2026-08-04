@@ -207,7 +207,12 @@ model OrganizationMember {
 model User {
   id              String   @id @default(uuid())
   name            String
-  email           String
+  // Login identity: a user signs in with EITHER email OR phone. At least one must
+  // be set (enforced in the service). Both are optional+unique at the column level
+  // (Postgres allows many NULLs under a unique index). Existing users have email
+  // and no phone until one is added.
+  email           String?
+  phone           String?
   password_hash   String
   is_super_admin  Boolean  @default(false)
   is_active       Boolean  @default(true)
@@ -256,6 +261,7 @@ model User {
   subject_overrides        UserSubjectOverride[]
 
   @@unique([email])
+  @@unique([phone])
   @@map("users")
 }
 

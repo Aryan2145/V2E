@@ -115,7 +115,7 @@ export class GroupsService {
     const userMap = new Map<string, { user_id: string; name: string; email: string; orgs: { id: string; name: string; is_admin: boolean }[] }>();
     for (const m of members) {
       if (!userMap.has(m.user_id)) {
-        userMap.set(m.user_id, { user_id: m.user.id, name: m.user.name, email: m.user.email, orgs: [] });
+        userMap.set(m.user_id, { user_id: m.user.id, name: m.user.name, email: m.user.email ?? '', orgs: [] });
       }
       userMap.get(m.user_id)!.orgs.push({ id: m.organization.id, name: m.organization.name, is_admin: m.is_admin });
     }

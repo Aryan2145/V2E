@@ -469,7 +469,7 @@ export class EmployeeImportService {
 
     const kept: UndoKeptRow[] = profiles
       .filter((p) => keptReasons.has(p.user_id))
-      .map((p) => ({ name: p.user.name, email: p.user.email, reason: keptReasons.get(p.user_id)! }));
+      .map((p) => ({ name: p.user.name, email: p.user.email ?? '', reason: keptReasons.get(p.user_id)! }));
     const delProfileIds = Array.from(deletable.values()).map((p) => p.id);
     const delUserIds = Array.from(deletable.keys());
 
@@ -541,7 +541,7 @@ export class EmployeeImportService {
     const orgUserByEmail = new Map<string, { id: string; name: string }>();
     const orgUserByName = new Map<string, string[]>();
     for (const m of members) {
-      orgUserByEmail.set(m.user.email.toLowerCase(), { id: m.user.id, name: m.user.name });
+      if (m.user.email) orgUserByEmail.set(m.user.email.toLowerCase(), { id: m.user.id, name: m.user.name });
       const k = m.user.name.trim().toLowerCase();
       orgUserByName.set(k, [...(orgUserByName.get(k) ?? []), m.user.id]);
     }

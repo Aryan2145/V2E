@@ -61,7 +61,7 @@ export class EligibleSubjectsController {
     const candidates: EligibleSubjectItem[] = profiles.map((p) => ({
       userId: p.user_id,
       name: p.user?.name ?? p.user?.email ?? 'Unknown',
-      email: p.user?.email,
+      email: p.user?.email ?? undefined,
       department: p.department?.name ?? null,
       eligible: true,
     }));

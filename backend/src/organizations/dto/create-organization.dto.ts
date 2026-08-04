@@ -56,6 +56,11 @@ export class CreateOrgWithAdminDto extends CreateOrganizationDto {
   @IsOptional()
   admin_email?: string;
 
+  @ApiPropertyOptional({ description: 'Admin mobile number — an alternative login identity' })
+  @IsString()
+  @IsOptional()
+  admin_phone?: string;
+
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()

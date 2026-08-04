@@ -28,6 +28,7 @@ export async function createOrganization(orgData: {
   existing_user_id?: string
   admin_name?: string
   admin_email?: string
+  admin_phone?: string
   admin_password?: string
   logo_url?: string
   industry?: string
@@ -53,10 +54,10 @@ export interface OrgAdminAccountCheck {
  * Does a global login already exist for this email? Lets the firm-creation form show
  * a password field only for a brand-new admin and hide it for an existing account.
  */
-export async function checkOrgAdminAccount(email: string): Promise<OrgAdminAccountCheck> {
+export async function checkOrgAdminAccount(identifier: string): Promise<OrgAdminAccountCheck> {
   const { data } = await apiClient.get<ApiResponse<OrgAdminAccountCheck>>(
     '/api/v1/organizations/check-account',
-    { params: { email } }
+    { params: { identifier } }
   );
   return data.data;
 }

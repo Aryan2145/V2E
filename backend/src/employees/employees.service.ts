@@ -10,6 +10,7 @@ import * as bcrypt from 'bcryptjs';
 import { EmployeeStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { classifyIdentifier, normalizePhone } from '../common/identifier.util';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { LearningService } from '../learning/learning.service';
@@ -95,19 +96,18 @@ export class EmployeesService {
   }
 
   /**
-   * Does a global login already exist for this email? Drives the Add-Employee form:
-   * an existing account is added to this firm WITHOUT a new password (they keep the
-   * one login they use everywhere). Returns the existing name so the form can lock it,
-   * whether they're already an employee HERE (duplicate block), and how many orgs they
-   * belong to (for the "changes their password everywhere" messaging). Deliberately
+   * Does a global login already exist for this email OR phone? Drives the Add-Employee
+   * form: an existing account is added to this firm WITHOUT a new password (they keep
+   * the one login they use everywhere). Returns the existing name so the form can lock
+   * it, whether they're already an employee HERE (duplicate block), and how many orgs
+   * they belong to (for the "changes their password everywhere" messaging). Deliberately
    * does NOT reveal which other firms — only the count. Admin-gated at the controller.
-   * (email today; extend to phone when mobile login lands.)
    */
-  async checkAccount(orgId: string, email: string) {
-    const trimmed = (email ?? '').trim();
-    if (!trimmed) return { exists: false };
+  async checkAccount(orgId: string, identifier: string) {
+    const { kind, value } = classifyIdentifier(identifier);
+    if (!value) return { exists: false };
     const user = await this.prisma.user.findUnique({
-      where: { email: trimmed },
+      where: kind === 'email' ? { email: value } : { phone: value },
       select: { id: true, name: true },
     });
     if (!user) return { exists: false };
@@ -129,7 +129,13 @@ export class EmployeesService {
   }
 
   async create(orgId: string, dto: CreateEmployeeDto) {
-    const { name, email, password, make_dep_head, ...profileData } = dto;
+    const { name, password, make_dep_head, ...profileData } = dto;
+    // Login identity: email OR phone — at least one is required. Normalise both.
+    const email = dto.email?.trim() || null;
+    const phone = normalizePhone(dto.phone) || null;
+    if (!email && !phone) {
+      throw new BadRequestException('Enter an email address or a phone number (at least one is required).');
+    }
 
     const roleExists = await this.prisma.role.findFirst({
       where: { id: profileData.role_id, organization_id: orgId },
@@ -178,7 +184,17 @@ export class EmployeesService {
     }
 
     const { profile, createdUserId, userWasCreated } = await this.prisma.$transaction(async (tx) => {
-      let user = await tx.user.findUnique({ where: { email } });
+      // Find an existing global login by email and/or phone (either identifies them).
+      const [userByEmail, userByPhone] = await Promise.all([
+        email ? tx.user.findUnique({ where: { email } }) : Promise.resolve(null),
+        phone ? tx.user.findUnique({ where: { phone } }) : Promise.resolve(null),
+      ]);
+      if (userByEmail && userByPhone && userByEmail.id !== userByPhone.id) {
+        throw new ConflictException(
+          'That email and phone number belong to two different people. Use one that identifies a single person.',
+        );
+      }
+      let user = userByEmail ?? userByPhone;
       let isExistingMember = false;
       let userWasCreated = false;
       if (user) {
@@ -187,16 +203,16 @@ export class EmployeesService {
         });
         if (existingProfile) {
           throw new ConflictException(
-            `A user with email '${email}' already has an employee profile in this organization`,
+            `${user.name} already has an employee profile in this organization`,
           );
         }
         const member = await tx.organizationMember.findFirst({
           where: { user_id: user.id, organization_id: orgId },
         });
         isExistingMember = !!member;
-        // Existing global account: we NEVER set/overwrite its password or name here.
-        // The person keeps the one login they already use across their other firms;
-        // this firm only adds a membership + profile. (Password can still be reset
+        // Existing global account: we NEVER set/overwrite its password, name, email or
+        // phone here. The person keeps the one login they already use across their other
+        // firms; this firm only adds a membership + profile. (Password can still be reset
         // later from the edit screen, which warns it changes their login everywhere.)
       } else {
         // Brand-new account — a password is required to create the login.
@@ -207,7 +223,7 @@ export class EmployeesService {
         }
         const password_hash = await bcrypt.hash(password, 12);
         user = await tx.user.create({
-          data: { name, email, password_hash, is_active: true },
+          data: { name, email, phone, password_hash, is_active: true },
         });
         userWasCreated = true;
       }
@@ -264,11 +280,14 @@ export class EmployeesService {
         select: { name: true },
       });
       const firmName = org?.name ?? 'your organisation';
-      if (userWasCreated) {
-        // password is guaranteed present here — new accounts are validated above.
-        await this.mail.sendWelcomeCredentials({ to: email, name, firmName, password: password! });
-      } else {
-        await this.mail.sendAddedToFirm({ to: email, name, firmName });
+      // Only email-able when they actually have an email (phone-only accounts don't).
+      if (email) {
+        if (userWasCreated) {
+          // password is guaranteed present here — new accounts are validated above.
+          await this.mail.sendWelcomeCredentials({ to: email, name, firmName, password: password! });
+        } else {
+          await this.mail.sendAddedToFirm({ to: email, name, firmName });
+        }
       }
     } catch {
       /* MailService logs failures; swallow so the employee is still created. */

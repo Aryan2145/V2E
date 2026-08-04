@@ -35,7 +35,8 @@ export async function createEmployee(
   orgId: string,
   employeeData: {
     name: string;
-    email: string;
+    email?: string;
+    phone?: string;
     password?: string;
     role_id: string;
     department_id: string;
@@ -67,13 +68,13 @@ export interface AccountCheck {
 }
 
 /**
- * Does a global V2E login already exist for this email? Drives the Add-Employee form:
- * an existing account is added without a new password (they keep their existing login).
+ * Does a global V2E login already exist for this email OR phone? Drives the Add-Employee
+ * form: an existing account is added without a new password (they keep their login).
  */
-export async function checkAccount(orgId: string, email: string): Promise<AccountCheck> {
+export async function checkAccount(orgId: string, identifier: string): Promise<AccountCheck> {
   const { data } = await apiClient.get<ApiResponse<AccountCheck>>(
     `/api/v1/org/${orgId}/employees/check-account`,
-    { params: { email } }
+    { params: { identifier } }
   );
   return data.data;
 }

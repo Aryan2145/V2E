@@ -17,7 +17,7 @@ export default function LoginPage() {
     router.replace(dest)
   }, [user, router])
 
-  const [email, setEmail] = useState('')
+  const [identifier, setIdentifier] = useState('')
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -26,18 +26,18 @@ export default function LoginPage() {
     e.preventDefault()
     setError(null)
 
-    if (!email.trim() || !password) {
-      setError('Please enter your email and password.')
+    if (!identifier.trim() || !password) {
+      setError('Please enter your email or phone number, and your password.')
       return
     }
 
     setIsLoading(true)
     try {
-      await login(email.trim(), password)
+      await login(identifier.trim(), password)
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { message?: string } } })?.response?.data
-          ?.message ?? 'Invalid email or password. Please try again.'
+          ?.message ?? 'Could not sign you in. Please check your details and try again.'
       setError(message)
     } finally {
       setIsLoading(false)
@@ -121,7 +121,7 @@ export default function LoginPage() {
             Sign in to your workspace
           </h1>
           <p className="mt-1.5 text-sm text-[#475569]">
-            Use your work email to continue.
+            Use your email or phone number to continue.
           </p>
 
           {error && (
@@ -135,17 +135,16 @@ export default function LoginPage() {
 
           <div className="mt-7 flex flex-col gap-5">
             <Input
-              id="email"
-              name="email"
-              label="Email address"
-              type="email"
-              placeholder="you@company.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              id="identifier"
+              name="identifier"
+              label="Email address / Phone number"
+              type="text"
+              placeholder="you@company.com or mobile number"
+              value={identifier}
+              onChange={(e) => setIdentifier(e.target.value)}
               required
               disabled={isLoading}
-              autoComplete="email"
-              inputMode="email"
+              autoComplete="username"
             />
 
             <Input

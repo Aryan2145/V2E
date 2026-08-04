@@ -18,10 +18,16 @@ export class CreateEmployeeDto {
   @IsNotEmpty()
   name: string;
 
-  @ApiProperty()
+  // Email OR phone — at least one is required (enforced in the service). Both is fine.
+  @ApiPropertyOptional()
   @IsEmail()
-  @IsNotEmpty()
-  email: string;
+  @IsOptional()
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'Mobile number — the person can also sign in with this' })
+  @IsString()
+  @IsOptional()
+  phone?: string;
 
   // Optional: only a BRAND-NEW account needs a password. When the email already
   // belongs to an existing V2E login (the person is in other firms), no password is

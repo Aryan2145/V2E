@@ -96,9 +96,9 @@ export class EmployeesController {
 
   @Get('check-account')
   @RequirePermission('employees.profile.manage', PermissionAction.write)
-  @ApiOperation({ summary: 'Does a global login already exist for this email? (drives the add form)' })
-  checkAccount(@Param('orgId') orgId: string, @Query('email') email: string) {
-    return this.employeesService.checkAccount(orgId, email ?? '');
+  @ApiOperation({ summary: 'Does a global login already exist for this email/phone? (drives the add form)' })
+  checkAccount(@Param('orgId') orgId: string, @Query('identifier') identifier: string) {
+    return this.employeesService.checkAccount(orgId, identifier ?? '');
   }
 
   @Get(':id')

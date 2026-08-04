@@ -34,7 +34,7 @@ interface AuthState {
 }
 
 interface AuthContextValue extends AuthState {
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   selectOrg: (organizationId: string) => Promise<void>;
   switchOrg: (organizationId: string) => Promise<void>;
@@ -144,8 +144,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [user]);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const result = await apiLogin(email, password);
+  const login = useCallback(async (identifier: string, password: string) => {
+    const result = await apiLogin(identifier, password);
 
     if ('requires_org_selection' in result && result.requires_org_selection) {
       if (typeof window !== 'undefined') {

@@ -1,17 +1,19 @@
 import apiClient from './client';
 import type { AuthTokens, AuthUser, ApiResponse, OrgMembership, LoginResponse } from '../types';
 
-export async function login(email: string, password: string): Promise<LoginResponse> {
+/** `identifier` is an email address OR a phone number. */
+export async function login(identifier: string, password: string): Promise<LoginResponse> {
   const { data } = await apiClient.post<{ data: LoginResponse }>('/api/v1/auth/login', {
-    email,
+    identifier,
     password,
   });
   return data.data;
 }
 
-export async function adminLogin(email: string, password: string): Promise<AuthTokens> {
+/** `identifier` is an email address OR a phone number. */
+export async function adminLogin(identifier: string, password: string): Promise<AuthTokens> {
   const { data } = await apiClient.post<{ data: AuthTokens }>('/api/v1/auth/admin-login', {
-    email,
+    identifier,
     password,
   });
   return data.data;

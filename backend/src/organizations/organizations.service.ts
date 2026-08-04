@@ -8,6 +8,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataScope, EntitlementState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { classifyIdentifier, normalizePhone } from '../common/identifier.util';
 import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
@@ -210,21 +211,24 @@ export class OrganizationsService {
    * show a password field ONLY for a brand-new admin, and none for an existing login
    * (who keeps their password). Returns the existing name so the form can lock it.
    */
-  async checkAccount(email: string) {
-    const trimmed = (email ?? '').trim();
-    if (!trimmed) return { exists: false };
+  async checkAccount(identifier: string) {
+    const { kind, value } = classifyIdentifier(identifier);
+    if (!value) return { exists: false };
     const user = await this.prisma.user.findUnique({
-      where: { email: trimmed },
+      where: kind === 'email' ? { email: value } : { phone: value },
       select: { name: true },
     });
     return user ? { exists: true, name: user.name } : { exists: false };
   }
 
   async create(dto: CreateOrgWithAdminDto) {
-    const { admin_name, admin_email, admin_password, existing_user_id, ...orgData } = dto;
+    const { admin_name, admin_email: rawEmail, admin_phone: rawPhone, admin_password, existing_user_id, ...orgData } = dto;
+    // Admin login identity: email OR phone (at least one), unless picking an existing user by id.
+    const admin_email = rawEmail?.trim() || null;
+    const admin_phone = normalizePhone(rawPhone) || null;
 
-    if (!existing_user_id && !admin_email) {
-      throw new UnprocessableEntityException('Either existing_user_id or admin_email is required');
+    if (!existing_user_id && !admin_email && !admin_phone) {
+      throw new UnprocessableEntityException('Provide an admin email or phone number (at least one), or pick an existing user.');
     }
 
     // Slug is an internal identifier — derive it from the name and guarantee uniqueness.
@@ -235,7 +239,7 @@ export class OrganizationsService {
         data: { ...orgData, slug, status: 'active' as any },
       });
 
-      let adminUser: { id: string; name: string; email: string; is_active: boolean; created_at: Date };
+      let adminUser: { id: string; name: string; email: string | null; is_active: boolean; created_at: Date };
       let adminWasCreated = false;
 
       if (existing_user_id) {
@@ -247,17 +251,24 @@ export class OrganizationsService {
         if (!found) throw new NotFoundException(`User ${existing_user_id} not found`);
         adminUser = found;
       } else {
-        // Path B: find or create by email
-        const found = await tx.user.findUnique({ where: { email: admin_email! } });
+        // Path B: find or create by email OR phone (either identifies the login)
+        const [byEmail, byPhone] = await Promise.all([
+          admin_email ? tx.user.findUnique({ where: { email: admin_email } }) : Promise.resolve(null),
+          admin_phone ? tx.user.findUnique({ where: { phone: admin_phone } }) : Promise.resolve(null),
+        ]);
+        if (byEmail && byPhone && byEmail.id !== byPhone.id) {
+          throw new BadRequestException('That email and phone number belong to two different people.');
+        }
+        const found = byEmail ?? byPhone;
         if (found) {
           adminUser = found;
         } else {
           if (!admin_password) {
-            throw new BadRequestException('admin_password is required when the email does not belong to an existing user');
+            throw new BadRequestException('A password is required for a brand-new admin login.');
           }
           const password_hash = await bcrypt.hash(admin_password, 12);
           adminUser = await tx.user.create({
-            data: { name: admin_name!, email: admin_email!, password_hash, is_active: true },
+            data: { name: admin_name!, email: admin_email, phone: admin_phone, password_hash, is_active: true },
             select: { id: true, name: true, email: true, is_active: true, created_at: true },
           });
           adminWasCreated = true;
@@ -322,7 +333,9 @@ export class OrganizationsService {
     // A freshly-created admin gets their credentials; an existing user who was
     // made admin of this new firm gets a "you've been added" notice instead.
     try {
-      if (result.adminWasCreated && admin_password) {
+      if (!result.admin.email) {
+        // Phone-only admin — nothing to email. Skip silently.
+      } else if (result.adminWasCreated && admin_password) {
         await this.mail.sendWelcomeCredentials({
           to: result.admin.email,
           name: result.admin.name,
