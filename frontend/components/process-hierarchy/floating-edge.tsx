@@ -115,13 +115,29 @@ function stepParams(source: Box, target: Box, opts?: { enterLeft?: boolean; exit
   if (opts?.sourceSide) { const p = sidePoint(source, opts.sourceSide); r.sx = p.x; r.sy = p.y; r.sourcePos = p.pos }
   if (opts?.targetSide) { const p = sidePoint(target, opts.targetSide); r.tx = p.x; r.ty = p.y; r.targetPos = p.pos }
 
-  // Auto-straighten a near-level side-to-side hop: if the line leaves one horizontal side and enters
-  // the opposite horizontal side and the two ends are within ~a node height of each other, share a
-  // single Y so it's a clean straight line — a tiny center mismatch could otherwise never be
-  // nudged away by hand, leaving a small step (as with a decision → task "No" branch).
+  // Land BOTH ends exactly on the node's connector dot (the midpoint of whichever side was chosen),
+  // so a line/arrow can never point at empty space beside a node — it always meets the blue dot.
+  const midOf = (b: Box, pos: Position) => {
+    switch (pos) {
+      case Position.Left: return { x: b.x, y: b.y + b.height / 2 }
+      case Position.Right: return { x: b.x + b.width, y: b.y + b.height / 2 }
+      case Position.Top: return { x: b.x + b.width / 2, y: b.y }
+      default: return { x: b.x + b.width / 2, y: b.y + b.height } // Bottom
+    }
+  }
+  const sm = midOf(source, r.sourcePos); r.sx = sm.x; r.sy = sm.y
+  const tm = midOf(target, r.targetPos); r.tx = tm.x; r.ty = tm.y
+
+  // Straighten a near-aligned hop by moving the SOURCE end onto the target's dot line — the arrow
+  // stays exactly on the target dot, the source line just leaves at the matching X/Y — so a tiny
+  // centre mismatch no longer leaves a little step you can't nudge away. Horizontal hop (left/right
+  // sides) shares a Y; vertical hop (top/bottom sides) shares an X.
   const horiz = (r.sourcePos === Position.Left || r.sourcePos === Position.Right)
     && (r.targetPos === Position.Left || r.targetPos === Position.Right)
-  if (horiz && Math.abs(r.sy - r.ty) <= 60) { const y = Math.round((r.sy + r.ty) / 2); r.sy = y; r.ty = y }
+  const vert = (r.sourcePos === Position.Top || r.sourcePos === Position.Bottom)
+    && (r.targetPos === Position.Top || r.targetPos === Position.Bottom)
+  if (horiz && Math.abs(r.sy - r.ty) <= 60) r.sy = r.ty
+  if (vert && Math.abs(r.sx - r.tx) <= 60) r.sx = r.tx
   return r
 }
 

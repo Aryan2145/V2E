@@ -43,10 +43,10 @@ export const FLOW_NAV_CSS = `
    OUTWARD from the node edge (only a hair inward) so it's easy to start a line without stealing
    clicks meant for the node body. The dot itself stays small. */
 .flow-nav .react-flow__handle::before { content: ''; position: absolute; }
-.flow-nav .react-flow__handle-right::before  { top: -11px; bottom: -11px; left: -4px; right: -16px; }
-.flow-nav .react-flow__handle-left::before   { top: -11px; bottom: -11px; right: -4px; left: -16px; }
-.flow-nav .react-flow__handle-top::before    { left: -11px; right: -11px; bottom: -4px; top: -16px; }
-.flow-nav .react-flow__handle-bottom::before { left: -11px; right: -11px; top: -4px; bottom: -16px; }
+.flow-nav .react-flow__handle-right::before  { top: -14px; bottom: -14px; left: -5px; right: -22px; }
+.flow-nav .react-flow__handle-left::before   { top: -14px; bottom: -14px; right: -5px; left: -22px; }
+.flow-nav .react-flow__handle-top::before    { left: -14px; right: -14px; bottom: -5px; top: -22px; }
+.flow-nav .react-flow__handle-bottom::before { left: -14px; right: -14px; top: -5px; bottom: -22px; }
 /* The OS cursor theme can be white/light → invisible on the white node body. Force a visible dark
    arrow (black fill, white outline, so it shows on any background) over nodes — including drillable
    nodes whose Tailwind cursor-pointer would otherwise use the same invisible OS cursor. */

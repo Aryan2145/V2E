@@ -84,6 +84,7 @@ export default function ProcessMapExplorerPage() {
   const swimlane = true
   const [departments, setDepartments] = useState<Department[]>([]) // for the New-swimlane picker
   const [addLanePick, setAddLanePick] = useState(false) // Add-step menu is showing its lane picker
+  const [laneRename, setLaneRename] = useState<{ laneId: string; deptId: string; name: string } | null>(null) // "change this lane's department" dialog
   const [laneAdd, setLaneAdd] = useState<{ pool: ProcessPool | null; departmentId: string | null; fromNodeId?: string | null; side?: string; autoCond?: ProcessConditionKind; ask?: boolean } | null>(null) // lane "+" / node-dot "add next" kind picker
   const [branchPick, setBranchPick] = useState<{ mode: 'create'; source: string; target: string; side?: string; tside?: string } | { mode: 'set'; connId: string } | null>(null) // Yes/No chooser for a decision connection
   const [modeInitialized, setModeInitialized] = useState(false)
@@ -297,6 +298,33 @@ export default function ProcessMapExplorerPage() {
       await refresh()
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not add the lane.', 'error') }
   }, [orgId, mapId, parentId, refresh, addToast])
+
+  // Open the "change a lane's department" dialog (clicking the lane's name).
+  const onRenameLane = useCallback((laneId: string, deptId: string, name: string) => {
+    setLaneRename({ laneId, deptId, name })
+  }, [])
+  // Apply it: re-point the lane at a new department; all its steps move with it.
+  const applyLaneRename = useCallback(async (newDeptId: string) => {
+    const lr = laneRename
+    if (!lr || newDeptId === lr.deptId) { setLaneRename(null); return }
+    setLaneRename(null)
+    try {
+      const { updated } = await processHierarchyApi.reassignLane(orgId, mapId, lr.laneId, newDeptId)
+      await refresh()
+      addToast(`Lane changed — ${updated} step${updated !== 1 ? 's' : ''} moved.`, 'success')
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not change the lane.', 'error') }
+  }, [laneRename, orgId, mapId, refresh, addToast])
+  // Remove the lane outright (only offered when it's empty).
+  const removeLane = useCallback(async () => {
+    const lr = laneRename
+    if (!lr) return
+    setLaneRename(null)
+    try {
+      await processHierarchyApi.deleteLane(orgId, mapId, lr.laneId)
+      await refresh()
+      addToast('Lane removed.', 'success')
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not remove the lane.', 'error') }
+  }, [laneRename, orgId, mapId, refresh, addToast])
 
   // Output rules: a decision has exactly one Yes + one No; every other step has a single output.
   // Returns whether another output is allowed, and — for a decision — which branch this one is
@@ -587,15 +615,21 @@ export default function ProcessMapExplorerPage() {
                     </span>
                   </button>
                 ))}
-                <div className="my-1 border-t border-[#F1F5F9]" />
-                <button onClick={() => setAddLanePick(true)}
-                  className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
-                  <span className="text-[#2563EB] mt-0.5"><Rows3 size={14} /></span>
-                  <span className="min-w-0">
-                    <span className="block text-[13px] font-medium text-[#0F172A]">New swimlane</span>
-                    <span className="block text-[11px] text-[#64748B]">Add a department lane (a horizontal band)</span>
-                  </span>
-                </button>
+                {/* Swimlanes only make sense at the top level of a map — a container (drill-down)
+                    holds flow steps, not department lanes. So hide "New swimlane" inside a container. */}
+                {!parentId && (
+                  <>
+                    <div className="my-1 border-t border-[#F1F5F9]" />
+                    <button onClick={() => setAddLanePick(true)}
+                      className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
+                      <span className="text-[#2563EB] mt-0.5"><Rows3 size={14} /></span>
+                      <span className="min-w-0">
+                        <span className="block text-[13px] font-medium text-[#0F172A]">New swimlane</span>
+                        <span className="block text-[11px] text-[#64748B]">Add a department lane (a horizontal band)</span>
+                      </span>
+                    </button>
+                  </>
+                )}
                 <div className="my-1 border-t border-[#F1F5F9]" />
                 <button onClick={() => { setShowAdd(false); setShowRefPicker(true) }}
                   className="w-full flex items-start gap-2.5 px-2.5 py-2 rounded-[8px] hover:bg-[#F1F5F9] text-left transition-colors">
@@ -775,6 +809,7 @@ export default function ProcessMapExplorerPage() {
             canEdit={canEditHere}
             swimlane={swimlane}
             onAddInLane={openLaneAdd}
+            onRenameLane={onRenameLane}
             onAppendFromNode={appendFromNode}
             onDecisionConnect={onDecisionConnect}
             onReassignLane={reassignLane}
@@ -871,6 +906,44 @@ export default function ProcessMapExplorerPage() {
               <button onClick={() => chooseBranch('no')}
                 className="flex-1 px-3 py-2 rounded-[8px] text-sm font-semibold text-white bg-[#DC2626] hover:bg-[#B91C1C]">No</button>
             </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Change a lane's department — clicking the lane name. Warns how many steps move with it. */}
+      {laneRename && createPortal(
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setLaneRename(null)} />
+          <div className="relative bg-white rounded-[12px] shadow-xl w-full max-w-sm p-4 animate-[fadeIn_.15s_ease-out]">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-semibold text-[#0F172A]">Change lane&rsquo;s department</h3>
+              <button onClick={() => setLaneRename(null)} className="text-[#94A3B8] hover:text-[#0F172A]"><X size={18} /></button>
+            </div>
+            {(() => {
+              const count = flow?.nodes.filter((n) => n.pool === 'company' && n.department_id === laneRename.deptId).length ?? 0
+              return (
+                <>
+                  <p className="text-[12px] text-[#64748B] mb-2.5">
+                    Re-point <span className="font-semibold text-[#0F172A]">{laneRename.name}</span> at another department.{' '}
+                    {count > 0
+                      ? <>All <span className="font-semibold text-[#B45309]">{count} step{count !== 1 ? 's' : ''}</span> in this lane will move to it.</>
+                      : <>This lane is empty.</>}
+                  </p>
+                  <DepartmentSelect
+                    inline value="" departments={departments} onChange={applyLaneRename}
+                    placeholder="Move to which department"
+                    lockedReason={(id) => (id === laneRename.deptId ? 'Current lane' : null)}
+                  />
+                  {count === 0 && (
+                    <button onClick={removeLane}
+                      className="mt-3 w-full px-3 py-2 rounded-[8px] text-[13px] font-semibold text-[#DC2626] border border-[#FCA5A5] hover:bg-[#FEF2F2] transition-colors">
+                      Remove this empty lane
+                    </button>
+                  )}
+                </>
+              )
+            })()}
           </div>
         </div>,
         document.body,

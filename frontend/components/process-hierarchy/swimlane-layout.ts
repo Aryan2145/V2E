@@ -41,11 +41,13 @@ export interface SwimlaneOpts {
   onEdit: (realNodeId: string) => void
   // Add a step straight into a lane (from the lane's "+"). deptId is null for Customer/Vendor.
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void
+  // Rename a lane = re-point it at a different department (its steps move with it).
+  onRenameLane?: (laneId: string, departmentId: string, currentName: string) => void
 }
 
-interface Band { key: string; variant: 'pool' | 'lane'; label: string; pool: ProcessPool; deptId: string | null }
+interface Band { key: string; variant: 'pool' | 'lane'; label: string; pool: ProcessPool; deptId: string | null; laneId?: string }
 
-export interface LaneBand { pool: ProcessPool; deptId: string | null; yTop: number; yBottom: number }
+export interface LaneBand { pool: ProcessPool; deptId: string | null; yTop: number; yBottom: number; offset: number }
 
 export function buildSwimlane(
   flow: FlowLevel,
@@ -191,7 +193,7 @@ export function buildSwimlane(
   if (steps.some((n) => n.pool === 'customer')) bands.push({ key: 'pool:customer', variant: 'pool', label: 'Customer', pool: 'customer', deptId: null })
   const companyStart = bands.length
   const hasCompany = flow.lanes.length > 0 || steps.some((n) => n.pool === 'company')
-  if (hasCompany) for (const lane of flow.lanes) bands.push({ key: 'lane:' + lane.department_id, variant: 'lane', label: lane.department_name, pool: 'company', deptId: lane.department_id })
+  if (hasCompany) for (const lane of flow.lanes) bands.push({ key: 'lane:' + lane.department_id, variant: 'lane', label: lane.department_name, pool: 'company', deptId: lane.department_id, laneId: lane.id })
   const companyEnd = bands.length
   if (steps.some((n) => n.pool === 'vendor')) bands.push({ key: 'pool:vendor', variant: 'pool', label: 'Vendor', pool: 'vendor', deptId: null })
 
@@ -348,9 +350,15 @@ export function buildSwimlane(
       data: {
         label: b.label, variant: b.variant,
         onAdd: opts.onAddInLane ? () => opts.onAddInLane!(b.pool, b.deptId) : undefined,
+        onRename: b.variant === 'lane' && b.laneId && b.deptId && opts.onRenameLane
+          ? () => opts.onRenameLane!(b.laneId!, b.deptId!, b.label)
+          : undefined,
       } as SwimlaneBandData,
     })
-    laneBands.push({ pool: b.pool, deptId: b.deptId, yTop: g.top, yBottom: g.bottom })
+    // offset = how much a stored (lane-relative) y is shifted to get the rendered y, i.e.
+    // rendered = offset + storedY. The drag handler subtracts it to turn a dropped absolute y back
+    // into the value to store, so a dragged lane node lands (and stays) exactly where it's dropped.
+    laneBands.push({ pool: b.pool, deptId: b.deptId, yTop: g.top, yBottom: g.bottom, offset: g.top + BAND_PAD - (laneMinY.get(b.key) ?? 0) })
   }
 
   // A node is a cross-lane "middle" when it has BOTH a cross-lane (different band) incoming AND

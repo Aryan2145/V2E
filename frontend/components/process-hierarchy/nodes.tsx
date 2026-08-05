@@ -246,7 +246,7 @@ function NoteNode({ data }: NodeProps<ProcessNodeData>) {
 // ─── Swimlane band: a pool or a department lane, drawn behind the steps. The label
 // runs vertically down the left strip (like the reference BPMN diagram). Non-interactive
 // (pointer-events off in the layout) so panning/clicking passes through to the canvas. ──
-export interface SwimlaneBandData { label: string; variant: 'pool' | 'lane'; onAdd?: () => void }
+export interface SwimlaneBandData { label: string; variant: 'pool' | 'lane'; onAdd?: () => void; onRename?: () => void }
 function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
   const isPool = data.variant === 'pool'
   return (
@@ -262,12 +262,26 @@ function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
         className="absolute left-0 top-0 bottom-0 flex items-center justify-center border-r"
         style={{ width: 30, borderColor: isPool ? '#CBD5E1' : '#E2E8F0' }}
       >
-        <span
-          className="text-[11px] font-bold text-[#1E293B] whitespace-nowrap"
-          style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-        >
-          {data.label}
-        </span>
+        {data.onRename ? (
+          // Click the lane's name to re-point it at a different department (its steps move with it).
+          <Tooltip label="Change this lane's department">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); data.onRename!() }}
+              className="nodrag text-[11px] font-bold text-[#1E293B] whitespace-nowrap hover:text-[#2563EB] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB] rounded"
+              style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)', pointerEvents: 'auto' }}
+            >
+              {data.label}
+            </button>
+          </Tooltip>
+        ) : (
+          <span
+            className="text-[11px] font-bold text-[#1E293B] whitespace-nowrap"
+            style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
+          >
+            {data.label}
+          </span>
+        )}
       </div>
       {/* Per-lane add (top-right): the band itself is click-through (pointer-events off in the
           layout), but this button re-enables pointer events. It opens a picker for WHAT to add. */}
