@@ -25,6 +25,30 @@ import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDt
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto } from './dto/snapshot.dto';
 
+/** Order nodes so every node appears after its parent — used before a bulk createMany so the
+ *  parent_node_id self-FK can never reference a not-yet-inserted row when the batch is split.
+ *  Nodes with a null/absent parent come first; a (defensive) cycle just gets appended as-is. */
+function orderNodesParentFirst(rows: any[]): any[] {
+  const present = new Set(rows.map((r) => r.id));
+  const emitted = new Set<string>();
+  const out: any[] = [];
+  let progressed = true;
+  while (out.length < rows.length && progressed) {
+    progressed = false;
+    for (const r of rows) {
+      if (emitted.has(r.id)) continue;
+      const p = r.parent_node_id;
+      if (!p || !present.has(p) || emitted.has(p)) {
+        out.push(r);
+        emitted.add(r.id);
+        progressed = true;
+      }
+    }
+  }
+  if (out.length < rows.length) for (const r of rows) if (!emitted.has(r.id)) out.push(r);
+  return out;
+}
+
 @Injectable()
 export class ProcessHierarchyService {
   constructor(
@@ -264,10 +288,23 @@ export class ProcessHierarchyService {
     const linkedNameById = new Map(linkedMaps.map((m) => [m.id, m.name]));
 
     // Swimlanes for THIS level (Company-pool department bands), ordered top→bottom.
-    const laneRows = await this.prisma.processLane.findMany({
+    const laneRowsAll = await this.prisma.processLane.findMany({
       where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null },
       orderBy: { sort_order: 'asc' },
     });
+    // An AUTO lane only exists to hold a node; once its last step is gone it should disappear (an
+    // empty band shouldn't linger). Prune empty auto lanes lazily here; manual lanes are kept even
+    // when empty (created on purpose). Best-effort delete so a read never fails on it.
+    const occupiedDepts = new Set(
+      nodes.filter((n) => n.pool === ProcessPool.company && n.department_id).map((n) => n.department_id),
+    );
+    const emptyAutoLaneIds = laneRowsAll
+      .filter((l) => l.origin === ProcessLaneOrigin.auto && !occupiedDepts.has(l.department_id))
+      .map((l) => l.id);
+    if (emptyAutoLaneIds.length) {
+      this.prisma.processLane.deleteMany({ where: { id: { in: emptyAutoLaneIds } } }).catch(() => {});
+    }
+    const laneRows = laneRowsAll.filter((l) => !emptyAutoLaneIds.includes(l.id));
     const laneDeptIds = Array.from(new Set(laneRows.map((l) => l.department_id)));
     const deptRows = laneDeptIds.length
       ? await this.prisma.department.findMany({
@@ -613,6 +650,46 @@ export class ProcessHierarchyService {
     return { success: true };
   }
 
+  // Re-point a lane at a DIFFERENT department (rename the lane) — every step in the lane moves to
+  // the new department with it. If a lane for the new department already exists at this level, the
+  // steps merge into it and this lane is removed; otherwise this lane is simply retargeted.
+  async reassignLane(orgId: string, principal: Principal, mapId: string, laneId: string, newDepartmentId: string) {
+    const lane = await this.prisma.processLane.findFirst({
+      where: { id: laneId, map_id: mapId, organization_id: orgId },
+    });
+    if (!lane) throw new NotFoundException('Lane not found');
+    if (lane.parent_node_id) await this.access.assertCanEditNode(orgId, principal, lane.parent_node_id);
+    else await this.access.assertCanEditMap(orgId, principal, mapId);
+    if (newDepartmentId === lane.department_id) return { updated: 0 };
+
+    const dept = await this.prisma.department.findFirst({
+      where: { id: newDepartmentId, organization_id: orgId },
+      select: { id: true },
+    });
+    if (!dept) throw new BadRequestException('Department not found');
+
+    // Move every step in the lane to the new department.
+    const moved = await this.prisma.processNode.updateMany({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: lane.parent_node_id, department_id: lane.department_id, pool: ProcessPool.company, is_deleted: false },
+      data: { department_id: newDepartmentId },
+    });
+
+    const existingDest = await this.prisma.processLane.findFirst({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: lane.parent_node_id, department_id: newDepartmentId },
+      select: { id: true, origin: true },
+    });
+    if (existingDest) {
+      // Merge into the existing lane (keep it manual if either side was), drop this one.
+      if (lane.origin === ProcessLaneOrigin.manual && existingDest.origin === ProcessLaneOrigin.auto) {
+        await this.prisma.processLane.update({ where: { id: existingDest.id }, data: { origin: ProcessLaneOrigin.manual } });
+      }
+      await this.prisma.processLane.delete({ where: { id: lane.id } });
+    } else {
+      await this.prisma.processLane.update({ where: { id: lane.id }, data: { department_id: newDepartmentId } });
+    }
+    return { updated: moved.count };
+  }
+
   async getNode(orgId: string, principal: Principal, mapId: string, nodeId: string) {
     await this.access.assertCanViewNode(orgId, principal, nodeId);
     const node = await this.requireNode(orgId, mapId, nodeId);
@@ -843,8 +920,9 @@ export class ProcessHierarchyService {
     // Collect the node + all descendants (soft-delete the subtree).
     const all = await this.prisma.processNode.findMany({
       where: { organization_id: orgId, map_id: mapId, is_deleted: false },
-      select: { id: true, parent_node_id: true },
+      select: { id: true, parent_node_id: true, pool: true, department_id: true },
     });
+    const nodeById = new Map(all.map((n) => [n.id, n]));
     const childrenOf = new Map<string, string[]>();
     for (const n of all) {
       if (!n.parent_node_id) continue;
@@ -875,6 +953,20 @@ export class ProcessHierarchyService {
         data: { is_deleted: true, deleted_at: new Date() },
       }),
     ]);
+
+    // Removing the last step from an AUTO lane should take the (now empty) lane with it — otherwise
+    // an empty band lingers on the map. Collect each deleted Company node's (level, department) and
+    // prune any auto lane that's now empty. Manual lanes are left alone (kept on purpose).
+    const lanePairs = new Map<string, { parent: string | null; dept: string }>();
+    for (const id of doomed) {
+      const n = nodeById.get(id);
+      if (n?.pool === ProcessPool.company && n.department_id) {
+        lanePairs.set(`${n.parent_node_id ?? 'root'}:${n.department_id}`, { parent: n.parent_node_id, dept: n.department_id });
+      }
+    }
+    for (const { parent, dept } of lanePairs.values()) {
+      await this.cleanupAutoLane(orgId, mapId, parent, dept);
+    }
     return { deleted: doomed.length };
   }
 
@@ -1230,9 +1322,10 @@ export class ProcessHierarchyService {
     const nodes = await this.prisma.processNode.findMany({ where: { organization_id: orgId, map_id: mapId, is_deleted: false } });
     const nodeIds = nodes.map((n) => n.id);
     const nodeIdSet = new Set(nodeIds);
-    const [connectionsAll, artifacts, links, checklist, access] = await Promise.all([
+    const [connectionsAll, artifacts, lanes, links, checklist, access] = await Promise.all([
       this.prisma.processConnection.findMany({ where: { organization_id: orgId, map_id: mapId } }),
       this.prisma.processArtifact.findMany({ where: { organization_id: orgId, map_id: mapId } }),
+      this.prisma.processLane.findMany({ where: { organization_id: orgId, map_id: mapId } }),
       nodeIds.length ? this.prisma.processNodeArtifact.findMany({ where: { node_id: { in: nodeIds } } }) : [],
       nodeIds.length ? this.prisma.processChecklistItem.findMany({ where: { node_id: { in: nodeIds } } }) : [],
       nodeIds.length ? this.prisma.processNodeAccess.findMany({ where: { organization_id: orgId, node_id: { in: nodeIds } } }) : [],
@@ -1241,8 +1334,9 @@ export class ProcessHierarchyService {
     const connections = connectionsAll.filter((c) => nodeIdSet.has(c.source_node_id) && nodeIdSet.has(c.target_node_id));
     // JSON round-trip converts Date instances to ISO strings so the value satisfies
     // Prisma's Json input type (and restore feeds the strings straight back to createMany,
-    // which accepts ISO-8601 for DateTime columns).
-    return JSON.parse(JSON.stringify({ version: 1, nodes, connections, artifacts, links, checklist, access }));
+    // which accepts ISO-8601 for DateTime columns). Lanes are captured too, else undo would
+    // silently lose swimlane add/remove/reorder (lanes reference no node, so they restore freely).
+    return JSON.parse(JSON.stringify({ version: 1, nodes, connections, artifacts, lanes, links, checklist, access }));
   }
 
   async restoreSnapshot(orgId: string, principal: Principal, mapId: string, snapshotId: string) {
@@ -1285,13 +1379,26 @@ export class ProcessHierarchyService {
     const withOrg = (rows: any[] | undefined) =>
       (rows ?? []).map((r) => ({ ...r, organization_id: orgId }));
     const artifacts = withOrgMap(tree.artifacts);
-    const nodes = withOrgMap(tree.nodes);
-    // Defensive: drop any child row that references a node/artifact NOT being recreated, so a stale
-    // or hand-built blob (e.g. an old snapshot with a dangling ref) can never break the whole
-    // restore with a foreign-key violation. Serialization now avoids these, but restore must be safe
-    // for ANY blob it's handed.
-    const nodeIdSet = new Set<string>(nodes.map((n) => n.id));
+    const rawNodes = withOrgMap(tree.nodes);
+    const lanes = withOrgMap(tree.lanes);
+    // Defensive: drop / neutralise any reference to a node/artifact NOT being recreated, so a stale
+    // or hand-built blob (e.g. an old snapshot, or a live map with a soft-deleted parent whose child
+    // survived) can never break the whole restore with a foreign-key violation. Serialization now
+    // avoids most of these, but restore must be safe for ANY blob it's handed.
+    const nodeIdSet = new Set<string>(rawNodes.map((n) => n.id));
     const artIdSet = new Set<string>(artifacts.map((a) => a.id));
+    // parent_node_id is a self-FK on process_nodes. serializeMap only keeps non-deleted nodes, so a
+    // child whose parent was soft-deleted points at an id that isn't in the blob — inserting it would
+    // violate process_nodes_parent_node_id_fkey and 500 the whole undo. Null the dangling ref so the
+    // node re-appears at top level instead (every OTHER cross-ref below is already sanitised the same way).
+    const nodesSanitised = rawNodes.map((n) =>
+      n.parent_node_id && !nodeIdSet.has(n.parent_node_id) ? { ...n, parent_node_id: null } : n,
+    );
+    // Insert parents before children. A single multi-row INSERT checks the self-FK at statement end
+    // (order-independent), but Prisma may split a large createMany into several statements — each of
+    // which is checked on its own — so order defensively to guarantee a parent is never referenced
+    // before it exists.
+    const nodes = orderNodesParentFirst(nodesSanitised);
     const connections = withOrgMap(tree.connections).filter(
       (c) => nodeIdSet.has(c.source_node_id) && nodeIdSet.has(c.target_node_id),
     );
@@ -1299,23 +1406,30 @@ export class ProcessHierarchyService {
     const checklist = (tree.checklist ?? []).filter((c: any) => nodeIdSet.has(c.node_id)); // node_id only
     const access = withOrg(tree.access).filter((a) => nodeIdSet.has(a.node_id));
 
-    await this.prisma.$transaction(async (tx) => {
-      // Wipe the working tree (hard delete — the supplied state is the source of truth).
-      await tx.processConnection.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
-      await tx.processNodeArtifact.deleteMany({ where: { node: { organization_id: orgId, map_id: mapId } } });
-      await tx.processChecklistItem.deleteMany({ where: { node: { organization_id: orgId, map_id: mapId } } });
-      await tx.processNodeAccess.deleteMany({ where: { organization_id: orgId, node: { map_id: mapId } } });
-      await tx.processNode.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
-      await tx.processArtifact.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
+    await this.prisma.$transaction(
+      async (tx) => {
+        // Wipe the working tree (hard delete — the supplied state is the source of truth).
+        await tx.processConnection.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
+        await tx.processNodeArtifact.deleteMany({ where: { node: { organization_id: orgId, map_id: mapId } } });
+        await tx.processChecklistItem.deleteMany({ where: { node: { organization_id: orgId, map_id: mapId } } });
+        await tx.processNodeAccess.deleteMany({ where: { organization_id: orgId, node: { map_id: mapId } } });
+        await tx.processLane.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
+        await tx.processNode.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
+        await tx.processArtifact.deleteMany({ where: { organization_id: orgId, map_id: mapId } });
 
-      // Recreate (ids preserved so relations resolve).
-      if (artifacts.length) await tx.processArtifact.createMany({ data: artifacts });
-      if (nodes.length) await tx.processNode.createMany({ data: nodes });
-      if (connections.length) await tx.processConnection.createMany({ data: connections });
-      if (links.length) await tx.processNodeArtifact.createMany({ data: links });
-      if (checklist.length) await tx.processChecklistItem.createMany({ data: checklist });
-      if (access.length) await tx.processNodeAccess.createMany({ data: access });
-    });
+        // Recreate (ids preserved so relations resolve).
+        if (artifacts.length) await tx.processArtifact.createMany({ data: artifacts });
+        if (nodes.length) await tx.processNode.createMany({ data: nodes });
+        if (lanes.length) await tx.processLane.createMany({ data: lanes });
+        if (connections.length) await tx.processConnection.createMany({ data: connections });
+        if (links.length) await tx.processNodeArtifact.createMany({ data: links });
+        if (checklist.length) await tx.processChecklistItem.createMany({ data: checklist });
+        if (access.length) await tx.processNodeAccess.createMany({ data: access });
+      },
+      // Wipe + rebuild of a whole map is far heavier than a single write; the 5s interactive-transaction
+      // default 500s on large production maps. Give it room.
+      { timeout: 30000, maxWait: 10000 },
+    );
   }
 
   // ─── Diff (as-is vs to-be) ─────────────────────────────────────────────────────

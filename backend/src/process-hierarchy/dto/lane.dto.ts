@@ -12,3 +12,9 @@ export class CreateLaneDto {
   @IsUUID()
   parent_node_id?: string | null;
 }
+
+// Re-point a lane at a different department (rename it) — its steps move with it.
+export class ReassignLaneDto {
+  @IsUUID()
+  department_id!: string;
+}
