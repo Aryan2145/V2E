@@ -10,6 +10,8 @@ import { createOrganization, checkOrgAdminAccount, type OrgAdminAccountCheck } f
 import { getGroups } from '@/lib/api/groups'
 import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
+import CountryCodeSelect from '@/components/ui/CountryCodeSelect'
+import { DEFAULT_COUNTRY, cleanNationalNumber, nationalDigitsFor } from '@/lib/phone'
 import type { OrganizationGroup } from '@/lib/types'
 
 // ─── Schema ────────────────────────────────────────────────────────────────────
@@ -24,6 +26,7 @@ const schema = z.object({
   admin_name: z.string().optional(),
   admin_email: z.string().optional(),
   admin_phone: z.string().optional(),
+  admin_country_code: z.string().optional(),
   admin_password: z.string().min(8, 'Password must be at least 8 characters').optional().or(z.literal('')),
 })
 
@@ -82,7 +85,7 @@ export default function NewOrganizationPage() {
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
     resolver: zodResolver(schema),
-    defaultValues: { timezone: 'Asia/Kolkata' },
+    defaultValues: { timezone: 'Asia/Kolkata', admin_country_code: DEFAULT_COUNTRY },
   })
 
   // Live "does this admin email already have a V2E login?" check. If it exists, we hide
@@ -90,13 +93,16 @@ export default function NewOrganizationPage() {
   // — the firm creator can't know this on their own, so we detect it and tell them.
   const adminEmail = watch('admin_email')
   const adminPhone = watch('admin_phone')
+  const adminCountry = watch('admin_country_code') ?? DEFAULT_COUNTRY
   const [adminAccount, setAdminAccount] = useState<OrgAdminAccountCheck | null>(null)
   const [checkingAdmin, setCheckingAdmin] = useState(false)
   const adminExists = !!adminAccount?.exists
   const email = (adminEmail ?? '').trim()
+  const adminExpectedDigits = nationalDigitsFor(adminCountry)
   const phoneDigits = (adminPhone ?? '').replace(/\D/g, '')
   const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-  const adminIdentifier = looksLikeEmail ? email : phoneDigits.length >= 10 ? phoneDigits : ''
+  const adminIdentifier = looksLikeEmail ? email : phoneDigits.length === adminExpectedDigits ? phoneDigits : ''
+  const adminCountryForCheck = looksLikeEmail ? undefined : adminCountry
   useEffect(() => {
     if (!adminIdentifier) {
       setAdminAccount(null)
@@ -106,7 +112,7 @@ export default function NewOrganizationPage() {
     let cancelled = false
     setCheckingAdmin(true)
     const t = setTimeout(() => {
-      checkOrgAdminAccount(adminIdentifier)
+      checkOrgAdminAccount(adminIdentifier, adminCountryForCheck)
         .then((res) => {
           if (cancelled) return
           setAdminAccount(res)
@@ -116,7 +122,7 @@ export default function NewOrganizationPage() {
         .finally(() => { if (!cancelled) setCheckingAdmin(false) })
     }, 400)
     return () => { cancelled = true; clearTimeout(t) }
-  }, [adminIdentifier, setValue])
+  }, [adminIdentifier, adminCountryForCheck, setValue])
 
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
@@ -148,6 +154,7 @@ export default function NewOrganizationPage() {
         admin_name: values.admin_name,
         admin_email: values.admin_email || undefined,
         admin_phone: values.admin_phone || undefined,
+        admin_country_code: values.admin_phone ? (values.admin_country_code || DEFAULT_COUNTRY) : undefined,
         // Omit the password for an existing login — they keep the one they already use.
         admin_password: adminExists ? undefined : values.admin_password || undefined,
       }
@@ -277,7 +284,25 @@ export default function NewOrganizationPage() {
                 <input {...register('admin_email')} type="email" placeholder="name@company.com" className={inputCls(!!errors.admin_email)} />
               </Field>
               <Field label="Admin Phone" error={errors.admin_phone?.message} hint="Email or phone — at least one">
-                <input {...register('admin_phone')} type="tel" placeholder="10-digit mobile number" className={inputCls(!!errors.admin_phone)} />
+                <div className="flex gap-2">
+                  <CountryCodeSelect
+                    value={adminCountry}
+                    onChange={(code) => {
+                      setValue('admin_country_code', code)
+                      setValue('admin_phone', cleanNationalNumber(adminPhone ?? '', code))
+                    }}
+                    wrapperClassName="w-[116px] shrink-0"
+                  />
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={adminPhone ?? ''}
+                    onChange={(e) => setValue('admin_phone', cleanNationalNumber(e.target.value, adminCountry))}
+                    maxLength={adminExpectedDigits}
+                    placeholder={`${adminExpectedDigits}-digit number`}
+                    className={`${inputCls(!!errors.admin_phone)} flex-1`}
+                  />
+                </div>
               </Field>
             </div>
             <Field label="Admin Name" error={errors.admin_name?.message} required

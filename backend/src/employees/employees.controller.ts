@@ -97,8 +97,12 @@ export class EmployeesController {
   @Get('check-account')
   @RequirePermission('employees.profile.manage', PermissionAction.write)
   @ApiOperation({ summary: 'Does a global login already exist for this email/phone? (drives the add form)' })
-  checkAccount(@Param('orgId') orgId: string, @Query('identifier') identifier: string) {
-    return this.employeesService.checkAccount(orgId, identifier ?? '');
+  checkAccount(
+    @Param('orgId') orgId: string,
+    @Query('identifier') identifier: string,
+    @Query('country_code') countryCode?: string,
+  ) {
+    return this.employeesService.checkAccount(orgId, identifier ?? '', countryCode);
   }
 
   @Get(':id')

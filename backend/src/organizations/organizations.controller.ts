@@ -47,8 +47,11 @@ export class OrganizationsController {
   // brand-new person, and none for an existing one.
   @Get('check-account')
   @SuperAdmin()
-  checkAccount(@Query('identifier') identifier: string) {
-    return this.organizationsService.checkAccount(identifier ?? '');
+  checkAccount(
+    @Query('identifier') identifier: string,
+    @Query('country_code') countryCode?: string,
+  ) {
+    return this.organizationsService.checkAccount(identifier ?? '', countryCode);
   }
 
   // Member-scoped: any member of the org (not just super admins) can read their

@@ -208,10 +208,14 @@ model User {
   id              String   @id @default(uuid())
   name            String
   // Login identity: a user signs in with EITHER email OR phone. At least one must
-  // be set (enforced in the service). Both are optional+unique at the column level
-  // (Postgres allows many NULLs under a unique index). Existing users have email
-  // and no phone until one is added.
+  // be set (enforced in the service). Email is optional+unique. The phone is stored
+  // as two parts: the dialling country_code ("+91") kept SEPARATE from the national
+  // number (digits only, no plus, no spaces). They are always written together or
+  // both left NULL. Uniqueness is on the (country_code, phone) PAIR, so the same 10
+  // digits under +91 and +971 are two different people. (Postgres lets many NULL
+  // rows sit under a unique index, so existing email-only users are unaffected.)
   email           String?
+  country_code    String?
   phone           String?
   password_hash   String
   is_super_admin  Boolean  @default(false)
@@ -261,7 +265,10 @@ model User {
   subject_overrides        UserSubjectOverride[]
 
   @@unique([email])
-  @@unique([phone])
+  // Composite uniqueness AND the lookup index for phone login live in one B-tree:
+  // a unique index on (country_code, phone) both prevents duplicate pairs and is
+  // exactly the index the login lookup (WHERE country_code = ? AND phone = ?) uses.
+  @@unique([country_code, phone])
   @@map("users")
 }
 

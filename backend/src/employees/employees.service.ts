@@ -10,7 +10,7 @@ import * as bcrypt from 'bcryptjs';
 import { EmployeeStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
-import { classifyIdentifier, normalizePhone } from '../common/identifier.util';
+import { classifyIdentifier, resolvePhoneForSave } from '../common/identifier.util';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { LearningService } from '../learning/learning.service';
@@ -103,11 +103,14 @@ export class EmployeesService {
    * they belong to (for the "changes their password everywhere" messaging). Deliberately
    * does NOT reveal which other firms — only the count. Admin-gated at the controller.
    */
-  async checkAccount(orgId: string, identifier: string) {
-    const { kind, value } = classifyIdentifier(identifier);
-    if (!value) return { exists: false };
+  async checkAccount(orgId: string, identifier: string, countryCode?: string) {
+    const classified = classifyIdentifier(identifier, countryCode);
+    if (!classified.value) return { exists: false };
     const user = await this.prisma.user.findUnique({
-      where: kind === 'email' ? { email: value } : { phone: value },
+      where:
+        classified.kind === 'email'
+          ? { email: classified.value }
+          : { country_code_phone: { country_code: classified.countryCode, phone: classified.value } },
       select: { id: true, name: true },
     });
     if (!user) return { exists: false };
@@ -129,10 +132,14 @@ export class EmployeesService {
   }
 
   async create(orgId: string, dto: CreateEmployeeDto) {
-    const { name, password, make_dep_head, ...profileData } = dto;
-    // Login identity: email OR phone — at least one is required. Normalise both.
+    // Pull the login-identity fields OUT of profileData — they belong to the User,
+    // not the EmployeeProfile (which has no email/phone/country_code columns).
+    const { name, password, make_dep_head, email: _e, phone: _p, country_code: _c, ...profileData } = dto;
+    // Login identity: email OR phone — at least one is required. The phone is
+    // validated + normalised for its country, and stored as a (country_code, phone)
+    // pair (or both NULL). At least one of email/phone must resolve to a value.
     const email = dto.email?.trim() || null;
-    const phone = normalizePhone(dto.phone) || null;
+    const { country_code, phone } = resolvePhoneForSave(dto.country_code, dto.phone);
     if (!email && !phone) {
       throw new BadRequestException('Enter an email address or a phone number (at least one is required).');
     }
@@ -184,10 +191,12 @@ export class EmployeesService {
     }
 
     const { profile, createdUserId, userWasCreated } = await this.prisma.$transaction(async (tx) => {
-      // Find an existing global login by email and/or phone (either identifies them).
+      // Find an existing global login by email and/or phone-pair (either identifies them).
       const [userByEmail, userByPhone] = await Promise.all([
         email ? tx.user.findUnique({ where: { email } }) : Promise.resolve(null),
-        phone ? tx.user.findUnique({ where: { phone } }) : Promise.resolve(null),
+        phone
+          ? tx.user.findUnique({ where: { country_code_phone: { country_code: country_code!, phone } } })
+          : Promise.resolve(null),
       ]);
       if (userByEmail && userByPhone && userByEmail.id !== userByPhone.id) {
         throw new ConflictException(
@@ -223,7 +232,7 @@ export class EmployeesService {
         }
         const password_hash = await bcrypt.hash(password, 12);
         user = await tx.user.create({
-          data: { name, email, phone, password_hash, is_active: true },
+          data: { name, email, country_code, phone, password_hash, is_active: true },
         });
         userWasCreated = true;
       }

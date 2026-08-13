@@ -3,14 +3,22 @@
 import React, { useState, useEffect } from 'react'
 import { Eye, EyeOff, ShieldCheck, Loader2 } from 'lucide-react'
 import { adminLogin as apiAdminLogin, getMe } from '@/lib/api/auth'
+import CountryCodeSelect from '@/components/ui/CountryCodeSelect'
+import { DEFAULT_COUNTRY, cleanNationalNumber } from '@/lib/phone'
 
 export default function AdminLoginPage() {
   const [identifier, setIdentifier] = useState('')
+  const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY)
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Same one-box behaviour as the main login: a country picker appears when the
+  // input looks like a phone (has a digit, no '@').
+  const isEmailish = identifier.includes('@')
+  const isPhoneish = !isEmailish && /\d/.test(identifier)
 
   // If already authenticated as super admin, redirect immediately
   useEffect(() => {
@@ -31,7 +39,9 @@ export default function AdminLoginPage() {
     setError(null)
     setLoading(true)
     try {
-      const tokens = await apiAdminLogin(identifier.trim(), password)
+      const tokens = isEmailish
+        ? await apiAdminLogin(identifier.trim(), password)
+        : await apiAdminLogin(cleanNationalNumber(identifier, countryCode), password, countryCode)
       localStorage.setItem('access_token', tokens.access_token)
       localStorage.setItem('refresh_token', tokens.refresh_token)
       window.location.href = '/super-admin/organizations'
@@ -81,16 +91,27 @@ export default function AdminLoginPage() {
               <label htmlFor="identifier" className="block text-sm font-medium text-[#CBD5E1] mb-1.5">
                 Email address / Phone number
               </label>
-              <input
-                id="identifier"
-                type="text"
-                autoComplete="username"
-                value={identifier}
-                onChange={(e) => setIdentifier(e.target.value)}
-                disabled={loading}
-                placeholder="admin@example.com or mobile number"
-                className="w-full h-11 px-3 rounded-[8px] border border-[#334155] bg-[#0F172A] text-white placeholder:text-[#475569] text-sm focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 disabled:opacity-50 transition-colors"
-              />
+              <div className="flex gap-2">
+                {isPhoneish && (
+                  <CountryCodeSelect
+                    value={countryCode}
+                    onChange={setCountryCode}
+                    disabled={loading}
+                    dark
+                    wrapperClassName="w-[116px] shrink-0"
+                  />
+                )}
+                <input
+                  id="identifier"
+                  type="text"
+                  autoComplete="username"
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  disabled={loading}
+                  placeholder="admin@example.com or mobile number"
+                  className="flex-1 h-11 px-3 rounded-[8px] border border-[#334155] bg-[#0F172A] text-white placeholder:text-[#475569] text-sm focus:border-[#2563EB] focus:outline-none focus:ring-2 focus:ring-[#2563EB]/20 disabled:opacity-50 transition-colors"
+                />
+              </div>
             </div>
 
             {/* Password */}

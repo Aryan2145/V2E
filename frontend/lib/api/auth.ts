@@ -1,20 +1,24 @@
 import apiClient from './client';
 import type { AuthTokens, AuthUser, ApiResponse, OrgMembership, LoginResponse } from '../types';
 
-/** `identifier` is an email address OR a phone number. */
-export async function login(identifier: string, password: string): Promise<LoginResponse> {
+/** `identifier` is an email address OR a phone number. `countryCode` (e.g. "+91")
+ *  is sent only when the identifier is a phone number. */
+export async function login(identifier: string, password: string, countryCode?: string): Promise<LoginResponse> {
   const { data } = await apiClient.post<{ data: LoginResponse }>('/api/v1/auth/login', {
     identifier,
     password,
+    ...(countryCode ? { country_code: countryCode } : {}),
   });
   return data.data;
 }
 
-/** `identifier` is an email address OR a phone number. */
-export async function adminLogin(identifier: string, password: string): Promise<AuthTokens> {
+/** `identifier` is an email address OR a phone number. `countryCode` (e.g. "+91")
+ *  is sent only when the identifier is a phone number. */
+export async function adminLogin(identifier: string, password: string, countryCode?: string): Promise<AuthTokens> {
   const { data } = await apiClient.post<{ data: AuthTokens }>('/api/v1/auth/admin-login', {
     identifier,
     password,
+    ...(countryCode ? { country_code: countryCode } : {}),
   });
   return data.data;
 }

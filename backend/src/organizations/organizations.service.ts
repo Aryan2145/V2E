@@ -8,7 +8,7 @@ import * as bcrypt from 'bcryptjs';
 import { DataScope, EntitlementState } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
-import { classifyIdentifier, normalizePhone } from '../common/identifier.util';
+import { classifyIdentifier, resolvePhoneForSave } from '../common/identifier.util';
 import { CreateOrgWithAdminDto } from './dto/create-organization.dto';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { UpdateEntitlementsDto } from './dto/update-entitlements.dto';
@@ -211,21 +211,33 @@ export class OrganizationsService {
    * show a password field ONLY for a brand-new admin, and none for an existing login
    * (who keeps their password). Returns the existing name so the form can lock it.
    */
-  async checkAccount(identifier: string) {
-    const { kind, value } = classifyIdentifier(identifier);
-    if (!value) return { exists: false };
+  async checkAccount(identifier: string, countryCode?: string) {
+    const classified = classifyIdentifier(identifier, countryCode);
+    if (!classified.value) return { exists: false };
     const user = await this.prisma.user.findUnique({
-      where: kind === 'email' ? { email: value } : { phone: value },
+      where:
+        classified.kind === 'email'
+          ? { email: classified.value }
+          : { country_code_phone: { country_code: classified.countryCode, phone: classified.value } },
       select: { name: true },
     });
     return user ? { exists: true, name: user.name } : { exists: false };
   }
 
   async create(dto: CreateOrgWithAdminDto) {
-    const { admin_name, admin_email: rawEmail, admin_phone: rawPhone, admin_password, existing_user_id, ...orgData } = dto;
+    const {
+      admin_name,
+      admin_email: rawEmail,
+      admin_phone: rawPhone,
+      admin_country_code: rawCountryCode,
+      admin_password,
+      existing_user_id,
+      ...orgData
+    } = dto;
     // Admin login identity: email OR phone (at least one), unless picking an existing user by id.
+    // The phone is validated + normalised into a (country_code, phone) pair, or both NULL.
     const admin_email = rawEmail?.trim() || null;
-    const admin_phone = normalizePhone(rawPhone) || null;
+    const { country_code: admin_country_code, phone: admin_phone } = resolvePhoneForSave(rawCountryCode, rawPhone);
 
     if (!existing_user_id && !admin_email && !admin_phone) {
       throw new UnprocessableEntityException('Provide an admin email or phone number (at least one), or pick an existing user.');
@@ -251,10 +263,12 @@ export class OrganizationsService {
         if (!found) throw new NotFoundException(`User ${existing_user_id} not found`);
         adminUser = found;
       } else {
-        // Path B: find or create by email OR phone (either identifies the login)
+        // Path B: find or create by email OR phone-pair (either identifies the login)
         const [byEmail, byPhone] = await Promise.all([
           admin_email ? tx.user.findUnique({ where: { email: admin_email } }) : Promise.resolve(null),
-          admin_phone ? tx.user.findUnique({ where: { phone: admin_phone } }) : Promise.resolve(null),
+          admin_phone
+            ? tx.user.findUnique({ where: { country_code_phone: { country_code: admin_country_code!, phone: admin_phone } } })
+            : Promise.resolve(null),
         ]);
         if (byEmail && byPhone && byEmail.id !== byPhone.id) {
           throw new BadRequestException('That email and phone number belong to two different people.');
@@ -268,7 +282,7 @@ export class OrganizationsService {
           }
           const password_hash = await bcrypt.hash(admin_password, 12);
           adminUser = await tx.user.create({
-            data: { name: admin_name!, email: admin_email, phone: admin_phone, password_hash, is_active: true },
+            data: { name: admin_name!, email: admin_email, country_code: admin_country_code, phone: admin_phone, password_hash, is_active: true },
             select: { id: true, name: true, email: true, is_active: true, created_at: true },
           });
           adminWasCreated = true;

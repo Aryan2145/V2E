@@ -5,7 +5,9 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
+import CountryCodeSelect from '@/components/ui/CountryCodeSelect'
 import BrandMark, { BrandGlyph } from '@/components/ui/BrandMark'
+import { DEFAULT_COUNTRY, cleanNationalNumber } from '@/lib/phone'
 
 export default function LoginPage() {
   const { login, user } = useAuth()
@@ -18,9 +20,15 @@ export default function LoginPage() {
   }, [user, router])
 
   const [identifier, setIdentifier] = useState('')
+  const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY)
   const [password, setPassword] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // One box for both. As soon as what's typed looks like a phone (has a digit and
+  // no '@'), a country-code picker appears beside it; an email keeps the box alone.
+  const isEmailish = identifier.includes('@')
+  const isPhoneish = !isEmailish && /\d/.test(identifier)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
@@ -33,7 +41,12 @@ export default function LoginPage() {
 
     setIsLoading(true)
     try {
-      await login(identifier.trim(), password)
+      if (isEmailish) {
+        await login(identifier.trim(), password)
+      } else {
+        // Phone: send the cleaned national digits plus the chosen country code.
+        await login(cleanNationalNumber(identifier, countryCode), password, countryCode)
+      }
     } catch (err: unknown) {
       const message =
         (err as { response?: { data?: { message?: string } } })?.response?.data
@@ -134,18 +147,34 @@ export default function LoginPage() {
           )}
 
           <div className="mt-7 flex flex-col gap-5">
-            <Input
-              id="identifier"
-              name="identifier"
-              label="Email address / Phone number"
-              type="text"
-              placeholder="you@company.com or mobile number"
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              required
-              disabled={isLoading}
-              autoComplete="username"
-            />
+            <div className="flex flex-col gap-1">
+              <label htmlFor="identifier" className="text-sm font-medium text-[#374151]">
+                Email address / Phone number
+              </label>
+              <div className="flex gap-2">
+                {isPhoneish && (
+                  <CountryCodeSelect
+                    value={countryCode}
+                    onChange={setCountryCode}
+                    disabled={isLoading}
+                    wrapperClassName="w-[120px] shrink-0"
+                  />
+                )}
+                <div className="flex-1">
+                  <Input
+                    id="identifier"
+                    name="identifier"
+                    type="text"
+                    placeholder="you@company.com or mobile number"
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    required
+                    disabled={isLoading}
+                    autoComplete="username"
+                  />
+                </div>
+              </div>
+            </div>
 
             <Input
               id="password"

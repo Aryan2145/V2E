@@ -24,10 +24,15 @@ export class CreateEmployeeDto {
   @IsOptional()
   email?: string;
 
-  @ApiPropertyOptional({ description: 'Mobile number — the person can also sign in with this' })
+  @ApiPropertyOptional({ description: 'Mobile number (national digits) — the person can also sign in with this' })
   @IsString()
   @IsOptional()
   phone?: string;
+
+  @ApiPropertyOptional({ description: 'Dialling country code for the phone, e.g. "+91". Defaults to +91.' })
+  @IsString()
+  @IsOptional()
+  country_code?: string;
 
   // Optional: only a BRAND-NEW account needs a password. When the email already
   // belongs to an existing V2E login (the person is in other firms), no password is

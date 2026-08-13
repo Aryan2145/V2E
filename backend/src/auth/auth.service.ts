@@ -42,17 +42,26 @@ export class AuthService {
     return this.issueFullTokens(user.id, user.email, null, false);
   }
 
-  // Resolve a login identity typed as either an email or a phone number.
-  private async findUserByIdentifier(identifier: string) {
-    const { kind, value } = classifyIdentifier(identifier);
+  // Resolve a login identity typed as either an email or a phone number. A phone
+  // is matched on the (country_code, phone) PAIR — never on digits alone — so the
+  // same national number under +91 and +971 stays two different accounts.
+  private async findUserByIdentifier(identifier: string, countryCode?: string) {
+    const classified = classifyIdentifier(identifier, countryCode);
     let user = null as Awaited<ReturnType<typeof this.prisma.user.findUnique>>;
-    if (value) {
+    if (classified.value) {
       user =
-        kind === 'email'
-          ? await this.prisma.user.findUnique({ where: { email: value } })
-          : await this.prisma.user.findUnique({ where: { phone: value } });
+        classified.kind === 'email'
+          ? await this.prisma.user.findUnique({ where: { email: classified.value } })
+          : await this.prisma.user.findUnique({
+              where: {
+                country_code_phone: {
+                  country_code: classified.countryCode,
+                  phone: classified.value,
+                },
+              },
+            });
     }
-    return { user, kind };
+    return { user, kind: classified.kind };
   }
 
   private identifierNotFoundMessage(kind: 'email' | 'phone'): string {
@@ -62,7 +71,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const { user, kind } = await this.findUserByIdentifier(dto.identifier);
+    const { user, kind } = await this.findUserByIdentifier(dto.identifier, dto.country_code);
     if (!user || !user.is_active) throw new UnauthorizedException(this.identifierNotFoundMessage(kind));
 
     const valid = await bcrypt.compare(dto.password, user.password_hash);
@@ -172,7 +181,7 @@ export class AuthService {
   }
 
   async adminLogin(dto: LoginDto) {
-    const { user, kind } = await this.findUserByIdentifier(dto.identifier);
+    const { user, kind } = await this.findUserByIdentifier(dto.identifier, dto.country_code);
     if (!user || !user.is_active) throw new UnauthorizedException(this.identifierNotFoundMessage(kind));
 
     const valid = await bcrypt.compare(dto.password, user.password_hash);
@@ -335,7 +344,7 @@ export class AuthService {
   }
 
   private async buildUserPayload(
-    user: { id: string; name: string; email: string | null; phone?: string | null },
+    user: { id: string; name: string; email: string | null; country_code?: string | null; phone?: string | null },
     organizationId: string | null,
     isAdmin: boolean,
     isSuperAdmin: boolean,
@@ -359,6 +368,6 @@ export class AuthService {
       // the admin shell, so the frontend doesn't render them as a plain member.
       effectiveIsAdmin = isAdmin || (profile?.system_role?.is_admin ?? false);
     }
-    return { id: user.id, name: user.name, email: user.email, phone: user.phone ?? null, isSuperAdmin, organizationId, is_admin: effectiveIsAdmin, isTestOrg };
+    return { id: user.id, name: user.name, email: user.email, country_code: user.country_code ?? null, phone: user.phone ?? null, isSuperAdmin, organizationId, is_admin: effectiveIsAdmin, isTestOrg };
   }
 }

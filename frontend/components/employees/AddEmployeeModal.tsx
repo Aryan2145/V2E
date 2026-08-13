@@ -13,6 +13,8 @@ import DeptFormDrawer from '@/components/org-chart/DeptFormDrawer'
 import RoleFormDrawer from '@/components/roles/RoleFormDrawer'
 import DatePicker from '@/components/ui/DatePicker'
 import StyledSelect from '@/components/ui/StyledSelect'
+import CountryCodeSelect from '@/components/ui/CountryCodeSelect'
+import { DEFAULT_COUNTRY, cleanNationalNumber, nationalDigitsFor } from '@/lib/phone'
 import ReportsToSelect from './ReportsToSelect'
 import DepartmentSelect from './DepartmentSelect'
 import RoleSelect from './RoleSelect'
@@ -151,6 +153,7 @@ export default function AddEmployeeModal({
     name: '',
     email: '',
     phone: '',
+    country_code: DEFAULT_COUNTRY,
     password: '',
     department_id: '',
     role_id: '',
@@ -170,10 +173,14 @@ export default function AddEmployeeModal({
   // Debounced check on the entered email OR phone. When a login already exists we lock
   // the name to that account's real name (name is one global value, like the password).
   const email = form.email.trim()
+  const expectedDigits = nationalDigitsFor(form.country_code)
   const phoneDigits = form.phone.replace(/\D/g, '')
   const looksLikeEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-  // Prefer email when it's a valid email; otherwise use a phone with enough digits.
-  const identifierToCheck = looksLikeEmail ? email : phoneDigits.length >= 10 ? phoneDigits : ''
+  // Prefer email when it's a valid email; otherwise use a phone with the exact
+  // number of digits the chosen country expects.
+  const identifierToCheck = looksLikeEmail ? email : phoneDigits.length === expectedDigits ? phoneDigits : ''
+  // Only send the country code when we're actually checking a phone number.
+  const countryForCheck = looksLikeEmail ? undefined : form.country_code
   useEffect(() => {
     if (prefillSelf || !identifierToCheck) {
       setAccount(null)
@@ -183,7 +190,7 @@ export default function AddEmployeeModal({
     let cancelled = false
     setCheckingAccount(true)
     const t = setTimeout(() => {
-      checkAccount(orgId, identifierToCheck)
+      checkAccount(orgId, identifierToCheck, countryForCheck)
         .then((res) => {
           if (cancelled) return
           setAccount(res)
@@ -200,7 +207,7 @@ export default function AddEmployeeModal({
       cancelled = true
       clearTimeout(t)
     }
-  }, [identifierToCheck, orgId, prefillSelf])
+  }, [identifierToCheck, countryForCheck, orgId, prefillSelf])
 
   // Roles are scoped to the chosen department.
   const deptRoles = useMemo(
@@ -257,8 +264,8 @@ export default function AddEmployeeModal({
       setError('Enter an email address or a phone number (at least one).')
       return
     }
-    if (form.phone.trim() && form.phone.replace(/\D/g, '').length < 10) {
-      setError('Enter a valid phone number (at least 10 digits).')
+    if (form.phone.trim() && form.phone.replace(/\D/g, '').length !== expectedDigits) {
+      setError(`Enter a ${expectedDigits}-digit number for ${form.country_code}.`)
       return
     }
     // A password is required ONLY for a brand-new login. An existing account keeps
@@ -292,6 +299,7 @@ export default function AddEmployeeModal({
         name: form.name.trim(),
         email: form.email.trim() || undefined,
         phone: form.phone.trim() || undefined,
+        country_code: form.phone.trim() ? form.country_code : undefined,
         // Omit the password entirely for an existing account — they keep their login.
         password: existingAccount ? undefined : form.password,
         role_id: form.role_id,
@@ -372,14 +380,28 @@ export default function AddEmployeeModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className={labelClass}>Phone number</label>
-                <input
-                  type="tel"
-                  value={form.phone}
-                  onChange={(e) => set('phone', e.target.value)}
-                  placeholder="10-digit mobile number"
-                  className={inputClass}
-                  disabled={prefillSelf}
-                />
+                <div className="flex gap-2">
+                  <CountryCodeSelect
+                    value={form.country_code}
+                    onChange={(code) => {
+                      // Re-clean the existing digits for the newly chosen country.
+                      set('country_code', code)
+                      set('phone', cleanNationalNumber(form.phone, code))
+                    }}
+                    disabled={prefillSelf}
+                    wrapperClassName="w-[116px] shrink-0"
+                  />
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={form.phone}
+                    onChange={(e) => set('phone', cleanNationalNumber(e.target.value, form.country_code))}
+                    maxLength={expectedDigits}
+                    placeholder={`${expectedDigits}-digit number`}
+                    className={`${inputClass} flex-1`}
+                    disabled={prefillSelf}
+                  />
+                </div>
                 <p className="mt-1 text-xs text-[#94A3B8]">Email or phone — at least one. They can sign in with either.</p>
               </div>
               <div className="flex items-start">
