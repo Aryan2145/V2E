@@ -30,6 +30,8 @@ import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { PasswordResetService } from './password-reset.service';
+import { GoogleAccountService } from '../gcal/google-account.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 describe('POST /auth/register cross-org self-join (SECURITY_AUDIT C1)', () => {
@@ -64,6 +66,10 @@ describe('POST /auth/register cross-org self-join (SECURITY_AUDIT C1)', () => {
         { provide: PrismaService, useValue: prisma },
         { provide: JwtService, useValue: jwt },
         { provide: ConfigService, useValue: config },
+        // The controller depends on these too; the register route under test never
+        // calls them, so empty stubs are enough to satisfy DI.
+        { provide: PasswordResetService, useValue: {} },
+        { provide: GoogleAccountService, useValue: {} },
       ],
     }).compile();
 

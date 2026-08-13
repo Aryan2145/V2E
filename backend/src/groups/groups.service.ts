@@ -112,7 +112,7 @@ export class GroupsService {
     // Deduplicate by user_id, collecting all orgs per user.
     // NOTE: frontend consumers key on `user_id` (org-create admin picker, group users table),
     // so expose the user's id as `user_id` — not the raw `id` from the user select.
-    const userMap = new Map<string, { user_id: string; name: string; email: string; orgs: { id: string; name: string; is_admin: boolean }[] }>();
+    const userMap = new Map<string, { user_id: string; name: string; email: string | null; orgs: { id: string; name: string; is_admin: boolean }[] }>();
     for (const m of members) {
       if (!userMap.has(m.user_id)) {
         userMap.set(m.user_id, { user_id: m.user.id, name: m.user.name, email: m.user.email ?? '', orgs: [] });

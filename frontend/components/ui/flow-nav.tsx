@@ -20,7 +20,7 @@
 //   </ReactFlow>
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { SelectionMode, useReactFlow, useStore, type Node } from 'reactflow'
+import { SelectionMode, useReactFlow, useStore, useStoreApi, type Node } from 'reactflow'
 
 // Panning is bounded to the content plus this margin (breathing room, not infinite space). The
 // scrollbars use the SAME margin, so a bar shows exactly when that axis can scroll and the thumb
@@ -34,6 +34,26 @@ export const PAN_PAD = 300
 export const FLOW_NAV_CSS = `
 .flow-nav .react-flow__viewport { transition: transform 90ms ease-out; }
 .flow-nav.flow-nav-instant .react-flow__viewport { transition: none; }
+.flow-nav.flow-nav-zooming .react-flow__viewport { transition: none; }
+/* Force a BLACK "+" over the connection dots — the OS crosshair theme can render white/faint. */
+.flow-nav .react-flow__handle {
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='18'%20height='18'%3E%3Cpath%20d='M9%201V17M1%209H17'%20stroke='%23000'%20stroke-width='1.75'/%3E%3C/svg%3E") 9 9, crosshair;
+}
+/* Bigger, easier grab target for the connection dots: an invisible hit area expanded mostly
+   OUTWARD from the node edge (only a hair inward) so it's easy to start a line without stealing
+   clicks meant for the node body. The dot itself stays small. */
+.flow-nav .react-flow__handle::before { content: ''; position: absolute; }
+.flow-nav .react-flow__handle-right::before  { top: -14px; bottom: -14px; left: -5px; right: -22px; }
+.flow-nav .react-flow__handle-left::before   { top: -14px; bottom: -14px; right: -5px; left: -22px; }
+.flow-nav .react-flow__handle-top::before    { left: -14px; right: -14px; bottom: -5px; top: -22px; }
+.flow-nav .react-flow__handle-bottom::before { left: -14px; right: -14px; top: -5px; bottom: -22px; }
+/* The OS cursor theme can be white/light → invisible on the white node body. Force a visible dark
+   arrow (black fill, white outline, so it shows on any background) over nodes — including drillable
+   nodes whose Tailwind cursor-pointer would otherwise use the same invisible OS cursor. */
+.flow-nav .react-flow__node,
+.flow-nav .react-flow__node .cursor-pointer {
+  cursor: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='20'%20height='24'%3E%3Cpath%20d='M2%202L2%2018L6.5%2014L9.2%2020L11.6%2019L9%2013L14%2013Z'%20fill='%23000'%20stroke='%23fff'%20stroke-width='1.3'%20stroke-linejoin='round'/%3E%3C/svg%3E") 2 2, auto;
+}
 `
 
 export function FlowNavStyles() {
@@ -56,6 +76,106 @@ function useContentBounds(nodes: Node[]) {
   }, [nodes])
 }
 
+// Auto-scroll while box-selecting — the behaviour every design tool / spreadsheet has: drag a
+// selection rectangle to the edge of the viewport and the canvas pans in that direction (faster the
+// harder you push), so you can rubber-band over content that's off-screen. As it pans we re-emit a
+// pointer move at the held cursor so ReactFlow keeps growing the selection into the revealed area.
+// Only active while `enabled` (i.e. marquee mode) and a left-drag started on the empty canvas.
+function useMarqueeAutoPan(nodes: Node[], enabled: boolean) {
+  const { setViewport } = useReactFlow()
+  const store = useStoreApi()
+  const domNode = useStore((s) => s.domNode)
+  const bounds = useContentBounds(nodes)
+  const boundsRef = useRef(bounds)
+  boundsRef.current = bounds
+
+  useEffect(() => {
+    if (!enabled || !domNode) return
+    const EDGE = 60 // px band along each side where auto-pan kicks in
+    const MAX = 18 // px/frame at full push (~1000px/s at 60fps) — brisk but controllable
+    const pointer = { x: 0, y: 0 }
+    let selecting = false
+    let raf = 0
+
+    // Speed ramps 0→MAX across the band, with a slight ease-in so a gentle nudge creeps and a hard
+    // push (or dragging past the edge) races — matching how Figma / Sheets feel.
+    const speed = (depth: number) => MAX * Math.min(1, Math.max(0, depth) / EDGE) ** 1.5
+
+    const emitMove = () => {
+      // ReactFlow drives the selection box from an onMouseMove bound to the PANE element (it reads
+      // clientX/clientY off the event). So dispatch the synthetic move straight ON the pane — not on
+      // elementFromPoint, which mid-drag is usually the selection overlay and never bubbles to the
+      // pane's handler. buttons:1 marks the left button as still held so it's treated as a live drag.
+      const pane = domNode.querySelector('.react-flow__pane') ?? domNode
+      const init = { clientX: pointer.x, clientY: pointer.y, bubbles: true, cancelable: true, buttons: 1, button: 0 }
+      pane.dispatchEvent(new MouseEvent('mousemove', init))
+    }
+
+    const tick = () => {
+      raf = 0
+      if (!selecting) return
+      const st = store.getState() as any
+      const [tx, ty, zoom] = st.transform as [number, number, number]
+      const width: number = st.width, height: number = st.height
+      const r = domNode.getBoundingClientRect()
+      const px = pointer.x - r.left, py = pointer.y - r.top
+      let dx = 0, dy = 0
+      if (px < EDGE) dx = -speed(EDGE - px)
+      else if (px > width - EDGE) dx = speed(px - (width - EDGE))
+      if (py < EDGE) dy = -speed(EDGE - py)
+      else if (py > height - EDGE) dy = speed(py - (height - EDGE))
+      if (dx || dy) {
+        // dx>0 (near right) → reveal content to the right → translate LEFT (tx decreases), etc.
+        let ntx = tx - dx, nty = ty - dy
+        const b = boundsRef.current
+        if (b) {
+          // Keep the pan inside the same content+margin bounds the rest of the nav respects.
+          const txLo = width - (b.maxX + PAN_PAD) * zoom, txHi = -(b.minX - PAN_PAD) * zoom
+          const tyLo = height - (b.maxY + PAN_PAD) * zoom, tyHi = -(b.minY - PAN_PAD) * zoom
+          ntx = Math.max(Math.min(txLo, txHi), Math.min(Math.max(txLo, txHi), ntx))
+          nty = Math.max(Math.min(tyLo, tyHi), Math.min(Math.max(tyLo, tyHi), nty))
+        }
+        if (ntx !== tx || nty !== ty) {
+          domNode.classList.add('flow-nav-zooming') // reuse the no-ease class so the pan tracks 1:1
+          setViewport({ x: ntx, y: nty, zoom })
+          emitMove() // grow the selection into the area we just scrolled in
+        }
+      }
+      raf = requestAnimationFrame(tick)
+    }
+
+    const startTick = () => { if (!raf) raf = requestAnimationFrame(tick) }
+    const stopTick = () => { if (raf) cancelAnimationFrame(raf); raf = 0; domNode.classList.remove('flow-nav-zooming') }
+
+    const onDown = (e: PointerEvent) => {
+      if (e.button !== 0) return
+      const t = e.target as HTMLElement
+      // Only a drag that begins on the empty canvas is a selection — never on a node, edge, control,
+      // minimap or our scrollbars.
+      if (!t.closest('.react-flow__pane') || t.closest('.react-flow__node') || t.closest('.react-flow__edge') ||
+        t.closest('.react-flow__controls') || t.closest('.react-flow__minimap') || t.closest('[role="scrollbar"]')) return
+      selecting = true
+      pointer.x = e.clientX; pointer.y = e.clientY
+    }
+    const onMove = (e: PointerEvent) => {
+      if (!e.isTrusted) return // ignore the moves WE synthesize, so we don't recurse
+      pointer.x = e.clientX; pointer.y = e.clientY
+      if (selecting) startTick()
+    }
+    const onUp = () => { selecting = false; stopTick() }
+
+    domNode.addEventListener('pointerdown', onDown)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      stopTick()
+      domNode.removeEventListener('pointerdown', onDown)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [enabled, domNode, store, setViewport])
+}
+
 // The main hook. Call INSIDE a <ReactFlowProvider>. Spread `flowProps` onto <ReactFlow>; the
 // caller keeps ownership of its own handlers, node/edge types and zoom limits.
 export function useFlowNav(nodes: Node[], opts?: { marquee?: boolean }) {
@@ -71,10 +191,47 @@ export function useFlowNav(nodes: Node[], opts?: { marquee?: boolean }) {
   }, [])
   const marquee = !!opts?.marquee && !isTouch
 
+  // Rubber-band selection auto-scrolls at the viewport edges (only in marquee mode).
+  useMarqueeAutoPan(nodes, marquee)
+
   const bounds = useContentBounds(nodes)
   const paneW = useStore((s) => s.width)
   const paneH = useStore((s) => s.height)
   const zoom = useStore((s) => s.transform[2])
+  const domNode = useStore((s) => s.domNode)
+  const { setViewport } = useReactFlow()
+  const store = useStoreApi()
+
+  // Pinch zoom — we take it over entirely so we control the sensitivity (ReactFlow's default zooms
+  // too little per pinch, so it took several gestures). A trackpad pinch (or ⌘/Ctrl+wheel) arrives
+  // as a wheel event with ctrlKey set; we zoom toward the cursor and apply an amplified step. Plain
+  // wheel (no ctrl) is left to ReactFlow for panning. Runs synchronously with no transition so it
+  // tracks the pinch 1:1.
+  const ZOOM_AMPLIFY = 4 // multiple of ReactFlow/d3's default zoom-per-tick; raise for more sensitivity
+  useEffect(() => {
+    if (!domNode) return
+    let t: ReturnType<typeof setTimeout>
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return // pinch / ⌘-Ctrl+wheel only — plain scroll pans (handled by ReactFlow)
+      e.preventDefault(); e.stopPropagation() // own the zoom so ReactFlow doesn't also apply its (smaller) step
+      const st = store.getState() as any
+      const [tx, ty, z] = st.transform as [number, number, number]
+      const minZoom: number = st.minZoom ?? 0.2, maxZoom: number = st.maxZoom ?? 2
+      // Normalise the delta the same way d3 does (per deltaMode), then amplify.
+      const perMode = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 1 : 0.002
+      const next = Math.min(maxZoom, Math.max(minZoom, z * Math.pow(2, -e.deltaY * perMode * ZOOM_AMPLIFY)))
+      if (next === z) return
+      const r = domNode.getBoundingClientRect()
+      const cx = e.clientX - r.left, cy = e.clientY - r.top
+      const fx = (cx - tx) / z, fy = (cy - ty) / z // keep the flow point under the cursor fixed
+      domNode.classList.add('flow-nav-zooming')
+      setViewport({ x: cx - fx * next, y: cy - fy * next, zoom: next })
+      clearTimeout(t)
+      t = setTimeout(() => domNode.classList.remove('flow-nav-zooming'), 200)
+    }
+    domNode.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    return () => { domNode.removeEventListener('wheel', onWheel, { capture: true } as any); clearTimeout(t) }
+  }, [domNode, store, setViewport])
 
   // Bound panning to content + margin so you can't scroll off into infinite empty space.
   const translateExtent = useMemo<[[number, number], [number, number]]>(() => {

@@ -41,11 +41,13 @@ export interface SwimlaneOpts {
   onEdit: (realNodeId: string) => void
   // Add a step straight into a lane (from the lane's "+"). deptId is null for Customer/Vendor.
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void
+  // Rename a lane = re-point it at a different department (its steps move with it).
+  onRenameLane?: (laneId: string, departmentId: string, currentName: string) => void
 }
 
-interface Band { key: string; variant: 'pool' | 'lane'; label: string; pool: ProcessPool; deptId: string | null }
+interface Band { key: string; variant: 'pool' | 'lane'; label: string; pool: ProcessPool; deptId: string | null; laneId?: string }
 
-export interface LaneBand { pool: ProcessPool; deptId: string | null; yTop: number; yBottom: number }
+export interface LaneBand { pool: ProcessPool; deptId: string | null; yTop: number; yBottom: number; offset: number }
 
 export function buildSwimlane(
   flow: FlowLevel,
@@ -191,7 +193,7 @@ export function buildSwimlane(
   if (steps.some((n) => n.pool === 'customer')) bands.push({ key: 'pool:customer', variant: 'pool', label: 'Customer', pool: 'customer', deptId: null })
   const companyStart = bands.length
   const hasCompany = flow.lanes.length > 0 || steps.some((n) => n.pool === 'company')
-  if (hasCompany) for (const lane of flow.lanes) bands.push({ key: 'lane:' + lane.department_id, variant: 'lane', label: lane.department_name, pool: 'company', deptId: lane.department_id })
+  if (hasCompany) for (const lane of flow.lanes) bands.push({ key: 'lane:' + lane.department_id, variant: 'lane', label: lane.department_name, pool: 'company', deptId: lane.department_id, laneId: lane.id })
   const companyEnd = bands.length
   if (steps.some((n) => n.pool === 'vendor')) bands.push({ key: 'pool:vendor', variant: 'pool', label: 'Vendor', pool: 'vendor', deptId: null })
 
@@ -247,53 +249,66 @@ export function buildSwimlane(
   // members' ACTUAL (frozen/stored) positions rather than a connection-derived height. bandY/bandH
   // above stay only as the fallback layout for not-yet-frozen nodes.
   const nodes: Node<any>[] = []
-  // Real y-extent of each band, gathered as we place the step nodes.
-  const bandExtent = new Map<string, { top: number; bottom: number }>()
-
-  // ── Step nodes: placed at (column, row) within their lane; lane-less steps sit below the
-  // pools. Every step gets the SAME wrapper height with content vertically centred, so the
-  // left/right handles sit at one shared height per row — connectors stay straight even when
-  // a task and a taller decision sit side by side (that mismatch is what bent the line). ──
   const meta: Record<string, { mapId: string; realId: string }> = {}
-  // The auto-layout position every node WOULD get (from the graph). A frozen node keeps its own
-  // stored spot instead; the page bakes an unfrozen (legacy) node's auto position into storage
-  // once, so switching to "frozen" never makes anything jump.
   const autoPositions: Record<string, { x: number; y: number }> = {}
+
+  // ── PASS 1 — the "raw" spot each step wants: a frozen node's stored (x,y), else the auto
+  // (column, row) position from the graph. We don't render at these directly; we use them only to
+  // measure each lane's own vertical spread. ──
+  const rawX = new Map<string, number>()
+  const rawY = new Map<string, number>()
+  const oldLooseTop = bandsBottom + LOOSE_GAP
   for (const n of steps) {
     const key = bandKeyOf(n)
-    const looseTop = bandsBottom + LOOSE_GAP
-    // Centre the step in its (content-sized) row: all steps in a row share the same centre-line,
-    // so same-row connectors stay straight even when heights differ, and a tall step is contained.
     const rowH = rowHFor(key)
-    const rowTop = (key === 'loose' ? looseTop : (bandY.get(key) ?? 0)) + BAND_PAD + (rowOf.get(n.id) ?? 0) * rowH
+    const rowTop = (key === 'loose' ? oldLooseTop : (bandY.get(key) ?? 0)) + BAND_PAD + (rowOf.get(n.id) ?? 0) * rowH
     const autoX = xOf(n.id)
     const autoY = rowTop + (rowH - estStepHeight(n)) / 2
-    autoPositions[n.id] = { x: autoX, y: autoY }
+    rawX.set(n.id, n.layout_frozen ? Math.max(CONTENT_X, n.position_x ?? autoX) : autoX)
+    rawY.set(n.id, n.layout_frozen ? (n.position_y ?? autoY) : autoY)
+  }
 
-    // A frozen node keeps its stored (x,y) VERBATIM — both axes, lane or loose — so nothing about
-    // its position depends on the connections. Adding or deleting a line can never re-flow it. (The
-    // lane band is drawn AROUND the nodes below, so a node no longer gets clamped by a band whose
-    // height shifts with the branch structure — that clamp was what moved frozen lane nodes.)
-    let px = autoX, py = autoY
-    if (n.layout_frozen) {
-      px = Math.max(CONTENT_X, n.position_x ?? autoX)
-      py = n.position_y ?? autoY
-    }
-    // Grow this node's band to include it (used to draw the band background around the nodes).
-    if (key !== 'loose') {
-      const ext = bandExtent.get(key)
-      const nb = py + estStepHeight(n)
-      if (!ext) bandExtent.set(key, { top: py, bottom: nb })
-      else { ext.top = Math.min(ext.top, py); ext.bottom = Math.max(ext.bottom, nb) }
-    }
+  // Each lane's height comes from its OWN members' vertical spread (never the connections), then the
+  // lanes are STACKED top→bottom, flush within a pool. So there are never gaps or overlaps between
+  // lanes no matter where the nodes' stored y-values happen to be (e.g. pasted from another map),
+  // yet each node keeps its position WITHIN its lane, and deleting a line moves nothing.
+  const laneMinY = new Map<string, number>()
+  const laneHeight = new Map<string, number>()
+  for (const b of bands) {
+    const ids = byBand.get(b.key) ?? []
+    if (!ids.length) { laneMinY.set(b.key, 0); laneHeight.set(b.key, rowHFor(b.key) + 2 * BAND_PAD); continue }
+    const min = Math.min(...ids.map((id) => rawY.get(id)!))
+    const maxB = Math.max(...ids.map((id) => rawY.get(id)! + estStepHeight(nodeById.get(id)!)))
+    laneMinY.set(b.key, min)
+    laneHeight.set(b.key, (maxB - min) + 2 * BAND_PAD)
+  }
+  const laneTop = new Map<string, number>()
+  let stackY = 0
+  let stackPrevPool: ProcessPool | null = null
+  for (const b of bands) {
+    if (stackPrevPool !== null && b.pool !== stackPrevPool) stackY += POOL_GAP
+    laneTop.set(b.key, stackY); stackY += laneHeight.get(b.key)!
+    stackPrevPool = b.pool
+  }
+  const looseTopFinal = stackY + LOOSE_GAP
+
+  // ── PASS 2 — final placement. A lane node sits at its lane's stacked top plus its offset within
+  // the lane; a lane-less (loose) node keeps its free spot (shifted below the re-stacked pools). ──
+  for (const n of steps) {
+    const key = bandKeyOf(n)
+    const px = rawX.get(n.id)!
+    const ry = rawY.get(n.id)!
+    const py = key === 'loose'
+      ? (n.layout_frozen ? ry : looseTopFinal + (ry - oldLooseTop))
+      : (laneTop.get(key) ?? 0) + BAND_PAD + (ry - (laneMinY.get(key) ?? 0))
+    autoPositions[n.id] = { x: px, y: py }
     meta[n.id] = { mapId: flow.map_id, realId: n.id }
     nodes.push({
       id: n.id, type: 'process', position: { x: px, y: py },
       draggable: opts.canEdit, selectable: true, zIndex: 2,
-      // minHeight (not a fixed height) keeps short steps uniform at NODE_H yet lets a step with a
-      // checklist / docs grow, so its measured box — and the arrowhead drawn at its bottom — matches
-      // what's on screen instead of clipping at 96.
-      style: { minHeight: NODE_H, display: 'flex', alignItems: 'center' },
+      // No wrapper min-height: the react-flow node hugs its real content, so the four connection
+      // dots — and a line entering/leaving the top or bottom — sit exactly on the visible box's
+      // edges for every node kind.
       data: {
         name: n.name, kind: n.kind, childCount: n.child_count ?? 0,
         docCount: (n.inputs?.length ?? 0) + (n.outputs?.length ?? 0),
@@ -307,15 +322,11 @@ export function buildSwimlane(
     })
   }
 
-  // ── Band backgrounds — drawn to WRAP each band's member nodes (their frozen/stored y-span),
-  // so a band's size/position depends only on where its nodes are, never on the connections. An
-  // empty band falls back to its stacked slot. Pushed here (after the steps) — zIndex keeps them
-  // behind. laneBands (returned for drop-detection) uses the same real extents. ──
+  // ── Band backgrounds — each drawn at its stacked slot (flush, content-sized). laneBands (returned
+  // for drop-detection) uses the same geometry. ──
   const geoFor = (key: string): { top: number; bottom: number } => {
-    const ext = bandExtent.get(key)
-    if (ext) return { top: ext.top - BAND_PAD, bottom: ext.bottom + BAND_PAD }
-    const t = bandY.get(key) ?? 0
-    return { top: t, bottom: t + (bandH.get(key) ?? ROW_H) }
+    const t = laneTop.get(key) ?? 0
+    return { top: t, bottom: t + (laneHeight.get(key) ?? ROW_H) }
   }
   if (companyEnd > companyStart) {
     let top = Infinity, bottom = -Infinity
@@ -339,9 +350,15 @@ export function buildSwimlane(
       data: {
         label: b.label, variant: b.variant,
         onAdd: opts.onAddInLane ? () => opts.onAddInLane!(b.pool, b.deptId) : undefined,
+        onRename: b.variant === 'lane' && b.laneId && b.deptId && opts.onRenameLane
+          ? () => opts.onRenameLane!(b.laneId!, b.deptId!, b.label)
+          : undefined,
       } as SwimlaneBandData,
     })
-    laneBands.push({ pool: b.pool, deptId: b.deptId, yTop: g.top, yBottom: g.bottom })
+    // offset = how much a stored (lane-relative) y is shifted to get the rendered y, i.e.
+    // rendered = offset + storedY. The drag handler subtracts it to turn a dropped absolute y back
+    // into the value to store, so a dragged lane node lands (and stays) exactly where it's dropped.
+    laneBands.push({ pool: b.pool, deptId: b.deptId, yTop: g.top, yBottom: g.bottom, offset: g.top + BAND_PAD - (laneMinY.get(b.key) ?? 0) })
   }
 
   // A node is a cross-lane "middle" when it has BOTH a cross-lane (different band) incoming AND

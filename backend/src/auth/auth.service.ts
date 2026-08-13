@@ -309,7 +309,7 @@ export class AuthService {
 
   private async issueFullTokens(
     userId: string,
-    email: string | null,
+    email: string | null, // a phone-only account has no email
     organizationId: string | null,
     isSuperAdmin: boolean,
     opts?: { demotePrevHash?: string | null },

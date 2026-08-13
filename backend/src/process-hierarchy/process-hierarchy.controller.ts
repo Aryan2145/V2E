@@ -30,7 +30,7 @@ import { ProcessHierarchyService } from './process-hierarchy.service';
 import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
 import { BulkPositionDto, CreateNodeDto, PasteNodesDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
-import { CreateLaneDto } from './dto/lane.dto';
+import { CreateLaneDto, ReassignLaneDto } from './dto/lane.dto';
 import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto, RestoreStateDto } from './dto/snapshot.dto';
@@ -226,6 +226,19 @@ export class ProcessHierarchyController {
   @ApiOperation({ summary: 'Create an (empty) swimlane for a department in a level' })
   createLane(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateLaneDto) {
     return this.service.createLane(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Patch('maps/:mapId/lanes/:laneId')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Re-point a swimlane at a different department (its steps move with it)' })
+  reassignLane(
+    @Param('orgId') orgId: string,
+    @Param('mapId') mapId: string,
+    @Param('laneId') laneId: string,
+    @Request() req: any,
+    @Body() dto: ReassignLaneDto,
+  ) {
+    return this.service.reassignLane(orgId, principalFromUser(req.user), mapId, laneId, dto.department_id);
   }
 
   @Delete('maps/:mapId/lanes/:laneId')

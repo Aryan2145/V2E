@@ -371,21 +371,22 @@ export class OrganizationsService {
     // A freshly-created admin gets their credentials; an existing user who was
     // made admin of this new firm gets a "you've been added" notice instead.
     try {
-      if (!result.admin.email) {
-        // Phone-only admin — nothing to email. Skip silently.
-      } else if (result.adminWasCreated && admin_password) {
-        await this.mail.sendWelcomeCredentials({
-          to: result.admin.email,
-          name: result.admin.name,
-          firmName: result.organization.name,
-          password: admin_password,
-        });
-      } else {
-        await this.mail.sendAddedToFirm({
-          to: result.admin.email,
-          name: result.admin.name,
-          firmName: result.organization.name,
-        });
+      // A phone-only admin has no email address — nothing to send to, so skip the mail.
+      if (result.admin.email) {
+        if (result.adminWasCreated && admin_password) {
+          await this.mail.sendWelcomeCredentials({
+            to: result.admin.email,
+            name: result.admin.name,
+            firmName: result.organization.name,
+            password: admin_password,
+          });
+        } else {
+          await this.mail.sendAddedToFirm({
+            to: result.admin.email,
+            name: result.admin.name,
+            firmName: result.organization.name,
+          });
+        }
       }
     } catch (err) {
       // MailService already logs; swallow so the org+admin still succeed.

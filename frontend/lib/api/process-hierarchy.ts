@@ -325,6 +325,8 @@ export const processHierarchyApi = {
       params: moveToDepartmentId ? { move_to_department_id: moveToDepartmentId } : undefined,
     })
   },
+  reassignLane: async (orgId: string, mapId: string, laneId: string, departmentId: string): Promise<{ updated: number }> =>
+    unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/lanes/${laneId}`, { department_id: departmentId })),
 
   // Artifacts
   listArtifacts: async (orgId: string, mapId: string): Promise<ProcessArtifact[]> =>

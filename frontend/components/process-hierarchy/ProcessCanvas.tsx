@@ -42,6 +42,7 @@ interface Props {
   canEdit: boolean
   swimlane?: boolean // render the pool/lane layout instead of the free-form canvas
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void // lane "+" in swimlane view
+  onRenameLane?: (laneId: string, departmentId: string, currentName: string) => void // click a lane name → change its department
   onAppendFromNode?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => void // click a node's exit dot → append a connected step
   onDecisionConnect?: (source: string, target: string, sourceSide?: string, targetSide?: string) => void // drag FROM a decision → choose Yes/No in a pop-up
   onReassignLane?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, positionX: number) => void // drag a node onto another lane → change its pool/department (null pool = dropped in the no-lane area)
@@ -96,7 +97,7 @@ const FIT_OPTIONS = { padding: 0.2, minZoom: 0.6, maxZoom: 1, duration: 300 }
 const LOD_THRESHOLD = 0.5
 
 function Inner({
-  flow, canEdit, swimlane = false, onAddInLane, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
+  flow, canEdit, swimlane = false, onAddInLane, onRenameLane, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
   onSelectNode, onDrill, onConnect, onNodeDragStop, onUpdateConnection, onDeleteConnection,
   onNodesMove, onNodesReassign, onDeleteNodes, topRightExtra, loadFlowAt, onOpenMap, onOpenDoc, spawnCenterRef, autoPositionsRef, onCopyNodes, onPaste, exportPngRef,
 }: Props) {
@@ -135,7 +136,7 @@ function Inner({
   const { rfNodes, rfEdges } = useMemo(() => {
     if (swimlane) {
       const built = buildSwimlane(flow, {
-        selectedNodeId, canEdit, diffStatus: diffStatus ?? null, onEdit: onSelectNode, onAddInLane,
+        selectedNodeId, canEdit, diffStatus: diffStatus ?? null, onEdit: onSelectNode, onAddInLane, onRenameLane,
       })
       metaRef.current = built.meta
       laneBandsRef.current = built.laneBands
@@ -150,7 +151,7 @@ function Inner({
     })
     metaRef.current = built.meta
     return { rfNodes: built.nodes, rfEdges: built.edges }
-  }, [swimlane, onAddInLane, flow, childFlows, expandedIds, canEdit, selectedNodeId, diffStatus, visibleNodeIds, onSelectNode, toggleExpand, onOpenDoc, lodCollapse])
+  }, [swimlane, onAddInLane, onRenameLane, flow, childFlows, expandedIds, canEdit, selectedNodeId, diffStatus, visibleNodeIds, onSelectNode, toggleExpand, onOpenDoc, lodCollapse])
 
   useEffect(() => { setNodes(rfNodes) }, [rfNodes, setNodes])
   useEffect(() => { setEdges(rfEdges) }, [rfEdges, setEdges])
@@ -396,12 +397,31 @@ function Inner({
     exportPngRef.current = handleExport
     return () => { if (exportPngRef) exportPngRef.current = null }
   }, [exportPngRef, handleExport])
+  // Alignment snap: on drop, if the node's vertical CENTRE lines up (within a small threshold)
+  // with another node's centre, snap it to match exactly — so nodes on the same "row" align and the
+  // connectors between them stay dead-straight (the fixed-band feel, snapped to real nodes, not a
+  // rigid grid). Returns the y to save for this node's current position/height.
+  const snapAlignY = useCallback((node: Node): number => {
+    const h = node.height ?? 96
+    const cy = node.position.y + h / 2
+    const THRESH = 55 // how close two nodes' centres must get before they snap level (generous, so "near" lines up)
+    let bestCentre: number | null = null, bestDiff = THRESH
+    for (const n of nodes) {
+      if (n.id === node.id || n.id.includes('::') || n.id.startsWith('band::')) continue
+      const nc = n.position.y + (n.height ?? 96) / 2
+      const d = Math.abs(nc - cy)
+      if (d < bestDiff) { bestDiff = d; bestCentre = nc }
+    }
+    return Math.round((bestCentre != null ? bestCentre : cy) - h / 2)
+  }, [nodes])
+
   const handleDragStop = useCallback(
     (_: React.MouseEvent, node: Node) => {
       if (node.id.includes('::')) return
+      const snappedY = snapAlignY(node)
       if (swimlane) {
         // Which lane did it land in (by the node's vertical centre)?
-        const cy = node.position.y + 48 // half of the fixed swimlane node height (96)
+        const cy = snappedY + (node.height ?? 96) / 2
         const newX = Math.max(CONTENT_X, Math.round(node.position.x))
         const band = laneBandsRef.current.find((b) => cy >= b.yTop && cy < b.yBottom)
         const cur = flow.nodes.find((n) => n.id === node.id)
@@ -412,11 +432,13 @@ function Inner({
           if (band.pool !== (cur.pool ?? null) || band.deptId !== (cur.department_id ?? null)) {
             onReassignLane?.(node.id, band.pool, band.deptId, newX)
           } else {
-            onNodeDragStop(node.id, newX, node.position.y)
+            // A lane node is rendered lane-relative (offset + stored y); convert the dropped absolute
+            // y back so it stores the value that renders it right where it was dropped — no jump.
+            onNodeDragStop(node.id, newX, Math.round(snappedY - band.offset))
           }
         } else if (!cur.pool) {
           // A lane-less node (e.g. a container) — placed freely: save both x and y.
-          onNodeDragStop(node.id, newX, Math.round(node.position.y))
+          onNodeDragStop(node.id, newX, snappedY)
         } else if (laneBandsRef.current.length && cy >= Math.max(...laneBandsRef.current.map((b) => b.yBottom))) {
           // Dropped in the no-lane area BELOW all the pools → drop its pool (make it lane-less).
           onReassignLane?.(node.id, null, null, newX)
@@ -425,9 +447,9 @@ function Inner({
         }
         return
       }
-      onNodeDragStop(node.id, node.position.x, node.position.y)
+      onNodeDragStop(node.id, node.position.x, snappedY)
     },
-    [swimlane, flow.nodes, onReassignLane, rfNodes, setNodes, onNodeDragStop],
+    [swimlane, flow.nodes, onReassignLane, rfNodes, setNodes, onNodeDragStop, snapAlignY, nodes],
   )
   const handleConnect = useCallback(
     (c: Connection) => {
