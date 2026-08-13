@@ -272,6 +272,15 @@ function EditMemberModal({
             {error}
           </div>
         )}
+        {member.also_in && member.also_in.length > 0 && (
+          <div className="flex items-start gap-2 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3 text-sm text-[#92400E]">
+            <Users size={16} className="shrink-0 mt-0.5" />
+            <p>
+              This person also works in {member.also_in.length} other {member.also_in.length === 1 ? 'firm' : 'firms'}.
+              Changing their email or phone changes how they sign in <strong>everywhere</strong>.
+            </p>
+          </div>
+        )}
         <div>
           <label className={labelCls}>Full name</label>
           <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />

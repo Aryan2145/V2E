@@ -169,11 +169,18 @@ export class EmployeesService {
     if (profileData.system_role_id) {
       const systemRoleExists = await this.prisma.systemRole.findFirst({
         where: { id: profileData.system_role_id, organization_id: orgId },
-        select: { id: true },
+        select: { id: true, is_admin: true },
       });
       if (!systemRoleExists) {
         throw new NotFoundException(
           `System role ${profileData.system_role_id} not found in this organization`,
+        );
+      }
+      // An admin must be reachable by email — a phone-only person can't be given an
+      // admin System Role.
+      if (systemRoleExists.is_admin && !email) {
+        throw new BadRequestException(
+          'An admin must always have an email address, so their team can recover access.',
         );
       }
     }
@@ -319,7 +326,7 @@ export class EmployeesService {
   }
 
   async update(id: string, orgId: string, dto: UpdateEmployeeDto) {
-    await this.findOne(id, orgId);
+    const profile = await this.findOne(id, orgId);
 
     if (dto.role_id) {
       const roleExists = await this.prisma.role.findFirst({
@@ -346,11 +353,17 @@ export class EmployeesService {
     if (dto.system_role_id) {
       const systemRoleExists = await this.prisma.systemRole.findFirst({
         where: { id: dto.system_role_id, organization_id: orgId },
-        select: { id: true },
+        select: { id: true, is_admin: true },
       });
       if (!systemRoleExists) {
         throw new NotFoundException(
           `System role ${dto.system_role_id} not found in this organization`,
+        );
+      }
+      // Promoting to an admin System Role requires an email (team can recover access).
+      if (systemRoleExists.is_admin && !profile.user?.email) {
+        throw new BadRequestException(
+          'An admin must always have an email address, so their team can recover access.',
         );
       }
     }

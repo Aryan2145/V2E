@@ -239,8 +239,10 @@ export class OrganizationsService {
     const admin_email = rawEmail?.trim() || null;
     const { country_code: admin_country_code, phone: admin_phone } = resolvePhoneForSave(rawCountryCode, rawPhone);
 
-    if (!existing_user_id && !admin_email && !admin_phone) {
-      throw new UnprocessableEntityException('Provide an admin email or phone number (at least one), or pick an existing user.');
+    if (!existing_user_id && !admin_email) {
+      // An org admin must be reachable by email (team can recover access) — a phone
+      // alone is not enough for the person who administers the firm.
+      throw new UnprocessableEntityException('An organization admin must have an email address, so their team can recover access.');
     }
 
     // Slug is an internal identifier — derive it from the name and guarantee uniqueness.
@@ -303,6 +305,12 @@ export class OrganizationsService {
           });
           adminWasCreated = true;
         }
+      }
+
+      // An org admin must always have an email — covers picking/matching an existing
+      // phone-only person as the firm's administrator.
+      if (!adminUser.email) {
+        throw new BadRequestException('An organization admin must have an email address, so their team can recover access.');
       }
 
       const member = await tx.organizationMember.create({

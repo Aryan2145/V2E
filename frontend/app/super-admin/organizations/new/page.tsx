@@ -127,9 +127,10 @@ export default function NewOrganizationPage() {
   const onSubmit = async (values: FormValues) => {
     setServerError(null)
 
-    // Validate admin section — single identity-driven flow (email OR phone).
-    if (!values.admin_email && !values.admin_phone) {
-      setServerError('Enter an admin email or phone number (at least one).')
+    // The firm's admin must have an email (so their team can recover access). A
+    // phone is optional and additional here.
+    if (!values.admin_email) {
+      setServerError('An organization admin must have an email address, so their team can recover access.')
       return
     }
     if (!values.admin_name) {
@@ -279,11 +280,11 @@ export default function NewOrganizationPage() {
               "new vs existing" choice — the email decides. */}
           <div className="flex flex-col gap-5 mt-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Admin Email" error={errors.admin_email?.message}
-                hint={checkingAdmin ? 'Checking…' : adminExists ? 'Existing account — no password needed' : undefined}>
+              <Field label="Admin Email" error={errors.admin_email?.message} required
+                hint={checkingAdmin ? 'Checking…' : adminExists ? 'Existing account — no password needed' : 'Required — used to recover access'}>
                 <input {...register('admin_email')} type="email" placeholder="name@company.com" className={inputCls(!!errors.admin_email)} />
               </Field>
-              <Field label="Admin Phone" error={errors.admin_phone?.message} hint="Email or phone — at least one">
+              <Field label="Admin Phone" error={errors.admin_phone?.message} hint="Optional — an extra way to sign in">
                 <div className="flex gap-2">
                   <CountryCodeSelect
                     value={adminCountry}

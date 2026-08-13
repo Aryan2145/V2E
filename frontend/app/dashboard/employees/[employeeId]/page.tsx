@@ -365,6 +365,17 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
             </div>
           )}
 
+          {/* Cross-firm notice — this person's login is shared across firms. */}
+          {orgCount !== null && orgCount > 1 && (
+            <div className="flex items-start gap-2 rounded-[8px] bg-[#FFFBEB] border border-[#FDE68A] px-4 py-3 text-sm text-[#92400E]">
+              <Users size={16} className="shrink-0 mt-0.5" />
+              <p>
+                This person also works in {orgCount - 1} other {orgCount - 1 === 1 ? 'firm' : 'firms'}.
+                Changing their email or phone changes how they sign in <strong>everywhere</strong>.
+              </p>
+            </div>
+          )}
+
           {/* Identity — name / email / password reset */}
           <div className="grid grid-cols-2 gap-4">
             <div>
