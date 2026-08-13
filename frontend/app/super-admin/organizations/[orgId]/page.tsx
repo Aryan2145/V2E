@@ -31,6 +31,8 @@ import Button from '@/components/ui/Button'
 import Card from '@/components/ui/Card'
 import Modal from '@/components/ui/Modal'
 import ResponsiveTable from '@/components/ui/ResponsiveTable'
+import CountryCodeSelect from '@/components/ui/CountryCodeSelect'
+import { DEFAULT_COUNTRY, cleanNationalNumber, nationalDigitsFor } from '@/lib/phone'
 import type { OrgDetail, OrgStatus } from '@/lib/types'
 
 type OrgMember = NonNullable<OrgDetail['members']>[number]
@@ -193,15 +195,20 @@ function EditMemberModal({
   orgId: string
   member: OrgMember
   onClose: () => void
-  onSaved: (vals: { name: string; email: string; is_admin: boolean }) => void
+  onSaved: (vals: { name: string; email: string; country_code: string | null; phone: string | null; is_admin: boolean }) => void
 }) {
   const [name, setName] = useState(member.user.name)
   const [email, setEmail] = useState(member.user.email)
+  const [phone, setPhone] = useState(member.user.phone ?? '')
+  const [countryCode, setCountryCode] = useState(member.user.country_code || DEFAULT_COUNTRY)
   const [password, setPassword] = useState('')
   const [isAdmin, setIsAdmin] = useState(member.is_admin)
   const [showPassword, setShowPassword] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const expectedDigits = nationalDigitsFor(countryCode)
+  const phoneDigits = phone.replace(/\D/g, '')
 
   const inputCls =
     'w-full px-3 py-2.5 border border-[#CBD5E1] rounded-[8px] text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
@@ -209,8 +216,16 @@ function EditMemberModal({
 
   const save = async () => {
     setError(null)
-    if (!name.trim() || !email.trim()) {
-      setError('Name and email are required.')
+    if (!name.trim()) {
+      setError('Name is required.')
+      return
+    }
+    if (!email.trim() && !phoneDigits) {
+      setError('Enter an email address or a phone number (at least one).')
+      return
+    }
+    if (phoneDigits && phoneDigits.length !== expectedDigits) {
+      setError(`Enter a ${expectedDigits}-digit number for ${countryCode}.`)
       return
     }
     if (password && password.length < 8) {
@@ -222,12 +237,26 @@ function EditMemberModal({
       const changes: Record<string, unknown> = {}
       if (name.trim() !== member.user.name) changes.name = name.trim()
       if (email.trim() !== member.user.email) changes.email = email.trim()
+      // Phone identity: send the pair when the number OR country changed; empty clears it.
+      const oldPhone = member.user.phone ?? ''
+      const oldCountry = member.user.country_code ?? ''
+      const phoneChanged = phoneDigits !== oldPhone || (!!phoneDigits && countryCode !== oldCountry)
+      if (phoneChanged) {
+        changes.phone = phoneDigits
+        changes.country_code = phoneDigits ? countryCode : ''
+      }
       if (password) changes.password = password
       if (isAdmin !== member.is_admin) changes.is_admin = isAdmin
       if (Object.keys(changes).length > 0) {
         await updateUser(orgId, member.user_id, changes)
       }
-      onSaved({ name: name.trim(), email: email.trim(), is_admin: isAdmin })
+      onSaved({
+        name: name.trim(),
+        email: email.trim(),
+        country_code: phoneChanged ? (phoneDigits ? countryCode : null) : (member.user.country_code ?? null),
+        phone: phoneChanged ? (phoneDigits || null) : (member.user.phone ?? null),
+        is_admin: isAdmin,
+      })
     } catch (err: any) {
       setError(err?.response?.data?.message ?? 'Failed to save changes.')
     } finally {
@@ -250,6 +279,29 @@ function EditMemberModal({
         <div>
           <label className={labelCls}>Email</label>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
+        </div>
+        <div>
+          <label className={labelCls}>Phone number <span className="font-normal text-[#64748B]">— used to sign in</span></label>
+          <div className="flex gap-2">
+            <CountryCodeSelect
+              value={countryCode}
+              onChange={(code) => {
+                setCountryCode(code)
+                setPhone(cleanNationalNumber(phone, code))
+              }}
+              wrapperClassName="w-[120px] shrink-0"
+            />
+            <input
+              type="tel"
+              inputMode="numeric"
+              value={phone}
+              onChange={(e) => setPhone(cleanNationalNumber(e.target.value, countryCode))}
+              maxLength={expectedDigits}
+              placeholder={`${expectedDigits}-digit number`}
+              className={`${inputCls} flex-1`}
+            />
+          </div>
+          <p className="mt-1 text-xs text-[#94A3B8]">They can sign in with this number. Leave empty to remove phone sign-in.</p>
         </div>
         <div>
           <label className={labelCls}>Reset password</label>
@@ -514,7 +566,7 @@ export default function OrgDetailPage() {
                     ...prev,
                     members: prev.members.map((m) =>
                       m.id === editingMember.id
-                        ? { ...m, is_admin: vals.is_admin, user: { ...m.user, name: vals.name, email: vals.email } }
+                        ? { ...m, is_admin: vals.is_admin, user: { ...m.user, name: vals.name, email: vals.email, country_code: vals.country_code, phone: vals.phone } }
                         : m,
                     ),
                   }

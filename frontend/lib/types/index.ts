@@ -49,6 +49,8 @@ export interface OrgDetailMember {
     id: string;
     name: string;
     email: string;
+    country_code?: string | null;
+    phone?: string | null;
     is_active: boolean;
   };
   also_in: Array<{ id: string; name: string }>;
@@ -64,6 +66,8 @@ export interface User {
   organization_id?: string;
   name: string;
   email: string;
+  country_code?: string | null;
+  phone?: string | null;
   is_admin: boolean;
   is_active: boolean;
   created_at: string;

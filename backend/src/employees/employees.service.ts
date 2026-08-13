@@ -20,6 +20,8 @@ const USER_SELECT = {
   id: true,
   name: true,
   email: true,
+  country_code: true,
+  phone: true,
   is_active: true,
   created_at: true,
 };
@@ -223,6 +225,17 @@ export class EmployeesService {
         // phone here. The person keeps the one login they already use across their other
         // firms; this firm only adds a membership + profile. (Password can still be reset
         // later from the edit screen, which warns it changes their login everywhere.)
+        //
+        // Issue #5: if a phone was typed but it isn't already this person's number, it
+        // would otherwise be silently dropped. Stop and tell the admin plainly, rather
+        // than pretend it was saved. (A matching number is harmless — it just re-identified
+        // them — so only a DIFFERENT number is blocked.)
+        if (phone && (user.country_code !== country_code || user.phone !== phone)) {
+          throw new ConflictException(
+            `${user.name} already has a V2E login, so the phone number you entered was NOT applied. ` +
+              `Add them without it, then set their number from their profile → Edit.`,
+          );
+        }
       } else {
         // Brand-new account — a password is required to create the login.
         if (!password || password.length < 8) {

@@ -16,6 +16,8 @@ export async function updateUser(
   userData: Partial<{
     name: string;
     email: string;
+    phone: string;
+    country_code: string;
     password: string;
     is_admin: boolean;
     is_active: boolean;

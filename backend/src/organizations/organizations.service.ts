@@ -55,7 +55,7 @@ export class OrganizationsService {
         org_identity: true,
         group: { select: { id: true, name: true } },
         members: {
-          include: { user: { select: { id: true, name: true, email: true, is_active: true } } },
+          include: { user: { select: { id: true, name: true, email: true, country_code: true, phone: true, is_active: true } } },
           orderBy: { joined_at: 'asc' },
         },
       },
@@ -258,9 +258,16 @@ export class OrganizationsService {
         // Path A: pick an existing user directly by ID
         const found = await tx.user.findUnique({
           where: { id: existing_user_id },
-          select: { id: true, name: true, email: true, is_active: true, created_at: true },
+          select: { id: true, name: true, email: true, country_code: true, phone: true, is_active: true, created_at: true },
         });
         if (!found) throw new NotFoundException(`User ${existing_user_id} not found`);
+        // Issue #5: a typed phone can't be applied to an already-existing account here.
+        if (admin_phone && (found.country_code !== admin_country_code || found.phone !== admin_phone)) {
+          throw new BadRequestException(
+            `${found.name} already has a V2E login, so the phone number you entered was NOT applied. ` +
+              `Create the firm without it, then set their number from the member's Edit screen.`,
+          );
+        }
         adminUser = found;
       } else {
         // Path B: find or create by email OR phone-pair (either identifies the login)
@@ -275,6 +282,15 @@ export class OrganizationsService {
         }
         const found = byEmail ?? byPhone;
         if (found) {
+          // Issue #5: if a phone was typed but it isn't already this person's number
+          // (e.g. they were matched by email), it would be silently dropped. Stop and
+          // tell the admin plainly instead of pretending it was saved.
+          if (admin_phone && (found.country_code !== admin_country_code || found.phone !== admin_phone)) {
+            throw new BadRequestException(
+              `${found.name} already has a V2E login, so the phone number you entered was NOT applied. ` +
+                `Create the firm without it, then set their number from the member's Edit screen.`,
+            );
+          }
           adminUser = found;
         } else {
           if (!admin_password) {

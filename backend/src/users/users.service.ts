@@ -2,15 +2,19 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service';
+import { resolvePhoneForSave } from '../common/identifier.util';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 const USER_SELECT = {
   id: true,
   name: true,
   email: true,
+  country_code: true,
+  phone: true,
   is_active: true,
   created_at: true,
   updated_at: true,
@@ -56,10 +60,34 @@ export class UsersService {
   async update(id: string, orgId: string, dto: UpdateUserDto) {
     await this.findOne(id, orgId);
 
-    const { password, is_admin, ...rest } = dto;
+    // Pull phone identity out so it never gets written raw — it must go through the
+    // shared normalise + validate + collision path below. (email is left as-is here;
+    // changing email is a separate concern and out of scope for this change.)
+    const { password, is_admin, phone, country_code, ...rest } = dto;
     const userUpdateData: Record<string, unknown> = { ...rest };
     if (password) {
       userUpdateData.password_hash = await bcrypt.hash(password, 12);
+    }
+
+    // Only touch the phone when the caller actually sent a phone/country field.
+    // Both are stored together or both cleared together (resolvePhoneForSave
+    // enforces this and validates the digit length for the chosen country, using
+    // the SAME helper as create + login — no second copy of that logic).
+    if (phone !== undefined || country_code !== undefined) {
+      const resolved = resolvePhoneForSave(country_code, phone);
+      if (resolved.phone) {
+        // Reject if this exact (country_code, phone) already belongs to someone else.
+        // Never silently overwrite, never create a second account.
+        const clash = await this.prisma.user.findUnique({
+          where: { country_code_phone: { country_code: resolved.country_code!, phone: resolved.phone } },
+          select: { id: true },
+        });
+        if (clash && clash.id !== id) {
+          throw new ConflictException('This number is already used by another account.');
+        }
+      }
+      userUpdateData.country_code = resolved.country_code; // string or null (cleared)
+      userUpdateData.phone = resolved.phone; // string or null (cleared)
     }
 
     await this.prisma.user.update({ where: { id }, data: userUpdateData });
@@ -104,6 +132,8 @@ export class UsersService {
       id: member.user.id,
       name: member.user.name,
       email: member.user.email,
+      country_code: member.user.country_code,
+      phone: member.user.phone,
       is_admin: member.is_admin,
       is_active: member.is_active && member.user.is_active,
       organization_id: orgId,

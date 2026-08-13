@@ -13,6 +13,8 @@ import { getRoles } from '@/lib/api/roles'
 import { getDepartments } from '@/lib/api/departments'
 import Button from '@/components/ui/Button'
 import StyledSelect from '@/components/ui/StyledSelect'
+import CountryCodeSelect from '@/components/ui/CountryCodeSelect'
+import { DEFAULT_COUNTRY, cleanNationalNumber, nationalDigitsFor } from '@/lib/phone'
 import EmployeePermissionsPanel from '@/components/permissions/EmployeePermissionsPanel'
 import type { EmployeeProfile, EmployeeStatus, Role, Department } from '@/lib/types'
 import { ArrowLeft, Users, ChevronDown, Pencil, Loader2, X, Eye, EyeOff, Trash2 } from 'lucide-react'
@@ -167,6 +169,8 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
   const [form, setForm] = useState({
     name: employee.user?.name ?? '',
     email: employee.user?.email ?? '',
+    phone: employee.user?.phone ?? '',
+    country_code: employee.user?.country_code || DEFAULT_COUNTRY,
     password: '',
     role_id: employee.role_id,
     system_role_id: employee.system_role_id ?? employee.system_role?.id ?? '',
@@ -225,11 +229,24 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
     setForm((f) => ({ ...f, [field]: value }))
   }
 
+  const expectedDigits = nationalDigitsFor(form.country_code)
+  const phoneDigits = form.phone.replace(/\D/g, '')
+
   function handleSave() {
     setError('')
 
-    if (!form.name.trim() || !form.email.trim()) {
-      setError('Name and email are required.')
+    if (!form.name.trim()) {
+      setError('Name is required.')
+      return
+    }
+    // Email OR phone — at least one identity is required (phone can be cleared as
+    // long as an email remains, so a wrong number can be removed).
+    if (!form.email.trim() && !phoneDigits) {
+      setError('Enter an email address or a phone number (at least one).')
+      return
+    }
+    if (phoneDigits && phoneDigits.length !== expectedDigits) {
+      setError(`Enter a ${expectedDigits}-digit number for ${form.country_code}.`)
       return
     }
     if (form.password && form.password.length < 8) {
@@ -259,10 +276,19 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
     setError('')
     setSaving(true)
     try {
-      // 1) User-level fields (name / email / password) — only what changed.
+      // 1) User-level fields (name / email / phone / password) — only what changed.
       const userChanges: Record<string, string> = {}
       if (form.name.trim() !== (employee.user?.name ?? '')) userChanges.name = form.name.trim()
       if (form.email.trim() !== (employee.user?.email ?? '')) userChanges.email = form.email.trim()
+      // Phone identity: send the pair when the number OR country changed. An empty
+      // number clears it (both fields sent so the backend clears them together).
+      const oldPhone = employee.user?.phone ?? ''
+      const oldCountry = employee.user?.country_code ?? ''
+      const phoneChanged = phoneDigits !== oldPhone || (!!phoneDigits && form.country_code !== oldCountry)
+      if (phoneChanged) {
+        userChanges.phone = phoneDigits
+        userChanges.country_code = phoneDigits ? form.country_code : ''
+      }
       if (form.password) userChanges.password = form.password
       if (Object.keys(userChanges).length > 0 && employee.user_id) {
         await updateUser(orgId, employee.user_id, userChanges)
@@ -361,6 +387,34 @@ function EditModal({ employee, allEmployees, roles, departments, onClose, onSave
                 className={inputClass}
               />
             </div>
+          </div>
+
+          {/* Phone — a login identity. Editable here so a wrong number can be fixed
+              or removed; clearing it removes phone sign-in (email still works). */}
+          <div>
+            <label className={labelClass}>Phone number <span className="font-normal text-[#64748B]">— used to sign in</span></label>
+            <div className="flex gap-2">
+              <CountryCodeSelect
+                value={form.country_code}
+                onChange={(code) => {
+                  set('country_code', code)
+                  set('phone', cleanNationalNumber(form.phone, code))
+                }}
+                wrapperClassName="w-[120px] shrink-0"
+              />
+              <input
+                type="tel"
+                inputMode="numeric"
+                value={form.phone}
+                onChange={(e) => set('phone', cleanNationalNumber(e.target.value, form.country_code))}
+                maxLength={expectedDigits}
+                placeholder={`${expectedDigits}-digit number`}
+                className={`${inputClass} flex-1`}
+              />
+            </div>
+            <p className="mt-1 text-xs text-[#94A3B8]">
+              They can sign in with this number. Leave it empty to remove phone sign-in. Changing it updates their login everywhere they work.
+            </p>
           </div>
 
           <div>
