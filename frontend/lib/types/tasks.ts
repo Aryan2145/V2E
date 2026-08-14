@@ -309,6 +309,8 @@ export interface RecurringTemplate {
   next_run?: string | null
   /** Whether the current viewer may manage this template's sharing (creator or admin). */
   can_manage?: boolean
+  /** Whether the current viewer may edit this template (creator, admin, or edit-share). Assignees cannot. */
+  can_edit?: boolean
 }
 
 /** Mine/Team perspective: work SENT (outgoing) vs work RECEIVED (incoming). */

@@ -428,15 +428,17 @@ export default function RecurringDetailPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2 min-w-0 flex-1">
             <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight min-w-0">{template.title}</h1>
-            <Tooltip label="Edit template">
-              <button
-                onClick={() => setShowEditModal(true)}
-                aria-label="Edit template"
-                className="mt-1 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
-              >
-                <Edit2 size={14} />
-              </button>
-            </Tooltip>
+            {template.can_edit && (
+              <Tooltip label="Edit template">
+                <button
+                  onClick={() => setShowEditModal(true)}
+                  aria-label="Edit template"
+                  className="mt-1 w-7 h-7 rounded-[6px] flex items-center justify-center text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors shrink-0"
+                >
+                  <Edit2 size={14} />
+                </button>
+              </Tooltip>
+            )}
             {template.can_manage && (
               <Tooltip label="Manage who can see this">
                 <button
@@ -661,19 +663,21 @@ export default function RecurringDetailPage() {
               <span className={`text-sm font-semibold ${template.is_active ? 'text-[#16A34A]' : 'text-[#DC2626]'}`}>
                 {template.is_active ? 'Active' : 'Paused'}
               </span>
-              <button
-                onClick={handleToggle}
-                disabled={toggling}
-                className={[
-                  'flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-[6px] disabled:opacity-60 transition-colors',
-                  template.is_active
-                    ? 'text-[#D97706] bg-[#FEF9C3] border border-[#FDE68A] hover:bg-[#FDE68A]'
-                    : 'text-[#16A34A] bg-[#DCFCE7] border border-[#BBF7D0] hover:bg-[#BBF7D0]',
-                ].join(' ')}
-              >
-                {template.is_active ? <Pause size={12} /> : <Play size={12} />}
-                {toggling ? '...' : template.is_active ? 'Pause' : 'Resume'}
-              </button>
+              {template.can_edit && (
+                <button
+                  onClick={handleToggle}
+                  disabled={toggling}
+                  className={[
+                    'flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-[6px] disabled:opacity-60 transition-colors',
+                    template.is_active
+                      ? 'text-[#D97706] bg-[#FEF9C3] border border-[#FDE68A] hover:bg-[#FDE68A]'
+                      : 'text-[#16A34A] bg-[#DCFCE7] border border-[#BBF7D0] hover:bg-[#BBF7D0]',
+                  ].join(' ')}
+                >
+                  {template.is_active ? <Pause size={12} /> : <Play size={12} />}
+                  {toggling ? '...' : template.is_active ? 'Pause' : 'Resume'}
+                </button>
+              )}
             </div>
           </div>
 

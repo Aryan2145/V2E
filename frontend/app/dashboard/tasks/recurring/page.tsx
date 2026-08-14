@@ -195,13 +195,15 @@ function RecurringCard({
                 </button>
               </Tooltip>
             )}
-            <Tooltip label="Edit template">
-              <button onClick={(e) => { e.stopPropagation(); onEdit() }} aria-label="Edit template"
-                className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
-                <Edit2 size={13} />
-              </button>
-            </Tooltip>
-            {template.is_active && (
+            {template.can_edit && (
+              <Tooltip label="Edit template">
+                <button onClick={(e) => { e.stopPropagation(); onEdit() }} aria-label="Edit template"
+                  className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#2563EB] hover:bg-[#EFF6FF] transition-colors">
+                  <Edit2 size={13} />
+                </button>
+              </Tooltip>
+            )}
+            {template.can_edit && template.is_active && (
               <Tooltip label="Spawn today's task now">
                 <button onClick={(e) => { e.stopPropagation(); handleSpawnToday() }} disabled={spawning}
                   className="flex items-center gap-1 px-2 py-1.5 text-xs font-semibold rounded-[8px] text-[#2563EB] bg-[#EFF6FF] border border-[#BFDBFE] hover:bg-[#DBEAFE] disabled:opacity-60 transition-colors">
@@ -209,12 +211,15 @@ function RecurringCard({
                 </button>
               </Tooltip>
             )}
-            <button onClick={(e) => { e.stopPropagation(); handleToggle() }} disabled={toggling}
-              className={['flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[8px] transition-colors disabled:opacity-60',
-                template.is_active ? 'text-[#D97706] bg-[#FEF9C3] border border-[#FDE68A] hover:bg-[#FDE68A]' : 'text-[#16A34A] bg-[#DCFCE7] border border-[#BBF7D0] hover:bg-[#BBF7D0]'].join(' ')}>
-              {template.is_active ? <Pause size={11} /> : <Play size={11} />}
-              {toggling ? '...' : template.is_active ? 'Pause' : 'Resume'}
-            </button>
+            {template.can_edit && (
+              <button onClick={(e) => { e.stopPropagation(); handleToggle() }} disabled={toggling}
+                className={['flex items-center gap-1 px-2.5 py-1.5 text-xs font-semibold rounded-[8px] transition-colors disabled:opacity-60',
+                  template.is_active ? 'text-[#D97706] bg-[#FEF9C3] border border-[#FDE68A] hover:bg-[#FDE68A]' : 'text-[#16A34A] bg-[#DCFCE7] border border-[#BBF7D0] hover:bg-[#BBF7D0]'].join(' ')}>
+                {template.is_active ? <Pause size={11} /> : <Play size={11} />}
+                {toggling ? '...' : template.is_active ? 'Pause' : 'Resume'}
+              </button>
+            )}
+            {template.can_manage && (
             <div className="relative">
               <button onClick={(e) => { e.stopPropagation(); setShowDeleteMenu((v) => !v) }}
                 className="w-7 h-7 flex items-center justify-center rounded-[6px] text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors">
@@ -237,6 +242,7 @@ function RecurringCard({
                 </div>
               )}
             </div>
+            )}
           </div>
         </div>
         <h3 className="text-[15px] font-semibold text-[#0F172A] break-words group-hover:text-[#2563EB] transition-colors line-clamp-1">{template.title}</h3>

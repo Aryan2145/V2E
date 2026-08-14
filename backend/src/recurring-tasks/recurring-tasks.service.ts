@@ -69,6 +69,23 @@ export class RecurringTasksService {
     const deptMap = new Map(depts.map((d) => [d.id, d.name]));
     const nameOf = (id: string) => nameMap.get(id) ?? 'Unknown';
 
+    // Which of these templates has this user been granted Drive-style edit on? The
+    // edit button is shown only to the creator, an admin, or a grant-edit sharee —
+    // never to a plain assignee (assignees receive tasks, they don't own the recurrence).
+    let editGrantedIds = new Set<string>();
+    if (principal) {
+      const grants = await this.prisma.recurringTemplateAccess.findMany({
+        where: {
+          recurring_template_id: { in: templates.map((t) => t.id) },
+          user_id: principal.userId,
+          kind: RecurringAccessKind.grant,
+          level: RecurringAccessLevel.edit,
+        },
+        select: { recurring_template_id: true },
+      });
+      editGrantedIds = new Set(grants.map((g) => g.recurring_template_id));
+    }
+
     return templates.map((t) => {
       const assignees = this.jsonIds(t.assignee_user_ids);
       const cc = this.jsonIds(t.cc_user_ids);
@@ -82,6 +99,9 @@ export class RecurringTasksService {
         occurrences,
         next_run: this.nextRunDate(t, now),
         can_manage: principal ? t.created_by_user_id === principal.userId || principal.isAdmin : false,
+        can_edit: principal
+          ? t.created_by_user_id === principal.userId || principal.isAdmin || editGrantedIds.has(t.id)
+          : false,
       };
     });
   }
@@ -121,9 +141,12 @@ export class RecurringTasksService {
     const assigneeIds = (Array.isArray(t.assignee_user_ids) ? t.assignee_user_ids : []) as string[];
     const isCreator = t.created_by_user_id === principal.userId;
     const isAssignee = assigneeIds.includes(principal.userId);
-    // Being assigned grants read/edit on the template, never the right to destroy it.
-    // Creator and assignees are participants and are never hidden by a revoke.
-    if (action === PermissionAction.delete ? isCreator : isCreator || isAssignee) return;
+    // The creator owns the recurrence and may read/edit/delete it. Assignees only
+    // receive the spawned tasks — being on the template grants READ, never the right
+    // to edit or delete it. Editing/deleting stays with the creator (plus explicit
+    // grants and scope elevation over the creator, handled below).
+    if (isCreator) return;
+    if (action === PermissionAction.read && isAssignee) return;
 
     // Google-Drive-style per-user override, layered on top of the rules.
     const override = await this.prisma.recurringTemplateAccess.findUnique({
@@ -142,10 +165,13 @@ export class RecurringTasksService {
       throw new NotFoundException(`Recurring template ${templateId} not found`);
     }
 
-    await this.scope.assertCanActOn(orgId, principal, TASK_LEAF, action, [
-      t.created_by_user_id,
-      ...assigneeIds,
-    ]);
+    // Scope elevation acts on the template's OWNER. For READ we also consider the
+    // assignees so a manager of an assignee can view it. For EDIT/DELETE the target
+    // is the creator alone — otherwise an assignee's own-scope `edit`/`delete` would
+    // match their own id in the list and re-grant them the edit they must not have.
+    const scopeTargets =
+      action === PermissionAction.read ? [t.created_by_user_id, ...assigneeIds] : [t.created_by_user_id];
+    await this.scope.assertCanActOn(orgId, principal, TASK_LEAF, action, scopeTargets);
   }
 
   // ─── Google-Drive-style access management ────────────────────────────────────
