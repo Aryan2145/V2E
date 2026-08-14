@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Search, X, Check, UserPlus } from 'lucide-react'
+import { Search, X, Check, UserPlus, ChevronDown } from 'lucide-react'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -34,6 +34,9 @@ interface Props {
   allowClear?: boolean
   /** Forwarded id for the associated <label htmlFor>. */
   id?: string
+  /** 'sm' renders a slim, chip-scale trigger to sit inline with compact filter rows
+   *  (matches StyledSelect's compact filters); 'md' is the default form-field size. */
+  size?: 'sm' | 'md'
 }
 
 // ─── Avatar helpers (shared visual language with AssigneeSelector) ───────────────
@@ -99,6 +102,7 @@ export default function EmployeePicker({
   currentUser,
   allowClear,
   id,
+  size = 'md',
 }: Props) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -152,7 +156,34 @@ export default function EmployeePicker({
 
   return (
     <div className="relative">
-      {/* Trigger — mirrors the AssigneeSelector chip box (single-select). */}
+      {size === 'sm' ? (
+        /* Compact trigger — matches StyledSelect's slim filter cells (no avatar). */
+        <button
+          type="button"
+          id={id}
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+          className="w-full flex items-center gap-2 rounded-[8px] border border-[#CBD5E1] bg-[#F8FAFC] px-3 py-1 text-[12px] text-left hover:bg-white hover:border-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <span className={`flex-1 min-w-0 truncate ${selected ? 'font-medium text-[#0F172A]' : 'text-[#94A3B8]'}`}>
+            {selected ? selected.name : placeholder}
+          </span>
+          {selected && allowClear && (
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label="Clear selection"
+              onClick={(e) => { e.stopPropagation(); onChange('') }}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); onChange('') } }}
+              className="shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[#94A3B8] hover:text-[#DC2626] hover:bg-[#F1F5F9] transition-colors"
+            >
+              <X size={12} />
+            </span>
+          )}
+          <ChevronDown size={14} className="shrink-0 text-[#94A3B8]" />
+        </button>
+      ) : (
+      /* Trigger — mirrors the AssigneeSelector chip box (single-select). */
       <button
         type="button"
         id={id}
@@ -185,6 +216,7 @@ export default function EmployeePicker({
           </span>
         )}
       </button>
+      )}
 
       {/* Picker — centered dialog over the page (own backdrop). Being fixed &
           centered it never drifts on scroll nor escapes a parent modal. */}

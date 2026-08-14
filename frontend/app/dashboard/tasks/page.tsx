@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/auth/context'
 import { tasksApi } from '@/lib/api/tasks'
 import { getDepartments } from '@/lib/api/departments'
-import type { Department } from '@/lib/types'
+import { getEmployees } from '@/lib/api/employees'
+import type { Department, EmployeeProfile } from '@/lib/types'
 import type {
   Task, TaskCategory, TaskPriority, TaskStatus, TaskDashboard, PeopleTree as PeopleTreeData,
   WorkScope, WorkBucket, WorkQuery, Timing, WorkFlow,
@@ -35,6 +36,7 @@ import TaskRow from '@/components/tasks/overview/TaskRow'
 import TaskDrawer from '@/components/tasks/overview/TaskDrawer'
 import BulkActionBar from '@/components/tasks/overview/BulkActionBar'
 import StyledSelect from '@/components/ui/StyledSelect'
+import EmployeePicker, { type EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import DateRangePicker from '@/components/ui/DateRangePicker'
 import AccessHiddenState from '@/components/ui/AccessHiddenState'
 import { usePermissions } from '@/lib/auth/use-permissions'
@@ -62,6 +64,7 @@ export default function TasksOverviewPage() {
   const [priorities, setPriorities] = useState<TaskPriority[]>([])
   const [statuses, setStatuses] = useState<TaskStatus[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
+  const [employees, setEmployees] = useState<EmployeePickerOption[]>([])
 
   // View (analytics canvas vs data table)
   const [view, setView] = useState<View>('analytics')
@@ -82,6 +85,8 @@ export default function TasksOverviewPage() {
   const [departmentId, setDepartmentId] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [timingFilter, setTimingFilter] = useState('')
+  const [assigneeUserId, setAssigneeUserId] = useState('')
+  const [createdByUserId, setCreatedByUserId] = useState('')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [sort, setSort] = useState('created_desc')
@@ -95,6 +100,9 @@ export default function TasksOverviewPage() {
   const [tree, setTree] = useState<PeopleTreeData | null>(null)
   const [rows, setRows] = useState<Task[]>([])
   const [total, setTotal] = useState(0)
+  // The "before filters" baseline — how many entries exist in the current scope with no
+  // filter-bar filters applied. Shown as "N of M" so the count reads at any point.
+  const [scopeTotal, setScopeTotal] = useState<number | null>(null)
   const [page, setPage] = useState(1)
   const [hasMore, setHasMore] = useState(false)
   const [loadingList, setLoadingList] = useState(true)
@@ -120,7 +128,23 @@ export default function TasksOverviewPage() {
       tasksApi.getPriorities(orgId).catch(() => []),
       tasksApi.getStatuses(orgId).catch(() => []),
       getDepartments(orgId).catch(() => [] as Department[]),
-    ]).then(([c, p, s, d]) => { setCategories(c); setPriorities(p); setStatuses(s); setDepartments(d) })
+      getEmployees(orgId).catch(() => [] as EmployeeProfile[]),
+    ]).then(([c, p, s, d, emps]) => {
+      setCategories(c); setPriorities(p); setStatuses(s); setDepartments(d)
+      // Full-org roster for the "Assigned to"/"Assigned by" person filters. The result
+      // list is scope-gated server-side, so offering everyone here is safe — filtering
+      // by someone out of scope simply returns the tasks the viewer is allowed to see.
+      const people = (emps as EmployeeProfile[])
+        .filter((e) => e.user_id && e.user?.name)
+        .map((e) => ({
+          user_id: e.user_id,
+          name: e.user!.name,
+          role_title: e.role?.title ?? null,
+          department_name: e.department?.name ?? null,
+        }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+      setEmployees(people)
+    })
   }, [orgId])
 
   const forest = useMemo(() => buildDeptForest(departments), [departments])
@@ -149,9 +173,11 @@ export default function TasksOverviewPage() {
     department_id: departmentId || undefined,
     type: typeFilter || undefined,
     timing: (timingFilter || undefined) as WorkQuery['timing'],
+    assignee_user_id: assigneeUserId || undefined,
+    created_by_user_id: createdByUserId || undefined,
     from_date: fromDate || undefined,
     to_date: toDate ? `${toDate}T23:59:59` : undefined,
-  }), [requestedScope, search, statusId, priorityId, categoryId, departmentId, typeFilter, timingFilter, fromDate, toDate])
+  }), [requestedScope, search, statusId, priorityId, categoryId, departmentId, typeFilter, timingFilter, assigneeUserId, createdByUserId, fromDate, toDate])
 
   // The dept subtree currently drilled (Departments lens).
   const deptNode = deptDrill ? forest.byId.get(deptDrill) ?? null : null
@@ -222,6 +248,17 @@ export default function TasksOverviewPage() {
 
   useEffect(() => { fetchList(1, true) }, [fetchList])
 
+  // Baseline count for the current scope (no filter-bar filters) — one tiny query,
+  // refreshed only when the scope changes, to power the "N of M entries" readout.
+  useEffect(() => {
+    if (!orgId) { setScopeTotal(null); return }
+    let cancelled = false
+    tasksApi.listTasksPaged(orgId, { scope: requestedScope, page: 1, page_size: 1 })
+      .then((r) => { if (!cancelled) setScopeTotal(r.total) })
+      .catch(() => { if (!cancelled) setScopeTotal(null) })
+    return () => { cancelled = true }
+  }, [orgId, requestedScope])
+
   const refreshAll = useCallback(() => {
     fetchList(1, true)
     tasksApi.getDashboard(orgId, JSON.parse(boardKey)).then(setDashboard).catch(() => {})
@@ -286,15 +323,21 @@ export default function TasksOverviewPage() {
     if (departmentId) list.push({ label: `Dept: ${departments.find((d) => d.id === departmentId)?.name ?? '—'}`, clear: () => setDepartmentId('') })
     if (typeFilter) list.push({ label: `Type: ${typeFilter === 'recurring' ? 'Recurring' : 'One-time'}`, clear: () => setTypeFilter('') })
     if (timingFilter) list.push({ label: `Timing: ${TIMING_META[timingFilter as Timing].label}`, clear: () => setTimingFilter('') })
+    if (assigneeUserId) list.push({ label: `Assigned to: ${employees.find((e) => e.user_id === assigneeUserId)?.name ?? '—'}`, clear: () => setAssigneeUserId('') })
+    if (createdByUserId) list.push({ label: `Assigned by: ${employees.find((e) => e.user_id === createdByUserId)?.name ?? '—'}`, clear: () => setCreatedByUserId('') })
     if (fromDate || toDate) list.push({ label: `Date: ${fromDate || '…'} → ${toDate || '…'}`, clear: () => { setFromDate(''); setToDate('') } })
     return list
-  }, [search, statusId, priorityId, categoryId, departmentId, typeFilter, timingFilter, fromDate, toDate, statuses, priorities, categories, departments])
+  }, [search, statusId, priorityId, categoryId, departmentId, typeFilter, timingFilter, assigneeUserId, createdByUserId, fromDate, toDate, statuses, priorities, categories, departments, employees])
 
   const filtersActive = pills.length > 0
   function clearFilters() {
     setSearchInput(''); setSearch(''); setStatusId(''); setPriorityId(''); setCategoryId('')
-    setDepartmentId(''); setTypeFilter(''); setTimingFilter(''); setFromDate(''); setToDate('')
+    setDepartmentId(''); setTypeFilter(''); setTimingFilter(''); setAssigneeUserId(''); setCreatedByUserId(''); setFromDate(''); setToDate('')
   }
+
+  // Current viewer, for the "Select me" shortcut in the person filters.
+  const meOption = user?.id ? employees.find((e) => e.user_id === user.id) : undefined
+  const currentUser = meOption ? { user_id: meOption.user_id, name: meOption.name } : undefined
 
   // Map the table's column-header filter selects onto the page filter state.
   const tableFilters: Record<TableFilterKey, string> = {
@@ -565,6 +608,24 @@ export default function TasksOverviewPage() {
               ...(['early', 'on_time', 'late', 'overdue', 'pending'] as Timing[]).map((t) => ({ value: t, label: TIMING_META[t].label })),
             ]}
           />
+          <EmployeePicker
+            value={assigneeUserId}
+            onChange={setAssigneeUserId}
+            employees={employees}
+            title="Filter by assignee"
+            placeholder="Assigned to anyone"
+            currentUser={currentUser}
+            allowClear
+          />
+          <EmployeePicker
+            value={createdByUserId}
+            onChange={setCreatedByUserId}
+            employees={employees}
+            title="Filter by assigner"
+            placeholder="Assigned by anyone"
+            currentUser={currentUser}
+            allowClear
+          />
           <DateRangePicker from={fromDate} to={toDate} onChange={(f, t) => { setFromDate(f); setToDate(t) }} placeholder="Created date range" />
         </div>
       )}
@@ -628,6 +689,19 @@ export default function TasksOverviewPage() {
 
       {pillsBar}
 
+      {/* Live entry count — reads at any point, before or after filters. */}
+      <div className="flex items-center gap-2">
+        <span className="inline-flex items-center gap-1 rounded-[999px] bg-[#2563EB] text-white text-[13px] font-semibold px-2.5 py-1 tabular-nums">
+          {loadingList ? '…' : total}
+          {!loadingList && filtersActive && scopeTotal != null && scopeTotal !== total && (
+            <span className="font-medium text-white/80">of {scopeTotal}</span>
+          )}
+        </span>
+        <span className="text-sm text-[#475569]">
+          {filtersActive ? 'entries match your filters' : `entr${total === 1 ? 'y' : 'ies'} in this view`}
+        </span>
+      </div>
+
       <TaskTable
         rows={rows}
         loading={loadingList}
@@ -640,6 +714,12 @@ export default function TasksOverviewPage() {
         categories={categories}
         priorities={priorities}
         statuses={statuses}
+        employees={employees}
+        currentUser={currentUser}
+        assigneeUserId={assigneeUserId}
+        createdByUserId={createdByUserId}
+        onAssigneeFilter={setAssigneeUserId}
+        onAssignerFilter={setCreatedByUserId}
         filters={tableFilters}
         onFilter={onTableFilter}
         sortDir={deadlineSortDir}

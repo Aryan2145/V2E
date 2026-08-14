@@ -3,6 +3,7 @@
 import React from 'react'
 import { ArrowDown, ArrowUp, CheckSquare } from 'lucide-react'
 import StyledSelect from '@/components/ui/StyledSelect'
+import EmployeePicker, { type EmployeePickerOption } from '@/components/ui/EmployeePicker'
 import {
   TIMINGS, TIMING_META, taskTiming,
   type Task, type TaskStatus, type TaskPriority, type TaskCategory,
@@ -45,6 +46,12 @@ export default function TaskTable({
   categories,
   priorities,
   statuses,
+  employees,
+  currentUser,
+  assigneeUserId,
+  createdByUserId,
+  onAssigneeFilter,
+  onAssignerFilter,
   filters,
   onFilter,
   sortDir,
@@ -61,6 +68,12 @@ export default function TaskTable({
   categories: TaskCategory[]
   priorities: TaskPriority[]
   statuses: TaskStatus[]
+  employees: EmployeePickerOption[]
+  currentUser?: { user_id: string; name: string }
+  assigneeUserId: string
+  createdByUserId: string
+  onAssigneeFilter: (value: string) => void
+  onAssignerFilter: (value: string) => void
   filters: TableFilters
   onFilter: (key: TableFilterKey, value: string) => void
   sortDir: 'asc' | 'desc' | null
@@ -115,8 +128,30 @@ export default function TaskTable({
                 {filterCell('type', 'All types', [{ value: 'one_time', label: 'One-time' }, { value: 'recurring', label: 'Recurring' }])}
               </td>
               <td className="px-3 py-2" />
-              <td className="px-3 py-2" />
-              <td className="px-3 py-2" />
+              <td className="px-3 py-2 align-top min-w-[150px]">
+                <EmployeePicker
+                  size="sm"
+                  value={assigneeUserId}
+                  onChange={onAssigneeFilter}
+                  employees={employees}
+                  title="Filter by assignee"
+                  placeholder="Anyone"
+                  currentUser={currentUser}
+                  allowClear
+                />
+              </td>
+              <td className="px-3 py-2 align-top min-w-[150px]">
+                <EmployeePicker
+                  size="sm"
+                  value={createdByUserId}
+                  onChange={onAssignerFilter}
+                  employees={employees}
+                  title="Filter by assigner"
+                  placeholder="Anyone"
+                  currentUser={currentUser}
+                  allowClear
+                />
+              </td>
               <td className="px-3 py-2 align-top min-w-[140px]">
                 {filterCell('department_id', 'All depts', departments.map((d) => ({ value: d.id, label: d.name })))}
               </td>
