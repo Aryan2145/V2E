@@ -177,7 +177,7 @@ function buildContent(
     const ordered = [...flow.nodes].filter((n) => n.kind !== 'note').sort((a, b) => a.position_y - b.position_y || a.position_x - b.position_x)
     for (const n of ordered) {
       const nw = sizeOf(n.id).w
-      let y = n.position_y
+      let shift = 0
       for (const m of ordered) {
         if (m.id === n.id) continue
         // only nodes placed above n (already resolved); skip peers below or to the side
@@ -185,11 +185,15 @@ function buildContent(
         const ms = sizeOf(m.id)
         const overlapX = Math.min(n.position_x + nw, m.position_x + ms.w) - Math.max(n.position_x, m.position_x)
         if (overlapX <= 0) continue // different column — no push
-        const grew = ms.h > sizeForKind(kindOf.get(m.id)!).h + 0.5
-        const need = displayY[m.id] + ms.h + (grew ? PUSH_GAP : 0)
-        if (need > y) y = need
+        // Only EXPANSION (an unfolded container growing past its base height) pushes the nodes
+        // below it down, cascaded. A node that hasn't grown contributes NO push — so stored
+        // positions are honoured exactly and every node (start markers included) drags freely,
+        // up or down, and stays where it's dropped instead of snapping back.
+        const grow = Math.max(0, ms.h - sizeForKind(kindOf.get(m.id)!).h)
+        const mShift = (displayY[m.id] - m.position_y) + (grow > 0.5 ? grow + PUSH_GAP : 0)
+        if (mShift > shift) shift = mShift
       }
-      displayY[n.id] = y
+      displayY[n.id] = n.position_y + shift
     }
   }
 
