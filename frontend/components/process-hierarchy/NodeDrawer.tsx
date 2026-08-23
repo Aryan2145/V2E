@@ -422,8 +422,8 @@ export default function NodeDrawer({
               </div>
             )}
 
-            {/* Description — a Start / End marker is punctuation, so it stays just a name. */}
-            {!isEvent(node.kind) && !isNote && (
+            {/* Description — available for every step, Start / End markers included. */}
+            {!isNote && (
               <div>
                 <label className="block text-xs font-medium text-[#374151] mb-1">Description</label>
                 <textarea className={`${inputCls} resize-none`} rows={3} value={description} disabled={!canEdit}
