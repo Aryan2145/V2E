@@ -85,7 +85,7 @@ export default function ProcessMapExplorerPage() {
   const [departments, setDepartments] = useState<Department[]>([]) // for the New-swimlane picker
   const [addLanePick, setAddLanePick] = useState(false) // Add-step menu is showing its lane picker
   const [laneRename, setLaneRename] = useState<{ laneId: string; deptId: string; name: string } | null>(null) // "change this lane's department" dialog
-  const [laneAdd, setLaneAdd] = useState<{ pool: ProcessPool | null; departmentId: string | null; fromNodeId?: string | null; side?: string; autoCond?: ProcessConditionKind; ask?: boolean } | null>(null) // lane "+" / node-dot "add next" kind picker
+  const [laneAdd, setLaneAdd] = useState<{ pool: ProcessPool | null; departmentId: string | null; fromNodeId?: string | null; fromX?: number; fromY?: number; side?: string; autoCond?: ProcessConditionKind; ask?: boolean } | null>(null) // lane "+" / node-dot "add next" kind picker
   const [branchPick, setBranchPick] = useState<{ mode: 'create'; source: string; target: string; side?: string; tside?: string } | { mode: 'set'; connId: string } | null>(null) // Yes/No chooser for a decision connection
   const [modeInitialized, setModeInitialized] = useState(false)
   const [diff, setDiff] = useState<MapDiff | null>(null)
@@ -355,17 +355,34 @@ export default function ProcessMapExplorerPage() {
   const appendFromNode = useCallback((nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => {
     const rule = outputRuleFor(nodeId)
     if (!rule.ok) { addToast(rule.reason!, 'error'); return }
-    setLaneAdd({ pool, departmentId, fromNodeId: nodeId, side: sourceSide, autoCond: rule.condition, ask: rule.ask })
-  }, [outputRuleFor, addToast])
+    const src = flow?.nodes.find((n) => n.id === nodeId)
+    setLaneAdd({ pool, departmentId, fromNodeId: nodeId, fromX: src?.position_x, fromY: src?.position_y, side: sourceSide, autoCond: rule.condition, ask: rule.ask })
+  }, [outputRuleFor, addToast, flow])
   const addLaneKind = useCallback(async (kind: ProcessNodeKind) => {
     if (!laneAdd) return
-    const { pool, departmentId, fromNodeId, side, autoCond, ask } = laneAdd
+    const { pool, departmentId, fromNodeId, fromX, fromY, side, autoCond, ask } = laneAdd
     setLaneAdd(null)
     const isArea = kind === 'subprocess' // no containers in a swimlane; only sub-process is an area
+    // Place the new step right beside the node you're continuing from, in the direction of the
+    // exit dot you clicked — so inserting a step between two nodes lands it next to the source,
+    // not off at the far end of the flow. Nudge past anything already sitting on that spot.
+    let pos: { position_x: number; position_y: number } | null = null
+    if (fromNodeId != null && fromX != null && fromY != null) {
+      let px = fromX, py = fromY
+      if (side === 'bottom') py = fromY + 140
+      else if (side === 'top') py = fromY - 140
+      else if (side === 'left') px = fromX - 240
+      else px = fromX + 240 // right (default): continue to the right
+      const horizontal = side !== 'top' && side !== 'bottom'
+      const occupied = (x: number, y: number) => (flow?.nodes ?? []).some((nd) => Math.abs(nd.position_x - x) < 60 && Math.abs(nd.position_y - y) < 50)
+      for (let i = 0; occupied(px, py) && i < 20; i++) { if (horizontal) px += 60; else py += 140 }
+      pos = { position_x: Math.round(px), position_y: Math.round(py) }
+    }
     try {
       const created = await processHierarchyApi.createNode(orgId, mapId, {
         parent_node_id: parentId, kind, name: `New ${KIND_META[kind].label}`,
         ...(pool ? { pool } : {}), ...(departmentId ? { department_id: departmentId } : {}),
+        ...(pos ?? {}),
         ...(isArea ? { create_linked_map: true } : {}),
       })
       // Dot "add next" also draws the connection into the new node — with the branch the output
@@ -385,7 +402,7 @@ export default function ProcessMapExplorerPage() {
       // Only ask for the branch when the rule said to (a decision's very first branch).
       if (fromNodeId && newConnId && ask) setBranchPick({ mode: 'set', connId: newConnId })
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not add a step to this lane.', 'error') }
-  }, [laneAdd, orgId, mapId, parentId, refresh, addToast])
+  }, [laneAdd, orgId, mapId, parentId, refresh, addToast, flow])
 
   // Drawing a line FROM a decision to an existing node → ask Yes/No before creating it.
   // Drag a node onto another lane → set its department (Customer/Vendor have none) and keep
