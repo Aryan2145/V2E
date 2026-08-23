@@ -467,7 +467,26 @@ function Inner({
         }
         return
       }
-      onNodeDragStop(node.id, node.position.x, snappedY)
+      // Free canvas: a container (band) dropped on top of another container ties on z-index and can
+      // end up hidden behind the other's opaque frame — looking like it vanished. If it lands
+      // overlapping another top-level container, nudge it straight down until it's clear, so it's
+      // always visible where it's dropped.
+      let finalY = snappedY
+      if (node.type === 'band') {
+        const dim = (n: Node) => ({
+          w: n.width ?? (typeof n.style?.width === 'number' ? (n.style!.width as number) : 220),
+          h: n.height ?? (typeof n.style?.height === 'number' ? (n.style!.height as number) : 88),
+        })
+        const me = dim(node)
+        const x = node.position.x
+        const others = nodes.filter((n) => n.type === 'band' && n.id !== node.id && !n.id.includes('::'))
+        const overlaps = (yy: number) => others.some((o) => {
+          const od = dim(o)
+          return x < o.position.x + od.w && x + me.w > o.position.x && yy < o.position.y + od.h && yy + me.h > o.position.y
+        })
+        for (let i = 0; overlaps(finalY) && i < 200; i++) finalY += 20
+      }
+      onNodeDragStop(node.id, node.position.x, finalY)
     },
     [swimlane, flow.nodes, onReassignLane, rfNodes, setNodes, onNodeDragStop, snapAlignY, nodes, laneForCenter],
   )
