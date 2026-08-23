@@ -185,6 +185,26 @@ function Inner({
   const handleSelectionChange = useCallback(({ nodes: sel }: { nodes: Node[] }) => {
     setSelectedIds(sel.map((n) => n.id))
   }, [])
+  // Which lane does a dropped node (by its vertical centre) belong to? Forgiving: if the centre
+  // isn't strictly inside a lane but still falls within the pools' vertical span (a lane's padding,
+  // or the small gap between two pools), snap to the NEAREST lane instead of rejecting the drop.
+  // Only a drop truly BELOW every pool (or above them all) returns null — handled by the caller.
+  const laneForCenter = useCallback((cy: number): LaneBand | null => {
+    const bands = laneBandsRef.current
+    if (!bands.length) return null
+    const inside = bands.find((b) => cy >= b.yTop && cy < b.yBottom)
+    if (inside) return inside
+    const top = Math.min(...bands.map((b) => b.yTop))
+    const bottom = Math.max(...bands.map((b) => b.yBottom))
+    if (cy < top || cy > bottom) return null
+    let best: LaneBand | null = null, bestD = Infinity
+    for (const b of bands) {
+      const d = cy < b.yTop ? b.yTop - cy : cy > b.yBottom ? cy - b.yBottom : 0
+      if (d < bestD) { bestD = d; best = b }
+    }
+    return best
+  }, [])
+
   const handleSelectionDragStop = useCallback(async (_: React.MouseEvent, dragged: Node[]) => {
     if (!swimlane) {
       onNodesMove?.(dragged.map((n) => ({ id: n.id, position_x: n.position.x, position_y: n.position.y })))
@@ -203,7 +223,7 @@ function Inner({
       if (!cur) continue
       const cy = node.position.y + 48
       const newX = Math.max(CONTENT_X, Math.round(node.position.x))
-      const band = laneBandsRef.current.find((b) => cy >= b.yTop && cy < b.yBottom)
+      const band = laneForCenter(cy)
       if (band) {
         if (band.pool !== (cur.pool ?? null) || band.deptId !== (cur.department_id ?? null)) {
           reassigns.push({ id: node.id, pool: band.pool, department_id: band.deptId, position_x: newX, position_y: node.position.y })
@@ -223,7 +243,7 @@ function Inner({
     // re-snap the dragged nodes back to their computed spots. Any persist triggers a rebuild that
     // already resets every node.
     if (!moves.length && !reassigns.length) setNodes(rfNodes)
-  }, [swimlane, flow.nodes, onNodesMove, onNodesReassign, setNodes, rfNodes])
+  }, [swimlane, flow.nodes, onNodesMove, onNodesReassign, setNodes, rfNodes, laneForCenter])
   const clearSelection = useCallback(() => {
     setNodes((nds) => nds.map((n) => (n.selected ? { ...n, selected: false } : n)))
     setSelectedIds([])
@@ -423,7 +443,7 @@ function Inner({
         // Which lane did it land in (by the node's vertical centre)?
         const cy = snappedY + (node.height ?? 96) / 2
         const newX = Math.max(CONTENT_X, Math.round(node.position.x))
-        const band = laneBandsRef.current.find((b) => cy >= b.yTop && cy < b.yBottom)
+        const band = laneForCenter(cy)
         const cur = flow.nodes.find((n) => n.id === node.id)
         if (!cur) { setNodes(rfNodes); return }
         if (band) {
@@ -449,7 +469,7 @@ function Inner({
       }
       onNodeDragStop(node.id, node.position.x, snappedY)
     },
-    [swimlane, flow.nodes, onReassignLane, rfNodes, setNodes, onNodeDragStop, snapAlignY, nodes],
+    [swimlane, flow.nodes, onReassignLane, rfNodes, setNodes, onNodeDragStop, snapAlignY, nodes, laneForCenter],
   )
   const handleConnect = useCallback(
     (c: Connection) => {

@@ -18,6 +18,7 @@ export const CONTENT_X = POOL_LABEL_W + LANE_LABEL_W + 20 // left edge of conten
 const COL_GAP = 56
 const ROW_H = 112 // height of a lane's single row (all steps sit on one line; no row-dropping)
 const BAND_PAD = 14 // vertical padding inside a lane band
+const LANE_BOTTOM_ROOM = 92 // extra room below a lane's last row so a new step can be dropped underneath and still land IN the lane
 const NODE_H = 96 // baseline (min) wrapper height for a step; taller content (checklist/docs) grows it
 const RIGHT_PAD = 80
 const LOOSE_GAP = 44 // gap below the pools where lane-less steps sit
@@ -280,7 +281,7 @@ export function buildSwimlane(
     const min = Math.min(...ids.map((id) => rawY.get(id)!))
     const maxB = Math.max(...ids.map((id) => rawY.get(id)! + estStepHeight(nodeById.get(id)!)))
     laneMinY.set(b.key, min)
-    laneHeight.set(b.key, (maxB - min) + 2 * BAND_PAD)
+    laneHeight.set(b.key, (maxB - min) + 2 * BAND_PAD + LANE_BOTTOM_ROOM)
   }
   const laneTop = new Map<string, number>()
   let stackY = 0
