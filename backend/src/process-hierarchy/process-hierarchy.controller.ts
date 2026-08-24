@@ -16,7 +16,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { PermissionAction } from '@prisma/client';
+import { PermissionAction, ProcessPool } from '@prisma/client';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { OrgScopeGuard } from '../common/guards/org-scope.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
@@ -30,7 +30,7 @@ import { ProcessHierarchyService } from './process-hierarchy.service';
 import { CreateMapDto, UpdateMapDto } from './dto/map.dto';
 import { BulkPositionDto, CreateNodeDto, PasteNodesDto, UpdateNodeDto } from './dto/node.dto';
 import { CreateConnectionDto, UpdateConnectionDto } from './dto/connection.dto';
-import { CreateLaneDto, ReassignLaneDto } from './dto/lane.dto';
+import { CreateLaneDto, ReassignLaneDto, ReorderLanesDto, PoolOrderDto } from './dto/lane.dto';
 import { CreateArtifactDto, CreateMaterialDto, LinkArtifactDto, UpdateArtifactDto } from './dto/artifact.dto';
 import { AddAccessRuleDto } from './dto/access.dto';
 import { CreateSnapshotDto, RestoreStateDto } from './dto/snapshot.dto';
@@ -226,6 +226,20 @@ export class ProcessHierarchyController {
   @ApiOperation({ summary: 'Create an (empty) swimlane for a department in a level' })
   createLane(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: CreateLaneDto) {
     return this.service.createLane(orgId, principalFromUser(req.user), mapId, dto);
+  }
+
+  @Patch('maps/:mapId/lanes-order')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Reorder the department lanes at a level (top→bottom)' })
+  reorderLanes(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: ReorderLanesDto) {
+    return this.service.reorderLanes(orgId, principalFromUser(req.user), mapId, dto.parent_node_id ?? null, dto.lane_ids);
+  }
+
+  @Patch('maps/:mapId/pool-order')
+  @RequirePermission(LEAF, PermissionAction.edit)
+  @ApiOperation({ summary: 'Reorder the pools (customer/company/vendor) at a level (top→bottom)' })
+  setPoolOrder(@Param('orgId') orgId: string, @Param('mapId') mapId: string, @Request() req: any, @Body() dto: PoolOrderDto) {
+    return this.service.setPoolOrder(orgId, principalFromUser(req.user), mapId, dto.parent_node_id ?? null, dto.pools as ProcessPool[]);
   }
 
   @Patch('maps/:mapId/lanes/:laneId')

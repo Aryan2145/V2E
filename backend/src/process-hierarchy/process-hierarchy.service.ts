@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { ProcessAccessKind, ProcessAccessLevel, ProcessNodeKind, ProcessNodeStatus, ProcessPool, ProcessLaneOrigin } from '@prisma/client';
+import { Prisma, ProcessAccessKind, ProcessAccessLevel, ProcessNodeKind, ProcessNodeStatus, ProcessPool, ProcessLaneOrigin } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { R2Service } from '../storage/r2.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -321,6 +321,15 @@ export class ProcessHierarchyService {
       sort_order: l.sort_order,
     }));
 
+    // Stored pool order for THIS level (customer/company/vendor top→bottom); null → default order.
+    const poolOrderRow = await this.prisma.processMap.findFirst({ where: { id: mapId }, select: { pool_order: true } });
+    const poolOrderAll =
+      poolOrderRow?.pool_order && typeof poolOrderRow.pool_order === 'object' && !Array.isArray(poolOrderRow.pool_order)
+        ? (poolOrderRow.pool_order as Record<string, unknown>)
+        : {};
+    const poolOrderLevel = poolOrderAll[parentNodeId ?? 'root'];
+    const pool_order: string[] | null = Array.isArray(poolOrderLevel) ? (poolOrderLevel as string[]) : null;
+
     // Renderer family for THIS level: the container's chart_type, or the map's at the root.
     const levelChartType = parent
       ? ((parent as { chart_type?: string }).chart_type ?? 'swimlane')
@@ -342,6 +351,7 @@ export class ProcessHierarchyService {
       })),
       connections,
       lanes,
+      pool_order,
     };
   }
 
@@ -565,10 +575,14 @@ export class ProcessHierarchyService {
     });
   }
 
-  // Remove an AUTO lane once its last node leaves. Manual lanes are left alone (kept on purpose).
+  // Remove a lane once its last node LEAVES it (a node moved to another lane, left the Company pool,
+  // changed level, or was deleted). Called only from those paths — so an emptied lane vanishes
+  // regardless of origin, which is what people expect ("no steps left → the band should go"). A
+  // freshly created empty lane ("New swimlane", to fill later) never triggers this, so it survives;
+  // getFlow's lazy read-time prune stays auto-only to protect that just-created case.
   private async cleanupAutoLane(orgId: string, mapId: string, parentNodeId: string | null, departmentId: string) {
     const lane = await this.prisma.processLane.findFirst({
-      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null, department_id: departmentId, origin: ProcessLaneOrigin.auto },
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null, department_id: departmentId },
       select: { id: true },
     });
     if (!lane) return;
@@ -688,6 +702,49 @@ export class ProcessHierarchyService {
       await this.prisma.processLane.update({ where: { id: lane.id }, data: { department_id: newDepartmentId } });
     }
     return { updated: moved.count };
+  }
+
+  // Set the top→bottom order of the department lanes at a level. Steps ride along with their lane
+  // (they're positioned lane-relative), so this only changes the visual arrangement — nothing moves
+  // between lanes and nothing is deleted. Ids not belonging to this level are ignored; any lane the
+  // client omitted is appended so no lane loses its place.
+  async reorderLanes(orgId: string, principal: Principal, mapId: string, parentNodeId: string | null, laneIds: string[]) {
+    if (parentNodeId) await this.access.assertCanEditNode(orgId, principal, parentNodeId);
+    else await this.access.assertCanEditMap(orgId, principal, mapId);
+    const lanes = await this.prisma.processLane.findMany({
+      where: { organization_id: orgId, map_id: mapId, parent_node_id: parentNodeId ?? null },
+      select: { id: true },
+    });
+    const known = new Set(lanes.map((l) => l.id));
+    const seen = new Set<string>();
+    const ordered = laneIds.filter((id) => known.has(id) && !seen.has(id) && (seen.add(id), true));
+    for (const l of lanes) if (!seen.has(l.id)) ordered.push(l.id);
+    await this.prisma.$transaction(
+      ordered.map((id, i) => this.prisma.processLane.update({ where: { id }, data: { sort_order: i } })),
+    );
+    return { success: true };
+  }
+
+  // Set the top→bottom order of the pools (customer/company/vendor) at a level. Stored per level on
+  // the map's pool_order JSON (keyed by parent_node_id or "root"); an unset level falls back to the
+  // default customer→company→vendor. Purely visual — no step or lane changes.
+  async setPoolOrder(orgId: string, principal: Principal, mapId: string, parentNodeId: string | null, pools: ProcessPool[]) {
+    if (parentNodeId) await this.access.assertCanEditNode(orgId, principal, parentNodeId);
+    else await this.access.assertCanEditMap(orgId, principal, mapId);
+    const map = await this.prisma.processMap.findFirst({
+      where: { id: mapId, organization_id: orgId, is_deleted: false },
+      select: { pool_order: true },
+    });
+    if (!map) throw new NotFoundException('Map not found');
+    const levelKey = parentNodeId ?? 'root';
+    const current: Record<string, unknown> =
+      map.pool_order && typeof map.pool_order === 'object' && !Array.isArray(map.pool_order)
+        ? { ...(map.pool_order as Record<string, unknown>) }
+        : {};
+    const valid = pools.filter((p, i) => Object.values(ProcessPool).includes(p) && pools.indexOf(p) === i);
+    current[levelKey] = valid;
+    await this.prisma.processMap.update({ where: { id: mapId }, data: { pool_order: current as Prisma.InputJsonValue } });
+    return { success: true };
   }
 
   async getNode(orgId: string, principal: Principal, mapId: string, nodeId: string) {

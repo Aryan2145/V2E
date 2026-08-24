@@ -6,6 +6,7 @@
 // lane, so new steps land to the RIGHT of existing ones, never stacked underneath. Columns
 // still respect the flow order (longest-path depth) so connected steps read left→right and
 // downstream steps sit further right. Connections within a pool are solid; across pools dotted.
+import type React from 'react'
 import { type Edge, type Node } from 'reactflow'
 import type { FlowLevel, ProcessNode, ProcessPool } from '@/lib/api/process-hierarchy'
 import type { ProcessNodeData, SwimlaneBandData } from './nodes'
@@ -44,6 +45,11 @@ export interface SwimlaneOpts {
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void
   // Rename a lane = re-point it at a different department (its steps move with it).
   onRenameLane?: (laneId: string, departmentId: string, currentName: string) => void
+  // Drag a lane's grip to reorder it among the department lanes; drag a pool's grip to reorder pools.
+  // The identifier is the lane's DEPARTMENT id (matches the band DOM key); the canvas maps it back
+  // to lane ids when it saves the new order.
+  onLaneReorderStart?: (e: React.PointerEvent, departmentId: string) => void
+  onPoolReorderStart?: (e: React.PointerEvent, pool: ProcessPool) => void
 }
 
 interface Band { key: string; variant: 'pool' | 'lane'; label: string; pool: ProcessPool; deptId: string | null; laneId?: string }
@@ -189,14 +195,26 @@ export function buildSwimlane(
   }
   const xOf = (id: string) => xFinal.get(id) ?? CONTENT_X
 
-  // ── Bands, top→bottom (Customer · Company lanes · Vendor). No "Unassigned" band. ──
-  const bands: Band[] = []
-  if (steps.some((n) => n.pool === 'customer')) bands.push({ key: 'pool:customer', variant: 'pool', label: 'Customer', pool: 'customer', deptId: null })
-  const companyStart = bands.length
+  // ── Bands, top→bottom. Pool order follows the stored pool_order for this level (fall back to the
+  // conventional Customer · Company · Vendor); department lanes within Company keep their sort_order.
+  // No "Unassigned" band. ──
+  const hasCustomer = steps.some((n) => n.pool === 'customer')
+  const hasVendor = steps.some((n) => n.pool === 'vendor')
   const hasCompany = flow.lanes.length > 0 || steps.some((n) => n.pool === 'company')
-  if (hasCompany) for (const lane of flow.lanes) bands.push({ key: 'lane:' + lane.department_id, variant: 'lane', label: lane.department_name, pool: 'company', deptId: lane.department_id, laneId: lane.id })
-  const companyEnd = bands.length
-  if (steps.some((n) => n.pool === 'vendor')) bands.push({ key: 'pool:vendor', variant: 'pool', label: 'Vendor', pool: 'vendor', deptId: null })
+  const poolGroup: Record<ProcessPool, Band[]> = {
+    customer: hasCustomer ? [{ key: 'pool:customer', variant: 'pool', label: 'Customer', pool: 'customer', deptId: null }] : [],
+    company: hasCompany ? flow.lanes.map((lane) => ({ key: 'lane:' + lane.department_id, variant: 'lane' as const, label: lane.department_name, pool: 'company' as ProcessPool, deptId: lane.department_id, laneId: lane.id })) : [],
+    vendor: hasVendor ? [{ key: 'pool:vendor', variant: 'pool', label: 'Vendor', pool: 'vendor', deptId: null }] : [],
+  }
+  const DEFAULT_POOL_ORDER: ProcessPool[] = ['customer', 'company', 'vendor']
+  const storedOrder = (flow.pool_order ?? []).filter((p): p is ProcessPool => p === 'customer' || p === 'company' || p === 'vendor')
+  const poolOrder = [...storedOrder, ...DEFAULT_POOL_ORDER.filter((p) => !storedOrder.includes(p))]
+  const bands: Band[] = []
+  let companyStart = 0, companyEnd = 0
+  for (const pool of poolOrder) {
+    if (pool === 'company') { companyStart = bands.length; bands.push(...poolGroup.company); companyEnd = bands.length }
+    else bands.push(...poolGroup[pool])
+  }
 
   // A lane is as many rows tall as its deepest branch needs (≥1).
   const byBand = new Map<string, string[]>()
@@ -336,7 +354,10 @@ export function buildSwimlane(
       id: 'band::pool:company', type: 'swimlane', position: { x: 0, y: top },
       draggable: false, selectable: false, zIndex: 0,
       style: { width: totalWidth, height: bottom - top, pointerEvents: 'none' },
-      data: { label: 'Company', variant: 'pool' } as SwimlaneBandData,
+      data: {
+        label: 'Company', variant: 'pool',
+        onReorderStart: opts.onPoolReorderStart ? (e) => opts.onPoolReorderStart!(e, 'company') : undefined,
+      } as SwimlaneBandData,
     })
   }
   const laneBands: LaneBand[] = []
@@ -354,6 +375,9 @@ export function buildSwimlane(
         onRename: b.variant === 'lane' && b.laneId && b.deptId && opts.onRenameLane
           ? () => opts.onRenameLane!(b.laneId!, b.deptId!, b.label)
           : undefined,
+        onReorderStart: isLane
+          ? (b.deptId && opts.onLaneReorderStart ? (e) => opts.onLaneReorderStart!(e, b.deptId!) : undefined)
+          : (opts.onPoolReorderStart ? (e) => opts.onPoolReorderStart!(e, b.pool) : undefined),
       } as SwimlaneBandData,
     })
     // offset = how much a stored (lane-relative) y is shifted to get the rendered y, i.e.

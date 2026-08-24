@@ -3855,6 +3855,10 @@ model ProcessMap {
   // Renderer family for this map's root level. String (not enum) so new chart types —
   // org, mindmap, … — are just a new value + renderer, with no DB migration. Default swimlane.
   chart_type         String    @default("swimlane")
+  // Top→bottom order of the pools (customer/company/vendor) per level, keyed by parent_node_id
+  // (or "root"): { "root": ["customer","company","vendor"], "<nodeId>": [...] }. Null/absent key =
+  // the default customer→company→vendor. Department-lane order lives on ProcessLane.sort_order.
+  pool_order         Json?
   description        String?   @db.Text
   // Composition tree: a map can live under another (an area built inside a bigger
   // map). null = top level. Drives the searchable tree list.

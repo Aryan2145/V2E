@@ -101,6 +101,7 @@ export interface FlowLevel {
   nodes: ProcessNode[]
   connections: ProcessConnection[]
   lanes: ProcessLane[] // Company-pool department bands for this level (top→bottom)
+  pool_order?: string[] | null // stored top→bottom pool order for this level; null = default customer→company→vendor
 }
 
 export interface TreeNode {
@@ -327,6 +328,12 @@ export const processHierarchyApi = {
   },
   reassignLane: async (orgId: string, mapId: string, laneId: string, departmentId: string): Promise<{ updated: number }> =>
     unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/lanes/${laneId}`, { department_id: departmentId })),
+  // Reorder the department lanes at a level (top→bottom), by lane id.
+  reorderLanes: async (orgId: string, mapId: string, laneIds: string[], parentNodeId?: string | null): Promise<{ success: boolean }> =>
+    unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/lanes-order`, { lane_ids: laneIds, parent_node_id: parentNodeId ?? null })),
+  // Reorder the pools (customer/company/vendor) at a level (top→bottom).
+  setPoolOrder: async (orgId: string, mapId: string, pools: ProcessPool[], parentNodeId?: string | null): Promise<{ success: boolean }> =>
+    unwrap(await apiClient.patch(`${base(orgId)}/maps/${mapId}/pool-order`, { pools, parent_node_id: parentNodeId ?? null })),
 
   // Artifacts
   listArtifacts: async (orgId: string, mapId: string): Promise<ProcessArtifact[]> =>

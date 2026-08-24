@@ -314,6 +314,20 @@ export default function ProcessMapExplorerPage() {
       addToast(`Lane changed — ${updated} step${updated !== 1 ? 's' : ''} moved.`, 'success')
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not change the lane.', 'error') }
   }, [laneRename, orgId, mapId, refresh, addToast])
+  // Drag a lane's grip → persist the new top→bottom order of the department lanes.
+  const onReorderLanes = useCallback(async (laneIds: string[]) => {
+    try {
+      await processHierarchyApi.reorderLanes(orgId, mapId, laneIds, parentId)
+      await refresh()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not reorder the lanes.', 'error') }
+  }, [orgId, mapId, parentId, refresh, addToast])
+  // Drag a pool's grip → persist the new top→bottom order of the pools.
+  const onReorderPools = useCallback(async (pools: ProcessPool[]) => {
+    try {
+      await processHierarchyApi.setPoolOrder(orgId, mapId, pools, parentId)
+      await refresh()
+    } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not reorder the pools.', 'error') }
+  }, [orgId, mapId, parentId, refresh, addToast])
   // Remove the lane outright (only offered when it's empty).
   const removeLane = useCallback(async () => {
     const lr = laneRename
@@ -827,6 +841,8 @@ export default function ProcessMapExplorerPage() {
             swimlane={swimlane}
             onAddInLane={openLaneAdd}
             onRenameLane={onRenameLane}
+            onReorderLanes={onReorderLanes}
+            onReorderPools={onReorderPools}
             onAppendFromNode={appendFromNode}
             onDecisionConnect={onDecisionConnect}
             onReassignLane={reassignLane}

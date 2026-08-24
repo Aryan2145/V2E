@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 import { Handle, Position, type NodeProps } from 'reactflow'
-import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote, ListChecks, Square, Plus } from 'lucide-react'
+import { Play, Flag, ExternalLink, ChevronRight, Pencil, FileText, Maximize2, Minimize2, Folder, Link2, StickyNote, ListChecks, Square, Plus, GripVertical } from 'lucide-react'
 import type { ProcessNodeKind, DiffChangeKind, ProcessArtifactContentType } from '@/lib/api/process-hierarchy'
 import { KIND_META } from './kind-meta'
 import Tooltip from '@/components/ui/Tooltip'
@@ -246,7 +246,7 @@ function NoteNode({ data }: NodeProps<ProcessNodeData>) {
 // ─── Swimlane band: a pool or a department lane, drawn behind the steps. The label
 // runs vertically down the left strip (like the reference BPMN diagram). Non-interactive
 // (pointer-events off in the layout) so panning/clicking passes through to the canvas. ──
-export interface SwimlaneBandData { label: string; variant: 'pool' | 'lane'; onAdd?: () => void; onRename?: () => void }
+export interface SwimlaneBandData { label: string; variant: 'pool' | 'lane'; onAdd?: () => void; onRename?: () => void; onReorderStart?: (e: React.PointerEvent) => void }
 function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
   const isPool = data.variant === 'pool'
   return (
@@ -259,9 +259,25 @@ function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
       }}
     >
       <div
-        className="absolute left-0 top-0 bottom-0 flex items-center justify-center border-r"
-        style={{ width: 30, borderColor: isPool ? '#CBD5E1' : '#E2E8F0' }}
+        className="absolute left-0 top-0 bottom-0 flex flex-col items-center border-r"
+        style={{ width: 30, borderColor: isPool ? '#CBD5E1' : '#E2E8F0', paddingTop: 6, gap: 4 }}
       >
+        {/* Drag grip: reorder this lane among the department lanes, or this pool among the pools. */}
+        {data.onReorderStart && (
+          <Tooltip label={isPool ? 'Drag to reorder this pool' : 'Drag to reorder this lane'}>
+            <button
+              type="button"
+              aria-label={isPool ? 'Reorder pool' : 'Reorder lane'}
+              onPointerDown={(e) => { e.stopPropagation(); data.onReorderStart!(e) }}
+              onClick={(e) => e.stopPropagation()}
+              className="nodrag inline-flex items-center justify-center rounded text-[#64748B] hover:text-[#2563EB] hover:bg-[#EFF6FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2563EB]"
+              style={{ pointerEvents: 'auto', cursor: 'grab', width: 20, height: 20, touchAction: 'none' }}
+            >
+              <GripVertical size={14} />
+            </button>
+          </Tooltip>
+        )}
+        <div className="flex-1 flex items-center justify-center min-h-0">
         {data.onRename ? (
           // Click the lane's name to re-point it at a different department (its steps move with it).
           <Tooltip label="Change this lane's department">
@@ -282,6 +298,7 @@ function SwimlaneBandNode({ data }: NodeProps<SwimlaneBandData>) {
             {data.label}
           </span>
         )}
+        </div>
       </div>
       {/* Per-lane add (top-right): the band itself is click-through (pointer-events off in the
           layout), but this button re-enables pointer events. It opens a picker for WHAT to add. */}

@@ -24,6 +24,7 @@ import ReactFlow, {
   type EdgeMouseHandler,
 } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { createPortal } from 'react-dom'
 import { Trash2, X, Maximize2, Minimize2, Copy } from 'lucide-react'
 import { nodeTypes, type ProcessNodeData } from './nodes'
 import FloatingEdge, { FloatingStepEdge } from './floating-edge'
@@ -43,6 +44,8 @@ interface Props {
   swimlane?: boolean // render the pool/lane layout instead of the free-form canvas
   onAddInLane?: (pool: ProcessPool, departmentId: string | null) => void // lane "+" in swimlane view
   onRenameLane?: (laneId: string, departmentId: string, currentName: string) => void // click a lane name → change its department
+  onReorderLanes?: (laneIds: string[]) => void | Promise<void> // drag a lane's grip → new top→bottom order of department lanes
+  onReorderPools?: (pools: ProcessPool[]) => void | Promise<void> // drag a pool's grip → new top→bottom order of pools
   onAppendFromNode?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => void // click a node's exit dot → append a connected step
   onDecisionConnect?: (source: string, target: string, sourceSide?: string, targetSide?: string) => void // drag FROM a decision → choose Yes/No in a pop-up
   onReassignLane?: (nodeId: string, pool: ProcessPool | null, departmentId: string | null, positionX: number) => void // drag a node onto another lane → change its pool/department (null pool = dropped in the no-lane area)
@@ -97,7 +100,7 @@ const FIT_OPTIONS = { padding: 0.2, minZoom: 0.6, maxZoom: 1, duration: 300 }
 const LOD_THRESHOLD = 0.5
 
 function Inner({
-  flow, canEdit, swimlane = false, onAddInLane, onRenameLane, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
+  flow, canEdit, swimlane = false, onAddInLane, onRenameLane, onReorderLanes, onReorderPools, onAppendFromNode, onDecisionConnect, onReassignLane, selectedNodeId, visibleNodeIds, diffStatus,
   onSelectNode, onDrill, onConnect, onNodeDragStop, onUpdateConnection, onDeleteConnection,
   onNodesMove, onNodesReassign, onDeleteNodes, topRightExtra, loadFlowAt, onOpenMap, onOpenDoc, spawnCenterRef, autoPositionsRef, onCopyNodes, onPaste, exportPngRef,
 }: Props) {
@@ -133,10 +136,60 @@ function Inner({
   // swimlane layout (pools + department lanes) when the Swimlane view is on.
   const metaRef = useRef<NodeMeta>({})
   const laneBandsRef = useRef<LaneBand[]>([])
+
+  // ── Reorder swimlanes / pools by dragging a band's grip. Track the pointer over the band DOM
+  // rects; on release, persist the new top→bottom order. A thin blue line marks the drop slot. ──
+  const [reorderDrag, setReorderDrag] = useState<{ kind: 'lane' | 'pool'; indicatorY: number | null } | null>(null)
+  const bandRects = useCallback((kind: 'lane' | 'pool') => {
+    const rectOf = (el: HTMLElement) => { const r = el.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, mid: r.top + r.height / 2 } }
+    const out: { key: string; top: number; bottom: number; mid: number }[] = []
+    for (const el of Array.from(document.querySelectorAll<HTMLElement>('.react-flow__node'))) {
+      const id = el.getAttribute('data-id') || ''
+      if (kind === 'lane') { if (id.startsWith('band::lane:')) out.push({ key: id.slice('band::lane:'.length), ...rectOf(el) }) }
+      else if (id === 'band::pool:customer') out.push({ key: 'customer', ...rectOf(el) })
+      else if (id === 'band::pool:company') out.push({ key: 'company', ...rectOf(el) })
+      else if (id === 'band::pool:vendor') out.push({ key: 'vendor', ...rectOf(el) })
+    }
+    return out.sort((a, b) => a.top - b.top)
+  }, [])
+  const beginReorder = useCallback((e: React.PointerEvent, kind: 'lane' | 'pool', id: string) => {
+    if (!canEdit) return
+    e.preventDefault(); e.stopPropagation()
+    const dropSlotTop = (clientY: number) => {
+      const all = bandRects(kind)
+      let idx = all.length
+      for (let i = 0; i < all.length; i++) { if (clientY < all[i].mid) { idx = i; break } }
+      return idx < all.length ? all[idx].top : (all[all.length - 1]?.bottom ?? clientY)
+    }
+    setReorderDrag({ kind, indicatorY: null })
+    const move = (ev: PointerEvent) => setReorderDrag({ kind, indicatorY: dropSlotTop(ev.clientY) })
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move)
+      setReorderDrag(null)
+      const rects = bandRects(kind).filter((r) => r.key !== id)
+      let insert = rects.length
+      for (let i = 0; i < rects.length; i++) { if (ev.clientY < rects[i].mid) { insert = i; break } }
+      const order = rects.map((r) => r.key); order.splice(insert, 0, id)
+      if (kind === 'lane') {
+        const laneByDept = new Map(flow.lanes.map((l) => [l.department_id, l.id]))
+        const laneIds = order.map((d) => laneByDept.get(d)).filter((x): x is string => !!x)
+        if (laneIds.length) onReorderLanes?.(laneIds)
+      } else {
+        onReorderPools?.(order as ProcessPool[])
+      }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up, { once: true })
+  }, [canEdit, bandRects, flow.lanes, onReorderLanes, onReorderPools])
+  const onLaneReorderStart = useCallback((e: React.PointerEvent, departmentId: string) => beginReorder(e, 'lane', departmentId), [beginReorder])
+  const onPoolReorderStart = useCallback((e: React.PointerEvent, pool: string) => beginReorder(e, 'pool', pool), [beginReorder])
+
   const { rfNodes, rfEdges } = useMemo(() => {
     if (swimlane) {
       const built = buildSwimlane(flow, {
         selectedNodeId, canEdit, diffStatus: diffStatus ?? null, onEdit: onSelectNode, onAddInLane, onRenameLane,
+        onLaneReorderStart: canEdit ? onLaneReorderStart : undefined,
+        onPoolReorderStart: canEdit ? onPoolReorderStart : undefined,
       })
       metaRef.current = built.meta
       laneBandsRef.current = built.laneBands
@@ -151,7 +204,7 @@ function Inner({
     })
     metaRef.current = built.meta
     return { rfNodes: built.nodes, rfEdges: built.edges }
-  }, [swimlane, onAddInLane, onRenameLane, flow, childFlows, expandedIds, canEdit, selectedNodeId, diffStatus, visibleNodeIds, onSelectNode, toggleExpand, onOpenDoc, lodCollapse])
+  }, [swimlane, onAddInLane, onRenameLane, onLaneReorderStart, onPoolReorderStart, flow, childFlows, expandedIds, canEdit, selectedNodeId, diffStatus, visibleNodeIds, onSelectNode, toggleExpand, onOpenDoc, lodCollapse])
 
   useEffect(() => { setNodes(rfNodes) }, [rfNodes, setNodes])
   useEffect(() => { setEdges(rfEdges) }, [rfEdges, setEdges])
@@ -661,6 +714,18 @@ function Inner({
         </div>
       )}
     </ReactFlow>
+
+    {/* Drop-slot indicator while dragging a lane/pool grip to reorder. */}
+    {reorderDrag?.indicatorY != null && typeof document !== 'undefined' && createPortal(
+      (() => {
+        const pane = document.querySelector('.react-flow')?.getBoundingClientRect()
+        if (!pane) return null
+        return (
+          <div style={{ position: 'fixed', left: pane.left, width: pane.width, top: reorderDrag.indicatorY - 1.5, height: 0, borderTop: '3px solid #2563EB', boxShadow: '0 0 0 1px rgba(37,99,235,0.25)', zIndex: 60, pointerEvents: 'none' }} />
+        )
+      })(),
+      document.body,
+    )}
 
     <ConfirmDialog
       open={confirmDelMany}
