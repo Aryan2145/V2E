@@ -340,10 +340,12 @@ export default function ProcessMapExplorerPage() {
     } catch (e: any) { addToast(e?.response?.data?.message ?? 'Could not remove the lane.', 'error') }
   }, [laneRename, orgId, mapId, refresh, addToast])
 
-  // Output rules: a decision has exactly one Yes + one No; every other step has a single output.
-  // Returns whether another output is allowed, and — for a decision — which branch this one is
-  // (auto-picking the remaining branch) or whether to ask (first branch, none chosen yet).
-  const outputRuleFor = useCallback((sourceId: string): { ok: boolean; reason?: string; condition?: ProcessConditionKind; ask?: boolean } => {
+  // Output rules: a decision has exactly one Yes + one No. Every other step can fan out from each
+  // FREE connector point — a point (a node side) is in use once a line attaches to it (this step's
+  // outgoing source_side OR an incoming target_side), so a step may lead to several next steps as
+  // long as there's a free dot. Returns whether another output is allowed and — for a decision —
+  // which branch this is (auto-picking the remaining one) or whether to ask (first branch).
+  const outputRuleFor = useCallback((sourceId: string, sourceSide?: string): { ok: boolean; reason?: string; condition?: ProcessConditionKind; ask?: boolean } => {
     const src = flow?.nodes.find((n) => n.id === sourceId)
     if (!flow || !src) return { ok: false, reason: 'Could not find that step.' }
     const outs = flow.connections.filter((c) => c.source_node_id === sourceId)
@@ -355,7 +357,16 @@ export default function ProcessMapExplorerPage() {
       if (hasNo) return { ok: true, condition: 'yes' }
       return { ok: true, ask: true }
     }
-    if (outs.length >= 1) return { ok: false, reason: 'This step already leads to a next step.' }
+    const usedPoints = new Set<string>()
+    for (const c of flow.connections) {
+      if (c.source_node_id === sourceId && c.source_side) usedPoints.add(c.source_side)
+      if (c.target_node_id === sourceId && c.target_side) usedPoints.add(c.target_side)
+    }
+    if (sourceSide) {
+      if (usedPoints.has(sourceSide)) return { ok: false, reason: 'That connection point is already in use — pick a free dot.' }
+      return { ok: true, condition: 'none' }
+    }
+    if (outs.length >= 4) return { ok: false, reason: 'This step already uses all four connection points.' }
     return { ok: true, condition: 'none' }
   }, [flow])
 
@@ -367,7 +378,7 @@ export default function ProcessMapExplorerPage() {
   // Click a node's exit dot: open the kind picker, remembering which node to link the new
   // step from, inheriting its pool + department.
   const appendFromNode = useCallback((nodeId: string, pool: ProcessPool | null, departmentId: string | null, sourceSide?: string) => {
-    const rule = outputRuleFor(nodeId)
+    const rule = outputRuleFor(nodeId, sourceSide)
     if (!rule.ok) { addToast(rule.reason!, 'error'); return }
     const src = flow?.nodes.find((n) => n.id === nodeId)
     setLaneAdd({ pool, departmentId, fromNodeId: nodeId, fromX: src?.position_x, fromY: src?.position_y, side: sourceSide, autoCond: rule.condition, ask: rule.ask })
@@ -442,7 +453,7 @@ export default function ProcessMapExplorerPage() {
   }, [orgId, mapId, refresh, addToast])
 
   const onDecisionConnect = useCallback((source: string, target: string, sourceSide?: string, targetSide?: string) => {
-    const rule = outputRuleFor(source)
+    const rule = outputRuleFor(source, sourceSide)
     if (!rule.ok) { addToast(rule.reason!, 'error'); return }
     if (rule.ask) { setBranchPick({ mode: 'create', source, target, side: sourceSide, tside: targetSide }); return }
     // One branch already used → this is automatically the other one; no pop-up.
@@ -495,7 +506,7 @@ export default function ProcessMapExplorerPage() {
   }, [spawnNode])
 
   const onConnect = useCallback(async (source: string, target: string, _condition: ProcessConditionKind, sourceSide?: string, targetSide?: string) => {
-    const rule = outputRuleFor(source)
+    const rule = outputRuleFor(source, sourceSide)
     if (!rule.ok) { addToast(rule.reason!, 'error'); return }
     const cond = rule.condition ?? 'none'
     try {
