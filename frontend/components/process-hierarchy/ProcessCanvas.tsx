@@ -33,7 +33,7 @@ import { buildSwimlane, CONTENT_X, type LaneBand } from './swimlane-layout'
 import StyledSelect from '@/components/ui/StyledSelect'
 import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import Tooltip from '@/components/ui/Tooltip'
-import { useFlowNav, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
+import { useFlowNav, useIsTouchDevice, CanvasScrollbars, FlowNavStyles } from '@/components/ui/flow-nav'
 
 const edgeTypes = { floating: FloatingEdge, floatingStep: FloatingStepEdge }
 import type { FlowLevel, ProcessConditionKind, ProcessConnection, DiffChangeKind, ProcessPool } from '@/lib/api/process-hierarchy'
@@ -107,6 +107,10 @@ function Inner({
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [edgeEdit, setEdgeEdit] = useState<{ conn: ProcessConnection; x: number; y: number; label: string } | null>(null)
+  // On touch (phone/iPad) nodes must NOT be draggable — a finger tap should drill/open, not drag.
+  // A node's own `draggable` flag overrides ReactFlow's nodesDraggable, so the layout builders below
+  // need this too (not just the flow-level prop).
+  const isTouch = useIsTouchDevice()
 
   // Inline expand/collapse of referenced areas (Phase-3 spike).
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
@@ -187,7 +191,7 @@ function Inner({
   const { rfNodes, rfEdges } = useMemo(() => {
     if (swimlane) {
       const built = buildSwimlane(flow, {
-        selectedNodeId, canEdit, diffStatus: diffStatus ?? null, onEdit: onSelectNode, onAddInLane, onRenameLane,
+        selectedNodeId, canEdit, isTouch, diffStatus: diffStatus ?? null, onEdit: onSelectNode, onAddInLane, onRenameLane,
         onLaneReorderStart: canEdit ? onLaneReorderStart : undefined,
         onPoolReorderStart: canEdit ? onPoolReorderStart : undefined,
       })
@@ -198,13 +202,13 @@ function Inner({
     }
     laneBandsRef.current = []
     const built = buildNested(flow, {
-      childFlows, expandedIds, currentMapId: flow.map_id, canEdit,
+      childFlows, expandedIds, currentMapId: flow.map_id, canEdit, isTouch,
       selectedNodeId, diffStatus: diffStatus ?? null, visibleNodeIds,
       onEdit: onSelectNode, onToggleExpand: toggleExpand, onOpenDoc, lodCollapse,
     })
     metaRef.current = built.meta
     return { rfNodes: built.nodes, rfEdges: built.edges }
-  }, [swimlane, onAddInLane, onRenameLane, onLaneReorderStart, onPoolReorderStart, flow, childFlows, expandedIds, canEdit, selectedNodeId, diffStatus, visibleNodeIds, onSelectNode, toggleExpand, onOpenDoc, lodCollapse])
+  }, [swimlane, onAddInLane, onRenameLane, onLaneReorderStart, onPoolReorderStart, flow, childFlows, expandedIds, canEdit, isTouch, selectedNodeId, diffStatus, visibleNodeIds, onSelectNode, toggleExpand, onOpenDoc, lodCollapse])
 
   useEffect(() => { setNodes(rfNodes) }, [rfNodes, setNodes])
   useEffect(() => { setEdges(rfEdges) }, [rfEdges, setEdges])

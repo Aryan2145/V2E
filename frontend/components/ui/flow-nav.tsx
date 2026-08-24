@@ -178,17 +178,24 @@ function useMarqueeAutoPan(nodes: Node[], enabled: boolean) {
 
 // The main hook. Call INSIDE a <ReactFlowProvider>. Spread `flowProps` onto <ReactFlow>; the
 // caller keeps ownership of its own handlers, node/edge types and zoom limits.
-export function useFlowNav(nodes: Node[], opts?: { marquee?: boolean }) {
-  // "Touch device" here = a phone/TABLET where fingers are the input (view + drill, one-finger
-  // pan, no node dragging). NOT a laptop that merely has a touchscreen — those must still drag
-  // with their mouse/trackpad. So detect the OS, not raw touch capability: iPhone/Android, or an
-  // iPad — which on iPadOS 13+ reports as a Mac with >1 touch points (a real Mac reports 0).
+// "Touch device" here = a phone/TABLET where fingers are the input (view + drill, one-finger
+// pan, no node dragging). NOT a laptop that merely has a touchscreen — those must still drag
+// with their mouse/trackpad. So detect the OS, not raw touch capability: iPhone/Android, or an
+// iPad — which on iPadOS 13+ reports as a Mac with >1 touch points (a real Mac reports 0).
+// Shared so the canvas can make per-node draggability touch-aware too (a node's own `draggable`
+// flag overrides ReactFlow's flow-level nodesDraggable, so both must honour touch).
+export function useIsTouchDevice(): boolean {
   const [isTouch, setIsTouch] = useState(false)
   useEffect(() => {
     const ua = navigator.userAgent || ''
     const macLike = navigator.platform === 'MacIntel' || /Macintosh/i.test(ua)
     setIsTouch(/iPhone|iPad|iPod|Android/i.test(ua) || (macLike && (navigator.maxTouchPoints ?? 0) > 1))
   }, [])
+  return isTouch
+}
+
+export function useFlowNav(nodes: Node[], opts?: { marquee?: boolean }) {
+  const isTouch = useIsTouchDevice()
   const marquee = !!opts?.marquee && !isTouch
 
   // Rubber-band selection auto-scrolls at the viewport edges (only in marquee mode).

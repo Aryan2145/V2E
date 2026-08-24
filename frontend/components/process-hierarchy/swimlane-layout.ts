@@ -39,6 +39,7 @@ const groupOf = (n: Pick<ProcessNode, 'pool'>): PoolGroup => (n.pool ?? 'none')
 export interface SwimlaneOpts {
   selectedNodeId: string | null
   canEdit: boolean
+  isTouch?: boolean // touch device: steps are view + drill only (never draggable), so a tap opens them
   diffStatus?: Record<string, any> | null
   onEdit: (realNodeId: string) => void
   // Add a step straight into a lane (from the lane's "+"). deptId is null for Customer/Vendor.
@@ -324,7 +325,7 @@ export function buildSwimlane(
     meta[n.id] = { mapId: flow.map_id, realId: n.id }
     nodes.push({
       id: n.id, type: 'process', position: { x: px, y: py },
-      draggable: opts.canEdit, selectable: true, zIndex: 2,
+      draggable: opts.canEdit && !opts.isTouch, selectable: true, zIndex: 2,
       // No wrapper min-height: the react-flow node hugs its real content, so the four connection
       // dots — and a line entering/leaving the top or bottom — sit exactly on the visible box's
       // edges for every node kind.

@@ -89,6 +89,7 @@ export interface NestedOpts {
   expandedIds: Set<string>
   currentMapId: string
   canEdit: boolean
+  isTouch?: boolean // touch device: nodes are view + drill only (never draggable), so a tap opens them
   selectedNodeId: string | null
   diffStatus?: Record<string, any> | null
   visibleNodeIds: Set<string> | null
@@ -220,7 +221,7 @@ function buildContent(
       nodes.push({
         id: rid, type: 'band', position: p,
         parentNode: parentId, extent: parentId ? 'parent' : undefined,
-        draggable: top && opts.canEdit, selectable: false,
+        draggable: top && opts.canEdit && !opts.isTouch, selectable: false,
         zIndex: 1000 + depth,
         style: { width: s.w, height: s.h },
         data: {
@@ -235,7 +236,7 @@ function buildContent(
       nodes.push({
         id: rid, type: 'process', position: p,
         parentNode: parentId, extent: parentId ? 'parent' : undefined,
-        draggable: top && opts.canEdit, selectable: top,
+        draggable: top && opts.canEdit && !opts.isTouch, selectable: top,
         zIndex: parentId ? 1000 + depth : undefined,
         data: {
           name: n.name, kind: n.kind, childCount: n.child_count ?? 0,
