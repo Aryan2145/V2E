@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { useRouter } from 'next/navigation'
-import { UserSquare2, BarChart2, ArrowRight, CalendarClock } from 'lucide-react'
+import { UserSquare2, BarChart2, ArrowRight, CalendarClock, CalendarDays } from 'lucide-react'
 
 interface ReportTile {
   key: string
@@ -35,6 +35,16 @@ const REPORTS: ReportTile[] = [
     href: '/dashboard/tasks/reports-new/ageing',
     Icon: CalendarClock,
     accent: '#DC2626',
+    badge: 'New',
+  },
+  {
+    key: 'calendar',
+    title: 'Monthly Task Compliance Calendar',
+    blurb:
+      'A month grid, one row per task and person — each day coloured green (on time), amber (late), red (missed) or white (not due yet). Pick any month, filter, and click a square to open the task.',
+    href: '/dashboard/tasks/reports-new/calendar',
+    Icon: CalendarDays,
+    accent: '#7C3AED',
     badge: 'New',
   },
   {

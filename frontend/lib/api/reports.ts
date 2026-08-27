@@ -6,6 +6,7 @@ import type {
   ScorecardScope,
   ScorecardWindow,
   AgeingReport,
+  CalendarReport,
 } from '@/lib/types/reports'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/reports`
@@ -55,5 +56,11 @@ export const reportsApi = {
   getAgeingReport: async (orgId: string, scope?: ScorecardScope): Promise<AgeingReport> => {
     const res = await apiClient.get(`${base(orgId)}/task-ageing${qs({ scope })}`)
     return unwrap<AgeingReport>(res)
+  },
+
+  /** Scope-aware Monthly Task Compliance Calendar (one row per task+person, one column per day). */
+  getTaskCalendar: async (orgId: string, month?: string, scope?: ScorecardScope): Promise<CalendarReport> => {
+    const res = await apiClient.get(`${base(orgId)}/task-calendar${qs({ month, scope })}`)
+    return unwrap<CalendarReport>(res)
   },
 }

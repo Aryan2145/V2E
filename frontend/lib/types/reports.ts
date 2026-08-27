@@ -175,3 +175,61 @@ export interface AgeingReport {
   applied_scope: ScorecardScope | null
   max_scope: ScorecardScope | null
 }
+
+// ─── Monthly Task Compliance Calendar ────────────────────────────────────────────
+// Mirrors the backend TaskCalendarService shapes (client "Report 3").
+
+export type DayResult = 'on_time' | 'late' | 'missed' | 'future'
+
+export interface CalendarDay {
+  day: number
+  iso: string
+  dow: string
+  weekend: boolean
+}
+
+export interface CalendarCell {
+  day: number
+  result: DayResult
+  task_id: string
+  due_date: string
+  completion_date: string | null
+  status: string | null
+}
+
+export interface CalendarRow {
+  title: string
+  person: string
+  user_id: string
+  frequency: string
+  department: string | null
+  brought_forward: number
+  scheduled: number
+  on_time: number
+  late: number
+  missed: number
+  future: number
+  cells: CalendarCell[]
+}
+
+export interface CalendarTotals {
+  rows: number
+  brought_forward: number
+  scheduled: number
+  on_time: number
+  late: number
+  missed: number
+  future: number
+}
+
+export interface CalendarReport {
+  month: string
+  month_label: string
+  as_on_date: string
+  days: CalendarDay[]
+  rows: CalendarRow[]
+  totals: CalendarTotals
+  frequencies: string[]
+  applied_scope: ScorecardScope | null
+  max_scope: ScorecardScope | null
+}
