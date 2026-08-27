@@ -48,10 +48,10 @@ const REPORTS: ReportTile[] = [
     badge: 'New',
   },
   {
-    key: 'task-performance',
-    title: 'Task Performance',
+    key: 'analytics',
+    title: 'Analytics',
     blurb:
-      'Team- and department-level completion rates, priority / category / status breakdowns. (The current Reports page.)',
+      'Organization-wide task analytics — team- and department-level completion rates and priority / category / status breakdowns.',
     href: '/dashboard/tasks/reports',
     Icon: BarChart2,
     accent: '#0891B2',

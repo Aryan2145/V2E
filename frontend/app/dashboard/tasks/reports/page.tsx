@@ -563,8 +563,8 @@ export default function ReportsPage() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
         <div>
-          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Task Reports</h1>
-          <p className="mt-1 text-[15px] text-[#475569]">Analytics and performance insights for your organization.</p>
+          <h1 className="text-[28px] font-bold text-[#0F172A] leading-tight">Analytics</h1>
+          <p className="mt-1 text-[15px] text-[#475569]">Organization-wide task analytics — completion, priority, category and status breakdowns.</p>
         </div>
 
         {/* Date range filter */}
