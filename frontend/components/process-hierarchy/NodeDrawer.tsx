@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   X, Trash2, Plus, Check, ChevronRight, Loader2, FileText, UserCircle2, Shield, ExternalLink,
@@ -40,6 +40,41 @@ const NOTE_MAX = 500 // a sticky note holds more than a name, but still bounded
 const inputCls =
   'w-full px-3 py-2 text-[14px] rounded-[8px] border border-[#CBD5E1] focus:border-[#2563EB] focus:outline-none bg-white text-[#0F172A] placeholder:text-[#94A3B8]'
 
+// Turn plain text into React nodes with any URLs (http(s):// or www.…) rendered as clickable
+// links that open in a new tab. Used to show a description so pasted links are clickable.
+function linkify(text: string): ReactNode[] {
+  const out: ReactNode[] = []
+  const re = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/g
+  let last = 0
+  let m: RegExpExecArray | null
+  let i = 0
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index))
+    // Don't swallow trailing punctuation that's clearly not part of the URL.
+    let raw = m[0]
+    const trail = raw.match(/[.,;:!?)\]]+$/)
+    let suffix = ''
+    if (trail) { suffix = trail[0]; raw = raw.slice(0, -suffix.length) }
+    const href = raw.startsWith('http') ? raw : `https://${raw}`
+    out.push(
+      <a
+        key={i++}
+        href={href}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="text-[#2563EB] underline underline-offset-2 hover:text-[#1D4ED8] break-all"
+      >
+        {raw}
+      </a>,
+    )
+    if (suffix) out.push(suffix)
+    last = m.index + m[0].length
+  }
+  if (last < text.length) out.push(text.slice(last))
+  return out
+}
+
 export default function NodeDrawer({
   orgId, mapId, nodeId, tree = [], onClose, onChanged, onDrill, onCopy,
 }: {
@@ -75,6 +110,7 @@ export default function NodeDrawer({
   const [name, setName] = useState('')
   const [kind, setKind] = useState<ProcessNodeKind>('task') // staged like every other field — only committed on Save
   const [description, setDescription] = useState('')
+  const [descEditing, setDescEditing] = useState(false) // description shows linkified text until you click to edit
   const [respUser, setRespUser] = useState<string>('')
   const [respRole, setRespRole] = useState<string>('')
   const [pool, setPool] = useState<ProcessPool | ''>('')
@@ -84,7 +120,7 @@ export default function NodeDrawer({
   const reloadNode = async () => {
     const d = await processHierarchyApi.getNode(orgId, mapId, nodeId)
     setNode(d)
-    setName(d.name); setKind(d.kind); setDescription(d.description ?? '')
+    setName(d.name); setKind(d.kind); setDescription(d.description ?? ''); setDescEditing(false)
     setRespUser(d.responsible_user_id ?? ''); setRespRole(d.responsible_role_id ?? '')
     setPool(d.pool ?? ''); setDeptId(d.department_id ?? '')
     setChecklist(d.checklist.map((c) => ({ id: c.id, text: c.text })))
@@ -422,13 +458,28 @@ export default function NodeDrawer({
               </div>
             )}
 
-            {/* Description — available for every step, Start / End markers included. */}
+            {/* Description — available for every step, Start / End markers included. Shows as
+                linkified text (pasted links are clickable, open in a new tab); click it to edit. */}
             {!isNote && (
               <div>
                 <label className="block text-xs font-medium text-[#374151] mb-1">Description</label>
-                <textarea className={`${inputCls} resize-none`} rows={3} value={description} disabled={!canEdit}
-                  placeholder={canEdit ? 'What happens in this step?' : '—'}
-                  onChange={(e) => { setDescription(e.target.value); touch() }} />
+                {canEdit && descEditing ? (
+                  <textarea autoFocus className={`${inputCls} resize-none`} rows={3} value={description}
+                    placeholder="What happens in this step?"
+                    onChange={(e) => { setDescription(e.target.value); touch() }}
+                    onBlur={() => setDescEditing(false)} />
+                ) : description.trim() ? (
+                  <div
+                    onClick={() => { if (canEdit) setDescEditing(true) }}
+                    className={`${inputCls} whitespace-pre-wrap break-words min-h-[76px] ${canEdit ? 'cursor-text' : ''}`}
+                  >{linkify(description)}</div>
+                ) : (
+                  <div
+                    onClick={() => { if (canEdit) setDescEditing(true) }}
+                    className={`${inputCls} min-h-[76px] text-[#94A3B8] ${canEdit ? 'cursor-text' : ''}`}
+                  >{canEdit ? 'What happens in this step?' : '—'}</div>
+                )}
+                {canEdit && <p className="text-[11px] text-[#64748B] mt-1">Paste a link and it becomes clickable.</p>}
               </div>
             )}
 
