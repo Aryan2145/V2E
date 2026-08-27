@@ -108,3 +108,70 @@ export interface ScorecardWindow {
   from_date?: string
   to_date?: string
 }
+
+// ─── Pending & Overdue Ageing report ─────────────────────────────────────────────
+// Mirrors the backend TaskAgeingService shapes (client "Pending and Overdue Ageing
+// Report": Person-wise + Task-wise + Pending Task List).
+
+export type AgeBucketKey =
+  | 'not_yet_due'
+  | 'd1_7'
+  | 'd8_15'
+  | 'd16_30'
+  | 'd31_60'
+  | 'd61_90'
+  | 'd90_plus'
+
+/** The seven age bands + three derived figures — one shared block per row. */
+export interface AgeBuckets {
+  not_yet_due: number
+  d1_7: number
+  d8_15: number
+  d16_30: number
+  d31_60: number
+  d61_90: number
+  d90_plus: number
+  total_pending: number      // every open entry, incl. Not Yet Due
+  over_month_late: number     // d31_60 + d61_90 + d90_plus
+  oldest_late_days: number | null
+  avg_late_days: number | null
+}
+
+export interface PersonAgeRow extends AgeBuckets {
+  user_id: string
+  name: string
+  role_title: string | null
+  department_name: string | null
+}
+
+export interface TaskAgeRow extends AgeBuckets {
+  title: string
+  frequency: string
+}
+
+export interface PendingTaskRow {
+  task_id: string
+  title: string
+  assigned_to: string
+  assigned_to_user_id: string
+  assigned_by: string | null
+  department: string | null
+  frequency: string
+  due_date: string | null
+  days_late: number | null
+  bucket: AgeBucketKey
+  bucket_label: string
+  status: 'Overdue' | 'Not Yet Due'
+}
+
+export interface AgeingReport {
+  as_on_date: string
+  people: PersonAgeRow[]
+  tasks: TaskAgeRow[]
+  pending: PendingTaskRow[]
+  totals: AgeBuckets
+  frequencies: string[]
+  list_truncated: boolean
+  applied_scope: ScorecardScope | null
+  max_scope: ScorecardScope | null
+}

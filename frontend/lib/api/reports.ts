@@ -5,6 +5,7 @@ import type {
   AllScorecardsResponse,
   ScorecardScope,
   ScorecardWindow,
+  AgeingReport,
 } from '@/lib/types/reports'
 
 const base = (orgId: string) => `/api/v1/org/${orgId}/reports`
@@ -48,5 +49,11 @@ export const reportsApi = {
       `${base(orgId)}/person-scorecards/all${qs({ scope, from_date: window.from_date, to_date: window.to_date })}`,
     )
     return unwrap<AllScorecardsResponse>(res)
+  },
+
+  /** Scope-aware Pending & Overdue Ageing report (person-wise + task-wise + pending list). */
+  getAgeingReport: async (orgId: string, scope?: ScorecardScope): Promise<AgeingReport> => {
+    const res = await apiClient.get(`${base(orgId)}/task-ageing${qs({ scope })}`)
+    return unwrap<AgeingReport>(res)
   },
 }

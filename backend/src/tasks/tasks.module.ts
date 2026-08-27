@@ -2,8 +2,10 @@ import { Module } from '@nestjs/common';
 import { TasksController } from './tasks.controller';
 import { TasksCollectiveController } from './tasks-collective.controller';
 import { PersonScorecardController } from './person-scorecard.controller';
+import { TaskAgeingController } from './task-ageing.controller';
 import { TasksService } from './tasks.service';
 import { PersonScorecardService } from './person-scorecard.service';
+import { TaskAgeingService } from './task-ageing.service';
 import { TasksAnalyticsService } from './tasks-analytics.service';
 import { TaskAttachmentsService } from './task-attachments.service';
 import { TaskImportService } from './task-import.service';
@@ -15,8 +17,8 @@ import { RecurringTasksModule } from '../recurring-tasks/recurring-tasks.module'
 
 @Module({
   imports: [WorkflowsModule, HolidaysModule, ProjectsModule, TaskMastersModule, RecurringTasksModule],
-  controllers: [TasksController, TasksCollectiveController, PersonScorecardController],
-  providers: [TasksService, TasksAnalyticsService, TaskAttachmentsService, TaskImportService, PersonScorecardService],
+  controllers: [TasksController, TasksCollectiveController, PersonScorecardController, TaskAgeingController],
+  providers: [TasksService, TasksAnalyticsService, TaskAttachmentsService, TaskImportService, PersonScorecardService, TaskAgeingService],
   exports: [TasksService, TasksAnalyticsService, TaskAttachmentsService],
 })
 export class TasksModule {}

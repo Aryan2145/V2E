@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { useRouter } from 'next/navigation'
-import { UserSquare2, BarChart2, ArrowRight } from 'lucide-react'
+import { UserSquare2, BarChart2, ArrowRight, CalendarClock } from 'lucide-react'
 
 interface ReportTile {
   key: string
@@ -25,6 +25,16 @@ const REPORTS: ReportTile[] = [
     href: '/dashboard/tasks/reports-new/person-scorecard',
     Icon: UserSquare2,
     accent: '#2563EB',
+    badge: 'New',
+  },
+  {
+    key: 'ageing',
+    title: 'Pending & Overdue Ageing',
+    blurb:
+      'Open work only — Overdue or Ongoing — bucketed by how late it is, by person and by task. Click any number to see exactly those tasks. Download the full three-sheet report.',
+    href: '/dashboard/tasks/reports-new/ageing',
+    Icon: CalendarClock,
+    accent: '#DC2626',
     badge: 'New',
   },
   {
