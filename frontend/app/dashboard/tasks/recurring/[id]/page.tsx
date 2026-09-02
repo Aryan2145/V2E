@@ -826,6 +826,33 @@ export default function RecurringDetailPage() {
             </div>
           )}
 
+          {/* CC — informational recipients; hidden when nobody is CC'd */}
+          {(template.cc_user_ids?.length ?? 0) > 0 && (
+            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
+              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#EFF6FF] border-b border-[#BFDBFE]">
+                <span className="w-2 h-2 rounded-full bg-[#2563EB]" />
+                <p className="text-[11px] font-bold text-[#2563EB] uppercase tracking-widest">CC</p>
+              </div>
+              <div className="p-4">
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {template.cc_user_ids.map((uid, i) => {
+                    // Prefer the server-resolved name — a CC'd person needn't be in the
+                    // eligible-assignee list that feeds userMap.
+                    const name = template.cc_names?.[i] ?? userMap.get(uid) ?? uid.slice(0, 8)
+                    return (
+                      <div key={uid} className="flex items-center gap-2.5">
+                        <div className={`w-7 h-7 rounded-full ${avatarColor(name)} flex items-center justify-center text-white text-[10px] font-bold shrink-0`}>
+                          {getInitials(name)}
+                        </div>
+                        <span className="text-sm text-[#0F172A] break-words">{name}</span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
            {/* Completion Mode */}
            <div className="bg-white border border-[#E2E8F0] rounded-[12px] shadow-[0_1px_3px_rgba(0,0,0,0.08)] overflow-hidden">
              <div className="flex items-center gap-2 px-4 py-2.5 bg-[#FFFBEB] border-b border-[#FDE68A]">
