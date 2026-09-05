@@ -1,46 +1,52 @@
 import {
-  IsArray,
   IsDateString,
   IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
-  ValidateNested,
+  ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { GoalCadence, GoalStatus } from '@prisma/client';
-import { GoalMeasureDto } from './create-goal.dto';
 
-/**
- * level, parent_goal_id and perspective are intentionally immutable — the cascade
- * and the "perspective set once on the annual" rule must not be re-picked.
- */
 export class UpdateGoalDto {
   @IsOptional()
   @IsString()
-  @MaxLength(250)
+  @MaxLength(300)
   title?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 
   @IsOptional()
   @IsUUID()
   owner_user_id?: string;
 
+  // Nullable: sending null clears the department.
   @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
   @IsUUID()
-  department_id?: string;
-
-  @IsOptional()
-  @IsDateString()
-  start_date?: string;
+  department_id?: string | null;
 
   @IsOptional()
   @IsDateString()
   due_date?: string;
+
+  // Nullable: sending null removes the target (and, in the service, the
+  // recorded number with it — a value with no target means nothing).
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsNumber()
+  target_value?: number | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @MaxLength(30)
+  unit?: string | null;
 
   @IsOptional()
   @IsEnum(GoalStatus)
@@ -50,15 +56,17 @@ export class UpdateGoalDto {
   @IsEnum(GoalCadence)
   review_cadence?: GoalCadence;
 
+  // When the next check-in is due. Sending it pins the date explicitly instead
+  // of letting the service re-anchor off the last check-in.
   @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => GoalMeasureDto)
-  measures?: GoalMeasureDto[];
+  @ValidateIf((_, v) => v !== null)
+  @IsDateString()
+  next_review_date?: string | null;
 }
 
 export class DeleteGoalDto {
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   reason?: string;
 }

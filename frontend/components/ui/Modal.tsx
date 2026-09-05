@@ -21,6 +21,12 @@ interface ModalProps {
    * becomes the sole scroll area, keeping headers/footers pinned.
    */
   bodyScroll?: boolean
+  /**
+   * Renders above another open Modal. Use for a nested "quick create" opened
+   * FROM a form modal, so the parent form stays visible behind it instead of
+   * being replaced (and its half-filled state stays obviously intact).
+   */
+  elevated?: boolean
 }
 
 const sizeClasses: Record<ModalSize, string> = {
@@ -36,6 +42,7 @@ export default function Modal({
   children,
   size = 'md',
   closeOnEscape = true,
+  elevated = false,
   bodyScroll = true,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null)
@@ -72,7 +79,7 @@ export default function Modal({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm"
+      className={`fixed inset-0 ${elevated ? 'z-[75]' : 'z-[60]'} flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/40 backdrop-blur-sm`}
       onClick={handleBackdropClick}
       role="dialog"
       aria-modal="true"

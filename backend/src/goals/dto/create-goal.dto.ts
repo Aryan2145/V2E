@@ -1,62 +1,25 @@
 import {
-  IsArray,
   IsDateString,
   IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
-  ValidateNested,
 } from 'class-validator';
-import { Type } from 'class-transformer';
-import { GoalCadence, GoalLevel, GoalPerspective, GoalStatus } from '@prisma/client';
-
-export class GoalMeasureDto {
-  // Present when editing an existing measure — lets the service preserve its
-  // identity (and check-in history) instead of wiping and recreating.
-  @IsOptional()
-  @IsUUID()
-  id?: string;
-
-  @IsString()
-  @MaxLength(200)
-  name!: string;
-
-  @IsString()
-  @MaxLength(100)
-  target_value!: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
-  current_value?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(50)
-  unit?: string;
-}
+import { GoalCadence, GoalStatus } from '@prisma/client';
 
 export class CreateGoalDto {
-  @IsEnum(GoalLevel)
-  level!: GoalLevel;
-
-  @IsOptional()
-  @IsUUID()
-  parent_goal_id?: string; // required for annual/quarterly, null for objective (validated in service)
-
-  @IsOptional()
-  @IsEnum(GoalPerspective)
-  perspective?: GoalPerspective; // required for annual; for quarterly defaults to the parent's; ignored for objective
-
   @IsString()
-  @MaxLength(250)
+  @MaxLength(300)
   title!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(5000)
   description?: string;
 
+  /** The single accountable person. Accountability, not access. */
   @IsUUID()
   owner_user_id!: string;
 
@@ -64,12 +27,24 @@ export class CreateGoalDto {
   @IsUUID()
   department_id?: string;
 
-  @IsOptional()
-  @IsDateString()
-  start_date?: string;
-
   @IsDateString()
   due_date!: string;
+
+  // Optional target. A goal with no target is normal — its check-in is just
+  // the traffic light and the note.
+  @IsOptional()
+  @IsNumber()
+  target_value?: number;
+
+  /** Seeds the starting number. After creation only check-ins write this. */
+  @IsOptional()
+  @IsNumber()
+  current_value?: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  unit?: string;
 
   @IsOptional()
   @IsEnum(GoalStatus)
@@ -79,9 +54,12 @@ export class CreateGoalDto {
   @IsEnum(GoalCadence)
   review_cadence?: GoalCadence;
 
+  /**
+   * When the FIRST check-in is due. Without this a rhythm silently anchors to
+   * "one interval from whenever the goal was created", which nobody can see or
+   * choose. Ignored when the cadence is `none`.
+   */
   @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => GoalMeasureDto)
-  measures?: GoalMeasureDto[];
+  @IsDateString()
+  first_check_in_date?: string;
 }

@@ -4,44 +4,57 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  DataScope,
-  GoalCadence,
-  GoalConfidence,
-  GoalLevel,
-  GoalPerspective,
-  GoalStatus,
-  PermissionAction,
-  Prisma,
-} from '@prisma/client';
+import { GoalCadence, GoalStatus, PermissionAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { SubjectEligibilityService } from '../access-rights/subject-eligibility.service';
-import { ScopeService } from '../access-rights/scope.service';
 import { AccessVisibilityService } from '../access-rights/access-visibility.service';
-import { Principal } from '../access-rights/permissions.service';
+import { ScopeService } from '../access-rights/scope.service';
+import { ClockService } from '../clock/clock.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PermissionsService, Principal } from '../access-rights/permissions.service';
+import { TERMINAL_TYPES } from '../tasks/status-phase';
 import { CreateGoalDto } from './dto/create-goal.dto';
 import { UpdateGoalDto } from './dto/update-goal.dto';
 import { CreateGoalCheckInDto } from './dto/create-check-in.dto';
+import { CreateGoalLinkDto, UpdateGoalLinkDto } from './dto/goal-link.dto';
+import { VoidCheckInDto } from './dto/void-check-in.dto';
 
-const PERSPECTIVES: GoalPerspective[] = [
-  'financial',
-  'customer',
-  'internal_process',
-  'learning_growth',
-];
+/** A goal with no cadence is flagged "not checked in for N+ days" past this. */
+export const GOAL_STALE_DAYS = 30;
+
+/** The only three values a check-in's traffic light may take. */
+export const CHECK_IN_STATUSES: GoalStatus[] = ['on_track', 'at_risk', 'off_track'];
+
+/** Statuses that mean the goal is finished — no check-ins, never chased. */
+const CLOSED_STATUSES: GoalStatus[] = ['achieved', 'closed'];
+
+/** The Projects module's permission leaf — goals only READ through it. */
+const PROJECTS_LEAF = 'projects.project.manage';
 
 export interface GoalListFilters {
-  level?: GoalLevel;
-  perspective?: GoalPerspective;
   owner_user_id?: string;
-  parent_goal_id?: string;
+  department_id?: string;
   status?: string;
   from_date?: string;
   to_date?: string;
   search?: string;
 }
 
+/**
+ * Goals — one flat entity plus a web of links.
+ *
+ * Deliberate design decisions, recorded so they don't get quietly undone:
+ *  · No levels, no parent, no cascade. `goal_links` carries all the structure.
+ *  · NOTHING is computed. A goal's number changes only when a person types it
+ *    in at a check-in — no rollup, no averaging, no percentage anywhere.
+ *  · Access is the module permission, full stop. Goals are company-wide by
+ *    design, so there is no row-level data scope on this module. Every query
+ *    is still scoped by organization_id (multi-tenant isolation is not
+ *    negotiable — see backend/AUTHORIZATION.md).
+ *  · Check-ins are immutable. A wrong one is VOIDED (kept, with a reason),
+ *    never edited or deleted.
+ */
 @Injectable()
 export class GoalsService {
   private static readonly GOALS_LEAF = 'goals';
@@ -50,99 +63,53 @@ export class GoalsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly subjects: SubjectEligibilityService,
-    private readonly scope: ScopeService,
     private readonly visibility: AccessVisibilityService,
+    private readonly scope: ScopeService,
+    private readonly permissions: PermissionsService,
+    private readonly clock: ClockService,
+    private readonly notifications: NotificationsService,
   ) {
-    this.scope.registerWiredList(GoalsService.GOALS_LEAF);
-    this.visibility.registerCounter(GoalsService.GOALS_LEAF, (orgId, userId) =>
-      this.prisma.goal.count({
-        where: {
-          organization_id: orgId,
-          is_deleted: false,
-          ...(this.visibility.whereForUser(GoalsService.GOALS_LEAF, userId) ?? {}),
-        },
-      }),
-    );
+    // Goals carry no row-level scope: anyone holding the leaf sees every goal
+    // in the org, so nothing is ever "hidden by permissions". Registering a
+    // zero counter keeps the shared access-hidden UI truthful for this module
+    // instead of reporting a phantom hidden count.
+    this.visibility.registerCounter(GoalsService.GOALS_LEAF, async () => 0);
   }
 
-  // ─── Create ───────────────────────────────────────────────────────────────
+  // ─── Create ─────────────────────────────────────────────────────────────────
   async create(orgId: string, userId: string, dto: CreateGoalDto) {
-    // Subject eligibility (fail loud): the chosen owner must be allowed to own a goal.
-    if (dto.owner_user_id) {
-      await this.subjects.assertEligible(orgId, 'goals.subject.ownable', dto.owner_user_id);
-    }
+    // Owner is accountability, not access — but it must be a person the org has
+    // marked ownable, not (say) a vendor contact.
+    await this.subjects.assertEligible(orgId, 'goals.subject.ownable', dto.owner_user_id);
 
     const dueDate = this.parseDate(dto.due_date, 'due_date');
-    const startDate = dto.start_date ? this.parseDate(dto.start_date, 'start_date') : null;
-
-    let parentGoalId: string | null = null;
-    let perspective: GoalPerspective | null = null;
-
-    if (dto.level === 'objective') {
-      if (dto.parent_goal_id) {
-        throw new BadRequestException('An objective is a top-level goal and cannot have a parent.');
-      }
-      // perspective stays null — objectives have no perspective
-    } else {
-      if (!dto.parent_goal_id) {
-        throw new BadRequestException(`A ${dto.level} goal must have a parent.`);
-      }
-      const parent = await this.findActiveOrFail(orgId, dto.parent_goal_id);
-      const requiredParentLevel: GoalLevel = dto.level === 'annual' ? 'objective' : 'annual';
-      if (parent.level !== requiredParentLevel) {
-        throw new BadRequestException(
-          `A ${dto.level} goal's parent must be a ${requiredParentLevel}.`,
-        );
-      }
-      parentGoalId = parent.id;
-
-      if (dto.level === 'annual') {
-        if (!dto.perspective) {
-          throw new BadRequestException('A goal must have a Balanced-Scorecard perspective.');
-        }
-        perspective = dto.perspective;
-      } else {
-        // quarterly — defaults to the parent goal's perspective but may be set to any other
-        perspective = dto.perspective ?? parent.perspective;
-      }
-
-      this.assertWithinParentBounds(dueDate, parent.due_date, dto.level);
-    }
-
-    this.assertNotPast(dueDate);
+    const now = await this.clock.now(orgId);
+    const cadence = dto.review_cadence ?? 'none';
 
     const goal = await this.prisma.goal.create({
       data: {
         organization_id: orgId,
-        level: dto.level,
-        parent_goal_id: parentGoalId,
-        perspective,
         title: dto.title.trim(),
-        description: dto.description ?? null,
+        description: dto.description?.trim() || null,
         owner_user_id: dto.owner_user_id,
-        department_id: dto.department_id ?? null,
-        start_date: startDate,
+        department_id: dto.department_id || null,
         due_date: dueDate,
+        target_value: this.toDecimal(dto.target_value),
+        current_value: this.toDecimal(dto.current_value),
+        unit: dto.unit?.trim() || null,
         status: dto.status ?? 'not_started',
-        review_cadence: dto.review_cadence ?? 'none',
+        review_cadence: cadence,
+        // An explicit first check-in date wins; otherwise fall back to one
+        // interval from today so a rhythm always has a concrete first date.
         next_review_date:
-          dto.review_cadence && dto.review_cadence !== 'none'
-            ? this.nextReviewDate(new Date(), dto.review_cadence)
-            : null,
+          cadence === 'none'
+            ? null
+            : dto.first_check_in_date
+              ? this.parseDate(dto.first_check_in_date, 'first_check_in_date')
+              : this.nextReviewDate(now, cadence),
         created_by_user_id: userId,
-        measures: dto.measures?.length
-          ? {
-              create: dto.measures.map((m) => ({
-                organization_id: orgId,
-                name: m.name.trim(),
-                target_value: m.target_value,
-                current_value: m.current_value ?? null,
-                unit: m.unit ?? null,
-              })),
-            }
-          : undefined,
       },
-      include: { measures: true },
+      include: this.goalInclude(),
     });
 
     await this.audit.record({
@@ -152,449 +119,250 @@ export class GoalsService {
       resource: 'goal',
       entityId: goal.id,
       entityLabel: goal.title,
-      changes: { level: { before: null, after: goal.level }, title: { before: null, after: goal.title } },
+      changes: { title: { before: null, after: goal.title } },
     });
 
-    return goal;
+    return this.shape(goal);
   }
 
-  // ─── List ─────────────────────────────────────────────────────────────────
-  async list(orgId: string, principal: Principal, filters: GoalListFilters = {}) {
+  // ─── List ───────────────────────────────────────────────────────────────────
+  async list(orgId: string, _principal: Principal, filters: GoalListFilters = {}) {
     const where: Prisma.GoalWhereInput = { organization_id: orgId, is_deleted: false };
-    const scopeWhere = await this.goalsLineOfSightWhere(orgId, principal);
-    if (Object.keys(scopeWhere).length) where.AND = [scopeWhere];
-    if (filters.level) where.level = filters.level;
-    if (filters.perspective) where.perspective = filters.perspective;
     if (filters.owner_user_id) where.owner_user_id = filters.owner_user_id;
-    if (filters.parent_goal_id) where.parent_goal_id = filters.parent_goal_id;
-    if (filters.status) where.status = filters.status as any;
+    if (filters.department_id) where.department_id = filters.department_id;
+    if (filters.status) where.status = filters.status as GoalStatus;
     if (filters.from_date || filters.to_date) {
       where.due_date = {};
-      if (filters.from_date) where.due_date.gte = new Date(filters.from_date);
-      if (filters.to_date) where.due_date.lte = new Date(filters.to_date);
+      if (filters.from_date) where.due_date.gte = this.parseDate(filters.from_date, 'from_date');
+      if (filters.to_date) where.due_date.lte = this.parseDate(filters.to_date, 'to_date');
     }
-    if (filters.search) {
-      where.title = { contains: filters.search, mode: 'insensitive' };
-    }
+    if (filters.search) where.title = { contains: filters.search, mode: 'insensitive' };
 
-    return this.prisma.goal.findMany({
+    const goals = await this.prisma.goal.findMany({
       where,
       orderBy: { due_date: 'asc' },
-      include: {
-        owner: { select: { id: true, name: true, email: true } },
-        department: { select: { id: true, name: true } },
-        _count: { select: { children: { where: { is_deleted: false } }, measures: true } },
-      },
+      include: this.goalInclude(),
     });
-  }
 
-  /**
-   * Read gate for a single goal — reuses the exact line-of-sight semantics of
-   * `list()` so a goal visible in the list is always openable and vice versa.
-   * External callers pass their principal; internal callers pass none (already
-   * authorized upstream). Fails closed with a non-leaky NotFound.
-   */
-  async assertCanViewGoal(orgId: string, principal: Principal | undefined, goalId: string): Promise<void> {
-    if (!principal) return;
-    const lineOfSight = await this.goalsLineOfSightWhere(orgId, principal);
-    const visible = await this.prisma.goal.findFirst({
-      where: { id: goalId, organization_id: orgId, is_deleted: false, AND: [lineOfSight] },
-      select: { id: true },
-    });
-    if (!visible) throw new NotFoundException('Goal not found');
-  }
-
-  /**
-   * Mutation gate: direct participants (owner / creator) act freely so a narrow
-   * scope entitlement never blocks them; everyone else must hold `action` scope
-   * over one of the goal's core participants.
-   */
-  private async assertParticipantAction(
-    orgId: string,
-    principal: Principal,
-    goal: { owner_user_id: string | null; created_by_user_id: string },
-    action: PermissionAction,
-  ): Promise<void> {
-    if (goal.owner_user_id === principal.userId || goal.created_by_user_id === principal.userId) return;
-    await this.scope.assertCanActOn(orgId, principal, GoalsService.GOALS_LEAF, action, [
-      goal.owner_user_id,
-      goal.created_by_user_id,
+    const [taskCounts, links, now] = await Promise.all([
+      this.taskCountsByGoal(
+        orgId,
+        goals.map((g) => g.id),
+      ),
+      this.allLinks(orgId),
+      this.clock.now(orgId),
     ]);
+
+    const supportCount = new Map<string, number>();
+    const supportedByCount = new Map<string, number>();
+    for (const l of links) {
+      supportCount.set(l.supporting_goal_id, (supportCount.get(l.supporting_goal_id) ?? 0) + 1);
+      supportedByCount.set(l.supported_goal_id, (supportedByCount.get(l.supported_goal_id) ?? 0) + 1);
+    }
+
+    return goals.map((g) => ({
+      ...this.shape(g),
+      days_left: this.daysBetween(now, g.due_date),
+      task_counts: taskCounts.get(g.id) ?? { open: 0, closed: 0 },
+      supports_count: supportCount.get(g.id) ?? 0,
+      supported_by_count: supportedByCount.get(g.id) ?? 0,
+    }));
   }
 
-  // ─── Detail (line of sight up + down + measures + linked tasks) ────────────
+  // ─── Detail ─────────────────────────────────────────────────────────────────
   async getOne(orgId: string, id: string, principal?: Principal) {
-    await this.assertCanViewGoal(orgId, principal, id);
     const goal = await this.prisma.goal.findFirst({
       where: { id, organization_id: orgId, is_deleted: false },
       include: {
-        owner: { select: { id: true, name: true, email: true } },
-        department: { select: { id: true, name: true } },
-        measures: {
-          orderBy: { created_at: 'asc' },
-          include: { check_ins: { orderBy: { created_at: 'asc' } } },
-        },
+        ...this.goalInclude(),
         check_ins: {
-          take: 12,
-          orderBy: { check_in_date: 'desc' },
-          include: {
-            created_by: { select: { id: true, name: true } },
-            measure_values: true,
-          },
-        },
-        parent: {
-          include: { owner: { select: { id: true, name: true } } },
-        },
-        children: {
-          where: { is_deleted: false },
-          orderBy: { due_date: 'asc' },
-          include: {
-            owner: { select: { id: true, name: true } },
-            _count: { select: { children: { where: { is_deleted: false } } } },
-          },
+          orderBy: [{ check_in_date: 'desc' }, { created_at: 'desc' }],
+          include: { created_by: { select: { id: true, name: true } } },
         },
       },
     });
     if (!goal) throw new NotFoundException('Goal not found');
 
-    let tasks: any[] = [];
-    if (goal.level === 'quarterly') {
-      tasks = await this.prisma.task.findMany({
+    const [links, tasks, projects, now] = await Promise.all([
+      this.getLinks(orgId, id),
+      this.prisma.task.findMany({
         where: { goal_id: id, organization_id: orgId, is_deleted: false },
         orderBy: { created_at: 'desc' },
-        include: {
-          status: true,
-          priority: true,
-          assignees: true,
-        },
-      });
-    }
-
-    return { ...goal, tasks };
-  }
-
-  // ─── Smart default date for the next sibling under a parent ────────────────
-  async getNextDefault(orgId: string, parentId: string, principal?: Principal) {
-    await this.assertCanViewGoal(orgId, principal, parentId);
-    const parent = await this.findActiveOrFail(orgId, parentId);
-    const childLevel: GoalLevel = parent.level === 'objective' ? 'annual' : 'quarterly';
-    if (parent.level === 'quarterly') {
-      throw new BadRequestException('Sub-goals cannot have child goals.');
-    }
-
-    const previous = await this.prisma.goal.findFirst({
-      where: { organization_id: orgId, parent_goal_id: parentId, is_deleted: false },
-      orderBy: { due_date: 'desc' },
-    });
-
-    const parentDue = parent.due_date;
-    const minDate = this.startOfToday();
-
-    if (!previous) {
-      // First child: user picks freely within [today, parentDue]
-      return {
-        child_level: childLevel,
-        is_first: true,
-        suggested: null,
-        clamped: false,
-        min_date: this.toISODate(minDate),
-        max_date: this.toISODate(parentDue),
-        parent_due_date: parentDue,
-        perspective: parent.perspective,
-      };
-    }
-
-    const base = new Date(previous.due_date);
-    if (childLevel === 'annual') {
-      base.setFullYear(base.getFullYear() + 1);
-    } else {
-      base.setMonth(base.getMonth() + 3);
-    }
-
-    let suggested = base;
-    let clamped = false;
-    if (suggested > parentDue) {
-      suggested = new Date(parentDue);
-      clamped = true;
-    }
+        include: { status: true, priority: true, assignees: true },
+      }),
+      this.linkedProjects(orgId, id, principal),
+      this.clock.now(orgId),
+    ]);
 
     return {
-      child_level: childLevel,
-      is_first: false,
-      suggested: this.toISODate(suggested),
-      clamped,
-      min_date: this.toISODate(minDate),
-      max_date: this.toISODate(parentDue),
-      parent_due_date: parentDue,
-      perspective: parent.perspective,
+      ...this.shape(goal),
+      check_ins: goal.check_ins.map((c) => this.shapeCheckIn(c)),
+      days_left: this.daysBetween(now, goal.due_date),
+      ...links,
+      tasks,
+      ...projects,
     };
   }
 
-  // ─── Balanced Scorecard rollup (annual goals only) ─────────────────────────
-  async getScorecard(orgId: string) {
-    const annuals = await this.prisma.goal.findMany({
-      where: { organization_id: orgId, level: 'annual', is_deleted: false },
-      select: { perspective: true, progress_percent: true },
-    });
+  /**
+   * A goal's linked projects.
+   *
+   * Goals are company-wide, but PROJECTS are not: opening one requires
+   * MEMBERSHIP of that project (ProjectsService.requireMember), on top of the
+   * module's row-level data scope. So this returns only projects this viewer
+   * can actually open — both gates applied — and reports the rest as a count.
+   *
+   * Membership is the binding gate, not the data scope: someone with org-wide
+   * project scope who is not on the project still gets a 403 from
+   * `GET /projects/:id`. Filtering on scope alone would put a link on this page
+   * that dead-ends, so both are intersected here.
+   */
+  private async linkedProjects(orgId: string, goalId: string, principal?: Principal) {
+    // Does the Projects section apply to this viewer AT ALL? `hasEffective`
+    // answers both halves in one call: the org's entitlement ceiling (is the
+    // module even licensed) AND this person's own effective permission. If
+    // either says no, the goal page must not show the section — not even a
+    // "hidden projects" note, which would itself reveal that projects exist.
+    const projectsVisible = principal
+      ? await this.permissions
+          .hasEffective(orgId, principal, PROJECTS_LEAF, PermissionAction.read)
+          .catch(() => false)
+      : true;
+    if (!projectsVisible) {
+      return { projects: [], hidden_project_count: 0, projects_visible: false };
+    }
 
-    return PERSPECTIVES.map((p) => {
-      const inQuadrant = annuals.filter((g) => g.perspective === p);
-      const count = inQuadrant.length;
-      const avg = count
-        ? Math.round(inQuadrant.reduce((s, g) => s + g.progress_percent, 0) / count)
-        : 0;
-      return { perspective: p, goal_count: count, average_progress: avg };
-    });
-  }
+    // Reached through the join table — a project can serve several goals.
+    const where: Prisma.ProjectWhereInput = {
+      organization_id: orgId,
+      is_deleted: false,
+      goals: { some: { goal_id: goalId } },
+    };
+    const total = await this.prisma.project.count({ where });
+    if (total === 0) return { projects: [], hidden_project_count: 0, projects_visible: true };
 
-  // ─── Check-in (record actuals + confidence at a review event) ──────────────
-  async createCheckIn(orgId: string, userId: string, goalId: string, dto: CreateGoalCheckInDto, principal?: Principal) {
-    const goal = await this.prisma.goal.findFirst({
-      where: { id: goalId, organization_id: orgId, is_deleted: false },
-      include: { measures: true },
-    });
-    if (!goal) throw new NotFoundException('Goal not found');
-    if (principal) await this.assertParticipantAction(orgId, principal, goal, PermissionAction.edit);
+    const gates: Record<string, unknown>[] = [];
+    if (principal) {
+      // Reuse the shared scope toolkit; never hand-roll access here.
+      const scopeWhere = await this.scope
+        .listWhere(orgId, principal, PROJECTS_LEAF)
+        .catch(() => ({}) as Record<string, unknown>);
+      if (Object.keys(scopeWhere).length) gates.push(scopeWhere);
+      gates.push({ members: { some: { user_id: principal.userId } } });
+    }
 
-    const checkInDate = this.parseDate(dto.check_in_date, 'check_in_date');
-
-    // Only accept values that map to a measure actually on this goal.
-    const measureIds = new Set(goal.measures.map((m) => m.id));
-    const values = (dto.values ?? []).filter(
-      (v) => measureIds.has(v.goal_measure_id) && v.value?.trim() !== '',
-    );
-
-    // Compute progress against the post-check-in measure snapshot.
-    const merged = goal.measures.map((m) => {
-      const v = values.find((x) => x.goal_measure_id === m.id);
-      return { target_value: m.target_value, current_value: v ? v.value : m.current_value };
-    });
-    const computed = this.computeProgress(merged);
-    const progress = computed ?? goal.progress_percent;
-
-    const checkIn = await this.prisma.$transaction(async (tx) => {
-      const ci = await tx.goalCheckIn.create({
-        data: {
-          organization_id: orgId,
-          goal_id: goalId,
-          check_in_date: checkInDate,
-          confidence: dto.confidence,
-          progress_percent: progress,
-          status_note: dto.status_note?.trim() || null,
-          created_by_user_id: userId,
-          measure_values: values.length
-            ? {
-                create: values.map((v) => ({
-                  organization_id: orgId,
-                  goal_measure_id: v.goal_measure_id,
-                  value: v.value.trim(),
-                })),
-              }
-            : undefined,
-        },
-        include: {
-          created_by: { select: { id: true, name: true } },
-          measure_values: true,
-        },
-      });
-
-      // Denormalise the latest actual onto each measure for at-a-glance reads.
-      for (const v of values) {
-        await tx.goalMeasure.update({
-          where: { id: v.goal_measure_id },
-          data: { current_value: v.value.trim() },
-        });
-      }
-
-      await tx.goal.update({
-        where: { id: goalId },
-        data: {
-          progress_percent: progress,
-          last_check_in_at: new Date(),
-          last_confidence: dto.confidence,
-          status: this.statusFromConfidence(dto.confidence, goal.status),
-          next_review_date: this.nextReviewDate(checkInDate, goal.review_cadence),
-        },
-      });
-
-      return ci;
-    });
-
-    // Roll the new progress up the line of sight (parents with no own measures).
-    await this.rollupAncestors(orgId, goal.parent_goal_id);
-
-    await this.audit.record({
-      orgId,
-      actorId: userId,
-      action: 'create',
-      resource: 'goal_check_in',
-      entityId: checkIn.id,
-      entityLabel: goal.title,
-      changes: {
-        confidence: { before: null, after: dto.confidence },
-        progress_percent: { before: goal.progress_percent, after: progress },
+    const projects = await this.prisma.project.findMany({
+      where: { ...where, ...(gates.length ? { AND: gates as any } : {}) },
+      orderBy: { created_at: 'desc' },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        start_date: true,
+        end_date: true,
+        completion_percentage: true,
+        total_tasks: true,
+        completed_tasks: true,
+        project_manager_user_id: true,
       },
     });
 
-    return checkIn;
+    return {
+      projects,
+      hidden_project_count: Math.max(0, total - projects.length),
+      projects_visible: true,
+    };
   }
 
-  async listCheckIns(orgId: string, goalId: string, principal?: Principal) {
-    await this.assertCanViewGoal(orgId, principal, goalId);
-    await this.findActiveOrFail(orgId, goalId);
-    return this.prisma.goalCheckIn.findMany({
-      where: { goal_id: goalId, organization_id: orgId },
-      orderBy: { check_in_date: 'desc' },
-      include: {
-        created_by: { select: { id: true, name: true } },
-        measure_values: true,
-      },
-    });
-  }
-
-  // ─── Update ────────────────────────────────────────────────────────────────
-  async update(orgId: string, userId: string, id: string, dto: UpdateGoalDto, principal?: Principal) {
+  // ─── Update ─────────────────────────────────────────────────────────────────
+  async update(orgId: string, userId: string, id: string, dto: UpdateGoalDto) {
     const existing = await this.findActiveOrFail(orgId, id);
-    if (principal) await this.assertParticipantAction(orgId, principal, existing, PermissionAction.edit);
+
+    if (dto.owner_user_id && dto.owner_user_id !== existing.owner_user_id) {
+      await this.subjects.assertEligible(orgId, 'goals.subject.ownable', dto.owner_user_id);
+    }
 
     const data: Prisma.GoalUpdateInput = {};
     if (dto.title !== undefined) data.title = dto.title.trim();
-    if (dto.description !== undefined) data.description = dto.description;
-    if (dto.owner_user_id !== undefined) {
-      if (dto.owner_user_id) {
-        await this.subjects.assertEligible(orgId, 'goals.subject.ownable', dto.owner_user_id);
-      }
-      data.owner = { connect: { id: dto.owner_user_id } };
-    }
+    if (dto.description !== undefined) data.description = dto.description?.trim() || null;
+    if (dto.owner_user_id !== undefined) data.owner = { connect: { id: dto.owner_user_id } };
     if (dto.department_id !== undefined) {
       data.department = dto.department_id
         ? { connect: { id: dto.department_id } }
         : { disconnect: true };
     }
+    if (dto.due_date !== undefined) data.due_date = this.parseDate(dto.due_date, 'due_date');
+    if (dto.target_value !== undefined) data.target_value = this.toDecimal(dto.target_value);
+    if (dto.unit !== undefined) data.unit = dto.unit?.trim() || null;
     if (dto.status !== undefined) data.status = dto.status;
+
+    // Clearing the target clears the recorded number with it — a value with no
+    // target to measure it against is meaningless.
+    if (dto.target_value !== undefined && this.toDecimal(dto.target_value) === null) {
+      data.current_value = null;
+    }
+
+    // Changing the cadence re-anchors the next review off the last check-in
+    // (or now, if there has never been one) rather than leaving a stale date.
     if (dto.review_cadence !== undefined) {
       data.review_cadence = dto.review_cadence;
-      // Re-anchor the next review off the last check-in (or now) under the new cadence.
-      const base = existing.last_check_in_at ?? new Date();
-      data.next_review_date =
-        dto.review_cadence === 'none' ? null : this.nextReviewDate(base, dto.review_cadence);
+      const anchor = existing.last_check_in_at ?? (await this.clock.now(orgId));
+      data.next_review_date = this.nextReviewDate(anchor, dto.review_cadence);
     }
-    if (dto.start_date !== undefined) {
-      data.start_date = dto.start_date ? this.parseDate(dto.start_date, 'start_date') : null;
-    }
-    if (dto.due_date !== undefined) {
-      const due = this.parseDate(dto.due_date, 'due_date');
-      this.assertNotPast(due);
-      if (existing.parent_goal_id) {
-        const parent = await this.findActiveOrFail(orgId, existing.parent_goal_id);
-        this.assertWithinParentBounds(due, parent.due_date, existing.level);
-      }
-      // moving a parent's due date in must still cover its children
-      await this.assertCoversChildren(orgId, id, due);
-      data.due_date = due;
+    // An explicit date always wins over the re-anchor above, so the owner can
+    // pin exactly when the next check-in is due.
+    if (dto.next_review_date !== undefined) {
+      data.next_review_date = dto.next_review_date
+        ? this.parseDate(dto.next_review_date, 'next_review_date')
+        : null;
     }
 
-    const updated = await this.prisma.goal.update({ where: { id }, data });
+    const goal = await this.prisma.goal.update({
+      where: { id },
+      data,
+      include: this.goalInclude(),
+    });
 
-    if (dto.measures !== undefined) {
-      // Upsert by id so a measure keeps its identity — and its check-in history —
-      // across edits. (A blanket delete/recreate would cascade-delete every
-      // MeasureCheckIn tied to it.) current_value is owned by check-ins, so it is
-      // never touched here; only measures the user actually removed are deleted.
-      const existingMeasures = await this.prisma.goalMeasure.findMany({
-        where: { goal_id: id },
-        select: { id: true },
-      });
-      const existingIds = new Set(existingMeasures.map((m) => m.id));
-      const keptIds = new Set(dto.measures.filter((m) => m.id).map((m) => m.id as string));
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'update',
+      resource: 'goal',
+      entityId: id,
+      entityLabel: goal.title,
+      changes: this.diff(existing, goal, [
+        'title',
+        'owner_user_id',
+        'due_date',
+        'target_value',
+        'unit',
+        'status',
+        'review_cadence',
+        'department_id',
+      ]),
+    });
 
-      const toDelete = [...existingIds].filter((eid) => !keptIds.has(eid));
-      if (toDelete.length) {
-        await this.prisma.goalMeasure.deleteMany({ where: { id: { in: toDelete } } });
-      }
-
-      for (const m of dto.measures) {
-        if (m.id && existingIds.has(m.id)) {
-          await this.prisma.goalMeasure.update({
-            where: { id: m.id },
-            data: { name: m.name.trim(), target_value: m.target_value, unit: m.unit ?? null },
-          });
-        } else {
-          await this.prisma.goalMeasure.create({
-            data: {
-              organization_id: orgId,
-              goal_id: id,
-              name: m.name.trim(),
-              target_value: m.target_value,
-              current_value: m.current_value ?? null,
-              unit: m.unit ?? null,
-            },
-          });
-        }
-      }
-
-      // A measure set change can shift computed progress — recompute from measures.
-      await this.recomputeProgressFromMeasures(orgId, id);
-    }
-
-    const changes = this.audit.diff(
-      existing,
-      {
-        title: dto.title?.trim(),
-        description: dto.description,
-        owner_user_id: dto.owner_user_id,
-        department_id: dto.department_id,
-        status: dto.status,
-        start_date: data.start_date as Date | null | undefined,
-        due_date: data.due_date as Date | undefined,
-      } as any,
-      ['title', 'description', 'owner_user_id', 'department_id', 'status', 'start_date', 'due_date'],
-    );
-    if (changes) {
-      await this.audit.record({
-        orgId,
-        actorId: userId,
-        action: 'update',
-        resource: 'goal',
-        entityId: id,
-        entityLabel: updated.title,
-        changes,
-      });
-    }
-
-    return this.getOne(orgId, id);
+    return this.shape(goal);
   }
 
-  // ─── Soft delete (blocked when children exist) ─────────────────────────────
-  async remove(orgId: string, userId: string, id: string, reason?: string, principal?: Principal) {
-    const existing = await this.findActiveOrFail(orgId, id);
-    // Deletion is entitlement-gated (no participant shortcut): owning a goal does
-    // not by itself grant the right to destroy it.
-    if (principal) {
-      await this.scope.assertCanActOn(orgId, principal, GoalsService.GOALS_LEAF, PermissionAction.delete, [
-        existing.owner_user_id,
-        existing.created_by_user_id,
-      ]);
-    }
-
-    const childCount = await this.prisma.goal.count({
-      where: { parent_goal_id: id, is_deleted: false },
-    });
-    if (childCount > 0) {
-      throw new ConflictException(
-        existing.level === 'objective'
-          ? 'This objective still has goals. Reassign or remove them first.'
-          : 'This goal still has sub-goals. Reassign or remove them first.',
-      );
-    }
+  // ─── Delete (soft) ──────────────────────────────────────────────────────────
+  /**
+   * Nothing blocks a delete — not links, not tasks. The UI tells the user what
+   * the delete severs (`deleteImpact`) and they decide. Link rows are LEFT IN
+   * PLACE so undeleting a goal restores its web; reads filter out edges whose
+   * other end is deleted.
+   */
+  async remove(orgId: string, userId: string, id: string, reason?: string) {
+    const goal = await this.findActiveOrFail(orgId, id);
+    const now = await this.clock.now(orgId);
 
     await this.prisma.goal.update({
       where: { id },
       data: {
         is_deleted: true,
-        deleted_at: new Date(),
+        deleted_at: now,
         deleted_by_user_id: userId,
-        deletion_reason: reason ?? null,
+        deletion_reason: reason?.trim() || null,
       },
     });
 
@@ -604,154 +372,916 @@ export class GoalsService {
       action: 'delete',
       resource: 'goal',
       entityId: id,
-      entityLabel: existing.title,
-      changes: reason ? { deletion_reason: { before: null, after: reason } } : null,
+      entityLabel: goal.title,
+      changes: { is_deleted: { before: false, after: true } },
+      triggerContext: reason?.trim() ? { reason: reason.trim() } : undefined,
     });
 
     return { success: true };
   }
 
-  // ─── Line-of-sight visibility ──────────────────────────────────────────────
+  /** What a delete would sever — powers the confirm dialog's plain-language warning. */
+  async deleteImpact(orgId: string, id: string, principal?: Principal) {
+    await this.findActiveOrFail(orgId, id);
+    const [supports, supportedBy, openTasks, checkIns, projects] = await Promise.all([
+      this.prisma.goalLink.count({
+        where: { organization_id: orgId, supporting_goal_id: id, supported: { is_deleted: false } },
+      }),
+      this.prisma.goalLink.count({
+        where: { organization_id: orgId, supported_goal_id: id, supporting: { is_deleted: false } },
+      }),
+      this.prisma.task.count({
+        where: {
+          goal_id: id,
+          organization_id: orgId,
+          is_deleted: false,
+          status: { type: { notIn: TERMINAL_TYPES } },
+        },
+      }),
+      this.prisma.goalCheckIn.count({ where: { goal_id: id, is_voided: false } }),
+      this.prisma.project.count({
+        where: { organization_id: orgId, is_deleted: false, goals: { some: { goal_id: id } } },
+      }),
+    ]);
+    // Same rule as the Projects section itself: someone with no Projects access
+    // is never told that linked projects exist, so the confirm text can't leak
+    // what the page deliberately hides.
+    const projectsVisible = principal
+      ? await this.permissions
+          .hasEffective(orgId, principal, PROJECTS_LEAF, PermissionAction.read)
+          .catch(() => false)
+      : true;
+
+    return {
+      supports_count: supports,
+      supported_by_count: supportedBy,
+      open_task_count: openTasks,
+      check_in_count: checkIns,
+      project_count: projectsVisible ? projects : 0,
+    };
+  }
+
+  // ─── Links (the web) ────────────────────────────────────────────────────────
+  /** Both sides of a goal's web, with each end's deleted goals filtered out. */
+  async getLinks(orgId: string, goalId: string) {
+    const linkGoalSelect = {
+      id: true,
+      title: true,
+      status: true,
+      due_date: true,
+      target_value: true,
+      current_value: true,
+      unit: true,
+      owner: { select: { id: true, name: true } },
+      // How far the chain continues past this neighbour, so the detail page can
+      // say "3 more behind this" instead of pretending the web stops here.
+      _count: {
+        select: {
+          supported_by: { where: { supporting: { is_deleted: false } } },
+          supports: { where: { supported: { is_deleted: false } } },
+        },
+      },
+    } as const;
+
+    const [self, supportedBy, supports] = await Promise.all([
+      this.prisma.goal.findFirst({
+        where: { id: goalId, organization_id: orgId },
+        select: { due_date: true },
+      }),
+      // Goals that support THIS goal.
+      this.prisma.goalLink.findMany({
+        where: {
+          organization_id: orgId,
+          supported_goal_id: goalId,
+          supporting: { is_deleted: false },
+        },
+        orderBy: { created_at: 'asc' },
+        include: { supporting: { select: linkGoalSelect } },
+      }),
+      // Goals THIS goal supports.
+      this.prisma.goalLink.findMany({
+        where: {
+          organization_id: orgId,
+          supporting_goal_id: goalId,
+          supported: { is_deleted: false },
+        },
+        orderBy: { created_at: 'asc' },
+        include: { supported: { select: linkGoalSelect } },
+      }),
+    ]);
+
+    const myDue = self?.due_date ?? null;
+
+    return {
+      // A supporting goal due AFTER the goal it feeds is a logic error worth
+      // surfacing — but legitimate cases exist (an ongoing capability goal that
+      // keeps running), so it warns and never blocks.
+      supported_by: supportedBy.map((l) => ({
+        link_id: l.id,
+        note: l.note,
+        goal: this.shape(l.supporting),
+        deadline_warning: !!myDue && l.supporting.due_date > myDue,
+      })),
+      supports: supports.map((l) => ({
+        link_id: l.id,
+        note: l.note,
+        goal: this.shape(l.supported),
+        deadline_warning: !!myDue && myDue > l.supported.due_date,
+      })),
+    };
+  }
+
+  /** Links `dto.supporting_goal_id` as a supporter of `supportedGoalId`. */
+  async createLink(orgId: string, userId: string, supportedGoalId: string, dto: CreateGoalLinkDto) {
+    const supportingId = dto.supporting_goal_id;
+
+    if (supportingId === supportedGoalId) {
+      throw new BadRequestException('A goal cannot support itself.');
+    }
+
+    const [supported, supporting] = await Promise.all([
+      this.findActiveOrFail(orgId, supportedGoalId),
+      this.findActiveOrFail(orgId, supportingId),
+    ]);
+
+    const existing = await this.prisma.goalLink.findUnique({
+      where: {
+        supporting_goal_id_supported_goal_id: {
+          supporting_goal_id: supportingId,
+          supported_goal_id: supportedGoalId,
+        },
+      },
+    });
+    if (existing) {
+      throw new ConflictException(`"${supporting.title}" already supports "${supported.title}".`);
+    }
+
+    // Cycle guard: adding supporting → supported is only safe if `supported`
+    // cannot already reach `supporting`. The refusal names the chain that
+    // closes the circle so the user can see why.
+    const path = await this.findPath(orgId, supportedGoalId, supportingId);
+    if (path) {
+      const via = path.slice(1, -1);
+      throw new ConflictException(
+        `"${supported.title}" already depends on "${supporting.title}"` +
+          (via.length ? `, through ${via.map((t) => `"${t}"`).join(' → ')}` : '') +
+          '. Linking them this way would make a circle.',
+      );
+    }
+
+    const link = await this.prisma.goalLink.create({
+      data: {
+        organization_id: orgId,
+        supporting_goal_id: supportingId,
+        supported_goal_id: supportedGoalId,
+        note: dto.note?.trim() || null,
+        created_by_user_id: userId,
+      },
+    });
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'create',
+      resource: 'goal_link',
+      entityId: link.id,
+      entityLabel: `${supporting.title} → ${supported.title}`,
+      changes: { note: { before: null, after: link.note } },
+    });
+
+    return link;
+  }
+
+  async updateLink(orgId: string, userId: string, linkId: string, dto: UpdateGoalLinkDto) {
+    const link = await this.findLinkOrFail(orgId, linkId);
+
+    const updated = await this.prisma.goalLink.update({
+      where: { id: linkId },
+      data: { note: dto.note?.trim() || null },
+    });
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'update',
+      resource: 'goal_link',
+      entityId: linkId,
+      entityLabel: `${link.supporting.title} → ${link.supported.title}`,
+      changes: { note: { before: link.note, after: updated.note } },
+    });
+
+    return updated;
+  }
+
+  async removeLink(orgId: string, userId: string, linkId: string) {
+    const link = await this.findLinkOrFail(orgId, linkId);
+
+    await this.prisma.goalLink.delete({ where: { id: linkId } });
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'delete',
+      resource: 'goal_link',
+      entityId: linkId,
+      entityLabel: `${link.supporting.title} → ${link.supported.title}`,
+      changes: {},
+    });
+
+    return { success: true };
+  }
 
   /**
-   * Goal visibility follows the cascade, not just row ownership. A user sees goals
-   * they participate in (own/created, within their data scope) PLUS the entire
-   * sub-tree beneath them AND the parent chain above them — so owning an objective
-   * reveals the goals cascading under it, and owning a sub-goal reveals the objective
-   * it rolls up to. Returns the Prisma `where` to AND into the list query
-   * (`{}` = org-wide, `{ id: { in: [] } }` = nothing).
+   * Goals that may be linked to `goalId` in `direction`, with everything that
+   * would error already filtered out: the goal itself, goals already linked
+   * that way, and anything that would close a loop. Pre-filtering here is what
+   * stops the picker offering a choice that fails on save.
    */
-  private async goalsLineOfSightWhere(
-    orgId: string,
-    principal: Principal,
-  ): Promise<Prisma.GoalWhereInput> {
-    const { effective } = await this.scope.resolveListScope(
+  async linkCandidates(orgId: string, goalId: string, direction: 'supported_by' | 'supports') {
+    await this.findActiveOrFail(orgId, goalId);
+    const [goals, links] = await Promise.all([
+      this.prisma.goal.findMany({
+        where: { organization_id: orgId, is_deleted: false, id: { not: goalId } },
+        orderBy: { title: 'asc' },
+        select: { id: true, title: true, due_date: true, status: true, unit: true },
+      }),
+      this.allLinks(orgId),
+    ]);
+
+    let taken: Set<string>;
+    let wouldLoop: Set<string>;
+    if (direction === 'supported_by') {
+      // Picking a goal to support this one: anything downstream of this goal
+      // (i.e. that this goal already helps) would close a circle.
+      taken = new Set(links.filter((l) => l.supported_goal_id === goalId).map((l) => l.supporting_goal_id));
+      wouldLoop = this.reachable(links, goalId, 'down');
+    } else {
+      // Picking a goal for this one to support: anything upstream would loop.
+      taken = new Set(links.filter((l) => l.supporting_goal_id === goalId).map((l) => l.supported_goal_id));
+      wouldLoop = this.reachable(links, goalId, 'up');
+    }
+
+    return goals.filter((g) => !taken.has(g.id) && !wouldLoop.has(g.id));
+  }
+
+  /**
+   * Attach an existing project to this goal. Gated twice on purpose: holding
+   * goals.edit gets you here (the controller), and the project must ALSO be one
+   * this person can already open — otherwise a goal editor could attach (and so
+   * reveal) a project they have no access to.
+   */
+  async linkProject(orgId: string, userId: string, goalId: string, projectId: string) {
+    await this.findActiveOrFail(orgId, goalId);
+    await this.assertProjectReachable(orgId, projectId, userId);
+
+    const existing = await this.prisma.goalProject.findUnique({
+      where: { goal_id_project_id: { goal_id: goalId, project_id: projectId } },
+    });
+    if (existing) throw new ConflictException('That project is already on this goal.');
+
+    const link = await this.prisma.goalProject.create({
+      data: {
+        organization_id: orgId,
+        goal_id: goalId,
+        project_id: projectId,
+        created_by_user_id: userId,
+      },
+      include: { project: { select: { name: true } }, goal: { select: { title: true } } },
+    });
+
+    await this.audit.record({
       orgId,
-      principal,
-      GoalsService.GOALS_LEAF,
-    );
-    if (effective === null) return { id: { in: [] } }; // denied — fail closed
-    if (effective === DataScope.org) return {}; // no row restriction
+      actorId: userId,
+      action: 'create',
+      resource: 'goal_project',
+      entityId: link.id,
+      entityLabel: `${link.project.name} → ${link.goal.title}`,
+      changes: {},
+    });
 
-    const visible = await this.scope.visibleUserIds(orgId, principal.userId, effective);
-    if (visible === 'ALL') return {};
+    return { success: true };
+  }
 
-    // Seeds: goals anyone in the user's scope participates in (owns / created).
-    const seeds = await this.prisma.goal.findMany({
+  async unlinkProject(orgId: string, userId: string, goalId: string, projectId: string) {
+    const link = await this.prisma.goalProject.findFirst({
+      where: { goal_id: goalId, project_id: projectId, organization_id: orgId },
+      include: { project: { select: { name: true } }, goal: { select: { title: true } } },
+    });
+    if (!link) throw new NotFoundException('That project is not on this goal.');
+    await this.assertProjectReachable(orgId, projectId, userId);
+
+    await this.prisma.goalProject.delete({ where: { id: link.id } });
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'delete',
+      resource: 'goal_project',
+      entityId: link.id,
+      entityLabel: `${link.project.name} → ${link.goal.title}`,
+      changes: {},
+    });
+
+    return { success: true };
+  }
+
+  /** Projects this person could link to a goal: live, in-org, and openable by them. */
+  async projectCandidates(orgId: string, goalId: string, principal?: Principal) {
+    await this.findActiveOrFail(orgId, goalId);
+    const visible = await this.permissions
+      .hasEffective(orgId, principal!, PROJECTS_LEAF, PermissionAction.read)
+      .catch(() => false);
+    if (!principal || !visible) return [];
+
+    const scopeWhere = await this.scope
+      .listWhere(orgId, principal, PROJECTS_LEAF)
+      .catch(() => ({}) as Record<string, unknown>);
+    const gates: Record<string, unknown>[] = [];
+    if (Object.keys(scopeWhere).length) gates.push(scopeWhere);
+    gates.push({ members: { some: { user_id: principal.userId } } });
+
+    return this.prisma.project.findMany({
       where: {
         organization_id: orgId,
         is_deleted: false,
-        OR: [{ owner_user_id: { in: visible } }, { created_by_user_id: { in: visible } }],
+        // Already on this goal — but a project may well be on OTHER goals, and
+        // that must not exclude it. Many-to-many by design.
+        NOT: { goals: { some: { goal_id: goalId } } },
+        AND: gates as any,
       },
-      select: { id: true, parent_goal_id: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, status: true, end_date: true },
     });
-
-    const visibleIds = new Set<string>(seeds.map((s) => s.id));
-
-    // Walk UP — the parent chain of every seed (line of sight to the top).
-    let parentIds = seeds.map((s) => s.parent_goal_id).filter((p): p is string => !!p);
-    while (parentIds.length) {
-      const parents = await this.prisma.goal.findMany({
-        where: { id: { in: parentIds }, organization_id: orgId, is_deleted: false },
-        select: { id: true, parent_goal_id: true },
-      });
-      parentIds = [];
-      for (const p of parents) {
-        if (!visibleIds.has(p.id)) {
-          visibleIds.add(p.id);
-          if (p.parent_goal_id) parentIds.push(p.parent_goal_id);
-        }
-      }
-    }
-
-    // Walk DOWN — the whole sub-tree beneath every seed.
-    let frontier = seeds.map((s) => s.id);
-    while (frontier.length) {
-      const children = await this.prisma.goal.findMany({
-        where: { parent_goal_id: { in: frontier }, organization_id: orgId, is_deleted: false },
-        select: { id: true },
-      });
-      frontier = [];
-      for (const c of children) {
-        if (!visibleIds.has(c.id)) {
-          visibleIds.add(c.id);
-          frontier.push(c.id);
-        }
-      }
-    }
-
-    return { id: { in: [...visibleIds] } };
   }
 
-  // ─── Progress / rollup ─────────────────────────────────────────────────────
-
-  /** Average of each numeric measure's clamped (current ÷ target) %. Null when
-   *  no measure is numerically computable (leave progress to roll up / manual). */
-  private computeProgress(
-    measures: { target_value: string; current_value: string | null }[],
-  ): number | null {
-    const pcts: number[] = [];
-    for (const m of measures) {
-      const target = this.toNum(m.target_value);
-      const current = this.toNum(m.current_value);
-      if (target === null || current === null || target === 0) continue;
-      pcts.push(Math.max(0, Math.min(100, (current / target) * 100)));
-    }
-    if (!pcts.length) return null;
-    return Math.round(pcts.reduce((s, x) => s + x, 0) / pcts.length);
-  }
-
-  private toNum(v: string | null | undefined): number | null {
-    if (v === null || v === undefined) return null;
-    const n = parseFloat(String(v).replace(/[, ]/g, ''));
-    return isNaN(n) ? null : n;
-  }
-
-  /** Recompute a goal's progress from its current measures, then roll up. */
-  private async recomputeProgressFromMeasures(orgId: string, goalId: string) {
-    const measures = await this.prisma.goalMeasure.findMany({
-      where: { goal_id: goalId },
-      select: { target_value: true, current_value: true },
+  /** A project must be one the actor can already open (scope AND membership). */
+  private async assertProjectReachable(orgId: string, projectId: string, userId: string) {
+    const project = await this.prisma.project.findFirst({
+      where: {
+        id: projectId,
+        organization_id: orgId,
+        is_deleted: false,
+        members: { some: { user_id: userId } },
+      },
+      select: { id: true },
     });
-    const computed = this.computeProgress(measures);
-    if (computed !== null) {
-      await this.prisma.goal.update({
+    if (!project) {
+      throw new NotFoundException(
+        'Project not found, or you are not on it. Ask a project manager to add you.',
+      );
+    }
+  }
+
+  // ─── Check-ins ──────────────────────────────────────────────────────────────
+  async createCheckIn(orgId: string, userId: string, goalId: string, dto: CreateGoalCheckInDto) {
+    const goal = await this.findActiveOrFail(orgId, goalId);
+
+    if (CLOSED_STATUSES.includes(goal.status)) {
+      throw new BadRequestException(
+        `"${goal.title}" is marked ${goal.status === 'achieved' ? 'achieved' : 'closed'}. ` +
+          'Change its status back before recording a check-in.',
+      );
+    }
+    if (!CHECK_IN_STATUSES.includes(dto.status)) {
+      throw new BadRequestException('A check-in must be on track, at risk or off track.');
+    }
+    if (dto.recorded_value !== undefined && dto.recorded_value !== null && goal.target_value === null) {
+      throw new BadRequestException('This goal has no target number, so there is no value to record.');
+    }
+
+    const checkInDate = this.parseDate(dto.check_in_date, 'check_in_date');
+    const now = await this.clock.now(orgId);
+    if (checkInDate > this.endOfDay(now)) {
+      throw new BadRequestException('A check-in cannot be dated in the future.');
+    }
+
+    const recorded = this.toDecimal(dto.recorded_value);
+
+    const checkIn = await this.prisma.$transaction(async (tx) => {
+      const ci = await tx.goalCheckIn.create({
+        data: {
+          organization_id: orgId,
+          goal_id: goalId,
+          check_in_date: checkInDate,
+          status: dto.status,
+          recorded_value: recorded,
+          // Snapshot the target as it stands today, so raising the target later
+          // never makes this row's history misleading.
+          target_value_at_check_in: goal.target_value,
+          status_note: dto.status_note?.trim() || null,
+          created_by_user_id: userId,
+        },
+        include: { created_by: { select: { id: true, name: true } } },
+      });
+
+      await tx.goal.update({
         where: { id: goalId },
-        data: { progress_percent: computed },
+        data: {
+          // The recorded number IS the goal's number. Nothing else writes it.
+          ...(recorded !== null ? { current_value: recorded } : {}),
+          status: dto.status,
+          last_check_in_at: now,
+          next_review_date: this.nextReviewDate(checkInDate, goal.review_cadence),
+        },
       });
-    }
-    const goal = await this.prisma.goal.findUnique({
-      where: { id: goalId },
-      select: { parent_goal_id: true },
+
+      return ci;
     });
-    await this.rollupAncestors(orgId, goal?.parent_goal_id ?? null);
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'create',
+      resource: 'goal_check_in',
+      entityId: checkIn.id,
+      entityLabel: goal.title,
+      changes: {
+        status: { before: goal.status, after: dto.status },
+        recorded_value: {
+          before: goal.current_value?.toString() ?? null,
+          after: recorded?.toString() ?? null,
+        },
+      },
+    });
+
+    if (dto.status === 'at_risk' || dto.status === 'off_track') {
+      await this.notifyDependentsOfRisk(orgId, goalId, goal.title, dto.status, userId).catch(() => {});
+    }
+
+    return this.shapeCheckIn(checkIn);
   }
 
-  /** Walk up the line of sight: a parent with no measures of its own takes the
-   *  average progress of its children. A parent that has its own measures owns
-   *  its progress via its own check-ins, so propagation stops there. */
-  private async rollupAncestors(orgId: string, parentId: string | null) {
-    let current = parentId;
-    const guard = new Set<string>();
-    while (current && !guard.has(current)) {
-      guard.add(current);
-      const parent = await this.prisma.goal.findFirst({
-        where: { id: current, organization_id: orgId, is_deleted: false },
-        include: { _count: { select: { measures: true } } },
-      });
-      if (!parent) break;
-      if (parent._count.measures > 0) break;
+  async listCheckIns(orgId: string, goalId: string) {
+    await this.findActiveOrFail(orgId, goalId);
+    const rows = await this.prisma.goalCheckIn.findMany({
+      where: { goal_id: goalId, organization_id: orgId },
+      orderBy: [{ check_in_date: 'desc' }, { created_at: 'desc' }],
+      include: { created_by: { select: { id: true, name: true } } },
+    });
+    return rows.map((r) => this.shapeCheckIn(r));
+  }
 
-      const children = await this.prisma.goal.findMany({
-        where: { parent_goal_id: current, is_deleted: false },
-        select: { progress_percent: true },
+  /**
+   * Void a check-in. Check-ins are never edited or deleted — the dated history
+   * IS the value — so a fat-finger entry is reversed the way accounting does
+   * it: the row stays, struck through, with a reason. The goal's headline
+   * number then falls back to the newest surviving check-in.
+   */
+  async voidCheckIn(orgId: string, userId: string, checkInId: string, dto: VoidCheckInDto) {
+    const ci = await this.prisma.goalCheckIn.findFirst({
+      where: { id: checkInId, organization_id: orgId },
+      include: { goal: { select: { id: true, title: true, is_deleted: true } } },
+    });
+    if (!ci || ci.goal.is_deleted) throw new NotFoundException('Check-in not found');
+    if (ci.is_voided) throw new ConflictException('This check-in is already voided.');
+
+    const now = await this.clock.now(orgId);
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.goalCheckIn.update({
+        where: { id: checkInId },
+        data: {
+          is_voided: true,
+          voided_at: now,
+          voided_by_user_id: userId,
+          void_reason: dto.reason.trim(),
+        },
       });
-      const avg = children.length
-        ? Math.round(children.reduce((s, c) => s + c.progress_percent, 0) / children.length)
-        : 0;
-      await this.prisma.goal.update({ where: { id: current }, data: { progress_percent: avg } });
-      current = parent.parent_goal_id;
+
+      // Re-derive the goal's headline number and status from the newest
+      // surviving check-in — never from arithmetic.
+      const latest = await tx.goalCheckIn.findFirst({
+        where: { goal_id: ci.goal_id, is_voided: false },
+        orderBy: [{ check_in_date: 'desc' }, { created_at: 'desc' }],
+      });
+      await tx.goal.update({
+        where: { id: ci.goal_id },
+        data: {
+          current_value: latest?.recorded_value ?? null,
+          status: latest?.status ?? 'not_started',
+          last_check_in_at: latest?.created_at ?? null,
+        },
+      });
+    });
+
+    await this.audit.record({
+      orgId,
+      actorId: userId,
+      action: 'update',
+      resource: 'goal_check_in',
+      entityId: checkInId,
+      entityLabel: ci.goal.title,
+      changes: { is_voided: { before: false, after: true } },
+      triggerContext: { reason: dto.reason.trim() },
+    });
+
+    return { success: true };
+  }
+
+  /**
+   * "My check-ins" — the goals this user owns that owe a check-in, soonest
+   * first. This is the screen that keeps the module alive, so it stays one
+   * cheap query.
+   */
+  async myCheckIns(orgId: string, userId: string) {
+    const now = await this.clock.now(orgId);
+    const goals = await this.prisma.goal.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        owner_user_id: userId,
+        ...this.checkInDueWhere(now),
+      },
+      orderBy: [{ next_review_date: 'asc' }, { due_date: 'asc' }],
+      include: this.goalInclude(),
+    });
+
+    return goals.map((g) => ({
+      ...this.shape(g),
+      days_left: this.daysBetween(now, g.due_date),
+      due_reason: this.dueReason(g, now),
+      days_overdue: g.next_review_date ? Math.max(0, this.daysBetween(g.next_review_date, now)) : null,
+    }));
+  }
+
+  /** Badge count for the "My check-ins" nav item. */
+  async myCheckInCount(orgId: string, userId: string) {
+    const now = await this.clock.now(orgId);
+    const count = await this.prisma.goal.count({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        owner_user_id: userId,
+        ...this.checkInDueWhere(now),
+      },
+    });
+    return { count };
+  }
+
+  // ─── Dashboard ──────────────────────────────────────────────────────────────
+  async dashboard(orgId: string) {
+    const now = await this.clock.now(orgId);
+    const today = this.endOfDay(now);
+    const staleBefore = this.daysAgo(now, GOAL_STALE_DAYS);
+
+    const goals = await this.prisma.goal.findMany({
+      where: { organization_id: orgId, is_deleted: false },
+      orderBy: { due_date: 'asc' },
+      include: this.goalInclude(),
+    });
+
+    const counts: Record<GoalStatus, number> = {
+      not_started: 0,
+      on_track: 0,
+      at_risk: 0,
+      off_track: 0,
+      achieved: 0,
+      closed: 0,
+    };
+    for (const g of goals) counts[g.status] += 1;
+
+    const live = goals.filter((g) => !CLOSED_STATUSES.includes(g.status));
+    const withDays = (g: (typeof goals)[number]) => ({
+      ...this.shape(g),
+      days_left: this.daysBetween(now, g.due_date),
+    });
+
+    return {
+      as_on: now.toISOString(),
+      total: goals.length,
+      counts,
+      at_risk: live.filter((g) => g.status === 'at_risk' || g.status === 'off_track').map(withDays),
+      overdue: live
+        .filter((g) => g.due_date < now)
+        .map((g) => ({ ...withDays(g), days_late: this.daysBetween(g.due_date, now) })),
+      needs_check_in: live
+        .filter(
+          (g) =>
+            (g.next_review_date && g.next_review_date <= today) ||
+            (g.review_cadence === 'none' && (g.last_check_in_at ?? g.created_at) < staleBefore),
+        )
+        .map((g) => ({ ...withDays(g), due_reason: this.dueReason(g, now) })),
+    };
+  }
+
+  // ─── Nightly check-in reminders (driven by the scheduler) ───────────────────
+  /**
+   * One pass per org: nudge owners whose review date has arrived, and nudge
+   * again once they are `followupDays` late. Both are deduped per
+   * (event_type, goal) by the notifications service, so an owner is never
+   * nagged twice for the same miss — the follow-up lands only because it is a
+   * different event type.
+   */
+  async sendCheckInReminders(orgId: string, now: Date, followupDays: number) {
+    const lateBefore = this.daysAgo(now, followupDays);
+
+    const goals = await this.prisma.goal.findMany({
+      where: {
+        organization_id: orgId,
+        is_deleted: false,
+        ...this.checkInDueWhere(now),
+      },
+      select: {
+        id: true,
+        title: true,
+        owner_user_id: true,
+        next_review_date: true,
+        review_cadence: true,
+        last_check_in_at: true,
+        created_at: true,
+      },
+    });
+    if (goals.length === 0) return { due: 0, overdue: 0 };
+
+    const items = goals.map((g) => {
+      const isLate = !!g.next_review_date && g.next_review_date < lateBefore;
+      return {
+        orgId,
+        module: 'goals' as const,
+        event_type: isLate ? 'goal_check_in_overdue' : 'goal_check_in_due',
+        recipients: [g.owner_user_id],
+        title: isLate ? 'Check-in overdue' : 'Check-in due',
+        body: isLate
+          ? `"${g.title}" has been waiting for a check-in since ${this.formatDate(g.next_review_date!)}.`
+          : `"${g.title}" is due for a check-in. It takes under a minute.`,
+        link: '/goals/my-check-ins',
+        entity: { type: 'goal', id: g.id },
+        dedupe: true,
+      };
+    });
+
+    await this.notifications.emitMany(items);
+    return {
+      due: items.filter((i) => i.event_type === 'goal_check_in_due').length,
+      overdue: items.filter((i) => i.event_type === 'goal_check_in_overdue').length,
+    };
+  }
+
+  /**
+   * When a goal goes amber or red, tell the owners of the goals it supports.
+   * This is what the web buys you: no reporting hierarchy is needed, because
+   * the links already know who is depending on this goal.
+   */
+  private async notifyDependentsOfRisk(
+    orgId: string,
+    goalId: string,
+    goalTitle: string,
+    status: GoalStatus,
+    actorId: string,
+  ) {
+    const dependents = await this.prisma.goalLink.findMany({
+      where: {
+        organization_id: orgId,
+        supporting_goal_id: goalId,
+        supported: { is_deleted: false },
+      },
+      include: { supported: { select: { id: true, title: true, owner_user_id: true } } },
+    });
+    if (dependents.length === 0) return;
+
+    const label = status === 'off_track' ? 'off track' : 'at risk';
+    const actor = await this.notifications.userName(actorId);
+
+    await this.notifications.emitMany(
+      dependents
+        .filter((d) => d.supported.owner_user_id !== actorId)
+        .map((d) => ({
+          orgId,
+          module: 'goals' as const,
+          event_type: 'goal_at_risk',
+          recipients: [d.supported.owner_user_id],
+          title: `A goal you depend on is ${label}`,
+          body: `${actor} marked "${goalTitle}" ${label}. It supports your goal "${d.supported.title}".`,
+          link: `/goals/${goalId}`,
+          entity: { type: 'goal', id: goalId },
+        })),
+    );
+  }
+
+  // ─── Graph helpers ──────────────────────────────────────────────────────────
+  /**
+   * Every live link edge in the org. An SME has hundreds of goals at most, so
+   * loading the edge list and walking it in memory beats a recursive SQL query
+   * on every read — and it is far easier to read and audit.
+   */
+  private async allLinks(orgId: string) {
+    return this.prisma.goalLink.findMany({
+      where: {
+        organization_id: orgId,
+        supporting: { is_deleted: false },
+        supported: { is_deleted: false },
+      },
+      select: { supporting_goal_id: true, supported_goal_id: true },
+    });
+  }
+
+  /**
+   * Every goal reachable from `startId`. `down` follows the supports direction
+   * (the goals this one helps); `up` follows its supporters.
+   */
+  private reachable(
+    links: { supporting_goal_id: string; supported_goal_id: string }[],
+    startId: string,
+    direction: 'up' | 'down',
+  ): Set<string> {
+    const next = this.adjacency(links, direction);
+    const seen = new Set<string>();
+    const queue = [startId];
+    while (queue.length) {
+      const id = queue.shift()!;
+      for (const n of next.get(id) ?? []) {
+        if (!seen.has(n)) {
+          seen.add(n);
+          queue.push(n);
+        }
+      }
     }
+    return seen;
+  }
+
+  private adjacency(
+    links: { supporting_goal_id: string; supported_goal_id: string }[],
+    direction: 'up' | 'down',
+  ): Map<string, string[]> {
+    const next = new Map<string, string[]>();
+    for (const l of links) {
+      const [from, to] =
+        direction === 'down'
+          ? [l.supporting_goal_id, l.supported_goal_id]
+          : [l.supported_goal_id, l.supporting_goal_id];
+      const arr = next.get(from);
+      if (arr) arr.push(to);
+      else next.set(from, [to]);
+    }
+    return next;
+  }
+
+  /**
+   * Shortest chain of goal TITLES from `fromId` to `toId` following the
+   * supports direction, or null if there is no path. Used to name the loop when
+   * a link is refused, so the message says which goals close the circle.
+   */
+  private async findPath(orgId: string, fromId: string, toId: string): Promise<string[] | null> {
+    const links = await this.allLinks(orgId);
+    const next = this.adjacency(links, 'down');
+
+    const prev = new Map<string, string>();
+    const seen = new Set([fromId]);
+    const queue = [fromId];
+    let found = false;
+    while (queue.length && !found) {
+      const id = queue.shift()!;
+      for (const n of next.get(id) ?? []) {
+        if (seen.has(n)) continue;
+        seen.add(n);
+        prev.set(n, id);
+        if (n === toId) {
+          found = true;
+          break;
+        }
+        queue.push(n);
+      }
+    }
+    if (!found) return null;
+
+    const ids: string[] = [toId];
+    let cur = toId;
+    while (prev.has(cur)) {
+      cur = prev.get(cur)!;
+      ids.unshift(cur);
+    }
+
+    const rows = await this.prisma.goal.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, title: true },
+    });
+    const byId = new Map(rows.map((r) => [r.id, r.title]));
+    return ids.map((id) => byId.get(id) ?? 'a goal');
+  }
+
+  // ─── Shaping ────────────────────────────────────────────────────────────────
+  private goalInclude() {
+    return {
+      owner: { select: { id: true, name: true, email: true } },
+      department: { select: { id: true, name: true } },
+    } as const;
+  }
+
+  /** Prisma hands Decimals back as objects — send plain numbers to the client. */
+  private shape<T extends { target_value: unknown; current_value: unknown }>(goal: T) {
+    return {
+      ...goal,
+      target_value: goal.target_value == null ? null : Number(goal.target_value),
+      current_value: goal.current_value == null ? null : Number(goal.current_value),
+    };
+  }
+
+  private shapeCheckIn<T extends { recorded_value: unknown; target_value_at_check_in: unknown }>(ci: T) {
+    return {
+      ...ci,
+      recorded_value: ci.recorded_value == null ? null : Number(ci.recorded_value),
+      target_value_at_check_in:
+        ci.target_value_at_check_in == null ? null : Number(ci.target_value_at_check_in),
+    };
+  }
+
+  /** Open vs closed linked-task counts for a whole page in two grouped queries. */
+  private async taskCountsByGoal(orgId: string, goalIds: string[]) {
+    const out = new Map<string, { open: number; closed: number }>();
+    if (goalIds.length === 0) return out;
+
+    const [open, total] = await Promise.all([
+      this.prisma.task.groupBy({
+        by: ['goal_id'],
+        where: {
+          organization_id: orgId,
+          is_deleted: false,
+          goal_id: { in: goalIds },
+          status: { type: { notIn: TERMINAL_TYPES } },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.task.groupBy({
+        by: ['goal_id'],
+        where: { organization_id: orgId, is_deleted: false, goal_id: { in: goalIds } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const openBy = new Map(open.map((r) => [r.goal_id!, r._count._all]));
+    for (const t of total) {
+      const o = openBy.get(t.goal_id!) ?? 0;
+      out.set(t.goal_id!, { open: o, closed: t._count._all - o });
+    }
+    return out;
+  }
+
+  /**
+   * The one definition of "owes a check-in", shared by My check-ins, the
+   * dashboard and the nightly reminder so all three can never disagree.
+   * A goal with no cadence was never promised a rhythm, so it is only chased
+   * once it has gone quiet for GOAL_STALE_DAYS.
+   */
+  private checkInDueWhere(now: Date): Prisma.GoalWhereInput {
+    const today = this.endOfDay(now);
+    const staleBefore = this.daysAgo(now, GOAL_STALE_DAYS);
+    return {
+      status: { notIn: CLOSED_STATUSES },
+      OR: [
+        { next_review_date: { lte: today } },
+        { review_cadence: 'none', last_check_in_at: { lt: staleBefore } },
+        { review_cadence: 'none', last_check_in_at: null, created_at: { lt: staleBefore } },
+      ],
+    };
+  }
+
+  /** Plain-language reason this goal is being chased for a check-in. */
+  private dueReason(
+    g: {
+      next_review_date: Date | null;
+      review_cadence: GoalCadence;
+      last_check_in_at: Date | null;
+      created_at: Date;
+    },
+    now: Date,
+  ): string {
+    if (g.next_review_date) {
+      const days = this.daysBetween(g.next_review_date, now);
+      if (days <= 0) return 'Due today';
+      return `${days} day${days === 1 ? '' : 's'} overdue`;
+    }
+    const days = this.daysBetween(g.last_check_in_at ?? g.created_at, now);
+    return g.last_check_in_at
+      ? `No check-in for ${days} days`
+      : `Created ${days} days ago, never checked in`;
+  }
+
+  // ─── Helpers ────────────────────────────────────────────────────────────────
+  private async findActiveOrFail(orgId: string, id: string) {
+    const goal = await this.prisma.goal.findFirst({
+      where: { id, organization_id: orgId, is_deleted: false },
+    });
+    if (!goal) throw new NotFoundException('Goal not found');
+    return goal;
+  }
+
+  private async findLinkOrFail(orgId: string, linkId: string) {
+    const link = await this.prisma.goalLink.findFirst({
+      where: { id: linkId, organization_id: orgId },
+      include: {
+        supporting: { select: { title: true } },
+        supported: { select: { title: true } },
+      },
+    });
+    if (!link) throw new NotFoundException('Link not found');
+    return link;
+  }
+
+  private toDecimal(v: number | string | null | undefined): Prisma.Decimal | null {
+    if (v === null || v === undefined || v === '') return null;
+    const n = typeof v === 'number' ? v : parseFloat(String(v).replace(/[, ]/g, ''));
+    if (isNaN(n)) throw new BadRequestException('Target and recorded values must be numbers.');
+    return new Prisma.Decimal(n);
   }
 
   private nextReviewDate(from: Date, cadence: GoalCadence): Date | null {
@@ -774,70 +1304,45 @@ export class GoalsService {
     }
   }
 
-  /** Map the owner's RAG confidence onto the goal's status, without clobbering a
-   *  goal that's already been closed out (achieved/archived). */
-  private statusFromConfidence(c: GoalConfidence, currentStatus: GoalStatus): GoalStatus {
-    if (currentStatus === 'achieved' || currentStatus === 'archived') return currentStatus;
-    return c === 'on_track' ? 'on_track' : 'at_risk';
-  }
-
-  // ─── Helpers ───────────────────────────────────────────────────────────────
-  private async findActiveOrFail(orgId: string, id: string) {
-    const goal = await this.prisma.goal.findFirst({
-      where: { id, organization_id: orgId, is_deleted: false },
-    });
-    if (!goal) throw new NotFoundException('Goal not found');
-    return goal;
-  }
-
-  private async assertCoversChildren(orgId: string, parentId: string, newDue: Date) {
-    const latestChild = await this.prisma.goal.findFirst({
-      where: { parent_goal_id: parentId, is_deleted: false },
-      orderBy: { due_date: 'desc' },
-      select: { due_date: true },
-    });
-    if (latestChild && latestChild.due_date > this.endOfDay(newDue)) {
-      throw new BadRequestException(
-        'Due date cannot be earlier than the due date of a child goal.',
-      );
+  private diff(before: any, after: any, fields: string[]) {
+    const changes: Record<string, { before: any; after: any }> = {};
+    const norm = (v: any) =>
+      v instanceof Date ? v.toISOString() : v === null || v === undefined ? null : v.toString();
+    for (const f of fields) {
+      const b = norm(before[f]);
+      const a = norm(after[f]);
+      if (b !== a) changes[f] = { before: b, after: a };
     }
-  }
-
-  private assertWithinParentBounds(due: Date, parentDue: Date, level: GoalLevel) {
-    if (this.startOfDay(due) > this.endOfDay(parentDue)) {
-      const parentName = level === 'annual' ? 'objective' : 'annual';
-      throw new BadRequestException(
-        `A ${level} goal's due date cannot be later than its parent ${parentName}'s due date (${this.toISODate(parentDue)}).`,
-      );
-    }
-  }
-
-  private assertNotPast(due: Date) {
-    if (this.endOfDay(due) < this.startOfToday()) {
-      throw new BadRequestException('Due date cannot be in the past.');
-    }
+    return changes;
   }
 
   private parseDate(value: string, field: string): Date {
     const d = new Date(value);
-    if (isNaN(d.getTime())) throw new BadRequestException(`Invalid ${field}.`);
+    if (isNaN(d.getTime())) throw new BadRequestException(`Invalid ${field}`);
     return d;
   }
 
-  private startOfToday(): Date {
-    return this.startOfDay(new Date());
-  }
-  private startOfDay(d: Date): Date {
-    const x = new Date(d);
-    x.setHours(0, 0, 0, 0);
-    return x;
-  }
   private endOfDay(d: Date): Date {
     const x = new Date(d);
     x.setHours(23, 59, 59, 999);
     return x;
   }
-  private toISODate(d: Date): string {
-    return this.startOfDay(d).toISOString().slice(0, 10);
+
+  private daysAgo(from: Date, days: number): Date {
+    const d = new Date(from);
+    d.setDate(d.getDate() - days);
+    return d;
+  }
+
+  private daysBetween(from: Date, to: Date): number {
+    const a = new Date(from);
+    a.setHours(0, 0, 0, 0);
+    const b = new Date(to);
+    b.setHours(0, 0, 0, 0);
+    return Math.round((b.getTime() - a.getTime()) / 86400000);
+  }
+
+  private formatDate(d: Date): string {
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   }
 }

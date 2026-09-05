@@ -50,12 +50,11 @@ export const CONTENT_LEAF_POLICY: Record<string, ContentLeafPolicy> = {
       ],
     }),
   },
-  goals: {
-    rowScope: 'scopable',
-    whereForUsers: (ids) => ({
-      OR: [{ owner_user_id: { in: ids } }, { created_by_user_id: { in: ids } }],
-    }),
-  },
+  // Goals are company-wide by design: the module permission is the whole gate,
+  // and every goal in the org is visible to anyone holding it. Declared
+  // org_default (not removed) so the System Roles screen stops offering a Goals
+  // scope dropdown that would silently do nothing.
+  goals: { rowScope: 'org_default', note: 'Goals are company-wide; no row-level scope.' },
   meetings: {
     rowScope: 'scopable',
     whereForUsers: (ids) => ({

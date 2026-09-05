@@ -1,412 +1,329 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
+import { Loader2, Plus } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
-import DatePicker from '@/components/ui/DatePicker'
-import EmployeePicker from '@/components/ui/EmployeePicker'
+import MultiSelect from '@/components/ui/MultiSelect'
 import { useToast } from '@/components/ui/Toast'
+import { usePermissions } from '@/lib/auth/use-permissions'
 import { goalsApi } from '@/lib/api/goals'
-import {
-  CADENCE_META,
-  CADENCE_OPTIONS,
-  LEVEL_META,
-  PERSPECTIVE_META,
-  type Goal,
-  type GoalCadence,
-  type GoalLevel,
-  type GoalPerspective,
-  type CreateGoalInput,
-} from '@/lib/types/goals'
+import { projectsApi } from '@/lib/api/projects'
+import { STATUS_META, type Goal } from '@/lib/types/goals'
+import type { Project } from '@/lib/types/projects'
+import GoalFormFields, {
+  labelClass,
+  type EmployeeOption,
+  type GoalFormState,
+} from './GoalFormFields'
+import QuickCreateProjectModal from './QuickCreateProjectModal'
+import { formatDate } from './shared'
 
-const inputClass =
-  'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
-const labelClass = 'block text-sm font-medium text-[#374151] mb-1'
-
-const PERSPECTIVES: GoalPerspective[] = ['financial', 'customer', 'internal_process', 'learning_growth']
-
-interface EmployeeOption {
-  user_id: string
-  name: string
-  role_title?: string | null
-  department_name?: string | null
-}
-interface DeptOption {
-  id: string
-  name: string
-}
-interface MeasureRow {
-  name: string
-  target_value: string
-  unit: string
+const EMPTY: GoalFormState = {
+  title: '',
+  description: '',
+  ownerUserId: '',
+  dueDate: '',
+  targetValue: '',
+  unit: '',
+  cadence: 'monthly',
+  checkInDate: '',
+  status: 'not_started',
 }
 
 interface Props {
   isOpen: boolean
   onClose: () => void
   orgId: string
-  level: GoalLevel
-  /** Fixed parent (when creating from a parent's detail page). */
-  parent?: Goal | null
-  /** Selectable parents (when creating from a list page) — renders a parent dropdown. */
-  parentOptions?: Goal[]
   employees: EmployeeOption[]
-  departments: DeptOption[]
   onCreated: (goal: Goal) => void
+  /** Pre-fills the owner (e.g. the current user creating their own goal). */
+  defaultOwnerId?: string
+  /**
+   * Whether this form offers the supporting-goal and project pickers. False for
+   * the nested "new supporting goal" form opened FROM those pickers — otherwise
+   * the form would recurse into itself forever.
+   */
+  allowLinking?: boolean
 }
 
-const todayStr = () => new Date().toISOString().slice(0, 10)
-
+/**
+ * New goal.
+ *
+ * Supporting goals and projects are chosen right here, and either can be
+ * created inline: the quick-create opens ON TOP of this form (never replacing
+ * it), and on save the new item is selected automatically. Everything typed so
+ * far survives, because this component stays mounted the whole time.
+ *
+ * Links are written AFTER the goal exists — a goal has no id to link to until
+ * it's saved — so the submit is: create the goal, then attach.
+ */
 export default function CreateGoalModal({
   isOpen,
   onClose,
   orgId,
-  level,
-  parent,
-  parentOptions,
   employees,
-  departments,
   onCreated,
+  defaultOwnerId,
+  allowLinking = true,
 }: Props) {
   const { addToast } = useToast()
-  const meta = LEVEL_META[level]
+  const { can, isAdmin } = usePermissions()
+  // Same combined gate the backend uses: /permissions/me already folds the org's
+  // entitlement ceiling into each leaf, so this is entitlement ∩ permission.
+  const canSeeProjects = isAdmin || can('projects.project.manage', 'read')
 
-  // The level a parent must be: objective → annual → quarterly.
-  const parentLevel: GoalLevel = level === 'quarterly' ? 'annual' : 'objective'
-  const parentMeta = LEVEL_META[parentLevel]
-  // When no fixed parent is supplied (creating from a list page), let the user pick one.
-  const selectableParent = !parent && level !== 'objective'
-
-  const [parentId, setParentId] = useState('')
-  const effectiveParent = useMemo<Goal | null>(
-    () => parent ?? parentOptions?.find((p) => p.id === parentId) ?? null,
-    [parent, parentOptions, parentId],
-  )
-
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [ownerId, setOwnerId] = useState('')
-  const [departmentId, setDepartmentId] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [dueDate, setDueDate] = useState('')
-  const [perspective, setPerspective] = useState<GoalPerspective | ''>('')
-  const [cadence, setCadence] = useState<GoalCadence>('none')
-  const [measures, setMeasures] = useState<MeasureRow[]>([])
-  const [minDate, setMinDate] = useState(todayStr())
-  const [maxDate, setMaxDate] = useState('')
-  const [clampNote, setClampNote] = useState(false)
+  const [form, setForm] = useState<GoalFormState>(EMPTY)
   const [saving, setSaving] = useState(false)
 
-  // Reset form fields on open
-  useEffect(() => {
-    if (!isOpen) return
-    setTitle('')
-    setDescription('')
-    setOwnerId('')
-    setDepartmentId('')
-    setStartDate('')
-    setMeasures([])
-    setPerspective('')
-    setCadence('none')
-    setParentId(parent?.id ?? '')
-  }, [isOpen, parent])
+  // Selections + the pools they pick from.
+  const [supportingIds, setSupportingIds] = useState<string[]>([])
+  const [projectIds, setProjectIds] = useState<string[]>([])
+  const [goalOptions, setGoalOptions] = useState<Goal[]>([])
+  const [projectOptions, setProjectOptions] = useState<Project[]>([])
 
-  // Resolve date bounds + smart default whenever the (effective) parent changes
-  useEffect(() => {
-    if (!isOpen) return
-    setClampNote(false)
+  // Nested quick-creates.
+  const [newGoalOpen, setNewGoalOpen] = useState(false)
+  const [newProjectOpen, setNewProjectOpen] = useState(false)
 
-    if (level === 'objective' || !effectiveParent) {
-      setMinDate(todayStr())
-      setMaxDate('')
-      setDueDate('')
-      return
-    }
-
-    // Annual / quarterly: ask backend for bounds + smart default
+  const loadPools = useCallback(() => {
+    if (!orgId || !allowLinking) return
     goalsApi
-      .nextDefault(orgId, effectiveParent.id)
-      .then((nd) => {
-        setMinDate(nd.min_date)
-        setMaxDate(nd.max_date)
-        setDueDate(nd.suggested ?? '')
-        setClampNote(nd.clamped)
-        // Sub-goals default to the parent goal's perspective, but may be changed.
-        if (level === 'quarterly' && nd.perspective) setPerspective(nd.perspective)
-      })
-      .catch(() => {
-        setMinDate(todayStr())
-        setMaxDate(effectiveParent.due_date.slice(0, 10))
-        if (level === 'quarterly' && effectiveParent.perspective) setPerspective(effectiveParent.perspective)
-      })
-  }, [isOpen, level, effectiveParent, orgId])
+      .list(orgId)
+      .then(setGoalOptions)
+      .catch(() => setGoalOptions([]))
+    if (canSeeProjects) {
+      projectsApi
+        .list(orgId)
+        // Every project is a candidate: one project can serve several goals, so
+        // being on another goal doesn't take it out of the running.
+        .then(setProjectOptions)
+        .catch(() => setProjectOptions([]))
+    }
+  }, [orgId, allowLinking, canSeeProjects])
 
-  const ownerOptions = useMemo(
-    () => employees.filter((e) => e.user_id && e.name),
-    [employees],
-  )
+  // Reset only when the form is (re)opened — NOT when a nested modal opens, so
+  // half-typed input is never lost behind a quick-create.
+  useEffect(() => {
+    if (!isOpen) return
+    setForm({ ...EMPTY, ownerUserId: defaultOwnerId ?? '' })
+    setSupportingIds([])
+    setProjectIds([])
+    loadPools()
+  }, [isOpen, defaultOwnerId, loadPools])
 
-  function updateMeasure(i: number, patch: Partial<MeasureRow>) {
-    setMeasures((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  const patch = (p: Partial<GoalFormState>) => setForm((f) => ({ ...f, ...p }))
+
+  /** A freshly created supporting goal joins the pool and is selected. */
+  function handleGoalCreated(goal: Goal) {
+    setGoalOptions((prev) => [goal, ...prev.filter((g) => g.id !== goal.id)])
+    setSupportingIds((prev) => (prev.includes(goal.id) ? prev : [...prev, goal.id]))
+  }
+
+  function handleProjectCreated(project: Project) {
+    setProjectOptions((prev) => [project, ...prev.filter((p) => p.id !== project.id)])
+    setProjectIds((prev) => (prev.includes(project.id) ? prev : [...prev, project.id]))
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (selectableParent && !parentId) return addToast(`${parentMeta.label} is required`, 'error')
-    if (!title.trim()) return addToast('Title is required', 'error')
-    if (!ownerId) return addToast('Owner is required', 'error')
-    if (!dueDate) return addToast('Due date is required', 'error')
-    if (level !== 'objective' && !perspective) return addToast('Perspective is required', 'error')
-
-    const dto: CreateGoalInput = {
-      level,
-      title: title.trim(),
-      owner_user_id: ownerId,
-      due_date: new Date(dueDate).toISOString(),
+    if (!form.title.trim()) return addToast('Give the goal a title', 'error')
+    if (!form.ownerUserId) return addToast('Every goal needs one accountable owner', 'error')
+    if (!form.dueDate) return addToast('Set a deadline', 'error')
+    if (form.cadence !== 'none' && !form.checkInDate) {
+      return addToast('Pick when the first check-in is due', 'error')
     }
-    if (description.trim()) dto.description = description.trim()
-    if (departmentId) dto.department_id = departmentId
-    if (startDate) dto.start_date = new Date(startDate).toISOString()
-    if (effectiveParent) dto.parent_goal_id = effectiveParent.id
-    if (level !== 'objective' && perspective) dto.perspective = perspective as GoalPerspective
-    if (cadence !== 'none') dto.review_cadence = cadence
-    const cleanMeasures = measures
-      .filter((m) => m.name.trim() && m.target_value.trim())
-      .map((m) => ({ name: m.name.trim(), target_value: m.target_value.trim(), unit: m.unit.trim() || undefined }))
-    if (cleanMeasures.length) dto.measures = cleanMeasures
+
+    const target = form.targetValue.trim()
+    if (target && isNaN(parseFloat(target.replace(/,/g, '')))) {
+      return addToast('The target must be a number', 'error')
+    }
 
     setSaving(true)
     try {
-      const goal = await goalsApi.create(orgId, dto)
-      addToast(`${meta.label} created`, 'success')
+      const goal = await goalsApi.create(orgId, {
+        title: form.title.trim(),
+        description: form.description.trim() || undefined,
+        owner_user_id: form.ownerUserId,
+        due_date: new Date(`${form.dueDate}T00:00:00`).toISOString(),
+        target_value: target ? parseFloat(target.replace(/,/g, '')) : undefined,
+        unit: form.unit.trim() || undefined,
+        review_cadence: form.cadence,
+        first_check_in_date:
+          form.cadence !== 'none' && form.checkInDate
+            ? new Date(`${form.checkInDate}T00:00:00`).toISOString()
+            : undefined,
+      })
+
+      // Attach afterwards — the goal needs an id first. A failure here must not
+      // discard the goal that was just created, so failures are counted and
+      // reported rather than thrown.
+      let failed = 0
+      await Promise.all([
+        ...supportingIds.map((id) =>
+          goalsApi.createLink(orgId, goal.id, { supporting_goal_id: id }).catch(() => {
+            failed += 1
+          }),
+        ),
+        ...projectIds.map((id) =>
+          goalsApi.linkProject(orgId, goal.id, id).catch(() => {
+            failed += 1
+          }),
+        ),
+      ])
+
+      if (failed > 0) {
+        addToast(
+          `Goal created, but ${failed} link${failed === 1 ? '' : 's'} didn’t attach — add ${
+            failed === 1 ? 'it' : 'them'
+          } from the goal’s page.`,
+          'warning',
+        )
+      } else {
+        addToast('Goal created', 'success')
+      }
       onCreated(goal)
       onClose()
     } catch (err: any) {
-      addToast(err?.response?.data?.message ?? `Failed to create ${meta.label.toLowerCase()}`, 'error')
+      addToast(err?.response?.data?.message ?? 'Could not create the goal', 'error')
     } finally {
       setSaving(false)
     }
   }
 
-  const titleText =
-    level === 'objective'
-      ? 'New Objective'
-      : effectiveParent
-        ? `New ${meta.label} under "${effectiveParent.title}"`
-        : `New ${meta.label}`
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={titleText} size="lg">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {selectableParent && (
-          <div>
-            <label className={labelClass}>{parentMeta.label} *</label>
-            <select className={inputClass} value={parentId} onChange={(e) => setParentId(e.target.value)} autoFocus>
-              <option value="">Select {parentMeta.label.toLowerCase()}…</option>
-              {parentOptions?.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.title}
-                </option>
-              ))}
-            </select>
-            {parentOptions && parentOptions.length === 0 && (
-              <p className="text-xs text-[#D97706] mt-1">
-                No {parentMeta.plural.toLowerCase()} exist yet — create one first.
-              </p>
-            )}
-          </div>
-        )}
-
-        <div>
-          <label className={labelClass}>Title *</label>
-          <input
-            className={inputClass}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder={level === 'objective' ? 'e.g. Become the #1 platform in our market' : 'What is the goal?'}
-            autoFocus={!selectableParent}
+    <>
+      <Modal isOpen={isOpen} onClose={() => !saving && onClose()} title="New goal" size="lg">
+        <form onSubmit={handleSubmit}>
+          <GoalFormFields
+            state={form}
+            onChange={patch}
+            employees={employees}
+            disabled={saving}
           />
-        </div>
 
-        <div>
-          <label className={labelClass}>Description</label>
-          <textarea
-            className={`${inputClass} resize-none`}
-            rows={2}
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="The qualitative 'what' of this goal"
-          />
-        </div>
-
-        {/* Perspective */}
-        {level !== 'objective' && (
-          <div>
-            <label className={labelClass}>
-              Balanced-Scorecard Perspective *
-              {level === 'quarterly' && (
-                <span className="ml-1 text-xs font-normal text-[#94A3B8]">
-                  · defaults to the parent goal&apos;s, change if needed
-                </span>
-              )}
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {PERSPECTIVES.map((p) => {
-                const active = perspective === p
-                const m = PERSPECTIVE_META[p]
-                return (
-                  <button
-                    type="button"
-                    key={p}
-                    onClick={() => setPerspective(p)}
-                    className={[
-                      'flex items-center gap-2 px-3 py-2 rounded-[8px] border text-sm font-medium transition-colors text-left',
-                      active ? 'border-[#2563EB] bg-[#EFF6FF] text-[#0F172A]' : 'border-[#E2E8F0] text-[#475569] hover:border-[#CBD5E1]',
-                    ].join(' ')}
-                  >
-                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: m.accent }} />
-                    {m.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Owner + Department */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Owner *</label>
-            <EmployeePicker
-              value={ownerId}
-              onChange={setOwnerId}
-              employees={ownerOptions}
-              title="Select Owner"
-              placeholder="Select owner…"
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Department</label>
-            <select className={inputClass} value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-              <option value="">None</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
-        {/* Dates */}
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Start date</label>
-            <DatePicker
-              value={startDate}
-              onChange={setStartDate}
-              min={minDate}
-              max={maxDate || undefined}
-              placeholder="Select date"
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Target / due date *</label>
-            <DatePicker
-              value={dueDate}
-              onChange={setDueDate}
-              min={minDate}
-              max={maxDate || undefined}
-              placeholder="Select date"
-            />
-            {maxDate && (
-              <p className="text-xs text-[#64748B] mt-1">
-                Must be on or before {new Date(maxDate).toLocaleDateString()} (parent&apos;s due date).
-              </p>
-            )}
-            {clampNote && (
-              <p className="text-xs text-[#D97706] mt-1">
-                Default was capped at the parent&apos;s due date.
-              </p>
-            )}
-          </div>
-        </div>
-
-        {/* Review cadence */}
-        <div>
-          <label className={labelClass}>Review cadence</label>
-          <select className={inputClass} value={cadence} onChange={(e) => setCadence(e.target.value as GoalCadence)}>
-            {CADENCE_OPTIONS.map((c) => (
-              <option key={c} value={c}>
-                {CADENCE_META[c].label}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-[#64748B] mt-1">
-            How often the owner checks in. Sets the next review date and keeps the goal honest.
-          </p>
-        </div>
-
-        {/* Measures */}
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className={labelClass + ' mb-0'}>Measures &amp; targets</label>
-            <button
-              type="button"
-              onClick={() => setMeasures((r) => [...r, { name: '', target_value: '', unit: '' }])}
-              className="inline-flex items-center gap-1 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8]"
-            >
-              <Plus size={14} /> Add measure
-            </button>
-          </div>
-          {measures.length === 0 && (
-            <p className="text-xs text-[#94A3B8]">A measure is a metric to track (e.g. &quot;active hospitals&quot;) with a target value.</p>
-          )}
-          <div className="flex flex-col gap-2">
-            {measures.map((m, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input
-                  className={inputClass}
-                  placeholder="Measure (e.g. active hospitals)"
-                  value={m.name}
-                  onChange={(e) => updateMeasure(i, { name: e.target.value })}
+          {allowLinking && (
+            <div className="mt-5 pt-5 border-t border-[#E2E8F0] space-y-4">
+              <FieldWithAdd
+                label="Supporting goals"
+                hint="Goals that have to land for this one to happen. Pick any that already exist, or create one."
+                addLabel="New supporting goal"
+                onAdd={() => setNewGoalOpen(true)}
+                disabled={saving}
+              >
+                <MultiSelect
+                  value={supportingIds}
+                  onChange={setSupportingIds}
+                  disabled={saving}
+                  placeholder="No supporting goals"
+                  searchPlaceholder="Search goals…"
+                  emptyText="No other goals yet — create the first one with +."
+                  options={goalOptions.map((g) => ({
+                    value: g.id,
+                    label: g.title,
+                    hint: `${g.owner?.name ?? '—'} · due ${formatDate(g.due_date)}`,
+                    color: STATUS_META[g.status]?.dot,
+                  }))}
                 />
-                <input
-                  className={`${inputClass} w-28`}
-                  placeholder="Target"
-                  value={m.target_value}
-                  onChange={(e) => updateMeasure(i, { target_value: e.target.value })}
-                />
-                <input
-                  className={`${inputClass} w-24`}
-                  placeholder="Unit"
-                  value={m.unit}
-                  onChange={(e) => updateMeasure(i, { unit: e.target.value })}
-                />
-                <button
-                  type="button"
-                  onClick={() => setMeasures((r) => r.filter((_, idx) => idx !== i))}
-                  className="text-[#94A3B8] hover:text-[#DC2626] shrink-0"
-                  aria-label="Remove measure"
+              </FieldWithAdd>
+
+              {canSeeProjects && (
+                <FieldWithAdd
+                  label="Projects"
+                  hint="Bigger bodies of work behind this goal. A project can serve several goals, so linking it here won't take it off any others."
+                  addLabel="New project"
+                  onAdd={() => setNewProjectOpen(true)}
+                  disabled={saving}
                 >
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+                  <MultiSelect
+                    value={projectIds}
+                    onChange={setProjectIds}
+                    disabled={saving}
+                    placeholder="No projects"
+                    searchPlaceholder="Search projects…"
+                    emptyText="No projects yet — create one with +."
+                    options={projectOptions.map((p) => ({
+                      value: p.id,
+                      label: p.name,
+                      hint: p.end_date ? `ends ${formatDate(p.end_date)}` : undefined,
+                    }))}
+                  />
+                </FieldWithAdd>
+              )}
+            </div>
+          )}
 
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
-          <Button variant="secondary" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" type="submit" isLoading={saving} disabled={saving}>
-            {saving && <Loader2 size={15} className="animate-spin" />}
-            Create {meta.label}
-          </Button>
-        </div>
-      </form>
-    </Modal>
+          {/* Header X is the dismiss, so the footer carries only the primary action. */}
+          <div className="flex justify-end pt-5 mt-5 border-t border-[#E2E8F0]">
+            <Button type="submit" disabled={saving}>
+              {saving && <Loader2 size={15} className="animate-spin mr-1.5" />}
+              {saving ? 'Creating…' : 'Create goal'}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Nested quick-creates. `allowLinking={false}` stops the goal form from
+          offering these same pickers again and recursing into itself. */}
+      {allowLinking && (
+        <CreateGoalModal
+          isOpen={newGoalOpen}
+          onClose={() => setNewGoalOpen(false)}
+          orgId={orgId}
+          employees={employees}
+          defaultOwnerId={defaultOwnerId}
+          allowLinking={false}
+          onCreated={handleGoalCreated}
+        />
+      )}
+
+      {allowLinking && canSeeProjects && (
+        <QuickCreateProjectModal
+          isOpen={newProjectOpen}
+          onClose={() => setNewProjectOpen(false)}
+          orgId={orgId}
+          employees={employees}
+          defaultManagerId={defaultOwnerId}
+          onCreated={handleProjectCreated}
+        />
+      )}
+    </>
+  )
+}
+
+/** A form field with its own Add action — solid blue +, sat next to what it controls. */
+function FieldWithAdd({
+  label,
+  hint,
+  addLabel,
+  onAdd,
+  disabled,
+  children,
+}: {
+  label: string
+  hint: string
+  addLabel: string
+  onAdd: () => void
+  disabled?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <div>
+      <label className={labelClass}>{label}</label>
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">{children}</div>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={disabled}
+          title={addLabel}
+          aria-label={addLabel}
+          className="shrink-0 w-[42px] h-[42px] rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] disabled:bg-[#E2E8F0] disabled:text-[#94A3B8] text-white flex items-center justify-center transition-colors"
+        >
+          <Plus size={18} />
+        </button>
+      </div>
+      <p className="text-[11px] text-[#475569] mt-1">{hint}</p>
+    </div>
   )
 }

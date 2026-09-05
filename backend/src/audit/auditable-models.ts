@@ -99,9 +99,17 @@ const EXPLICIT: Record<string, ModelAuditConfig> = {
   Goal: {
     resource: 'goal',
     labelFields: ['title'],
-    relationLabels: { owner_user_id: { model: 'User' }, parent_id: { model: 'Goal', labelField: 'title' } },
+    relationLabels: { owner_user_id: { model: 'User' }, department_id: { model: 'Department' } },
   },
-  GoalMeasure: { resource: 'goal_measure', labelFields: ['name'] },
+  GoalLink: {
+    resource: 'goal_link',
+    // No text field of its own — the label is derived from the two goals.
+    labelFields: [],
+    relationLabels: {
+      supporting_goal_id: { model: 'Goal', labelField: 'title' },
+      supported_goal_id: { model: 'Goal', labelField: 'title' },
+    },
+  },
   Task: {
     resource: 'task',
     labelFields: ['title'],
@@ -233,7 +241,8 @@ export const AUDIT_MODULES: AuditModuleDef[] = [
     label: 'Goals',
     resources: [
       { key: 'goal', label: 'Goals' },
-      { key: 'goal_measure', label: 'Measures' },
+      { key: 'goal_link', label: 'Goal links' },
+      { key: 'goal_check_in', label: 'Check-ins' },
     ],
   },
   {

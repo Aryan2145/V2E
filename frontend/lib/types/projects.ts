@@ -23,6 +23,11 @@ export interface Project {
   name: string
   description?: string
   status: ProjectStatus
+  /**
+   * The goals this project serves. Many-to-many — one project can move several
+   * goals at once, so this is a list, not a single foreign key.
+   */
+  goals?: { goal: { id: string; title: string; status: string; due_date: string } }[]
   status_reason?: string
   created_by_user_id: string
   project_manager_user_id: string

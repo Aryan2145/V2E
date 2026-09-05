@@ -23,6 +23,10 @@ const PROJECT_INCLUDE = {
   members: true,
   milestones: { orderBy: { order_index: 'asc' as const } },
   project_tasks: true,
+  goals: {
+    where: { goal: { is_deleted: false } },
+    include: { goal: { select: { id: true, title: true, status: true, due_date: true } } },
+  },
   _count: { select: { members: true, project_tasks: true } },
 };
 
@@ -73,6 +77,62 @@ export class ProjectsService {
     });
     if (!p) throw new NotFoundException(`Project ${projectId} not found`);
     return p;
+  }
+
+  /**
+   * Linked goals must be real, live goals in THIS org — otherwise a pasted
+   * foreign id would attach the project to another firm's goal.
+   */
+  private async assertGoalsInOrg(orgId: string, goalIds: string[] | undefined): Promise<string[]> {
+    const ids = Array.from(new Set((goalIds ?? []).filter(Boolean)));
+    if (ids.length === 0) return [];
+    const found = await this.prisma.goal.findMany({
+      where: { id: { in: ids }, organization_id: orgId, is_deleted: false },
+      select: { id: true },
+    });
+    if (found.length !== ids.length) {
+      throw new NotFoundException('A linked goal was not found in this organization');
+    }
+    return ids;
+  }
+
+  /**
+   * Replace a project's goal links with exactly `goalIds`. Many-to-many by
+   * design: a project can serve several goals at once, so this is a set
+   * operation, not a single foreign key.
+   */
+  private async setProjectGoals(
+    orgId: string,
+    projectId: string,
+    userId: string,
+    goalIds: string[],
+  ): Promise<void> {
+    const existing = await this.prisma.goalProject.findMany({
+      where: { project_id: projectId, organization_id: orgId },
+      select: { goal_id: true },
+    });
+    const have = new Set(existing.map((e) => e.goal_id));
+    const want = new Set(goalIds);
+
+    const toAdd = goalIds.filter((id) => !have.has(id));
+    const toRemove = [...have].filter((id) => !want.has(id));
+
+    if (toRemove.length) {
+      await this.prisma.goalProject.deleteMany({
+        where: { project_id: projectId, organization_id: orgId, goal_id: { in: toRemove } },
+      });
+    }
+    if (toAdd.length) {
+      await this.prisma.goalProject.createMany({
+        data: toAdd.map((goal_id) => ({
+          organization_id: orgId,
+          goal_id,
+          project_id: projectId,
+          created_by_user_id: userId,
+        })),
+        skipDuplicates: true,
+      });
+    }
   }
 
   private async requireMember(projectId: string, userId: string) {
@@ -218,6 +278,8 @@ export class ProjectsService {
       throw new ForbiddenException('Your role is not permitted to create projects');
     }
 
+    const goalIds = await this.assertGoalsInOrg(orgId, dto.goal_ids);
+
     const project = await this.prisma.project.create({
       data: {
         organization_id: orgId,
@@ -232,6 +294,10 @@ export class ProjectsService {
         created_by_user_id: userId,
       },
     });
+
+    if (goalIds.length) {
+      await this.setProjectGoals(orgId, project.id, userId, goalIds);
+    }
 
     // Auto-add creator as manager
     await this.prisma.projectMember.create({
@@ -289,6 +355,10 @@ export class ProjectsService {
   async updateProject(orgId: string, projectId: string, userId: string, dto: UpdateProjectDto) {
     await this.findProjectOrFail(orgId, projectId);
     await this.requireManagerOrEditor(projectId, userId);
+    if (dto.goal_ids !== undefined) {
+      const goalIds = await this.assertGoalsInOrg(orgId, dto.goal_ids ?? []);
+      await this.setProjectGoals(orgId, projectId, userId, goalIds);
+    }
 
     return this.prisma.project.update({
       where: { id: projectId },

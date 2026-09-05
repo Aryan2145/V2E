@@ -2,14 +2,10 @@
 
 import { useEffect, useState } from 'react'
 import { getMyPermissions } from '@/lib/api/permissions'
-import {
-  CONFIDENCE_META,
-  PERSPECTIVE_META,
-  STATUS_META,
-  type GoalConfidence,
-  type GoalPerspective,
-  type GoalStatus,
-} from '@/lib/types/goals'
+import { getEmployees } from '@/lib/api/employees'
+import { getDepartments } from '@/lib/api/departments'
+import { STATUS_META, formatValue, type GoalStatus } from '@/lib/types/goals'
+import type { DeptOption, EmployeeOption } from './GoalFormFields'
 
 // ─── Formatting ────────────────────────────────────────────────────────────────
 
@@ -20,70 +16,96 @@ export function formatDate(iso?: string | null): string {
   return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+export function formatDateTime(iso?: string | null): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return '—'
+  return d.toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
 export function toDateInput(iso?: string | null): string {
   if (!iso) return ''
   const d = new Date(iso)
   if (isNaN(d.getTime())) return ''
-  return d.toISOString().slice(0, 10)
+  // Local parts, not toISOString — that shifts the date across timezones.
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** Plain-language days-left, e.g. "12 days left", "Due today", "5 days late". */
+export function daysLeftLabel(days: number | null | undefined): {
+  text: string
+  tone: 'ok' | 'soon' | 'late'
+} {
+  if (days === null || days === undefined) return { text: '—', tone: 'ok' }
+  if (days < 0) {
+    const n = Math.abs(days)
+    return { text: `${n} day${n === 1 ? '' : 's'} late`, tone: 'late' }
+  }
+  if (days === 0) return { text: 'Due today', tone: 'soon' }
+  return { text: `${days} day${days === 1 ? '' : 's'} left`, tone: days <= 7 ? 'soon' : 'ok' }
+}
+
+export const DAYS_TONE: Record<'ok' | 'soon' | 'late', string> = {
+  ok: 'text-[#475569]',
+  soon: 'text-[#CA8A04]',
+  late: 'text-[#DC2626]',
 }
 
 // ─── Badges ──────────────────────────────────────────────────────────────────
 
-export function PerspectiveBadge({ perspective }: { perspective: GoalPerspective | null | undefined }) {
-  if (!perspective) return null
-  const m = PERSPECTIVE_META[perspective]
-  return (
-    <span
-      className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap"
-      style={{ backgroundColor: m.bg, color: m.text, borderColor: m.border }}
-    >
-      {m.label}
-    </span>
-  )
-}
-
-export function GoalStatusBadge({ status }: { status: GoalStatus }) {
+export function GoalStatusBadge({ status, withDot = true }: { status: GoalStatus; withDot?: boolean }) {
   const m = STATUS_META[status]
-  return (
-    <span
-      className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap"
-      style={{ backgroundColor: m.bg, color: m.text, borderColor: m.border }}
-    >
-      {m.label}
-    </span>
-  )
-}
-
-export function ConfidenceBadge({
-  confidence,
-  withDot = true,
-}: {
-  confidence: GoalConfidence | null | undefined
-  withDot?: boolean
-}) {
-  if (!confidence) return null
-  const m = CONFIDENCE_META[confidence]
   return (
     <span
       className="inline-flex items-center gap-1.5 font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap"
       style={{ backgroundColor: m.bg, color: m.text, borderColor: m.border }}
     >
-      {withDot && <span className="w-2 h-2 rounded-full" style={{ backgroundColor: m.dot }} />}
+      {withDot && <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: m.dot }} />}
       {m.label}
     </span>
   )
 }
 
-export function ProgressBar({ value, className = '' }: { value: number; className?: string }) {
-  const pct = Math.max(0, Math.min(100, Math.round(value)))
-  const color = pct >= 100 ? '#16A34A' : pct >= 60 ? '#2563EB' : pct >= 30 ? '#D97706' : '#94A3B8'
+/**
+ * A goal's number against its target — the only quantitative reading in the
+ * module. There is deliberately NO percentage and no progress bar: nothing here
+ * is computed, so a bar would imply arithmetic that doesn't exist.
+ */
+export function ValueAgainstTarget({
+  current,
+  target,
+  unit,
+  size = 'md',
+}: {
+  current: number | null
+  target: number | null
+  unit?: string | null
+  size?: 'sm' | 'md' | 'lg'
+}) {
+  if (target === null || target === undefined) {
+    return <span className="text-[13px] text-[#475569]">No target number</span>
+  }
+  const cls =
+    size === 'lg' ? 'text-[24px]' : size === 'sm' ? 'text-[13px]' : 'text-[15px]'
   return (
-    <div className={`flex items-center gap-2 ${className}`}>
-      <div className="flex-1 h-2 rounded-full bg-[#F1F5F9] overflow-hidden min-w-[60px]">
-        <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
-      </div>
-      <span className="text-[13px] text-[#475569] tabular-nums w-9 text-right">{pct}%</span>
-    </div>
+    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+      <span className={`${cls} font-bold text-[#0F172A] tabular-nums`}>
+        {current === null ? '—' : current.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+      </span>
+      <span className="text-[13px] text-[#475569]">of {formatValue(target, unit)}</span>
+    </span>
+  )
+}
+
+// ─── Count badge (solid blue pill, hidden at 0 — DESIGN_RULES Part 2) ─────────
+
+export function CountBadge({ count }: { count: number }) {
+  if (!count) return null
+  return (
+    <span className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-[#2563EB] text-white text-[11px] font-semibold">
+      {count}
+    </span>
   )
 }
 
@@ -112,7 +134,12 @@ export function EmptyState({
   )
 }
 
-// ─── Permissions hook (foundation Access Rights) ───────────────────────────────
+// ─── Permissions hook ─────────────────────────────────────────────────────────
+//
+// Holding the `goals` leaf IS the whole permission for this module — there is no
+// row-level scope and no per-goal owner check. Anyone with edit rights may
+// create, edit, link, unlink and check in on any goal; delete is its own action
+// so default roles never get it.
 
 export interface GoalPerms {
   read: boolean
@@ -145,4 +172,42 @@ export function useGoalPermissions(orgId: string): { perms: GoalPerms; loading: 
   }, [orgId])
 
   return { perms, loading }
+}
+
+// ─── Reference data (owners + departments) ────────────────────────────────────
+//
+// Every goals screen needs the same two lists to render its pickers and
+// filters, so they share one loader rather than four slightly different ones.
+
+export function useGoalRefData(orgId: string): {
+  employees: EmployeeOption[]
+  departments: DeptOption[]
+} {
+  const [employees, setEmployees] = useState<EmployeeOption[]>([])
+  const [departments, setDepartments] = useState<DeptOption[]>([])
+
+  useEffect(() => {
+    let active = true
+    if (!orgId) return
+    Promise.all([getEmployees(orgId).catch(() => []), getDepartments(orgId).catch(() => [])]).then(
+      ([emps, depts]: any[]) => {
+        if (!active) return
+        setEmployees(
+          (emps as any[]).map((e) => ({
+            user_id: e.user_id,
+            name: e.user?.name ?? e.name ?? e.email ?? 'Unknown',
+            role_title: e.role?.title ?? e.role?.name ?? null,
+            department_id: e.department?.id ?? null,
+            department_name: e.department?.name ?? null,
+          })),
+        )
+        setDepartments((depts as any[]).map((d) => ({ id: d.id, name: d.name })))
+      },
+    )
+    return () => {
+      active = false
+    }
+  }, [orgId])
+
+  return { employees, departments }
 }

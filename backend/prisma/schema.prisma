@@ -12,7 +12,6 @@ enum OrgStatus {
   pending_setup
 }
 
-
 enum BehaviorType {
   expected_behavior
   unacceptable_behavior
@@ -139,62 +138,62 @@ model OrganizationGroup {
 }
 
 model Organization {
-  id         String    @id @default(uuid())
+  id         String             @id @default(uuid())
   name       String
-  slug       String    @unique
+  slug       String             @unique
   logo_url   String?
   industry   String?
   country    String?
   timezone   String?
-  status     OrgStatus @default(pending_setup)
+  status     OrgStatus          @default(pending_setup)
   group_id   String?
   group      OrganizationGroup? @relation(fields: [group_id], references: [id])
-  created_at DateTime  @default(now())
-  updated_at DateTime  @updatedAt
+  created_at DateTime           @default(now())
+  updated_at DateTime           @updatedAt
 
   // ─── Simulated clock (test orgs only) ─────────────────────────────────────────
   is_test            Boolean   @default(false) // test client → controllable clock
-  sim_epoch          DateTime?                 // the simulated instant last set
-  sim_anchor         DateTime?                 // real time when sim_epoch was set (ticking)
-  sim_replayed_until DateTime?                 // simulated time engines have replayed up to
+  sim_epoch          DateTime? // the simulated instant last set
+  sim_anchor         DateTime? // real time when sim_epoch was set (ticking)
+  sim_replayed_until DateTime? // simulated time engines have replayed up to
 
-  members            OrganizationMember[]
-  org_identity       OrgIdentity?
-  culture_standards  CultureStandard[]
-  departments        Department[]
-  roles              Role[]
-  system_roles       SystemRole[]
-  employee_profiles  EmployeeProfile[]
-  employee_import_batches EmployeeImportBatch[]
+  members                   OrganizationMember[]
+  org_identity              OrgIdentity?
+  culture_standards         CultureStandard[]
+  departments               Department[]
+  roles                     Role[]
+  system_roles              SystemRole[]
+  employee_profiles         EmployeeProfile[]
+  employee_import_batches   EmployeeImportBatch[]
   department_import_batches DepartmentImportBatch[]
-  role_import_batches      RoleImportBatch[]
-  task_import_batches      TaskImportBatch[]
-  learning_paths     LearningPath[]
-  company_policies   CompanyPolicy[]
-  announcements      Announcement[]
-  announcement_reads AnnouncementRead[]
-  bulletin_boards    BulletinBoard[]
-  bulletin_posts     BulletinPost[]
-  bulletin_comments  BulletinComment[]
-  bulletin_reactions BulletinReaction[]
-  knowledge_posts    KnowledgePost[]
-  knowledge_comments KnowledgeComment[]
-  knowledge_reactions KnowledgeReaction[]
-  conversations      Conversation[]
-  conversation_members ConversationMember[]
-  messages           Message[]
-  module_entitlements OrgModuleEntitlement[]
+  role_import_batches       RoleImportBatch[]
+  task_import_batches       TaskImportBatch[]
+  learning_paths            LearningPath[]
+  company_policies          CompanyPolicy[]
+  announcements             Announcement[]
+  announcement_reads        AnnouncementRead[]
+  bulletin_boards           BulletinBoard[]
+  bulletin_posts            BulletinPost[]
+  bulletin_comments         BulletinComment[]
+  bulletin_reactions        BulletinReaction[]
+  knowledge_posts           KnowledgePost[]
+  knowledge_comments        KnowledgeComment[]
+  knowledge_reactions       KnowledgeReaction[]
+  conversations             Conversation[]
+  conversation_members      ConversationMember[]
+  messages                  Message[]
+  module_entitlements       OrgModuleEntitlement[]
 
   @@map("organizations")
 }
 
 model OrganizationMember {
-  id              String     @id @default(uuid())
+  id              String   @id @default(uuid())
   organization_id String
   user_id         String
-  is_admin        Boolean    @default(false) // platform-admin flag — governs admin leaves ONLY, never feature access
-  is_active       Boolean    @default(true)
-  joined_at       DateTime   @default(now())
+  is_admin        Boolean  @default(false) // platform-admin flag — governs admin leaves ONLY, never feature access
+  is_active       Boolean  @default(true)
+  joined_at       DateTime @default(now())
 
   organization Organization @relation(fields: [organization_id], references: [id])
   user         User         @relation(fields: [user_id], references: [id])
@@ -205,8 +204,8 @@ model OrganizationMember {
 }
 
 model User {
-  id              String   @id @default(uuid())
-  name            String
+  id                     String    @id @default(uuid())
+  name                   String
   // Login identity: a user signs in with EITHER email OR phone. At least one must
   // be set (enforced in the service). Email is optional+unique. The phone is stored
   // as two parts: the dialling country_code ("+91") kept SEPARATE from the national
@@ -214,12 +213,12 @@ model User {
   // both left NULL. Uniqueness is on the (country_code, phone) PAIR, so the same 10
   // digits under +91 and +971 are two different people. (Postgres lets many NULL
   // rows sit under a unique index, so existing email-only users are unaffected.)
-  email           String?
-  country_code    String?
-  phone           String?
-  password_hash   String
-  is_super_admin  Boolean  @default(false)
-  is_active       Boolean  @default(true)
+  email                  String?
+  country_code           String?
+  phone                  String?
+  password_hash          String
+  is_super_admin         Boolean   @default(false)
+  is_active              Boolean   @default(true)
   // Sliding-session refresh tokens are stored HASHED (sha256 hex), never raw —
   // a DB leak must not hand out usable sessions. `refresh_token` is the current
   // hash; `refresh_token_prev` is the immediately-previous hash, honoured only
@@ -232,37 +231,37 @@ model User {
   // ENCRYPTED at rest (AES-256-GCM), never raw. null = not connected. Each user
   // connects their own calendar; the token is global to the user (not per-org).
   google_refresh_token   String?
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  created_at             DateTime  @default(now())
+  updated_at             DateTime  @updatedAt
 
-  organization_memberships OrganizationMember[]
-  employee_profiles        EmployeeProfile[]
-  employee_import_batches  EmployeeImportBatch[] @relation("EmployeeImportedBy")
-  department_import_batches DepartmentImportBatch[] @relation("DepartmentImportedBy")
-  role_import_batches      RoleImportBatch[] @relation("RoleImportedBy")
-  task_import_batches      TaskImportBatch[] @relation("TaskImportedBy")
-  headed_departments       Department[]       @relation("DepartmentHead")
-  reports_to_employees     EmployeeProfile[]  @relation("ReportingTo")
-  announcements            Announcement[]
-  announcement_reads       AnnouncementRead[]
-  bulletin_boards          BulletinBoard[]
-  bulletin_posts           BulletinPost[]
-  bulletin_comments        BulletinComment[]
-  bulletin_reactions       BulletinReaction[]
-  knowledge_posts          KnowledgePost[]
-  knowledge_comments       KnowledgeComment[]
-  knowledge_reactions      KnowledgeReaction[]
-  conversations            Conversation[]
-  conversation_memberships ConversationMember[]
-  sent_messages            Message[]          @relation("SentMessages")
-  owned_goals              Goal[]             @relation("GoalOwner")
-  goal_check_ins           GoalCheckIn[]      @relation("GoalCheckInAuthor")
-  audit_logs               AuditLog[]
-  organized_meetings       Meeting[]          @relation("MeetingOrganizer")
-  meeting_attendances      MeetingAttendee[]  @relation("MeetingAttendeeUser")
-  time_blocks              TimeBlock[]        @relation("UserTimeBlocks")
-  permission_overrides     UserPermissionOverride[]
-  subject_overrides        UserSubjectOverride[]
+  organization_memberships  OrganizationMember[]
+  employee_profiles         EmployeeProfile[]
+  employee_import_batches   EmployeeImportBatch[]    @relation("EmployeeImportedBy")
+  department_import_batches DepartmentImportBatch[]  @relation("DepartmentImportedBy")
+  role_import_batches       RoleImportBatch[]        @relation("RoleImportedBy")
+  task_import_batches       TaskImportBatch[]        @relation("TaskImportedBy")
+  headed_departments        Department[]             @relation("DepartmentHead")
+  reports_to_employees      EmployeeProfile[]        @relation("ReportingTo")
+  announcements             Announcement[]
+  announcement_reads        AnnouncementRead[]
+  bulletin_boards           BulletinBoard[]
+  bulletin_posts            BulletinPost[]
+  bulletin_comments         BulletinComment[]
+  bulletin_reactions        BulletinReaction[]
+  knowledge_posts           KnowledgePost[]
+  knowledge_comments        KnowledgeComment[]
+  knowledge_reactions       KnowledgeReaction[]
+  conversations             Conversation[]
+  conversation_memberships  ConversationMember[]
+  sent_messages             Message[]                @relation("SentMessages")
+  owned_goals               Goal[]                   @relation("GoalOwner")
+  goal_check_ins            GoalCheckIn[]            @relation("GoalCheckInAuthor")
+  audit_logs                AuditLog[]
+  organized_meetings        Meeting[]                @relation("MeetingOrganizer")
+  meeting_attendances       MeetingAttendee[]        @relation("MeetingAttendeeUser")
+  time_blocks               TimeBlock[]              @relation("UserTimeBlocks")
+  permission_overrides      UserPermissionOverride[]
+  subject_overrides         UserSubjectOverride[]
 
   @@unique([email])
   // Composite uniqueness AND the lookup index for phone login live in one B-tree:
@@ -320,37 +319,37 @@ model CultureStandard {
 }
 
 model Department {
-  id                   String   @id @default(uuid())
-  organization_id      String
-  name                 String
-  description          String?  @db.Text
-  parent_department_id String?
-  head_user_id         String?
-  color                String?  // optional hex override for the org-chart node; null = inherit branch hue
-  position_x           Float    @default(0)
-  position_y           Float    @default(0)
+  id                     String   @id @default(uuid())
+  organization_id        String
+  name                   String
+  description            String?  @db.Text
+  parent_department_id   String?
+  head_user_id           String?
+  color                  String? // optional hex override for the org-chart node; null = inherit branch hue
+  position_x             Float    @default(0)
+  position_y             Float    @default(0)
   // Assignee-visibility: when false, members of this dept can assign to their direct
   // manager and below, but not above the manager. Default false = restrictive.
-  assignee_allow_upward Boolean @default(false)
+  assignee_allow_upward  Boolean  @default(false)
   // Assignee-visibility: when true, this department and ALL its descendant departments
   // are treated as one pool — every member can assign to every other member of the
   // subtree. The flag highest in the chain wins. Default false.
-  assignee_unify_subtree Boolean @default(false)
-  created_at           DateTime @default(now())
-  updated_at           DateTime @updatedAt
+  assignee_unify_subtree Boolean  @default(false)
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
 
-  organization        Organization    @relation(fields: [organization_id], references: [id])
-  parent_department   Department?     @relation("DepartmentHierarchy", fields: [parent_department_id], references: [id])
-  child_departments   Department[]    @relation("DepartmentHierarchy")
-  head_user           User?           @relation("DepartmentHead", fields: [head_user_id], references: [id])
-  roles               Role[]
-  employee_profiles   EmployeeProfile[]
-  import_batch_id     String?
-  import_batch        DepartmentImportBatch? @relation("DepartmentImportBatch", fields: [import_batch_id], references: [id], onDelete: SetNull)
-  announcements       Announcement[]
-  bulletin_boards     BulletinBoard[]
-  knowledge_posts     KnowledgePost[]
-  goals               Goal[]
+  organization      Organization           @relation(fields: [organization_id], references: [id])
+  parent_department Department?            @relation("DepartmentHierarchy", fields: [parent_department_id], references: [id])
+  child_departments Department[]           @relation("DepartmentHierarchy")
+  head_user         User?                  @relation("DepartmentHead", fields: [head_user_id], references: [id])
+  roles             Role[]
+  employee_profiles EmployeeProfile[]
+  import_batch_id   String?
+  import_batch      DepartmentImportBatch? @relation("DepartmentImportBatch", fields: [import_batch_id], references: [id], onDelete: SetNull)
+  announcements     Announcement[]
+  bulletin_boards   BulletinBoard[]
+  knowledge_posts   KnowledgePost[]
+  goals             Goal[]
 
   @@index([import_batch_id])
   @@map("departments")
@@ -372,7 +371,7 @@ model Role {
   department        Department        @relation(fields: [department_id], references: [id])
   employee_profiles EmployeeProfile[]
   import_batch_id   String?
-  import_batch      RoleImportBatch? @relation("RoleImportBatch", fields: [import_batch_id], references: [id], onDelete: SetNull)
+  import_batch      RoleImportBatch?  @relation("RoleImportBatch", fields: [import_batch_id], references: [id], onDelete: SetNull)
 
   @@index([import_batch_id])
   @@map("roles")
@@ -396,13 +395,13 @@ model EmployeeProfile {
   created_at           DateTime       @default(now())
   updated_at           DateTime       @updatedAt
 
-  organization         Organization             @relation(fields: [organization_id], references: [id])
-  user                 User                     @relation(fields: [user_id], references: [id])
-  role                 Role                     @relation(fields: [role_id], references: [id])
-  system_role          SystemRole?              @relation(fields: [system_role_id], references: [id])
-  department           Department               @relation(fields: [department_id], references: [id])
-  reporting_to         User?                    @relation("ReportingTo", fields: [reporting_to_user_id], references: [id])
-  import_batch         EmployeeImportBatch?     @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
+  organization         Organization              @relation(fields: [organization_id], references: [id])
+  user                 User                      @relation(fields: [user_id], references: [id])
+  role                 Role                      @relation(fields: [role_id], references: [id])
+  system_role          SystemRole?               @relation(fields: [system_role_id], references: [id])
+  department           Department                @relation(fields: [department_id], references: [id])
+  reporting_to         User?                     @relation("ReportingTo", fields: [reporting_to_user_id], references: [id])
+  import_batch         EmployeeImportBatch?      @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
   learning_assignments LearningPathAssignment[]
   policy_assignments   CompanyPolicyAssignment[]
 
@@ -525,8 +524,8 @@ model TaskImportBatch {
   created_at          DateTime          @default(now())
   undone_at           DateTime?
 
-  organization Organization      @relation(fields: [organization_id], references: [id], onDelete: Cascade)
-  imported_by  User              @relation("TaskImportedBy", fields: [imported_by_user_id], references: [id])
+  organization Organization    @relation(fields: [organization_id], references: [id], onDelete: Cascade)
+  imported_by  User            @relation("TaskImportedBy", fields: [imported_by_user_id], references: [id])
   tasks        Task[]
   rows         TaskImportRow[]
 
@@ -692,25 +691,25 @@ model LearningPathProgress {
 // ─── Communication Layer ────────────────────────────────────────────────────
 
 model Announcement {
-  id                  String              @id @default(uuid())
-  organization_id     String
-  title               String
-  body                String              @db.Text
-  type                AnnouncementType    @default(announcement)
-  scope               CommunicationScope  @default(company_wide)
-  department_id       String?
-  priority            AnnouncementPriority @default(normal)
-  published_at        DateTime?
-  expires_at          DateTime?
-  created_by_user_id  String
-  is_pinned           Boolean             @default(false)
-  attachment_urls     Json?
-  created_at          DateTime            @default(now())
-  updated_at          DateTime            @updatedAt
+  id                 String               @id @default(uuid())
+  organization_id    String
+  title              String
+  body               String               @db.Text
+  type               AnnouncementType     @default(announcement)
+  scope              CommunicationScope   @default(company_wide)
+  department_id      String?
+  priority           AnnouncementPriority @default(normal)
+  published_at       DateTime?
+  expires_at         DateTime?
+  created_by_user_id String
+  is_pinned          Boolean              @default(false)
+  attachment_urls    Json?
+  created_at         DateTime             @default(now())
+  updated_at         DateTime             @updatedAt
 
-  organization Organization      @relation(fields: [organization_id], references: [id])
-  department   Department?       @relation(fields: [department_id], references: [id])
-  created_by   User              @relation(fields: [created_by_user_id], references: [id])
+  organization Organization       @relation(fields: [organization_id], references: [id])
+  department   Department?        @relation(fields: [department_id], references: [id])
+  created_by   User               @relation(fields: [created_by_user_id], references: [id])
   reads        AnnouncementRead[]
 
   @@map("announcements")
@@ -732,37 +731,37 @@ model AnnouncementRead {
 }
 
 model BulletinBoard {
-  id                  String               @id @default(uuid())
-  organization_id     String
-  name                String
-  description         String?              @db.Text
-  scope               CommunicationScope   @default(company_wide)
-  department_id       String?
-  interaction_mode    BoardInteractionMode @default(comments_and_reactions)
-  created_by_user_id  String
-  is_active           Boolean              @default(true)
-  created_at          DateTime             @default(now())
-  updated_at          DateTime             @updatedAt
+  id                 String               @id @default(uuid())
+  organization_id    String
+  name               String
+  description        String?              @db.Text
+  scope              CommunicationScope   @default(company_wide)
+  department_id      String?
+  interaction_mode   BoardInteractionMode @default(comments_and_reactions)
+  created_by_user_id String
+  is_active          Boolean              @default(true)
+  created_at         DateTime             @default(now())
+  updated_at         DateTime             @updatedAt
 
-  organization Organization    @relation(fields: [organization_id], references: [id])
-  department   Department?     @relation(fields: [department_id], references: [id])
-  created_by   User            @relation(fields: [created_by_user_id], references: [id])
+  organization Organization   @relation(fields: [organization_id], references: [id])
+  department   Department?    @relation(fields: [department_id], references: [id])
+  created_by   User           @relation(fields: [created_by_user_id], references: [id])
   posts        BulletinPost[]
 
   @@map("bulletin_boards")
 }
 
 model BulletinPost {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  bulletin_board_id   String
-  title               String
-  body                String   @db.Text
-  attachment_urls     Json?
-  is_pinned           Boolean  @default(false)
-  created_by_user_id  String
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  organization_id    String
+  bulletin_board_id  String
+  title              String
+  body               String   @db.Text
+  attachment_urls    Json?
+  is_pinned          Boolean  @default(false)
+  created_by_user_id String
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   organization   Organization       @relation(fields: [organization_id], references: [id])
   bulletin_board BulletinBoard      @relation(fields: [bulletin_board_id], references: [id], onDelete: Cascade)
@@ -774,13 +773,13 @@ model BulletinPost {
 }
 
 model BulletinComment {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  bulletin_post_id    String
-  body                String   @db.Text
-  created_by_user_id  String
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  organization_id    String
+  bulletin_post_id   String
+  body               String   @db.Text
+  created_by_user_id String
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   organization  Organization @relation(fields: [organization_id], references: [id])
   bulletin_post BulletinPost @relation(fields: [bulletin_post_id], references: [id], onDelete: Cascade)
@@ -790,12 +789,12 @@ model BulletinComment {
 }
 
 model BulletinReaction {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  bulletin_post_id    String
-  user_id             String
-  emoji               String
-  created_at          DateTime @default(now())
+  id               String   @id @default(uuid())
+  organization_id  String
+  bulletin_post_id String
+  user_id          String
+  emoji            String
+  created_at       DateTime @default(now())
 
   organization  Organization @relation(fields: [organization_id], references: [id])
   bulletin_post BulletinPost @relation(fields: [bulletin_post_id], references: [id], onDelete: Cascade)
@@ -806,22 +805,22 @@ model BulletinReaction {
 }
 
 model KnowledgePost {
-  id                  String             @id @default(uuid())
-  organization_id     String
-  title               String?
-  body                String             @db.Text
-  scope               CommunicationScope @default(company_wide)
-  department_id       String?
-  tags                Json?
-  is_pinned           Boolean            @default(false)
-  attachment_urls     Json?
-  created_by_user_id  String
-  created_at          DateTime           @default(now())
-  updated_at          DateTime           @updatedAt
+  id                 String             @id @default(uuid())
+  organization_id    String
+  title              String?
+  body               String             @db.Text
+  scope              CommunicationScope @default(company_wide)
+  department_id      String?
+  tags               Json?
+  is_pinned          Boolean            @default(false)
+  attachment_urls    Json?
+  created_by_user_id String
+  created_at         DateTime           @default(now())
+  updated_at         DateTime           @updatedAt
 
-  organization Organization          @relation(fields: [organization_id], references: [id])
-  department   Department?           @relation(fields: [department_id], references: [id])
-  created_by   User                  @relation(fields: [created_by_user_id], references: [id])
+  organization Organization        @relation(fields: [organization_id], references: [id])
+  department   Department?         @relation(fields: [department_id], references: [id])
+  created_by   User                @relation(fields: [created_by_user_id], references: [id])
   comments     KnowledgeComment[]
   reactions    KnowledgeReaction[]
 
@@ -829,14 +828,14 @@ model KnowledgePost {
 }
 
 model KnowledgeComment {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  knowledge_post_id   String
-  body                String   @db.Text
-  parent_comment_id   String?
-  created_by_user_id  String
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  organization_id    String
+  knowledge_post_id  String
+  body               String   @db.Text
+  parent_comment_id  String?
+  created_by_user_id String
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   organization   Organization       @relation(fields: [organization_id], references: [id])
   knowledge_post KnowledgePost      @relation(fields: [knowledge_post_id], references: [id], onDelete: Cascade)
@@ -848,12 +847,12 @@ model KnowledgeComment {
 }
 
 model KnowledgeReaction {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  knowledge_post_id   String
-  user_id             String
-  emoji               String
-  created_at          DateTime @default(now())
+  id                String   @id @default(uuid())
+  organization_id   String
+  knowledge_post_id String
+  user_id           String
+  emoji             String
+  created_at        DateTime @default(now())
 
   organization   Organization  @relation(fields: [organization_id], references: [id])
   knowledge_post KnowledgePost @relation(fields: [knowledge_post_id], references: [id], onDelete: Cascade)
@@ -864,14 +863,14 @@ model KnowledgeReaction {
 }
 
 model Conversation {
-  id                  String           @id @default(uuid())
-  organization_id     String
-  type                ConversationType @default(direct)
-  name                String?
-  avatar_url          String?
-  created_by_user_id  String
-  created_at          DateTime         @default(now())
-  updated_at          DateTime         @updatedAt
+  id                 String           @id @default(uuid())
+  organization_id    String
+  type               ConversationType @default(direct)
+  name               String?
+  avatar_url         String?
+  created_by_user_id String
+  created_at         DateTime         @default(now())
+  updated_at         DateTime         @updatedAt
 
   organization Organization         @relation(fields: [organization_id], references: [id])
   created_by   User                 @relation(fields: [created_by_user_id], references: [id])
@@ -1020,16 +1019,16 @@ enum RecurringAccessLevel {
 // This allows extraction as a standalone microservice.
 
 model TaskMaster {
-  id                          String   @id @default(uuid())
-  organization_id             String   @unique
-  task_creation_roles         Json     @default("[\"org_admin\",\"hr_manager\",\"employee\"]")
-  task_edit_roles             Json     @default("[\"org_admin\",\"hr_manager\"]")
-  task_delete_roles           Json     @default("[\"org_admin\"]")
-  default_reminder_days_before Int     @default(1)
-  default_reminder_frequency  String   @default("once")
-  reopen_window_minutes       Int      @default(5)
-  escalation_levels           Int      @default(2)
-  archive_view_roles          Json     @default("[\"org_admin\"]")
+  id                               String   @id @default(uuid())
+  organization_id                  String   @unique
+  task_creation_roles              Json     @default("[\"org_admin\",\"hr_manager\",\"employee\"]")
+  task_edit_roles                  Json     @default("[\"org_admin\",\"hr_manager\"]")
+  task_delete_roles                Json     @default("[\"org_admin\"]")
+  default_reminder_days_before     Int      @default(1)
+  default_reminder_frequency       String   @default("once")
+  reopen_window_minutes            Int      @default(5)
+  escalation_levels                Int      @default(2)
+  archive_view_roles               Json     @default("[\"org_admin\"]")
   // Legacy base-mode fields — retained for rollback/reference; no longer read by the
   // resolver (base default is now fixed Hierarchy+Department, modulated by the per-dept
   // upward switch). See AssigneeVisibilityService.
@@ -1040,8 +1039,8 @@ model TaskMaster {
   assignee_master_override         Boolean  @default(false)
   assignee_full_visibility_roles   Json     @default("[\"org_admin\",\"hr_manager\"]")
   assignee_full_visibility_users   Json     @default("[]")
-  created_at                  DateTime @default(now())
-  updated_at                  DateTime @updatedAt
+  created_at                       DateTime @default(now())
+  updated_at                       DateTime @updatedAt
 
   @@map("task_masters")
 }
@@ -1077,17 +1076,17 @@ model Leave {
 
 // Per-org leave policy (one row per org — mirrors TaskMaster/HolidayMaster).
 model LeaveMaster {
-  id                  String   @id @default(uuid())
-  organization_id     String   @unique
+  id                    String   @id @default(uuid())
+  organization_id       String   @unique
   // self_mark | manager | approvers | manager_or_approvers
-  approval_mode       String   @default("manager")
-  approver_user_ids   Json     @default("[]") // explicitly named approvers (no HR role exists)
-  any_one_can_approve Boolean  @default(true)
-  allow_override      Boolean  @default(true) // may an employee self-declare / override a rejection
-  recurring_notice_days Int    @default(3) // look-ahead lead time for recurring-task leave warnings
-  config_manage_roles Json     @default("[\"org_admin\"]") // who may edit these rules
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  approval_mode         String   @default("manager")
+  approver_user_ids     Json     @default("[]") // explicitly named approvers (no HR role exists)
+  any_one_can_approve   Boolean  @default(true)
+  allow_override        Boolean  @default(true) // may an employee self-declare / override a rejection
+  recurring_notice_days Int      @default(3) // look-ahead lead time for recurring-task leave warnings
+  config_manage_roles   Json     @default("[\"org_admin\"]") // who may edit these rules
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
 
   @@map("leave_masters")
 }
@@ -1101,16 +1100,16 @@ enum BridgeDepth {
 
 // One-directional: members of from_department may additionally assign into to_department.
 model AssigneeCrossDeptBridge {
-  id                 String      @id @default(uuid())
-  organization_id    String
-  from_department_id String
-  to_department_id   String
-  depth              BridgeDepth @default(head_senior)
+  id                      String      @id @default(uuid())
+  organization_id         String
+  from_department_id      String
+  to_department_id        String
+  depth                   BridgeDepth @default(head_senior)
   // When true the bridge also reaches every descendant department of to_department
   // (at the same depth), so a single bridge can cover a whole sub-tree.
-  include_sub_departments Boolean @default(false)
-  created_by         String?
-  created_at         DateTime    @default(now())
+  include_sub_departments Boolean     @default(false)
+  created_by              String?
+  created_at              DateTime    @default(now())
 
   @@unique([organization_id, from_department_id, to_department_id])
   @@index([organization_id, from_department_id])
@@ -1152,17 +1151,17 @@ model AssigneeVisibilityAuditLog {
 }
 
 model TaskCategory {
-  id                    String   @id @default(uuid())
-  organization_id       String
-  name                  String
-  description           String?
-  color                 String   @default("#2563EB")
-  created_by_user_id    String
-  visible_to_departments Json    @default("[]")
-  visible_to_roles      Json     @default("[]")
-  is_active             Boolean  @default(true)
-  created_at            DateTime @default(now())
-  updated_at            DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  organization_id        String
+  name                   String
+  description            String?
+  color                  String   @default("#2563EB")
+  created_by_user_id     String
+  visible_to_departments Json     @default("[]")
+  visible_to_roles       Json     @default("[]")
+  is_active              Boolean  @default(true)
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
 
   tasks Task[]
 
@@ -1203,67 +1202,67 @@ model TaskStatus {
 }
 
 model Task {
-  id                   String         @id @default(uuid())
-  organization_id      String
-  title                String
-  description          String?        @db.Text
-  category_id          String?
-  priority_id          String?
-  status_id            String
-  quadrant             TaskQuadrant   @default(Q2)
-  type                 TaskType       @default(one_time)
-  created_by_user_id   String
-  department_id        String?
-  completion_mode      CompletionMode @default(any_can_complete)
-  proof_required       Boolean        @default(false)
+  id                        String            @id @default(uuid())
+  organization_id           String
+  title                     String
+  description               String?           @db.Text
+  category_id               String?
+  priority_id               String?
+  status_id                 String
+  quadrant                  TaskQuadrant      @default(Q2)
+  type                      TaskType          @default(one_time)
+  created_by_user_id        String
+  department_id             String?
+  completion_mode           CompletionMode    @default(any_can_complete)
+  proof_required            Boolean           @default(false)
   // Allowed proof file extensions (lowercase, no dot). Empty = anything allowed.
-  proof_allowed_extensions String[]   @default([])
-  is_deleted           Boolean        @default(false)
-  deleted_by_user_id   String?
-  deleted_at           DateTime?
-  deletion_reason      String?        @db.Text
-  reopened_at          DateTime?
-  reopen_expires_at    DateTime?
-  deadline             DateTime?
-  is_overdue           Boolean        @default(false) // persisted by the auto-overdue sweep (mirrors Ticket.sla_breached)
-  overdue_at           DateTime?      // business time the task crossed its deadline
-  completed_at         DateTime?      // when the task reached a terminal `completed` OR `incomplete` status
-  completion_timing    CompletionTiming? // early/on_time/late vs deadline, set once at completion
+  proof_allowed_extensions  String[]          @default([])
+  is_deleted                Boolean           @default(false)
+  deleted_by_user_id        String?
+  deleted_at                DateTime?
+  deletion_reason           String?           @db.Text
+  reopened_at               DateTime?
+  reopen_expires_at         DateTime?
+  deadline                  DateTime?
+  is_overdue                Boolean           @default(false) // persisted by the auto-overdue sweep (mirrors Ticket.sla_breached)
+  overdue_at                DateTime? // business time the task crossed its deadline
+  completed_at              DateTime? // when the task reached a terminal `completed` OR `incomplete` status
+  completion_timing         CompletionTiming? // early/on_time/late vs deadline, set once at completion
   // Why the task was closed unsuccessfully (terminal `incomplete`). Required when
   // marking a task Incomplete; cleared on reopen. `completed_by_user_id` doubles as
   // "who closed it" for both the completed and incomplete terminal transitions.
-  incomplete_reason    String?        @db.Text
+  incomplete_reason         String?           @db.Text
   // Attribution for the shared-status ("any can complete") flow: who last moved the
   // shared status, and who actually closed the task. Powers "changed by X" / "Completed by X".
-  status_actor_user_id String?
-  completed_by_user_id String?
+  status_actor_user_id      String?
+  completed_by_user_id      String?
   recurring_template_id     String?
   // Date-only stamp of the day this instance was spawned from its recurring
   // template. Paired with a unique index below so the DB physically rejects a
   // second spawn of the same template on the same day — the race-safe guard the
   // scheduler's count-then-create check cannot provide on its own. NULL for every
   // non-recurring task (NULLs are distinct in a Postgres unique index).
-  recurring_spawn_date      DateTime? @db.Date
+  recurring_spawn_date      DateTime?         @db.Date
   workflow_instance_step_id String?
-  goal_id              String?        // links a task to a QUARTERLY goal (initiative)
+  goal_id                   String? // optional link to the goal this task moves
   // Set when the task was created via bulk import; enables the guarded undo.
-  import_batch_id      String?
-  created_at           DateTime       @default(now())
-  updated_at           DateTime       @updatedAt
+  import_batch_id           String?
+  created_at                DateTime          @default(now())
+  updated_at                DateTime          @updatedAt
 
-  category   TaskCategory?   @relation(fields: [category_id], references: [id])
-  priority   TaskPriority?   @relation(fields: [priority_id], references: [id])
-  status     TaskStatus      @relation(fields: [status_id], references: [id])
-  goal       Goal?           @relation(fields: [goal_id], references: [id])
-  import_batch TaskImportBatch? @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
-  assignees  TaskAssignee[]
-  checklist  TaskChecklist[]
-  reminders  TaskReminder[]
-  escalations TaskEscalation[]
+  category      TaskCategory?     @relation(fields: [category_id], references: [id])
+  priority      TaskPriority?     @relation(fields: [priority_id], references: [id])
+  status        TaskStatus        @relation(fields: [status_id], references: [id])
+  goal          Goal?             @relation(fields: [goal_id], references: [id])
+  import_batch  TaskImportBatch?  @relation(fields: [import_batch_id], references: [id], onDelete: SetNull)
+  assignees     TaskAssignee[]
+  checklist     TaskChecklist[]
+  reminders     TaskReminder[]
+  escalations   TaskEscalation[]
   activity_logs TaskActivityLog[]
-  comments   TaskComment[]
-  attachments TaskAttachment[]
-  views      TaskView[]
+  comments      TaskComment[]
+  attachments   TaskAttachment[]
+  views         TaskView[]
 
   @@unique([recurring_template_id, recurring_spawn_date], map: "tasks_recurring_template_day_unique")
   @@index([goal_id])
@@ -1294,16 +1293,16 @@ model TaskView {
 }
 
 model TaskAssignee {
-  id              String    @id @default(uuid())
-  organization_id String
-  task_id         String
-  user_id         String
+  id                     String    @id @default(uuid())
+  organization_id        String
+  task_id                String
+  user_id                String
   // Per-person status track, used only in `all_must_complete` mode: each assignee
   // drives their own open-state status. Null → treat as the org's not_started status.
   // In `any_can_complete` mode this stays null; the task carries one shared status.
-  status_id       String?
-  is_completed    Boolean   @default(false)
-  completed_at    DateTime?
+  status_id              String?
+  is_completed           Boolean   @default(false)
+  completed_at           DateTime?
   // Per-person "I can't finish my part" flag (all_must_complete mode). The part stays
   // OPEN but visibly flagged with a required reason; the task never auto-completes while
   // any part is flagged, so the creator/admin decides whether to close the whole task
@@ -1311,8 +1310,8 @@ model TaskAssignee {
   cannot_complete        Boolean   @default(false)
   cannot_complete_reason String?   @db.Text
   cannot_complete_at     DateTime?
-  is_cc           Boolean   @default(false)
-  created_at      DateTime  @default(now())
+  is_cc                  Boolean   @default(false)
+  created_at             DateTime  @default(now())
 
   task   Task        @relation(fields: [task_id], references: [id], onDelete: Cascade)
   status TaskStatus? @relation(fields: [status_id], references: [id])
@@ -1334,19 +1333,19 @@ model TaskAssignee {
 //     item gates that person's Complete: they can't finish their part until every
 //     item is done OR skipped-with-reason for them.
 model TaskChecklist {
-  id              String   @id @default(uuid())
-  organization_id String
-  task_id         String
-  title           String
-  group_title     String? // section label when a task carries multiple checklists; null = single ungrouped list
-  is_completed    Boolean  @default(false) // shared-mode tick only (any_can_complete / single)
-  cant_do         Boolean  @default(false) // shared-mode "can't do" — an item that genuinely can't be done
-  cant_do_reason  String?  @db.Text // required when cant_do; shown to everyone
+  id                   String    @id @default(uuid())
+  organization_id      String
+  task_id              String
+  title                String
+  group_title          String? // section label when a task carries multiple checklists; null = single ungrouped list
+  is_completed         Boolean   @default(false) // shared-mode tick only (any_can_complete / single)
+  cant_do              Boolean   @default(false) // shared-mode "can't do" — an item that genuinely can't be done
+  cant_do_reason       String?   @db.Text // required when cant_do; shown to everyone
   completed_by_user_id String? // shared-mode: who last ticked/flagged it (attribution)
-  completed_at    DateTime? // shared-mode: when it was last ticked/flagged
-  order_index     Int      @default(0)
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+  completed_at         DateTime? // shared-mode: when it was last ticked/flagged
+  order_index          Int       @default(0)
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
 
   task   Task                     @relation(fields: [task_id], references: [id], onDelete: Cascade)
   states TaskChecklistItemState[]
@@ -1460,15 +1459,15 @@ model ChecklistTemplateAccessRule {
 }
 
 model TaskReminder {
-  id              String       @id @default(uuid())
+  id              String             @id @default(uuid())
   organization_id String
   task_id         String
   remind_at       DateTime
-  type            ReminderType @default(assignee) // who is notified: assignee | assigner | cc
+  type            ReminderType       @default(assignee) // who is notified: assignee | assigner | cc
   offset_days     Int? // relative provenance: days-before-deadline this was set from (null = absolute date)
   recurrence      ReminderRecurrence @default(one_time) // yearly re-arms after firing (until the task closes)
-  is_sent         Boolean      @default(false)
-  created_at      DateTime     @default(now())
+  is_sent         Boolean            @default(false)
+  created_at      DateTime           @default(now())
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
@@ -1478,16 +1477,16 @@ model TaskReminder {
 }
 
 model TaskEscalation {
-  id                   String    @id @default(uuid())
-  organization_id      String
-  task_id              String
-  level                Int       @default(1)
-  escalate_to_user_id  String
-  escalated_at         DateTime?
-  is_acknowledged      Boolean   @default(false)
-  acknowledged_at      DateTime?
-  is_active            Boolean   @default(true)
-  created_at           DateTime  @default(now())
+  id                  String    @id @default(uuid())
+  organization_id     String
+  task_id             String
+  level               Int       @default(1)
+  escalate_to_user_id String
+  escalated_at        DateTime?
+  is_acknowledged     Boolean   @default(false)
+  acknowledged_at     DateTime?
+  is_active           Boolean   @default(true)
+  created_at          DateTime  @default(now())
 
   task Task @relation(fields: [task_id], references: [id], onDelete: Cascade)
 
@@ -1526,9 +1525,9 @@ model TaskComment {
   created_at          DateTime  @default(now())
   updated_at          DateTime  @updatedAt
 
-  task             Task          @relation(fields: [task_id], references: [id], onDelete: Cascade)
-  reply_to_comment TaskComment?  @relation("CommentReplies", fields: [reply_to_comment_id], references: [id])
-  replies          TaskComment[] @relation("CommentReplies")
+  task             Task             @relation(fields: [task_id], references: [id], onDelete: Cascade)
+  reply_to_comment TaskComment?     @relation("CommentReplies", fields: [reply_to_comment_id], references: [id])
+  replies          TaskComment[]    @relation("CommentReplies")
   attachments      TaskAttachment[]
 
   @@index([task_id])
@@ -1541,7 +1540,7 @@ model TaskComment {
 // this row is the metadata + access record. Cascade-deletes with its task/comment so
 // orphaned rows never linger (the R2 object is purged by the service on delete).
 model TaskAttachment {
-  id                  String    @id @default(uuid())
+  id                  String           @id @default(uuid())
   organization_id     String
   task_id             String
   comment_id          String? // set when attached to a comment rather than the task itself
@@ -1553,9 +1552,9 @@ model TaskAttachment {
   // Proof-of-completion flag + who may see it. uploaded_by_user_id is the owner.
   is_proof            Boolean          @default(false)
   proof_visibility    ProofVisibility? // null for non-proof rows
-  is_deleted          Boolean   @default(false)
+  is_deleted          Boolean          @default(false)
   deleted_at          DateTime?
-  created_at          DateTime  @default(now())
+  created_at          DateTime         @default(now())
 
   task    Task         @relation(fields: [task_id], references: [id], onDelete: Cascade)
   comment TaskComment? @relation(fields: [comment_id], references: [id], onDelete: Cascade)
@@ -1568,35 +1567,35 @@ model TaskAttachment {
 }
 
 model RecurringTemplate {
-  id                     String   @id @default(uuid())
-  organization_id        String
-  title                  String
-  description            String?  @db.Text
-  quadrant               TaskQuadrant @default(Q2)
-  category_id            String?
-  priority_id            String?
-  has_multiple_schedules Boolean  @default(false)
-  is_active              Boolean  @default(true)
-  completion_mode        CompletionMode @default(any_can_complete)
-  proof_required         Boolean  @default(false)
+  id                       String         @id @default(uuid())
+  organization_id          String
+  title                    String
+  description              String?        @db.Text
+  quadrant                 TaskQuadrant   @default(Q2)
+  category_id              String?
+  priority_id              String?
+  has_multiple_schedules   Boolean        @default(false)
+  is_active                Boolean        @default(true)
+  completion_mode          CompletionMode @default(any_can_complete)
+  proof_required           Boolean        @default(false)
   // Allowed proof file extensions (empty = any type) — copied to every spawned instance.
-  proof_allowed_extensions String[] @default([])
+  proof_allowed_extensions String[]       @default([])
   // Ordered escalation contacts ([userId]) — materialized as TaskEscalation rows
   // (level = position + 1) on every spawned instance so the escalation engine fires.
-  escalation_user_ids    Json     @default("[]")
-  assignee_user_ids      Json     @default("[]")
-  cc_user_ids            Json     @default("[]")
+  escalation_user_ids      Json           @default("[]")
+  assignee_user_ids        Json           @default("[]")
+  cc_user_ids              Json           @default("[]")
   // Flattened checklist definition ([{ title, group_title?, order_index }]) copied
   // into every spawned instance as TaskChecklist rows.
-  checklist_items        Json     @default("[]")
+  checklist_items          Json           @default("[]")
   // Reminder specs ([ReminderSpec]) — resolved to TaskReminder rows per spawned
   // instance (relative ones recomputed against that instance's deadline).
-  reminder_specs         Json     @default("[]")
-  department_id          String?
-  linked_goal_id         String?
-  created_by_user_id     String
-  created_at             DateTime @default(now())
-  updated_at             DateTime @updatedAt
+  reminder_specs           Json           @default("[]")
+  department_id            String?
+  linked_goal_id           String?
+  created_by_user_id       String
+  created_at               DateTime       @default(now())
+  updated_at               DateTime       @updatedAt
 
   schedule_entries RecurringScheduleEntry[]
   attachments      RecurringTemplateAttachment[]
@@ -1681,14 +1680,14 @@ model RecurringScheduleEntry {
 }
 
 model TaskArchive {
-  id                String   @id @default(uuid())
-  organization_id   String
-  original_task_id  String
-  task_snapshot     Json
+  id                 String   @id @default(uuid())
+  organization_id    String
+  original_task_id   String
+  task_snapshot      Json
   deleted_by_user_id String
-  deletion_reason   String?  @db.Text
-  deleted_at        DateTime
-  created_at        DateTime @default(now())
+  deletion_reason    String?  @db.Text
+  deleted_at         DateTime
+  created_at         DateTime @default(now())
 
   @@map("task_archives")
 }
@@ -1777,18 +1776,18 @@ model WorkflowMaster {
 }
 
 model WorkflowTemplate {
-  id                          String                 @id @default(uuid())
-  organization_id             String
-  name                        String
-  description                 String?                @db.Text
-  owner_user_ids              Json                   @default("[]")
-  created_by_user_id          String
-  status                      WorkflowTemplateStatus @default(draft)
-  show_workflow_on_task_card  Boolean                @default(true)
-  workflow_nature             WorkflowNature         @default(one_time)
-  recurring_type              WorkflowRecurringType?
-  created_at                  DateTime               @default(now())
-  updated_at                  DateTime               @updatedAt
+  id                         String                 @id @default(uuid())
+  organization_id            String
+  name                       String
+  description                String?                @db.Text
+  owner_user_ids             Json                   @default("[]")
+  created_by_user_id         String
+  status                     WorkflowTemplateStatus @default(draft)
+  show_workflow_on_task_card Boolean                @default(true)
+  workflow_nature            WorkflowNature         @default(one_time)
+  recurring_type             WorkflowRecurringType?
+  created_at                 DateTime               @default(now())
+  updated_at                 DateTime               @updatedAt
 
   steps       WorkflowStep[]
   triggers    WorkflowTrigger[]
@@ -1800,27 +1799,27 @@ model WorkflowTemplate {
 }
 
 model WorkflowStep {
-  id                    String               @id @default(uuid())
+  id                    String                @id @default(uuid())
   organization_id       String
   workflow_template_id  String
-  order_index           Int                  @default(0)
+  order_index           Int                   @default(0)
   title                 String
-  description           String?              @db.Text
-  assignee_type         WorkflowAssigneeType @default(fixed_person)
+  description           String?               @db.Text
+  assignee_type         WorkflowAssigneeType  @default(fixed_person)
   assignee_user_id      String?
   assignee_role         String?
   assigner_user_id      String
   deadline_config       Json
-  proof_required        Boolean              @default(false)
+  proof_required        Boolean               @default(false)
   priority_id           String?
   category_id           String?
-  checklist_items       Json                 @default("[]")
+  checklist_items       Json                  @default("[]")
   if_overdue_action     WorkflowOverdueAction @default(block_next)
   branch_step_id        String?
-  is_branch_step        Boolean              @default(false)
+  is_branch_step        Boolean               @default(false)
   parent_branch_step_id String?
-  created_at            DateTime             @default(now())
-  updated_at            DateTime             @updatedAt
+  created_at            DateTime              @default(now())
+  updated_at            DateTime              @updatedAt
 
   template WorkflowTemplate @relation(fields: [workflow_template_id], references: [id], onDelete: Cascade)
 
@@ -1871,8 +1870,8 @@ model WorkflowInstance {
   created_at           DateTime               @default(now())
   updated_at           DateTime               @updatedAt
 
-  template WorkflowTemplate        @relation(fields: [workflow_template_id], references: [id])
-  steps    WorkflowInstanceStep[]
+  template      WorkflowTemplate       @relation(fields: [workflow_template_id], references: [id])
+  steps         WorkflowInstanceStep[]
   notifications WorkflowNotification[]
 
   @@map("workflow_instances")
@@ -1955,8 +1954,8 @@ enum TicketReassignmentMode {
 // How a resolver group hands a new ticket to one of its members.
 enum TicketAssignmentStrategy {
   round_robin // force-assign to the next member in rotation
-  claim       // leave unassigned in the pool; any member can claim it
-  manual      // leave unassigned for an admin/manager to assign
+  claim // leave unassigned in the pool; any member can claim it
+  manual // leave unassigned for an admin/manager to assign
 }
 
 // Mirrors ChecklistAccessMode — gates who may pick a template when raising.
@@ -2120,10 +2119,10 @@ model TicketTemplate {
   created_at           DateTime                 @default(now())
   updated_at           DateTime                 @updatedAt
 
-  ticket_type    TicketType?                  @relation(fields: [ticket_type_id], references: [id])
-  category       TicketCategory?              @relation(fields: [category_id], references: [id])
-  priority       TicketPriority?              @relation(fields: [priority_id], references: [id])
-  resolver_group TicketResolverGroup?         @relation(fields: [resolver_group_id], references: [id])
+  ticket_type    TicketType?                @relation(fields: [ticket_type_id], references: [id])
+  category       TicketCategory?            @relation(fields: [category_id], references: [id])
+  priority       TicketPriority?            @relation(fields: [priority_id], references: [id])
+  resolver_group TicketResolverGroup?       @relation(fields: [resolver_group_id], references: [id])
   access_rules   TicketTemplateAccessRule[]
   tickets        Ticket[]
 
@@ -2193,11 +2192,11 @@ model Ticket {
   created_at                   DateTime  @default(now())
   updated_at                   DateTime  @updatedAt
 
-  ticket_type   TicketType      @relation(fields: [ticket_type_id], references: [id])
-  category      TicketCategory? @relation(fields: [category_id], references: [id])
-  priority      TicketPriority? @relation(fields: [priority_id], references: [id])
-  status        TicketStatus    @relation(fields: [status_id], references: [id])
-  template      TicketTemplate? @relation(fields: [template_id], references: [id])
+  ticket_type   TicketType          @relation(fields: [ticket_type_id], references: [id])
+  category      TicketCategory?     @relation(fields: [category_id], references: [id])
+  priority      TicketPriority?     @relation(fields: [priority_id], references: [id])
+  status        TicketStatus        @relation(fields: [status_id], references: [id])
+  template      TicketTemplate?     @relation(fields: [template_id], references: [id])
   checklist     TicketChecklist[]
   escalations   TicketEscalation[]
   activity_logs TicketActivityLog[]
@@ -2405,15 +2404,15 @@ enum HolidayEntityType {
 }
 
 model HolidayMaster {
-  id                            String                @id @default(uuid())
-  organization_id               String                @unique
-  country_code                  String?
-  holiday_on_task_action        HolidayOnTaskAction   @default(move_to_next_working_day)
-  priority_level                HolidayPriorityLevel  @default(individual_first)
-  pending_review_deadline_days  Int                   @default(7)
-  auto_apply_if_not_reviewed    Boolean               @default(false)
-  created_at                    DateTime              @default(now())
-  updated_at                    DateTime              @updatedAt
+  id                           String               @id @default(uuid())
+  organization_id              String               @unique
+  country_code                 String?
+  holiday_on_task_action       HolidayOnTaskAction  @default(move_to_next_working_day)
+  priority_level               HolidayPriorityLevel @default(individual_first)
+  pending_review_deadline_days Int                  @default(7)
+  auto_apply_if_not_reviewed   Boolean              @default(false)
+  created_at                   DateTime             @default(now())
+  updated_at                   DateTime             @updatedAt
 
   @@map("holiday_masters")
 }
@@ -2429,19 +2428,19 @@ model OrgWorkingDays {
 }
 
 model OrgHoliday {
-  id                   String        @id @default(uuid())
-  organization_id      String
-  name                 String
-  date                 DateTime      @db.Date
-  end_date             DateTime?     @db.Date
-  type                 HolidayType
-  source               String?
-  is_recurring_yearly  Boolean       @default(false)
-  description          String?       @db.Text
-  status               HolidayStatus @default(active)
-  year                 Int
-  created_at           DateTime      @default(now())
-  updated_at           DateTime      @updatedAt
+  id                  String        @id @default(uuid())
+  organization_id     String
+  name                String
+  date                DateTime      @db.Date
+  end_date            DateTime?     @db.Date
+  type                HolidayType
+  source              String?
+  is_recurring_yearly Boolean       @default(false)
+  description         String?       @db.Text
+  status              HolidayStatus @default(active)
+  year                Int
+  created_at          DateTime      @default(now())
+  updated_at          DateTime      @updatedAt
 
   opt_outs OrgHolidayOptOut[]
 
@@ -2452,9 +2451,9 @@ model OrgHoliday {
  * Department-level suppression of an ORG holiday. Org holidays are a baseline that
  * cascades to every department; this row removes one for a department. The remover
  * chooses the reach via `applies_to_subtree`:
- *   - false → suppress at this department only (children still observe it).
- *   - true  → suppress at this department AND all its descendants (parent's call is
- *             authoritative; a descendant cannot re-add it).
+ * - false → suppress at this department only (children still observe it).
+ * - true  → suppress at this department AND all its descendants (parent's call is
+ * authoritative; a descendant cannot re-add it).
  * Resolution: an org holiday is suppressed for dept D if any anchor A in D's ancestor
  * chain (D included) has `A === D || applies_to_subtree`. Reversible (delete the row).
  */
@@ -2655,24 +2654,24 @@ enum ProjectActivityAction {
 }
 
 model ProjectMaster {
-  id                      String   @id @default(uuid())
-  organization_id         String   @unique
-  project_creation_roles  Json     @default("[\"org_admin\",\"hr_manager\",\"employee\"]")
-  created_at              DateTime @default(now())
-  updated_at              DateTime @updatedAt
+  id                     String   @id @default(uuid())
+  organization_id        String   @unique
+  project_creation_roles Json     @default("[\"org_admin\",\"hr_manager\",\"employee\"]")
+  created_at             DateTime @default(now())
+  updated_at             DateTime @updatedAt
 
   @@map("project_masters")
 }
 
 model ProjectTemplate {
-  id                  String   @id @default(uuid())
-  organization_id     String
-  name                String
-  description         String?  @db.Text
-  created_by_user_id  String
-  is_active           Boolean  @default(true)
-  created_at          DateTime @default(now())
-  updated_at          DateTime @updatedAt
+  id                 String   @id @default(uuid())
+  organization_id    String
+  name               String
+  description        String?  @db.Text
+  created_by_user_id String
+  is_active          Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
 
   milestones ProjectTemplateMilestone[]
   tasks      ProjectTemplateTask[]
@@ -2690,7 +2689,7 @@ model ProjectTemplateMilestone {
   created_at          DateTime @default(now())
   updated_at          DateTime @updatedAt
 
-  template ProjectTemplate      @relation(fields: [project_template_id], references: [id], onDelete: Cascade)
+  template ProjectTemplate       @relation(fields: [project_template_id], references: [id], onDelete: Cascade)
   tasks    ProjectTemplateTask[]
 
   @@map("project_template_milestones")
@@ -2752,6 +2751,7 @@ model Project {
   comments      ProjectComment[]
   documents     ProjectDocument[]
   activity_logs ProjectActivityLog[]
+  goals         GoalProject[]
 
   @@map("projects")
 }
@@ -2888,33 +2888,33 @@ enum PolicyAssignmentStatus {
 }
 
 model CompanyPolicy {
-  id                  String              @id @default(uuid())
-  organization_id     String
-  title               String              @db.VarChar(200)
-  description         String?             @db.Text
-  status              CompanyPolicyStatus @default(draft)
-  created_by_user_id  String
-  created_at          DateTime            @default(now())
-  updated_at          DateTime            @updatedAt
+  id                 String              @id @default(uuid())
+  organization_id    String
+  title              String              @db.VarChar(200)
+  description        String?             @db.Text
+  status             CompanyPolicyStatus @default(draft)
+  created_by_user_id String
+  created_at         DateTime            @default(now())
+  updated_at         DateTime            @updatedAt
 
-  organization  Organization              @relation(fields: [organization_id], references: [id])
-  items         CompanyPolicyItem[]
-  assignments   CompanyPolicyAssignment[]
+  organization Organization              @relation(fields: [organization_id], references: [id])
+  items        CompanyPolicyItem[]
+  assignments  CompanyPolicyAssignment[]
 
   @@map("company_policies")
 }
 
 model CompanyPolicyItem {
-  id            String      @id @default(uuid())
-  policy_id     String
-  title         String      @db.VarChar(200)
-  description   String?     @db.Text
-  content_type  ContentType
-  content_url   String?
-  content_body  String?     @db.Text
-  order_index   Int         @default(0)
-  created_at    DateTime    @default(now())
-  updated_at    DateTime    @updatedAt
+  id           String      @id @default(uuid())
+  policy_id    String
+  title        String      @db.VarChar(200)
+  description  String?     @db.Text
+  content_type ContentType
+  content_url  String?
+  content_body String?     @db.Text
+  order_index  Int         @default(0)
+  created_at   DateTime    @default(now())
+  updated_at   DateTime    @updatedAt
 
   policy CompanyPolicy @relation(fields: [policy_id], references: [id], onDelete: Cascade)
 
@@ -2941,6 +2941,7 @@ model CompanyPolicyAssignment {
 
 enum NotificationModule {
   tasks
+  goals
   projects
   workflows
   tickets
@@ -3012,7 +3013,7 @@ enum PermissionAction {
 // Admin leaves are governed by OrganizationMember.is_admin, not by these tables.
 
 enum OverrideEffect {
-  grant  // force allow / force eligible
+  grant // force allow / force eligible
   revoke // force deny / force ineligible
 }
 
@@ -3177,16 +3178,16 @@ model OrgModuleEntitlement {
 model AuditLog {
   id              String   @id @default(uuid())
   organization_id String
-  actor_user_id   String?  // NULL for system-triggered entries
+  actor_user_id   String? // NULL for system-triggered entries
   actor_type      String   @default("user") // user | system
-  action          String   // create | update | delete | <semantic verb>
-  resource        String   // "goal", "access_right", ...
+  action          String // create | update | delete | <semantic verb>
+  resource        String // "goal", "access_right", ...
   entity_id       String
-  entity_type     String?  // originating Prisma model name (e.g. "Task")
-  entity_label    String?  // human-readable (e.g. goal title)
-  changes         Json?    // { field: { before, after } }
-  trigger_source  String?  // for system entries: "sla_breach", "auto_overdue", ...
-  trigger_context Json?    // arbitrary context about the system trigger
+  entity_type     String? // originating Prisma model name (e.g. "Task")
+  entity_label    String? // human-readable (e.g. goal title)
+  changes         Json? // { field: { before, after } }
+  trigger_source  String? // for system entries: "sla_breach", "auto_overdue", ...
+  trigger_context Json? // arbitrary context about the system trigger
   occurred_at     DateTime @default(now()) // business time (respects sim clock)
   request_id      String?
   ip              String?
@@ -3202,37 +3203,26 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// ─── Goals (3-level cascade: objective → annual → quarterly) ───────────────────
-enum GoalLevel {
-  objective
-  annual
-  quarterly
-}
+// ─── Goals ────────────────────────────────────────────────────────────────────
+// One flat entity. A goal has an owner, a deadline, an optional target number,
+// and links to other goals (which goals support it / which it supports). There
+// is no hierarchy, no level, and nothing is computed — every number on a goal
+// is typed in by a person at a check-in.
 
-enum GoalPerspective {
-  financial
-  customer
-  internal_process
-  learning_growth
-}
-
+// A goal's single status field. `not_started` = no check-in yet. The three
+// middle values are the owner's traffic light, set at each check-in. `achieved`
+// and `closed` are set by hand by a person.
 enum GoalStatus {
   not_started
-  on_track
-  at_risk
-  achieved
-  archived
-}
-
-// Owner's RAG judgement call, recorded at each check-in (independent of the
-// raw measure math — confidence is the human read on whether the goal lands).
-enum GoalConfidence {
   on_track // green
   at_risk // amber
   off_track // red
+  achieved
+  closed
 }
 
-// How often the owner is expected to check in. `none` = ad-hoc, no cadence.
+// How often the owner is expected to check in. `none` = ad-hoc, no cadence —
+// such goals are flagged stale after GOAL_STALE_DAYS instead of "overdue".
 enum GoalCadence {
   none
   weekly
@@ -3242,103 +3232,128 @@ enum GoalCadence {
 }
 
 model Goal {
-  id                 String           @id @default(uuid())
-  organization_id    String
-  level              GoalLevel
-  parent_goal_id     String? // NULL only for objective; required for annual/quarterly
-  perspective        GoalPerspective? // NULL for objective; set on annual; copied onto quarterly
-  title              String
-  description        String?          @db.Text
-  owner_user_id      String // single accountable person (an employee's user)
-  department_id      String?
-  start_date         DateTime?
-  due_date           DateTime // REQUIRED on every level
-  status             GoalStatus       @default(not_started)
-  progress_percent   Float            @default(0) // computed from measures / rolled up from children at each check-in
-  review_cadence     GoalCadence      @default(none) // expected check-in rhythm
-  next_review_date   DateTime? // when the next check-in is due (driven by cadence)
-  last_check_in_at   DateTime? // timestamp of the most recent check-in
-  last_confidence    GoalConfidence? // owner's most recent RAG call
-  is_deleted         Boolean          @default(false)
+  id              String   @id @default(uuid())
+  organization_id String
+  title           String
+  description     String?  @db.Text
+  owner_user_id   String // single accountable person (an employee's user)
+  department_id   String? // optional — used for filtering only, never for access
+  due_date        DateTime
+
+  // Optional target. Decimal (not string) so the dashboard can sort by gap to
+  // target and the trajectory chart can plot the series. `unit` is the label.
+  target_value  Decimal? @db.Decimal(18, 2)
+  current_value Decimal? @db.Decimal(18, 2) // last value recorded at a check-in
+  unit          String? // e.g. "Cr", "dealers", "%"
+
+  status           GoalStatus  @default(not_started)
+  review_cadence   GoalCadence @default(none)
+  next_review_date DateTime? // when the next check-in is due (driven by cadence)
+  last_check_in_at DateTime? // timestamp of the most recent (non-voided) check-in
+
+  is_deleted         Boolean   @default(false)
   deleted_at         DateTime?
   deleted_by_user_id String?
-  deletion_reason    String?          @db.Text
+  deletion_reason    String?   @db.Text
   created_by_user_id String
-  created_at         DateTime         @default(now())
-  updated_at         DateTime         @updatedAt
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
 
-  owner      User          @relation("GoalOwner", fields: [owner_user_id], references: [id])
-  department Department?   @relation(fields: [department_id], references: [id])
-  parent     Goal?         @relation("GoalHierarchy", fields: [parent_goal_id], references: [id])
-  children   Goal[]        @relation("GoalHierarchy")
-  measures   GoalMeasure[]
-  tasks      Task[]
-  check_ins  GoalCheckIn[]
+  owner        User          @relation("GoalOwner", fields: [owner_user_id], references: [id])
+  department   Department?   @relation(fields: [department_id], references: [id])
+  tasks        Task[]
+  projects     GoalProject[]
+  check_ins    GoalCheckIn[]
+  // Links where THIS goal is the one doing the supporting (i.e. the goals it supports).
+  supports     GoalLink[]    @relation("GoalLinkSupporting")
+  // Links where THIS goal is the one being supported (i.e. the goals supporting it).
+  supported_by GoalLink[]    @relation("GoalLinkSupported")
 
-  @@index([organization_id, level])
-  @@index([parent_goal_id])
+  @@index([organization_id, is_deleted])
   @@index([organization_id, next_review_date])
   @@index([organization_id, owner_user_id])
+  @@index([organization_id, status])
   @@map("goals")
 }
 
-model GoalMeasure {
-  id              String   @id @default(uuid())
-  organization_id String
-  goal_id         String
-  name            String // the metric, e.g. "active hospitals"
-  target_value    String // target, e.g. "100" (string keeps units flexible)
-  current_value   String?
-  unit            String?
-  created_at      DateTime @default(now())
-  updated_at      DateTime @updatedAt
+// ─── Goal links (the web) ─────────────────────────────────────────────────────
+// A directed edge: `supporting` helps `supported` happen. Any goal may link to
+// any goal, in either direction, as many times as needed. Self-links and cycles
+// are refused in the service. `note` records WHY the link exists — the strategic
+// assumption, so it can be revisited at review.
+//
+// Links are NOT removed when a goal is soft-deleted, so undeleting a goal
+// restores its web; queries filter out edges whose other end is deleted.
+model GoalLink {
+  id                 String   @id @default(uuid())
+  organization_id    String
+  supporting_goal_id String // the goal that helps
+  supported_goal_id  String // the goal that benefits
+  note               String?  @db.Text // why this link exists
+  created_by_user_id String
+  created_at         DateTime @default(now())
 
-  goal       Goal             @relation(fields: [goal_id], references: [id], onDelete: Cascade)
-  check_ins  MeasureCheckIn[]
+  supporting Goal @relation("GoalLinkSupporting", fields: [supporting_goal_id], references: [id], onDelete: Cascade)
+  supported  Goal @relation("GoalLinkSupported", fields: [supported_goal_id], references: [id], onDelete: Cascade)
 
-  @@index([goal_id])
-  @@map("goal_measures")
+  @@unique([supporting_goal_id, supported_goal_id])
+  @@index([organization_id])
+  @@index([supported_goal_id])
+  @@map("goal_links")
 }
 
-// ─── Goal check-ins (the execution heartbeat) ──────────────────────────────────
-// One row per review event on a goal: the owner records the period's actuals
-// (MeasureCheckIn rows), a confidence (RAG) call, and a short narrative. The
-// computed progress at that moment is snapshotted so history is replayable.
-model GoalCheckIn {
-  id                 String         @id @default(uuid())
+// ─── Goal ⇄ Project links ─────────────────────────────────────────────────────
+// Many-to-many on purpose: one project can serve several goals (a delivery-time
+// project moves retention AND cost AND revenue), and one goal can need several
+// projects. Forcing a project to pick a single goal would make people either
+// lie or duplicate the project — the same trap the old goal hierarchy had.
+model GoalProject {
+  id                 String   @id @default(uuid())
   organization_id    String
   goal_id            String
-  check_in_date      DateTime // the date the check-in is "for"
-  confidence         GoalConfidence
-  progress_percent   Float // snapshot of computed progress at this check-in
-  status_note        String?        @db.Text // owner's narrative: what's happening & why
+  project_id         String
   created_by_user_id String
-  created_at         DateTime       @default(now())
+  created_at         DateTime @default(now())
 
-  goal           Goal             @relation(fields: [goal_id], references: [id], onDelete: Cascade)
-  created_by     User             @relation("GoalCheckInAuthor", fields: [created_by_user_id], references: [id])
-  measure_values MeasureCheckIn[]
+  goal    Goal    @relation(fields: [goal_id], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([goal_id, project_id])
+  @@index([organization_id])
+  @@index([project_id])
+  @@map("goal_projects")
+}
+
+// ─── Goal check-ins (the only way a goal's number or status ever changes) ──────
+// One row per review event: the recorded number, the owner's traffic light, and
+// a short narrative. Rows are immutable — never edited, never deleted. A wrong
+// entry is VOIDED (kept, struck through, reason recorded) and superseded, the
+// way a reversal works in accounting.
+//
+// `target_value_at_check_in` snapshots the target as it stood that day, so
+// raising the target later never makes the history chart lie.
+model GoalCheckIn {
+  id                       String     @id @default(uuid())
+  organization_id          String
+  goal_id                  String
+  check_in_date            DateTime // the date the check-in is "for"
+  status                   GoalStatus // the traffic light: on_track | at_risk | off_track
+  recorded_value           Decimal?   @db.Decimal(18, 2) // null when the goal has no target
+  target_value_at_check_in Decimal?   @db.Decimal(18, 2)
+  status_note              String?    @db.Text // what's happening & why
+  created_by_user_id       String
+  created_at               DateTime   @default(now())
+
+  is_voided         Boolean   @default(false)
+  voided_at         DateTime?
+  voided_by_user_id String?
+  void_reason       String?   @db.Text
+
+  goal       Goal @relation(fields: [goal_id], references: [id], onDelete: Cascade)
+  created_by User @relation("GoalCheckInAuthor", fields: [created_by_user_id], references: [id])
 
   @@index([goal_id, check_in_date])
   @@map("goal_check_ins")
-}
-
-// The actual value recorded for a single measure at a single check-in — the
-// time-series that powers each measure's trajectory chart.
-model MeasureCheckIn {
-  id               String   @id @default(uuid())
-  organization_id  String
-  goal_check_in_id String
-  goal_measure_id  String
-  value            String // recorded actual at this check-in (string keeps units flexible)
-  created_at       DateTime @default(now())
-
-  check_in GoalCheckIn @relation(fields: [goal_check_in_id], references: [id], onDelete: Cascade)
-  measure  GoalMeasure @relation(fields: [goal_measure_id], references: [id], onDelete: Cascade)
-
-  @@index([goal_measure_id, created_at])
-  @@index([goal_check_in_id])
-  @@map("measure_check_ins")
 }
 
 // ─── Governance: Meetings ──────────────────────────────────────────────────────
@@ -3381,25 +3396,25 @@ enum TimeBlockSource {
 }
 
 model TimeBlock {
-  id              String          @id @default(uuid())
-  user_id         String
+  id                String          @id @default(uuid())
+  user_id           String
   // The org the block was created in (native) — informational only; availability
   // queries match by user across orgs. null for Google-imported blocks.
-  organization_id String?
-  title           String          // user-named; private to the owner
-  note            String?         @db.Text
-  start_at        DateTime
-  end_at          DateTime
-  all_day         Boolean         @default(false)
-  source          TimeBlockSource @default(native)
+  organization_id   String?
+  title             String // user-named; private to the owner
+  note              String?         @db.Text
+  start_at          DateTime
+  end_at            DateTime
+  all_day           Boolean         @default(false)
+  source            TimeBlockSource @default(native)
   // Google mirror (two-way). google_event_id updates/deletes the mirrored event;
   // google_ical_uid dedupes an imported block against a meeting already on Google;
   // google_updated_at breaks the echo loop (skip our own push coming back).
   google_event_id   String?
   google_ical_uid   String?
   google_updated_at String?
-  created_at      DateTime        @default(now())
-  updated_at      DateTime        @updatedAt
+  created_at        DateTime        @default(now())
+  updated_at        DateTime        @updatedAt
 
   user User @relation("UserTimeBlocks", fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -3409,26 +3424,26 @@ model TimeBlock {
 }
 
 model Meeting {
-  id                 String           @id @default(uuid())
-  organization_id    String
-  title              String
-  type               MeetingType
-  online_link        String?
-  online_password    String?
-  location           String? // free text (offline / hybrid)
-  status             MeetingStatus    @default(scheduled)
+  id                  String           @id @default(uuid())
+  organization_id     String
+  title               String
+  type                MeetingType
+  online_link         String?
+  online_password     String?
+  location            String? // free text (offline / hybrid)
+  status              MeetingStatus    @default(scheduled)
   // linkage (single optional link; all null = ad-hoc)
-  link_type          MeetingLinkType?
-  link_entity_id     String?
+  link_type           MeetingLinkType?
+  link_entity_id      String?
   // shared record (layer 1) — markdown
-  agenda             String?          @db.Text
-  minutes            String?          @db.Text
+  agenda              String?          @db.Text
+  minutes             String?          @db.Text
   // schedule (fixed time — the organiser picks it; the system never decides)
-  scheduled_start    DateTime?
-  scheduled_end      DateTime?
-  actual_start       DateTime?
-  actual_end         DateTime?
-  reminder_sent      Boolean          @default(false)
+  scheduled_start     DateTime?
+  scheduled_end       DateTime?
+  actual_start        DateTime?
+  actual_end          DateTime?
+  reminder_sent       Boolean          @default(false)
   // Attendance ledger honesty: null = attendance was never taken (reads as
   // "not recorded", NEVER as everyone no-showing). Set the first time the
   // organiser records attendance for this meeting.
@@ -3436,19 +3451,19 @@ model Meeting {
   // Rhythm linkage: set on instances spawned from a MeetingRhythm. spawn_date is
   // the date-only day the instance was spawned for; the unique pair blocks a
   // second spawn of the same rhythm on the same day (mirrors Task recurrence).
-  rhythm_id          String?
-  rhythm_spawn_date  DateTime?        @db.Date
-  created_by_user_id String // the caller / organizer
-  is_deleted         Boolean          @default(false)
-  deleted_at         DateTime?
-  deleted_by_user_id String?
-  deletion_reason    String?          @db.Text
+  rhythm_id           String?
+  rhythm_spawn_date   DateTime?        @db.Date
+  created_by_user_id  String // the caller / organizer
+  is_deleted          Boolean          @default(false)
+  deleted_at          DateTime?
+  deleted_by_user_id  String?
+  deletion_reason     String?          @db.Text
   // Google Calendar mirror (forward sync). google_event_id updates/deletes the
   // mirrored event; google_ical_uid is the stable dedupe key for the reverse view.
-  google_event_id    String?
-  google_ical_uid    String?
-  created_at         DateTime         @default(now())
-  updated_at         DateTime         @updatedAt
+  google_event_id     String?
+  google_ical_uid     String?
+  created_at          DateTime         @default(now())
+  updated_at          DateTime         @updatedAt
 
   organizer     User                 @relation("MeetingOrganizer", fields: [created_by_user_id], references: [id])
   rhythm        MeetingRhythm?       @relation(fields: [rhythm_id], references: [id])
@@ -3767,13 +3782,13 @@ model WorkLogSettings {
 // registered `self_scoped`). See project memory `project_process_hierarchy`.
 
 enum ProcessNodeKind {
-  container    // holds other nodes; you drill in
-  task         // a normal step in a flow
-  decision     // a binary Yes/No branch (diamond)
-  subprocess   // a step that opens into its own deeper flow (the recursion)
-  start_event  // BPMN start marker (no detail panel)
-  end_event    // BPMN end marker (no detail panel)
-  note         // free-form sticky annotation; not part of the flow, never counted
+  container // holds other nodes; you drill in
+  task // a normal step in a flow
+  decision // a binary Yes/No branch (diamond)
+  subprocess // a step that opens into its own deeper flow (the recursion)
+  start_event // BPMN start marker (no detail panel)
+  end_event // BPMN end marker (no detail panel)
+  note // free-form sticky annotation; not part of the flow, never counted
 }
 
 enum ProcessNodeStatus {
@@ -3784,8 +3799,8 @@ enum ProcessNodeStatus {
 
 enum ProcessConditionKind {
   none // normal sequence flow
-  yes  // the "Yes" branch out of a decision
-  no   // the "No" branch out of a decision
+  yes // the "Yes" branch out of a decision
+  no // the "No" branch out of a decision
 }
 
 // Swimlane model (Phase 2). A node sits in a POOL; a Company-pool node also sits in a
@@ -3813,7 +3828,7 @@ enum ProcessArtifactType {
 }
 
 enum ProcessArtifactDirection {
-  input  // a document the node needs
+  input // a document the node needs
   output // a document the node produces
 }
 
@@ -3864,7 +3879,7 @@ model ProcessMap {
   // map). null = top level. Drives the searchable tree list.
   parent_map_id      String?
   is_pinned          Boolean   @default(false) // show at the list's top level
-  is_listed          Boolean   @default(true)  // false = local-only (not a reusable list entry)
+  is_listed          Boolean   @default(true) // false = local-only (not a reusable list entry)
   is_deleted         Boolean   @default(false)
   deleted_at         DateTime?
   deleted_by_user_id String?
@@ -3872,8 +3887,8 @@ model ProcessMap {
   created_at         DateTime  @default(now())
   updated_at         DateTime  @updatedAt
 
-  parent_map  ProcessMap?  @relation("MapTree", fields: [parent_map_id], references: [id], onDelete: SetNull)
-  child_maps  ProcessMap[] @relation("MapTree")
+  parent_map  ProcessMap?         @relation("MapTree", fields: [parent_map_id], references: [id], onDelete: SetNull)
+  child_maps  ProcessMap[]        @relation("MapTree")
   nodes       ProcessNode[]
   connections ProcessConnection[]
   lanes       ProcessLane[]
@@ -3921,9 +3936,9 @@ model ProcessNode {
   created_at          DateTime          @default(now())
   updated_at          DateTime          @updatedAt
 
-  map            ProcessMap            @relation(fields: [map_id], references: [id], onDelete: Cascade)
-  parent_node    ProcessNode?          @relation("ProcessNodeTree", fields: [parent_node_id], references: [id])
-  child_nodes    ProcessNode[]         @relation("ProcessNodeTree")
+  map            ProcessMap             @relation(fields: [map_id], references: [id], onDelete: Cascade)
+  parent_node    ProcessNode?           @relation("ProcessNodeTree", fields: [parent_node_id], references: [id])
+  child_nodes    ProcessNode[]          @relation("ProcessNodeTree")
   checklist      ProcessChecklistItem[]
   artifact_links ProcessNodeArtifact[]
   access_rules   ProcessNodeAccess[]
@@ -3985,25 +4000,25 @@ model ProcessLane {
 // "Sits on the connection" is derived: an artifact that is an OUTPUT of the source
 // node and an INPUT of the target node renders on that edge.
 model ProcessArtifact {
-  id                 String              @id @default(uuid())
+  id                 String                     @id @default(uuid())
   organization_id    String
   map_id             String
   name               String
-  description        String?             @db.Text
-  artifact_type      ProcessArtifactType @default(document)
+  description        String?                    @db.Text
+  artifact_type      ProcessArtifactType        @default(document)
   // file (upload) | link (pasted URL) | article (written text)
   content_type       ProcessArtifactContentType @default(file)
-  url                String?             @db.Text // when content_type = link
-  content_body       String?             @db.Text // when content_type = article
-  allow_download     Boolean             @default(true) // files: false = view-only
+  url                String?                    @db.Text // when content_type = link
+  content_body       String?                    @db.Text // when content_type = article
+  allow_download     Boolean                    @default(true) // files: false = view-only
   // optional real file (all null = metadata-only / link / article)
   file_name          String?
   mime_type          String?
   size_bytes         Int?
   storage_key        String? // object key within the R2 bucket
   created_by_user_id String
-  created_at         DateTime            @default(now())
-  updated_at         DateTime            @updatedAt
+  created_at         DateTime                   @default(now())
+  updated_at         DateTime                   @updatedAt
 
   map        ProcessMap            @relation(fields: [map_id], references: [id], onDelete: Cascade)
   node_links ProcessNodeArtifact[]
@@ -4105,8 +4120,6 @@ model ProcessTemplate {
   @@index([organization_id])
   @@map("process_templates")
 }
-
-
 
 // ─── Delegation ───────────────────────────────────────────────────────────────
 // A management "hand-off": a delegator transfers ownership of an outcome to an

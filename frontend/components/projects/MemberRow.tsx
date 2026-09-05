@@ -1,6 +1,7 @@
 'use client'
 
 import { Trash2 } from 'lucide-react'
+import StyledSelect from '@/components/ui/StyledSelect'
 import type { ProjectMember, ProjectMemberRole, TaskVisibility } from '@/lib/types/projects'
 
 interface MemberRowProps {
@@ -26,23 +27,27 @@ export default function MemberRow({ member, currentUserId, canEdit, onRoleChange
       </div>
       {canEdit && !isSelf ? (
         <>
-          <select
+          <StyledSelect
             value={member.role}
-            onChange={(e) => onRoleChange(member.user_id, e.target.value as ProjectMemberRole)}
-            className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-          >
-            <option value="manager">Manager</option>
-            <option value="editor">Editor</option>
-            <option value="viewer">Viewer</option>
-          </select>
-          <select
+            onChange={(v) => onRoleChange(member.user_id, v as ProjectMemberRole)}
+            size="sm"
+            wrapperClassName="w-[110px]"
+            options={[
+              { value: 'manager', label: 'Manager' },
+              { value: 'editor', label: 'Editor' },
+              { value: 'viewer', label: 'Viewer' },
+            ]}
+          />
+          <StyledSelect
             value={member.task_visibility}
-            onChange={(e) => onVisibilityChange(member.user_id, e.target.value as TaskVisibility)}
-            className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-          >
-            <option value="own_tasks_only">Own tasks</option>
-            <option value="all_member_tasks">All tasks</option>
-          </select>
+            onChange={(v) => onVisibilityChange(member.user_id, v as TaskVisibility)}
+            size="sm"
+            wrapperClassName="w-[120px]"
+            options={[
+              { value: 'own_tasks_only', label: 'Own tasks' },
+              { value: 'all_member_tasks', label: 'All tasks' },
+            ]}
+          />
           <button
             type="button"
             onClick={() => onRemove(member.user_id)}

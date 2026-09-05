@@ -11,6 +11,8 @@ import type { Project, ProjectMember } from '@/lib/types/projects'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 import MemberRow from '@/components/projects/MemberRow'
 import DatePicker from '@/components/ui/DatePicker'
+import StyledSelect from '@/components/ui/StyledSelect'
+import GoalsMultiSelectField from '@/components/projects/GoalsMultiSelectField'
 import { ChevronLeft, Plus, Loader2, Trash2, Search, X, Check } from 'lucide-react'
 
 // ─── Avatar helpers ────────────────────────────────────────────────────────────
@@ -208,6 +210,7 @@ export default function ProjectSettingsPage() {
   const [plannedBudget, setPlannedBudget] = useState('')
   const [actualSpent, setActualSpent] = useState('')
   const [currency, setCurrency] = useState('INR')
+  const [goalIds, setGoalIds] = useState<string[]>([])
 
   // Save / delete state
   const [saving, setSaving] = useState(false)
@@ -254,6 +257,7 @@ export default function ProjectSettingsPage() {
       setPlannedBudget(proj.planned_budget?.toString() ?? '')
       setActualSpent(proj.actual_spent?.toString() ?? '')
       setCurrency(proj.currency)
+      setGoalIds((proj.goals ?? []).map((g) => g.goal.id))
       // Pre-fill PM user from eligible list
       const allUsers = eligible.departments.flatMap((d) => d.users)
       const pm = allUsers.find((u) => u.user_id === proj.project_manager_user_id)
@@ -292,6 +296,8 @@ export default function ProjectSettingsPage() {
         project_manager_user_id: pmUser!.user_id,
         start_date: startDate || undefined,
         end_date: endDate || undefined,
+        // The full set — sending it replaces this project's goal links.
+        goal_ids: goalIds,
       })
       if (status !== project?.status || statusReason !== (project?.status_reason ?? '')) {
         const needsReason = status === 'on_hold' || status === 'cancelled'
@@ -416,6 +422,8 @@ export default function ProjectSettingsPage() {
           <label className={labelCls}>Project manager <span className="text-[#DC2626]">*</span></label>
           <UserSearchDropdown orgId={orgId} selected={pmUser} onSelect={setPmUser} />
         </div>
+        {/* The goals this project serves. Clearing one unlinks just that pair. */}
+        <GoalsMultiSelectField orgId={orgId} value={goalIds} onChange={setGoalIds} />
       </div>
 
       {/* Status */}
@@ -423,9 +431,7 @@ export default function ProjectSettingsPage() {
         <h2 className="text-base font-semibold text-[#0F172A]">Status</h2>
         <div>
           <label className={labelCls}>Project status</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className={inputCls}>
-            {STATUS_OPTS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </select>
+          <StyledSelect value={status} onChange={setStatus} options={STATUS_OPTS} />
         </div>
         {needsReason && (
           <div>
@@ -446,12 +452,11 @@ export default function ProjectSettingsPage() {
           </div>
           <div>
             <label className={labelCls}>Currency</label>
-            <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
-              <option value="INR">INR</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
-            </select>
+            <StyledSelect
+              value={currency}
+              onChange={setCurrency}
+              options={['INR', 'USD', 'EUR', 'GBP'].map((c) => ({ value: c, label: c }))}
+            />
           </div>
         </div>
         <div>

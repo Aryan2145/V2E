@@ -22,11 +22,12 @@ interface Props {
 }
 
 /**
- * Reuses the existing Task module — creates a task linked to a quarterly goal via
- * goal_id. Keeps fields minimal (title, executor, deadline); full task editing
- * happens in the Tasks module.
+ * Reuses the existing Task module — creates a task linked to this goal via
+ * goal_id. Keeps fields minimal (title, who does it, deadline); full task
+ * editing happens in the Tasks module. Goals are flat, so any goal can carry
+ * work directly.
  */
-export default function AddInitiativeModal({ isOpen, onClose, orgId, goalId, employees, onCreated }: Props) {
+export default function AddGoalTaskModal({ isOpen, onClose, orgId, goalId, employees, onCreated }: Props) {
   const { addToast } = useToast()
   const [title, setTitle] = useState('')
   const [assignee, setAssignee] = useState('')
@@ -54,21 +55,21 @@ export default function AddInitiativeModal({ isOpen, onClose, orgId, goalId, emp
         deadline: deadline ? new Date(deadline).toISOString() : undefined,
         goal_id: goalId,
       })
-      addToast('Initiative added', 'success')
+      addToast('Task added', 'success')
       onCreated()
       onClose()
     } catch (err: any) {
-      addToast(err?.response?.data?.message ?? 'Failed to add initiative', 'error')
+      addToast(err?.response?.data?.message ?? 'Could not add the task', 'error')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add initiative" size="md">
+    <Modal isOpen={isOpen} onClose={onClose} title="Add a task to this goal" size="md">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <p className="text-sm text-[#475569] -mt-1">
-          Initiatives are tasks from the Task module linked to this sub-goal.
+          This creates a real task in the Tasks module, linked to this goal.
         </p>
         <div>
           <label className={labelClass}>Task title *</label>
@@ -93,7 +94,7 @@ export default function AddInitiativeModal({ isOpen, onClose, orgId, goalId, emp
             Cancel
           </Button>
           <Button variant="primary" type="submit" isLoading={saving} disabled={saving}>
-            Add initiative
+            Add task
           </Button>
         </div>
       </form>

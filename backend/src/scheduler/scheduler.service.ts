@@ -13,6 +13,7 @@ import { shouldEntryFireToday } from '../common/recurrence/should-fire-today';
 import { filterActiveOrgMembers } from '../common/org-members';
 import { resolveRemindAt, expandReminderRows, type ReminderSpec } from '../common/reminders/reminder-spec';
 import { isTerminal, TERMINAL_TYPES } from '../tasks/status-phase';
+import { GoalsService } from '../goals/goals.service';
 
 // Rolling look-ahead for meeting rhythms: the nightly cron keeps the next 60 days
 // of occurrences materialised. (Tasks spawn day-of; rhythms need advance visibility.)
@@ -29,6 +30,7 @@ export class SchedulerService {
     private readonly auditWriter: AuditWriterService,
     private readonly leave: LeaveService,
     private readonly r2: R2Service,
+    private readonly goals: GoalsService,
   ) {}
 
   /**
@@ -96,6 +98,39 @@ export class SchedulerService {
     }
 
     this.logger.log(`Recurring spawn: ${spawned} tasks spawned`);
+  }
+
+  // ─── Goal check-in reminders ──────────────────────────────────────────────────
+  // The Goals module's heartbeat. `next_review_date` is meaningless unless
+  // somebody is actually told, so this nudges the owner the day a check-in comes
+  // due and again once they are properly late. Deduped per (event, goal) by the
+  // notifications service, so an owner is never nagged twice for one miss.
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async sendGoalCheckInReminders() {
+    const now = new Date();
+    // Real-time orgs only — test orgs are driven by ReplayService on their sim clock.
+    const orgs = await this.prisma.organization.findMany({
+      where: { is_test: false },
+      select: { id: true },
+    });
+    for (const org of orgs) {
+      try {
+        await this.processGoalCheckInsForOrg(org.id, now);
+      } catch (err) {
+        this.logger.warn(`Goal check-in reminders failed for org ${org.id}: ${err}`);
+      }
+    }
+  }
+
+  /** Also called by ReplayService so simulated clocks fire these too. */
+  async processGoalCheckInsForOrg(orgId: string, now: Date): Promise<void> {
+    const master = await this.notifications.getMaster(orgId);
+    const followupDays = master?.overdue_followup_days ?? 2;
+    const r = await this.goals.sendCheckInReminders(orgId, now, followupDays);
+    if (r.due || r.overdue) {
+      this.logger.log(`Goal check-ins for org ${orgId}: ${r.due} due, ${r.overdue} overdue`);
+    }
   }
 
   // ─── Recurring leave look-ahead ───────────────────────────────────────────────

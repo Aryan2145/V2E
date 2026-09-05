@@ -1,218 +1,141 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, Trash2 } from 'lucide-react'
+import { Loader2, Trash2 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
-import DatePicker from '@/components/ui/DatePicker'
-import EmployeePicker from '@/components/ui/EmployeePicker'
 import { useToast } from '@/components/ui/Toast'
 import { goalsApi } from '@/lib/api/goals'
-import {
-  CADENCE_META,
-  CADENCE_OPTIONS,
-  STATUS_META,
-  type Goal,
-  type GoalCadence,
-  type GoalStatus,
-  type UpdateGoalInput,
-} from '@/lib/types/goals'
+import type { Goal } from '@/lib/types/goals'
+import GoalFormFields, {
+  type EmployeeOption,
+  type GoalFormState,
+} from './GoalFormFields'
 import { toDateInput } from './shared'
 
-const inputClass =
-  'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
-const labelClass = 'block text-sm font-medium text-[#374151] mb-1'
-const STATUSES: GoalStatus[] = ['not_started', 'on_track', 'at_risk', 'achieved', 'archived']
-const todayStr = () => new Date().toISOString().slice(0, 10)
-
-interface MeasureRow {
-  id?: string
-  name: string
-  target_value: string
-  unit: string
-}
-
-interface Props {
+export default function EditGoalModal({
+  isOpen,
+  onClose,
+  orgId,
+  goal,
+  employees,
+  onSaved,
+  onRequestDelete,
+  canDelete,
+}: {
   isOpen: boolean
   onClose: () => void
   orgId: string
   goal: Goal
-  employees: { user_id: string; name: string; role_title?: string | null; department_name?: string | null }[]
-  departments: { id: string; name: string }[]
+  employees: EmployeeOption[]
   onSaved: (goal: Goal) => void
-}
-
-export default function EditGoalModal({ isOpen, onClose, orgId, goal, employees, departments, onSaved }: Props) {
+  /** Opens the delete confirm — Delete lives in this footer per DESIGN_RULES Part 4. */
+  onRequestDelete?: () => void
+  canDelete?: boolean
+}) {
   const { addToast } = useToast()
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [ownerId, setOwnerId] = useState('')
-  const [departmentId, setDepartmentId] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [dueDate, setDueDate] = useState('')
-  const [status, setStatus] = useState<GoalStatus>('not_started')
-  const [cadence, setCadence] = useState<GoalCadence>('none')
-  const [measures, setMeasures] = useState<MeasureRow[]>([])
+  const [form, setForm] = useState<GoalFormState | null>(null)
   const [saving, setSaving] = useState(false)
-
-  const maxDate = goal.parent?.due_date ? toDateInput(goal.parent.due_date) : undefined
 
   useEffect(() => {
     if (!isOpen) return
-    setTitle(goal.title)
-    setDescription(goal.description ?? '')
-    setOwnerId(goal.owner_user_id)
-    setDepartmentId(goal.department_id ?? '')
-    setStartDate(toDateInput(goal.start_date))
-    setDueDate(toDateInput(goal.due_date))
-    setStatus(goal.status)
-    setCadence(goal.review_cadence ?? 'none')
-    setMeasures(
-      (goal.measures ?? []).map((m) => ({
-        id: m.id,
-        name: m.name,
-        target_value: m.target_value,
-        unit: m.unit ?? '',
-      })),
-    )
+    setForm({
+      title: goal.title,
+      description: goal.description ?? '',
+      ownerUserId: goal.owner_user_id,
+      dueDate: toDateInput(goal.due_date),
+      targetValue: goal.target_value === null ? '' : String(goal.target_value),
+      unit: goal.unit ?? '',
+      cadence: goal.review_cadence,
+      checkInDate: toDateInput(goal.next_review_date),
+      status: goal.status,
+    })
   }, [isOpen, goal])
 
-  function updateMeasure(i: number, patch: Partial<MeasureRow>) {
-    setMeasures((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
-  }
+  const patch = (p: Partial<GoalFormState>) => setForm((f) => (f ? { ...f, ...p } : f))
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!title.trim()) return addToast('Title is required', 'error')
-    if (!dueDate) return addToast('Due date is required', 'error')
+    if (!form) return
+    if (!form.title.trim()) return addToast('Give the goal a title', 'error')
+    if (!form.ownerUserId) return addToast('Every goal needs one accountable owner', 'error')
+    if (!form.dueDate) return addToast('Set a deadline', 'error')
+    if (form.cadence !== 'none' && !form.checkInDate) {
+      return addToast('Pick when the next check-in is due', 'error')
+    }
 
-    const dto: UpdateGoalInput = {
-      title: title.trim(),
-      description: description.trim(),
-      owner_user_id: ownerId,
-      department_id: departmentId || undefined,
-      start_date: startDate ? new Date(startDate).toISOString() : undefined,
-      due_date: new Date(dueDate).toISOString(),
-      status,
-      review_cadence: cadence,
-      measures: measures
-        .filter((m) => m.name.trim() && m.target_value.trim())
-        .map((m) => ({
-          id: m.id,
-          name: m.name.trim(),
-          target_value: m.target_value.trim(),
-          unit: m.unit.trim() || undefined,
-        })),
+    const target = form.targetValue.trim()
+    if (target && isNaN(parseFloat(target.replace(/,/g, '')))) {
+      return addToast('The target must be a number', 'error')
     }
 
     setSaving(true)
     try {
-      const updated = await goalsApi.update(orgId, goal.id, dto)
+      const updated = await goalsApi.update(orgId, goal.id, {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        owner_user_id: form.ownerUserId,
+        due_date: new Date(`${form.dueDate}T00:00:00`).toISOString(),
+        // null clears the target (and the recorded number with it).
+        target_value: target ? parseFloat(target.replace(/,/g, '')) : null,
+        unit: form.unit.trim() || null,
+        review_cadence: form.cadence,
+        next_review_date:
+          form.cadence === 'none' || !form.checkInDate
+            ? null
+            : new Date(`${form.checkInDate}T00:00:00`).toISOString(),
+        status: form.status,
+      })
       addToast('Goal updated', 'success')
       onSaved(updated)
       onClose()
     } catch (err: any) {
-      addToast(err?.response?.data?.message ?? 'Failed to update goal', 'error')
+      addToast(err?.response?.data?.message ?? 'Could not save the goal', 'error')
     } finally {
       setSaving(false)
     }
   }
 
+  if (!form) return null
+
+  const clearingTarget = goal.target_value !== null && !form.targetValue.trim()
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Edit goal" size="lg">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        <div>
-          <label className={labelClass}>Title *</label>
-          <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} />
-        </div>
-        <div>
-          <label className={labelClass}>Description</label>
-          <textarea className={`${inputClass} resize-none`} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Owner *</label>
-            <EmployeePicker
-              value={ownerId}
-              onChange={setOwnerId}
-              employees={employees}
-              title="Select Owner"
-              placeholder="Select owner…"
-            />
-          </div>
-          <div>
-            <label className={labelClass}>Department</label>
-            <select className={inputClass} value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-              <option value="">None</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className={labelClass}>Start date</label>
-            <DatePicker value={startDate} onChange={setStartDate} max={maxDate} placeholder="Select date" />
-          </div>
-          <div>
-            <label className={labelClass}>Due date *</label>
-            <DatePicker value={dueDate} onChange={setDueDate} min={todayStr()} max={maxDate} placeholder="Select date" />
-          </div>
-          <div>
-            <label className={labelClass}>Status</label>
-            <select className={inputClass} value={status} onChange={(e) => setStatus(e.target.value as GoalStatus)}>
-              {STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_META[s].label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div>
-          <label className={labelClass}>Review cadence</label>
-          <select className={inputClass} value={cadence} onChange={(e) => setCadence(e.target.value as GoalCadence)}>
-            {CADENCE_OPTIONS.map((c) => (
-              <option key={c} value={c}>
-                {CADENCE_META[c].label}
-              </option>
-            ))}
-          </select>
-          <p className="text-xs text-[#64748B] mt-1">How often the owner is expected to check in — sets the next review date.</p>
-        </div>
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <label className={labelClass + ' mb-0'}>Measures &amp; targets</label>
+    <Modal isOpen={isOpen} onClose={() => !saving && onClose()} title="Edit goal" size="lg">
+      <form onSubmit={handleSubmit}>
+        <GoalFormFields
+          state={form}
+          onChange={patch}
+          employees={employees}
+          showStatus
+          firstCheckInLabel="Next check-in due"
+          disabled={saving}
+        />
+
+        {clearingTarget && (
+          <p className="mt-4 rounded-[8px] border border-[#FDE68A] bg-[#FFFBEB] px-3 py-2 text-[13px] text-[#92400E]">
+            Removing the target also clears this goal’s recorded number. The check-in history stays
+            exactly as it is.
+          </p>
+        )}
+
+        <div className="flex items-center justify-between pt-5 mt-5 border-t border-[#E2E8F0]">
+          {/* Destructive action on the left, opposite the primary — DESIGN_RULES Part 4. */}
+          {canDelete && onRequestDelete ? (
             <button
               type="button"
-              onClick={() => setMeasures((r) => [...r, { name: '', target_value: '', unit: '' }])}
-              className="inline-flex items-center gap-1 text-sm font-medium text-[#2563EB] hover:text-[#1D4ED8]"
+              onClick={onRequestDelete}
+              disabled={saving}
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-[#DC2626] hover:text-[#B91C1C] disabled:text-[#94A3B8] transition-colors"
             >
-              <Plus size={14} /> Add measure
+              <Trash2 size={15} /> Delete goal
             </button>
-          </div>
-          <div className="flex flex-col gap-2">
-            {measures.map((m, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <input className={inputClass} placeholder="Measure" value={m.name} onChange={(e) => updateMeasure(i, { name: e.target.value })} />
-                <input className={`${inputClass} w-28`} placeholder="Target" value={m.target_value} onChange={(e) => updateMeasure(i, { target_value: e.target.value })} />
-                <input className={`${inputClass} w-24`} placeholder="Unit" value={m.unit} onChange={(e) => updateMeasure(i, { unit: e.target.value })} />
-                <button type="button" onClick={() => setMeasures((r) => r.filter((_, idx) => idx !== i))} className="text-[#94A3B8] hover:text-[#DC2626] shrink-0" aria-label="Remove measure">
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
-          <Button variant="secondary" type="button" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="primary" type="submit" isLoading={saving} disabled={saving}>
-            Save changes
+          ) : (
+            <span />
+          )}
+          <Button type="submit" disabled={saving}>
+            {saving && <Loader2 size={15} className="animate-spin mr-1.5" />}
+            {saving ? 'Saving…' : 'Save changes'}
           </Button>
         </div>
       </form>

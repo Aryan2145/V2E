@@ -2,302 +2,327 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { Target, Plus, Search, ChevronRight } from 'lucide-react'
+import { Plus, Search, Target, X } from 'lucide-react'
 import { useAuth } from '@/lib/auth/context'
+import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
+import StyledSelect from '@/components/ui/StyledSelect'
+import AccessHiddenState from '@/components/ui/AccessHiddenState'
 import { goalsApi } from '@/lib/api/goals'
-import { getEmployees } from '@/lib/api/employees'
-import { getDepartments } from '@/lib/api/departments'
+import { STATUS_META, formatValue, type Goal, type GoalStatus } from '@/lib/types/goals'
+import CreateGoalModal from './CreateGoalModal'
 import {
-  LEVEL_META,
-  PERSPECTIVE_META,
-  STATUS_META,
-  type Goal,
-  type GoalLevel,
-  type GoalPerspective,
-  type GoalStatus,
-} from '@/lib/types/goals'
-import {
+  CountBadge,
+  DAYS_TONE,
   EmptyState,
   GoalStatusBadge,
-  PerspectiveBadge,
-  ConfidenceBadge,
-  ProgressBar,
+  daysLeftLabel,
   formatDate,
   useGoalPermissions,
+  useGoalRefData,
 } from './shared'
-import CreateGoalModal from './CreateGoalModal'
-import ResponsiveTable, { type ResponsiveColumn } from '@/components/ui/ResponsiveTable'
-import AccessHiddenState from '@/components/ui/AccessHiddenState'
 
-const PERSPECTIVES: GoalPerspective[] = ['financial', 'customer', 'internal_process', 'learning_growth']
-const STATUSES: GoalStatus[] = ['not_started', 'on_track', 'at_risk', 'achieved', 'archived']
+const STATUSES: GoalStatus[] = [
+  'not_started',
+  'on_track',
+  'at_risk',
+  'off_track',
+  'achieved',
+  'closed',
+]
 
-const selectClass =
-  'border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-sm text-[#0F172A] bg-white focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
-
-export default function GoalListView({ level }: { level: GoalLevel }) {
+/**
+ * Goals — one flat list. No nesting and no indentation: a goal's place in the
+ * web lives on its own page, because in a web there is no single "level" a row
+ * could be indented to.
+ */
+export default function GoalListView() {
   const { user } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
   const orgId = user?.organizationId ?? ''
-  const meta = LEVEL_META[level]
-  const showPerspective = level !== 'objective'
   const { perms, loading: permsLoading } = useGoalPermissions(orgId)
-
-  // The parent level a new goal at this level rolls up to: annual → objective, quarterly → annual.
-  const parentLevel: GoalLevel | null = level === 'annual' ? 'objective' : level === 'quarterly' ? 'annual' : null
+  const { employees, departments } = useGoalRefData(orgId)
 
   const [goals, setGoals] = useState<Goal[]>([])
-  const [parentOptions, setParentOptions] = useState<Goal[]>([])
-  const [employees, setEmployees] = useState<
-    { user_id: string; name: string; role_title?: string | null; department_name?: string | null }[]
-  >([])
-  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
 
   const [search, setSearch] = useState('')
-  const [perspective, setPerspective] = useState<GoalPerspective | ''>(
-    (searchParams.get('perspective') as GoalPerspective) || '',
-  )
   const [owner, setOwner] = useState('')
-  const [status, setStatus] = useState<GoalStatus | ''>('')
+  const [department, setDepartment] = useState('')
+  // Seeded from ?status= so the Dashboard's status tiles land pre-filtered.
+  const [status, setStatus] = useState<GoalStatus | ''>(
+    (searchParams.get('status') as GoalStatus) || '',
+  )
 
-  const load = useCallback(() => {
-    if (!orgId) {
-      setLoading(false)
-      return
-    }
+  const load = useCallback(async () => {
+    if (!orgId) return
     setLoading(true)
-    Promise.all([
-      goalsApi.list(orgId, { level }).catch(() => []),
-      getEmployees(orgId).catch(() => []),
-      getDepartments(orgId).catch(() => []),
-      parentLevel ? goalsApi.list(orgId, { level: parentLevel }).catch(() => []) : Promise.resolve([]),
-    ])
-      .then(([g, emps, depts, parents]: any[]) => {
-        setGoals(g)
-        setEmployees(
-          (emps as any[]).map((e) => ({
-            user_id: e.user_id,
-            name: e.user?.name ?? e.name ?? e.email ?? 'Unknown',
-            role_title: e.role?.title ?? e.role?.name ?? null,
-            department_name: e.department?.name ?? null,
-          })),
-        )
-        setDepartments((depts as any[]).map((d) => ({ id: d.id, name: d.name })))
-        setParentOptions(parents as Goal[])
-      })
-      .finally(() => setLoading(false))
-  }, [orgId, level, parentLevel])
+    try {
+      setGoals(await goalsApi.list(orgId).catch(() => []))
+    } finally {
+      setLoading(false)
+    }
+  }, [orgId])
 
   useEffect(() => {
-    load()
+    void load()
   }, [load])
 
-  const filtered = useMemo(() => {
-    return goals.filter((g) => {
-      if (search && !g.title.toLowerCase().includes(search.toLowerCase())) return false
-      if (perspective && g.perspective !== perspective) return false
-      if (owner && g.owner_user_id !== owner) return false
-      if (status && g.status !== status) return false
-      return true
-    })
-  }, [goals, search, perspective, owner, status])
+  const deptOfOwner = useMemo(
+    () => new Map(employees.map((e) => [e.user_id, e.department_id ?? ''])),
+    [employees],
+  )
 
-  const isFiltered = !!(search || perspective || owner || status)
+  const filtered = useMemo(
+    () =>
+      goals.filter((g) => {
+        if (search && !g.title.toLowerCase().includes(search.toLowerCase())) return false
+        if (owner && g.owner_user_id !== owner) return false
+        // A goal has no department of its own — it belongs to whichever
+        // department its owner sits in, so the filter reads through them.
+        if (department && deptOfOwner.get(g.owner_user_id) !== department) return false
+        if (status && g.status !== status) return false
+        return true
+      }),
+    [goals, search, owner, department, status, deptOfOwner],
+  )
 
-  const columns = useMemo<ResponsiveColumn<Goal>[]>(() => {
-    const cols: ResponsiveColumn<Goal>[] = [
-      {
-        key: 'goal',
-        header: meta.label,
-        primary: true,
-        render: (g) => (
-          <>
-            <div className="font-medium text-[#0F172A] text-[15px]">{g.title}</div>
-            {g._count?.children ? (
-              <div className="text-xs text-[#64748B] mt-0.5">{g._count.children} child goal(s)</div>
-            ) : null}
-          </>
+  const isFiltered = !!(search || owner || department || status)
+
+  function clearFilters() {
+    setSearch('')
+    setOwner('')
+    setDepartment('')
+    setStatus('')
+  }
+
+  const columns: ResponsiveColumn<Goal>[] = [
+    {
+      key: 'title',
+      header: 'Goal',
+      primary: true,
+      render: (g) => (
+        <div className="min-w-0">
+          <p className="text-[15px] font-semibold text-[#0F172A] truncate">{g.title}</p>
+          {(g.supported_by_count || g.supports_count) ? (
+            <p className="text-[11px] text-[#475569] mt-0.5">
+              {g.supported_by_count ? `${g.supported_by_count} supporting` : ''}
+              {g.supported_by_count && g.supports_count ? ' · ' : ''}
+              {g.supports_count ? `supports ${g.supports_count}` : ''}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: 'owner',
+      header: 'Owner',
+      render: (g) => <span className="text-[14px] text-[#1E293B]">{g.owner?.name ?? '—'}</span>,
+    },
+    {
+      key: 'due',
+      header: 'Deadline',
+      desktopHiddenBelow: 'md',
+      render: (g) => <span className="text-[14px] text-[#1E293B]">{formatDate(g.due_date)}</span>,
+    },
+    {
+      key: 'days',
+      header: 'Days left',
+      render: (g) => {
+        const d = daysLeftLabel(g.days_left)
+        const closed = g.status === 'achieved' || g.status === 'closed'
+        return (
+          <span className={`text-[13px] font-medium ${closed ? 'text-[#475569]' : DAYS_TONE[d.tone]}`}>
+            {closed ? '—' : d.text}
+          </span>
+        )
+      },
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (g) => <GoalStatusBadge status={g.status} />,
+    },
+    {
+      key: 'number',
+      header: 'Number',
+      desktopHiddenBelow: 'lg',
+      render: (g) =>
+        g.target_value === null || g.target_value === undefined ? (
+          <span className="text-[13px] text-[#475569]">—</span>
+        ) : (
+          <span className="text-[13px] text-[#1E293B] tabular-nums whitespace-nowrap">
+            {g.current_value === null || g.current_value === undefined ? '—' : g.current_value}
+            <span className="text-[#475569]"> of {formatValue(g.target_value, g.unit)}</span>
+          </span>
         ),
+    },
+    {
+      key: 'tasks',
+      header: 'Tasks',
+      align: 'center',
+      desktopHiddenBelow: 'lg',
+      render: (g) => {
+        const t = g.task_counts ?? { open: 0, closed: 0 }
+        if (!t.open && !t.closed) return <span className="text-[13px] text-[#475569]">—</span>
+        return (
+          <span className="text-[13px] whitespace-nowrap">
+            <span className="font-semibold text-[#0F172A]">{t.open}</span>
+            <span className="text-[#475569]"> open</span>
+            <span className="text-[#CBD5E1]"> · </span>
+            <span className="text-[#475569]">{t.closed} done</span>
+          </span>
+        )
       },
-    ]
-    if (showPerspective) {
-      cols.push({
-        key: 'perspective',
-        header: 'Perspective',
-        desktopHiddenBelow: 'md',
-        render: (g) => <PerspectiveBadge perspective={g.perspective} />,
-      })
-    }
-    cols.push(
-      {
-        key: 'owner',
-        header: 'Owner',
-        cellClassName: 'text-sm text-[#1E293B]',
-        render: (g) => g.owner?.name ?? '—',
-      },
-      {
-        key: 'due',
-        header: 'Due',
-        desktopHiddenBelow: 'lg',
-        cellClassName: 'text-sm text-[#475569]',
-        render: (g) => formatDate(g.due_date),
-      },
-      {
-        key: 'status',
-        header: 'Status',
-        render: (g) => <GoalStatusBadge status={g.status} />,
-      },
-      {
-        key: 'review',
-        header: 'Review',
-        desktopHiddenBelow: 'lg',
-        render: (g) => {
-          const overdue = g.next_review_date && new Date(g.next_review_date) < new Date()
-          if (overdue) {
-            return (
-              <span className="inline-flex items-center font-medium text-[12px] rounded-full px-2.5 py-0.5 border whitespace-nowrap bg-[#FEE2E2] text-[#DC2626] border-[#FECACA]">
-                Review due
-              </span>
-            )
-          }
-          if (g.last_confidence) return <ConfidenceBadge confidence={g.last_confidence} />
-          return <span className="text-xs text-[#94A3B8]">No check-in</span>
-        },
-      },
-      {
-        key: 'progress',
-        header: 'Progress',
-        desktopHiddenBelow: 'md',
-        headerClassName: 'w-44',
-        render: (g) => <ProgressBar value={g.progress_percent} />,
-      },
-      {
-        key: 'chevron',
-        header: '',
-        hideOnMobile: true,
-        cellClassName: 'text-[#CBD5E1] w-8',
-        headerClassName: 'w-8',
-        render: () => <ChevronRight size={16} />,
-      },
-    )
-    return cols
-  }, [showPerspective, meta.label])
+    },
+    {
+      key: 'last',
+      header: 'Last check-in',
+      desktopHiddenBelow: 'xl',
+      render: (g) => (
+        <span className="text-[13px] text-[#475569] whitespace-nowrap">
+          {g.last_check_in_at ? formatDate(g.last_check_in_at) : 'Never'}
+        </span>
+      ),
+    },
+  ]
+
+  if (!permsLoading && !perms.read) {
+    return <AccessHiddenState orgId={orgId} leaf="goals" moduleLabel="Goals" />
+  }
 
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-5">
-        <div>
-          <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">{meta.plural}</h1>
-          <p className="text-sm text-[#475569] mt-1">
-            {level === 'objective' && '3–5 year strategic north stars.'}
-            {level === 'annual' && 'Goals, each tagged with a Balanced-Scorecard perspective and linked to an objective.'}
-            {level === 'quarterly' && 'Sub-goals that roll up to a goal and carry work via linked tasks.'}
-          </p>
+      {/* Sticky header so the primary action never scrolls away — DESIGN_RULES Part 3 */}
+      <div className="sticky top-0 z-20 bg-[#F8FAFC] pb-4 -mt-2 pt-2">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-[26px] font-bold text-[#0F172A] leading-tight">Goals</h1>
+              <CountBadge count={filtered.length} />
+            </div>
+            <p className="text-sm text-[#475569] mt-1">
+              Every goal in the company. Open one to see what it needs, what it powers, and its
+              check-in record.
+            </p>
+          </div>
+          {perms.write && (
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold transition-colors shrink-0"
+            >
+              <Plus size={16} /> New goal
+            </button>
+          )}
         </div>
-        {perms.write && (
-          <button
-            onClick={() => setCreateOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px] shrink-0"
-          >
-            <Plus size={16} /> New {meta.label}
-          </button>
-        )}
-      </div>
 
-      {!permsLoading && !perms.read ? (
-        <AccessHiddenState orgId={orgId} leaf="goals" moduleLabel={meta.plural} />
-      ) : (
-       <>
-      {/* Filters */}
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
-          <input
-            className={`${selectClass} w-full pl-9`}
-            placeholder={`Search ${meta.plural.toLowerCase()}…`}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
+        {/* Filters — StyledSelect everywhere, never a native select */}
+        <div className="flex items-center gap-2.5 flex-wrap mt-4">
+          <div className="relative flex-1 min-w-[200px] max-w-[320px]">
+            <Search
+              size={15}
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8] pointer-events-none"
+            />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search goals…"
+              className="w-full border border-[#CBD5E1] rounded-[8px] pl-9 pr-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]"
+            />
+          </div>
+          <StyledSelect
+            value={status}
+            onChange={(v) => setStatus(v as GoalStatus | '')}
+            placeholder="All statuses"
+            size="sm"
+            wrapperClassName="w-[170px]"
+            options={[
+              { value: '', label: 'All statuses' },
+              ...STATUSES.map((s) => ({
+                value: s,
+                label: STATUS_META[s].label,
+                color: STATUS_META[s].dot,
+              })),
+            ]}
           />
+          <StyledSelect
+            value={owner}
+            onChange={setOwner}
+            placeholder="All owners"
+            size="sm"
+            wrapperClassName="w-[190px]"
+            options={[
+              { value: '', label: 'All owners' },
+              ...employees.map((e) => ({ value: e.user_id, label: e.name })),
+            ]}
+          />
+          <StyledSelect
+            value={department}
+            onChange={setDepartment}
+            placeholder="All departments"
+            size="sm"
+            wrapperClassName="w-[190px]"
+            options={[
+              { value: '', label: 'All departments' },
+              ...departments.map((d) => ({ value: d.id, label: d.name })),
+            ]}
+          />
+          {isFiltered && (
+            <button
+              onClick={clearFilters}
+              className="inline-flex items-center gap-1 text-sm font-medium text-[#475569] hover:text-[#0F172A] transition-colors"
+            >
+              <X size={14} /> Clear
+            </button>
+          )}
         </div>
-        {showPerspective && (
-          <select className={selectClass} value={perspective} onChange={(e) => setPerspective(e.target.value as any)}>
-            <option value="">All perspectives</option>
-            {PERSPECTIVES.map((p) => (
-              <option key={p} value={p}>
-                {PERSPECTIVE_META[p].label}
-              </option>
-            ))}
-          </select>
-        )}
-        <select className={selectClass} value={owner} onChange={(e) => setOwner(e.target.value)}>
-          <option value="">All owners</option>
-          {employees.map((e) => (
-            <option key={e.user_id} value={e.user_id}>
-              {e.name}
-            </option>
-          ))}
-        </select>
-        <select className={selectClass} value={status} onChange={(e) => setStatus(e.target.value as any)}>
-          <option value="">All statuses</option>
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_META[s].label}
-            </option>
-          ))}
-        </select>
       </div>
 
-      {/* Table */}
       <ResponsiveTable
         columns={columns}
         rows={filtered}
         rowKey={(g) => g.id}
-        loading={loading}
         onRowClick={(g) => router.push(`/goals/${g.id}`)}
+        loading={loading}
+        maxBodyHeight="min(66vh, 660px)"
         emptyState={
-          <div className="bg-white border border-[#E2E8F0] rounded-[12px] overflow-hidden">
-            <EmptyState
-              icon={<Target size={26} />}
-              title={isFiltered ? 'No goals match your filters' : `No ${meta.plural.toLowerCase()} yet`}
-              subtitle={
-                isFiltered
-                  ? 'Try clearing a filter.'
-                  : level === 'objective'
-                    ? 'Start by creating an objective — your top-level strategic goal.'
-                    : level === 'annual'
-                      ? 'Open an objective and add a goal under it.'
-                      : 'Open a goal and add a sub-goal under it.'
-              }
-              action={
-                perms.write && !isFiltered ? (
-                  <button
-                    onClick={() => setCreateOpen(true)}
-                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-white bg-[#2563EB] hover:bg-[#1D4ED8] rounded-[8px]"
-                  >
-                    <Plus size={16} /> New {meta.label}
-                  </button>
-                ) : undefined
-              }
-            />
-          </div>
+          <EmptyState
+            icon={<Target size={26} />}
+            title={isFiltered ? 'No goals match your filters' : 'No goals yet'}
+            subtitle={
+              isFiltered
+                ? 'Try clearing a filter.'
+                : 'Start with the outcome you actually want — the number, the owner, the date. You can link supporting goals to it afterwards.'
+            }
+            action={
+              isFiltered ? (
+                <button
+                  onClick={clearFilters}
+                  className="mt-1 text-sm font-semibold text-[#2563EB] hover:text-[#1D4ED8]"
+                >
+                  Clear filters
+                </button>
+              ) : perms.write ? (
+                <button
+                  onClick={() => setCreateOpen(true)}
+                  className="mt-1 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold transition-colors"
+                >
+                  <Plus size={16} /> New goal
+                </button>
+              ) : undefined
+            }
+          />
         }
       />
-       </>
-      )}
 
       <CreateGoalModal
         isOpen={createOpen}
         onClose={() => setCreateOpen(false)}
         orgId={orgId}
-        level={level}
-        parentOptions={parentLevel ? parentOptions : undefined}
         employees={employees}
-        departments={departments}
-        onCreated={() => load()}
+        defaultOwnerId={user?.id}
+        onCreated={(g) => router.push(`/goals/${g.id}`)}
       />
     </div>
   )

@@ -24,6 +24,11 @@ export const NOTIF_EVENTS = {
     'assignee_on_leave_conflict', // new leave overlaps an existing task's deadline
     'recurring_assignee_on_leave', // upcoming recurring occurrence lands on an assignee's leave
   ],
+  goals: [
+    'goal_check_in_due', // the owner owes a check-in today (driven by review cadence)
+    'goal_check_in_overdue', // still not checked in, N days past the due date
+    'goal_at_risk', // owner logged at-risk/off-track — told to the owners of the goals this one supports
+  ],
   projects: ['project_created', 'project_member_added', 'milestone_completed'],
   workflows: [
     'workflow_triggered',

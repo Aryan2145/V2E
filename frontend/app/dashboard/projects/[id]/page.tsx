@@ -246,6 +246,26 @@ export default function ProjectDetailPage() {
                   <dt className="text-[#94A3B8] text-xs font-medium mb-0.5">Tasks</dt>
                   <dd className="text-[#0F172A]">{project.completed_tasks}/{project.total_tasks} completed</dd>
                 </div>
+                {/* The goals this project moves — visible from both ends, so
+                    neither side is a dead end. A project may serve several. */}
+                {!!project.goals?.length && (
+                  <div className="col-span-2">
+                    <dt className="text-[#94A3B8] text-xs font-medium mb-0.5">
+                      {project.goals.length === 1 ? 'Goal' : 'Goals'}
+                    </dt>
+                    <dd className="flex flex-wrap gap-x-3 gap-y-1">
+                      {project.goals.map(({ goal }) => (
+                        <Link
+                          key={goal.id}
+                          href={`/goals/${goal.id}`}
+                          className="inline-flex items-center gap-1 text-[#2563EB] hover:text-[#1D4ED8] hover:underline"
+                        >
+                          {goal.title}
+                        </Link>
+                      ))}
+                    </dd>
+                  </div>
+                )}
                 <div>
                   <dt className="text-[#94A3B8] text-xs font-medium mb-0.5">Progress</dt>
                   <dd className="text-[#0F172A] font-semibold">{Math.round(project.completion_percentage)}%</dd>

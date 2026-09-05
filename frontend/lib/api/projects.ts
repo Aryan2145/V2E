@@ -40,6 +40,8 @@ export const projectsApi = {
     name: string; description?: string; project_manager_user_id: string;
     start_date?: string; end_date?: string; planned_budget?: number;
     currency?: string; template_id?: string;
+    /** Optional — the goals this project exists to move. */
+    goal_ids?: string[];
   }): Promise<Project> => {
     const res = await apiClient.post(base(orgId), dto)
     return unwrap<Project>(res)
@@ -47,6 +49,8 @@ export const projectsApi = {
   update: async (orgId: string, projectId: string, dto: Partial<{
     name: string; description: string; project_manager_user_id: string;
     start_date: string; end_date: string;
+    /** The FULL set of goals this project serves — sending it replaces the links. */
+    goal_ids: string[];
   }>): Promise<Project> => {
     const res = await apiClient.patch(`${base(orgId)}/${projectId}`, dto)
     return unwrap<Project>(res)

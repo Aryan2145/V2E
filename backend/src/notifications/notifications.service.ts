@@ -139,6 +139,12 @@ export class NotificationsService {
       const rows: any[] = [];
       const deliver: Array<{ userId: string; orgId: string; title: string; body: string; link: string | null }> = [];
 
+      // Honour `dedupe` the same way emit() does — in ONE lookup for the whole
+      // batch, so a nightly sweep of hundreds of items stays a single query.
+      // Without this a repeated sweep re-notifies the same person for the same
+      // miss every run.
+      const alreadySent = await this.findAlreadySent(items);
+
       // Master config (with its toggles) is per-org and cached; fetch once each.
       const masters = new Map<string, Record<string, boolean>>();
       for (const p of items) {
@@ -147,7 +153,12 @@ export class NotificationsService {
           masters.set(p.orgId, (master.event_toggles ?? {}) as Record<string, boolean>);
         }
         if (masters.get(p.orgId)![p.event_type] === false) continue;
-        const recipients = Array.from(new Set(p.recipients.filter((r): r is string => !!r)));
+        let recipients = Array.from(new Set(p.recipients.filter((r): r is string => !!r)));
+        if (p.dedupe && p.entity) {
+          recipients = recipients.filter(
+            (r) => !alreadySent.has(this.dedupeKey(p.orgId, p.event_type, p.entity!.id, r)),
+          );
+        }
         for (const userId of recipients) {
           rows.push({
             organization_id: p.orgId,
@@ -186,6 +197,49 @@ export class NotificationsService {
     } catch (err) {
       this.logger.error(`emitMany failed: ${err}`);
     }
+  }
+
+  private dedupeKey(orgId: string, eventType: string, entityId: string, userId: string): string {
+    return `${orgId}|${eventType}|${entityId}|${userId}`;
+  }
+
+  /**
+   * The (org, event, entity, user) tuples in a batch that have ALREADY been
+   * notified. One query for the batch: it over-fetches slightly (the id sets
+   * are matched independently) and the exact tuples are filtered client-side
+   * from the returned keys.
+   */
+  private async findAlreadySent(items: EmitParams[]): Promise<Set<string>> {
+    const eligible = items.filter((p) => p.dedupe && p.entity);
+    if (eligible.length === 0) return new Set();
+
+    const orgIds = new Set<string>();
+    const eventTypes = new Set<string>();
+    const entityIds = new Set<string>();
+    const userIds = new Set<string>();
+    for (const p of eligible) {
+      orgIds.add(p.orgId);
+      eventTypes.add(p.event_type);
+      entityIds.add(p.entity!.id);
+      for (const r of p.recipients) if (r) userIds.add(r);
+    }
+    if (userIds.size === 0) return new Set();
+
+    const existing = await this.prisma.notification.findMany({
+      where: {
+        organization_id: { in: [...orgIds] },
+        event_type: { in: [...eventTypes] },
+        entity_id: { in: [...entityIds] },
+        user_id: { in: [...userIds] },
+      },
+      select: { organization_id: true, event_type: true, entity_id: true, user_id: true },
+    });
+
+    return new Set(
+      existing.map((e) =>
+        this.dedupeKey(e.organization_id, e.event_type, e.entity_id ?? '', e.user_id),
+      ),
+    );
   }
 
   /** Resolve a user's display name (for message bodies). */

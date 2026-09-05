@@ -1,169 +1,193 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import Modal from '@/components/ui/Modal'
 import Button from '@/components/ui/Button'
 import DatePicker from '@/components/ui/DatePicker'
 import { useToast } from '@/components/ui/Toast'
 import { goalsApi } from '@/lib/api/goals'
 import {
-  CONFIDENCE_META,
+  CHECK_IN_STATUSES,
+  STATUS_META,
+  formatValue,
+  type CheckInStatus,
   type Goal,
-  type GoalConfidence,
-  type CreateCheckInInput,
 } from '@/lib/types/goals'
+import { inputClass, labelClass } from './GoalFormFields'
 
-const inputClass =
-  'w-full border border-[#CBD5E1] rounded-[8px] px-3 py-2 text-[15px] text-[#0F172A] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#2563EB] focus:ring-1 focus:ring-[#2563EB]'
-const labelClass = 'block text-sm font-medium text-[#374151] mb-1'
-const todayStr = () => new Date().toISOString().slice(0, 10)
-const CONFIDENCES: GoalConfidence[] = ['on_track', 'at_risk', 'off_track']
+const todayStr = () => {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
 
-interface Props {
+/**
+ * The check-in. This is the module's heartbeat and the thing that has to be
+ * effortless: a date (pre-filled to today), one number, one traffic light, a
+ * line of context. Nothing else — it must be completable on a phone in under a
+ * minute.
+ */
+export default function CheckInModal({
+  isOpen,
+  onClose,
+  orgId,
+  goal,
+  onDone,
+}: {
   isOpen: boolean
   onClose: () => void
   orgId: string
   goal: Goal
-  onSaved: () => void
-}
-
-export default function CheckInModal({ isOpen, onClose, orgId, goal, onSaved }: Props) {
+  onDone: () => void
+}) {
   const { addToast } = useToast()
   const [date, setDate] = useState(todayStr())
-  const [confidence, setConfidence] = useState<GoalConfidence>('on_track')
+  const [status, setStatus] = useState<CheckInStatus | ''>('')
+  const [value, setValue] = useState('')
   const [note, setNote] = useState('')
-  const [values, setValues] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
+
+  const hasTarget = goal.target_value !== null && goal.target_value !== undefined
 
   useEffect(() => {
     if (!isOpen) return
     setDate(todayStr())
-    setConfidence(goal.last_confidence ?? 'on_track')
+    setStatus('')
+    // Pre-fill with the last recorded number so the owner edits the delta
+    // rather than retyping the whole figure.
+    setValue(goal.current_value === null || goal.current_value === undefined ? '' : String(goal.current_value))
     setNote('')
-    // Pre-fill each measure with its last recorded actual so the owner edits deltas.
-    const seed: Record<string, string> = {}
-    for (const m of goal.measures ?? []) seed[m.id] = m.current_value ?? ''
-    setValues(seed)
-  }, [isOpen, goal])
+  }, [isOpen, goal.id, goal.current_value])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!date) return addToast('Check-in date is required', 'error')
+    if (!date) return addToast('Pick the date this check-in is for', 'error')
+    if (!status) return addToast('Choose on track, at risk or off track', 'error')
 
-    const measureValues = (goal.measures ?? [])
-      .map((m) => ({ goal_measure_id: m.id, value: (values[m.id] ?? '').trim() }))
-      .filter((v) => v.value !== '')
-
-    const dto: CreateCheckInInput = {
-      check_in_date: new Date(date).toISOString(),
-      confidence,
-      status_note: note.trim() || undefined,
-      values: measureValues.length ? measureValues : undefined,
+    let recorded: number | null = null
+    if (hasTarget && value.trim()) {
+      recorded = parseFloat(value.trim().replace(/,/g, ''))
+      if (isNaN(recorded)) return addToast('The value must be a number', 'error')
     }
 
     setSaving(true)
     try {
-      await goalsApi.createCheckIn(orgId, goal.id, dto)
+      await goalsApi.createCheckIn(orgId, goal.id, {
+        check_in_date: new Date(`${date}T00:00:00`).toISOString(),
+        status,
+        recorded_value: recorded,
+        status_note: note.trim() || undefined,
+      })
       addToast('Check-in recorded', 'success')
-      onSaved()
+      onDone()
       onClose()
     } catch (err: any) {
-      addToast(err?.response?.data?.message ?? 'Failed to record check-in', 'error')
+      addToast(err?.response?.data?.message ?? 'Could not record the check-in', 'error')
     } finally {
       setSaving(false)
     }
   }
 
-  const measures = goal.measures ?? []
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Check in — ${goal.title}`} size="lg">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-        {/* Date + confidence */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className={labelClass}>Check-in date *</label>
-            <DatePicker value={date} onChange={setDate} max={todayStr()} placeholder="Select date" />
-          </div>
-          <div>
-            <label className={labelClass}>Confidence *</label>
-            <div className="grid grid-cols-3 gap-2">
-              {CONFIDENCES.map((c) => {
-                const m = CONFIDENCE_META[c]
-                const active = confidence === c
-                return (
-                  <button
-                    type="button"
-                    key={c}
-                    onClick={() => setConfidence(c)}
-                    className={[
-                      'flex items-center justify-center gap-1.5 px-2 py-2 rounded-[8px] border text-sm font-medium transition-colors',
-                      active ? 'text-white' : 'bg-white text-[#475569] border-[#E2E8F0] hover:border-[#CBD5E1]',
-                    ].join(' ')}
-                    style={active ? { backgroundColor: m.dot, borderColor: m.dot } : undefined}
-                  >
-                    <span
-                      className="w-2 h-2 rounded-full shrink-0"
-                      style={{ backgroundColor: active ? '#FFFFFF' : m.dot }}
-                    />
-                    {m.label}
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Measure actuals */}
-        <div>
-          <label className={labelClass}>Record actuals</label>
-          {measures.length === 0 ? (
-            <p className="text-xs text-[#94A3B8]">
-              This goal has no measures — your confidence and note will still be logged.
+    <Modal isOpen={isOpen} onClose={() => !saving && onClose()} title="Check in" size="md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="rounded-[10px] bg-[#F8FAFC] border border-[#E2E8F0] px-3 py-2.5">
+          <p className="text-[15px] font-semibold text-[#0F172A] leading-snug">{goal.title}</p>
+          {hasTarget && (
+            <p className="text-[13px] text-[#475569] mt-0.5">
+              Target {formatValue(goal.target_value, goal.unit)}
+              {goal.current_value !== null && goal.current_value !== undefined && (
+                <> · last recorded {formatValue(goal.current_value, goal.unit)}</>
+              )}
             </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {measures.map((m) => (
-                <div key={m.id} className="flex items-center gap-3 border border-[#E2E8F0] rounded-[8px] px-3 py-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-[#0F172A] truncate">{m.name}</p>
-                    <p className="text-xs text-[#64748B]">
-                      Target {m.target_value}
-                      {m.unit ? ` ${m.unit}` : ''}
-                      {m.current_value ? ` · was ${m.current_value}` : ''}
-                    </p>
-                  </div>
-                  <input
-                    className={`${inputClass} w-28 shrink-0`}
-                    placeholder="Actual"
-                    value={values[m.id] ?? ''}
-                    onChange={(e) => setValues((v) => ({ ...v, [m.id]: e.target.value }))}
-                  />
-                  {m.unit ? <span className="text-sm text-[#64748B] w-10 shrink-0">{m.unit}</span> : null}
-                </div>
-              ))}
-            </div>
           )}
         </div>
 
-        {/* Narrative */}
         <div>
-          <label className={labelClass}>What&apos;s happening &amp; why</label>
+          <label className={labelClass}>Date *</label>
+          <DatePicker value={date} onChange={setDate} max={todayStr()} placeholder="Select date" disabled={saving} />
+        </div>
+
+        {hasTarget && (
+          <div>
+            <label className={labelClass}>Where is the number today?</label>
+            <div className="flex items-stretch gap-2">
+              <input
+                className={inputClass}
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="e.g. 31"
+                inputMode="decimal"
+                disabled={saving}
+              />
+              {goal.unit && (
+                <span className="flex items-center px-3 rounded-[8px] bg-[#F1F5F9] border border-[#E2E8F0] text-[14px] text-[#475569] whitespace-nowrap">
+                  {goal.unit}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className={labelClass}>Your call *</label>
+          <div className="grid grid-cols-3 gap-2">
+            {CHECK_IN_STATUSES.map((s) => {
+              const m = STATUS_META[s]
+              const active = status === s
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setStatus(s)}
+                  disabled={saving}
+                  aria-pressed={active}
+                  className={[
+                    'flex flex-col items-center justify-center gap-1.5 rounded-[10px] border-2 py-3 px-2 min-h-[64px]',
+                    'text-[13px] font-semibold transition-colors',
+                    active ? '' : 'border-[#E2E8F0] bg-white text-[#475569] hover:bg-[#F8FAFC]',
+                  ].join(' ')}
+                  style={
+                    active
+                      ? { backgroundColor: m.bg, borderColor: m.dot, color: m.text }
+                      : undefined
+                  }
+                >
+                  <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: m.dot }} />
+                  {m.label}
+                </button>
+              )
+            })}
+          </div>
+          <p className="text-[11px] text-[#475569] mt-1.5">
+            Your honest read, separate from the number — a goal can be on 60% and safe, or on 90%
+            and about to slip.
+          </p>
+        </div>
+
+        <div>
+          <label className={labelClass}>What’s happening &amp; why</label>
           <textarea
             className={`${inputClass} resize-none`}
             rows={3}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="One or two sentences: the story behind the number, blockers, next step…"
+            placeholder="One or two lines: the story behind the number, what’s blocking, the next step…"
+            disabled={saving}
+            maxLength={2000}
           />
         </div>
 
-        <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#E2E8F0]">
-          <Button variant="secondary" type="button" onClick={onClose} disabled={saving}>
-            Cancel
-          </Button>
-          <Button variant="primary" type="submit" isLoading={saving} disabled={saving}>
-            Record check-in
+        <p className="text-[12px] text-[#475569]">
+          Check-ins can’t be edited or deleted afterwards — the dated history is the whole point. A
+          mistake can be voided with a reason.
+        </p>
+
+        <div className="flex justify-end pt-4 border-t border-[#E2E8F0]">
+          <Button type="submit" disabled={saving}>
+            {saving && <Loader2 size={15} className="animate-spin mr-1.5" />}
+            {saving ? 'Recording…' : 'Record check-in'}
           </Button>
         </div>
       </form>

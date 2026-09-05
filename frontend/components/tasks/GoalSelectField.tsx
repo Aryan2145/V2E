@@ -9,21 +9,23 @@ interface Props {
   orgId: string
   value: string
   onChange: (goalId: string) => void
+  /** Overrides the helper line — Projects reuses this field with its own wording. */
+  hint?: string
 }
 
 /**
- * Optional "Link to goal" select (Create Task + recurring modals). Lists the
- * quarterly goals the viewer can see; a linked task shows up as an initiative
- * on that goal and feeds its execution view. Hidden while there are no goals.
+ * Optional "Link to goal" select (Create Task + recurring modals). Lists every
+ * goal the viewer can see — goals are flat now, so there is no level to filter
+ * by and any goal can carry work. Hidden while there are no goals at all.
  */
-export default function GoalSelectField({ orgId, value, onChange }: Props) {
+export default function GoalSelectField({ orgId, value, onChange, hint }: Props) {
   const [goals, setGoals] = useState<Goal[]>([])
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     if (!orgId) return
     goalsApi
-      .list(orgId, { level: 'quarterly' })
+      .list(orgId)
       .then((g) => setGoals(g ?? []))
       .catch(() => setGoals([]))
       .finally(() => setLoaded(true))
@@ -49,7 +51,9 @@ export default function GoalSelectField({ orgId, value, onChange }: Props) {
           ...goals.map((g) => ({ value: g.id, label: g.title })),
         ]}
       />
-      <p className="text-[11px] text-[#475569] mt-1">Optional — the task counts as an initiative on this quarterly goal.</p>
+      <p className="text-[11px] text-[#475569] mt-1">
+        {hint ?? 'Optional — the task shows up on that goal as part of the work behind it.'}
+      </p>
     </div>
   )
 }

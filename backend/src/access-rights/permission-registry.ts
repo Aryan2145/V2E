@@ -116,7 +116,7 @@ export const PERMISSION_REGISTRY: PermissionModule[] = [
         label: 'Goals',
         features: [
           // Legacy umbrella leaf — keep the exact key `goals` so existing rows/decorators resolve.
-          feature('goals', 'Goals', A_ALL, 'Objectives, goals and sub-goals'),
+          feature('goals', 'Goals', A_ALL, 'Goals, their links and check-ins'),
           subject('goals.subject.ownable', 'Can own a goal'),
         ],
       },

@@ -9,6 +9,8 @@ import { tasksApi } from '@/lib/api/tasks'
 import { getNow } from '@/lib/clock'
 import TemplatePicker from './TemplatePicker'
 import DatePicker from '@/components/ui/DatePicker'
+import StyledSelect from '@/components/ui/StyledSelect'
+import GoalsMultiSelectField from './GoalsMultiSelectField'
 import type { ProjectTemplate } from '@/lib/types/projects'
 import type { EligibleAssigneeUser } from '@/lib/types/tasks'
 
@@ -250,6 +252,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
   const [budget, setBudget] = useState('')
   const [currency, setCurrency] = useState('INR')
   const [templateId, setTemplateId] = useState<string | null>(null)
+  const [goalIds, setGoalIds] = useState<string[]>([])
 
   // Step 2 fields
   const [members, setMembers] = useState<WizardMember[]>([])
@@ -320,6 +323,7 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
         planned_budget: budget ? Number(budget) : undefined,
         currency: currency || 'INR',
         template_id: templateId ?? undefined,
+        goal_ids: goalIds.length ? goalIds : undefined,
       })
 
       await Promise.all(
@@ -399,18 +403,19 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
             </div>
             <div>
               <label className={labelCls}>Currency</label>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
-                <option value="INR">INR</option>
-                <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
-              </select>
+              <StyledSelect
+                value={currency}
+                onChange={setCurrency}
+                options={['INR', 'USD', 'EUR', 'GBP'].map((c) => ({ value: c, label: c }))}
+              />
             </div>
           </div>
           <div>
             <label className={labelCls}>Start from template</label>
             <TemplatePicker templates={templates} selected={templateId} onSelect={setTemplateId} />
           </div>
+          {/* The goals this project exists to move — it can serve several. */}
+          <GoalsMultiSelectField orgId={orgId} value={goalIds} onChange={setGoalIds} />
           <div className="flex justify-end pt-2">
             <button type="button" onClick={() => { if (validateStep1()) setStep(2) }} className="h-10 px-6 rounded-[8px] bg-[#2563EB] hover:bg-[#1D4ED8] text-white text-sm font-semibold transition-colors">
               Next: Add Members
@@ -472,23 +477,27 @@ export default function CreateProjectWizard({ templates }: CreateProjectWizardPr
                     <p className="text-sm font-medium text-[#0F172A] truncate">{m.name}</p>
                     <p className="text-xs text-[#94A3B8] truncate">{m.role_title}</p>
                   </div>
-                  <select
+                  <StyledSelect
                     value={m.role}
-                    onChange={(e) => updateMember(m.user_id, { role: e.target.value as 'manager' | 'editor' | 'viewer' })}
-                    className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1.5 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-                  >
-                    <option value="manager">Manager</option>
-                    <option value="editor">Editor</option>
-                    <option value="viewer">Viewer</option>
-                  </select>
-                  <select
+                    onChange={(v) => updateMember(m.user_id, { role: v as 'manager' | 'editor' | 'viewer' })}
+                    size="sm"
+                    wrapperClassName="w-[110px]"
+                    options={[
+                      { value: 'manager', label: 'Manager' },
+                      { value: 'editor', label: 'Editor' },
+                      { value: 'viewer', label: 'Viewer' },
+                    ]}
+                  />
+                  <StyledSelect
                     value={m.task_visibility}
-                    onChange={(e) => updateMember(m.user_id, { task_visibility: e.target.value as 'own_tasks_only' | 'all_member_tasks' })}
-                    className="text-xs border border-[#CBD5E1] rounded-[6px] px-2 py-1.5 text-[#0F172A] bg-white focus:border-[#2563EB] focus:outline-none"
-                  >
-                    <option value="own_tasks_only">Own tasks</option>
-                    <option value="all_member_tasks">All tasks</option>
-                  </select>
+                    onChange={(v) => updateMember(m.user_id, { task_visibility: v as 'own_tasks_only' | 'all_member_tasks' })}
+                    size="sm"
+                    wrapperClassName="w-[120px]"
+                    options={[
+                      { value: 'own_tasks_only', label: 'Own tasks' },
+                      { value: 'all_member_tasks', label: 'All tasks' },
+                    ]}
+                  />
                   <button type="button" onClick={() => removeMember(m.user_id)} className="p-1 rounded hover:bg-[#FEE2E2] text-[#DC2626] transition-colors">
                     <X size={13} />
                   </button>

@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsArray, IsNumber, IsDateString } from 'class-validator';
+import { IsString, IsOptional, IsArray, IsNumber, IsDateString, IsUUID } from 'class-validator';
 
 export class CreateProjectDto {
   @IsString()
@@ -35,4 +35,10 @@ export class CreateProjectDto {
   @IsArray()
   @IsString({ each: true })
   member_user_ids?: string[];
+
+  /** Optional — the goals this project exists to move. A project may serve several. */
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  goal_ids?: string[];
 }

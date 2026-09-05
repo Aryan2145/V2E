@@ -110,7 +110,7 @@ export class TaskImportService {
         select: { id: true, name: true },
       }),
       this.prisma.goal.findMany({
-        where: { organization_id: orgId, level: 'quarterly', is_deleted: false },
+        where: { organization_id: orgId, is_deleted: false },
         orderBy: { title: 'asc' },
         select: { id: true, title: true },
       }),
@@ -403,7 +403,7 @@ export class TaskImportService {
     const [priorities, categories, goals, templates, { pool }, profileMap, existingTasks] = await Promise.all([
       this.prisma.taskPriority.findMany({ where: { organization_id: orgId, is_active: true }, select: { id: true, label: true } }),
       this.prisma.taskCategory.findMany({ where: { organization_id: orgId, is_active: true }, select: { id: true, name: true } }),
-      this.prisma.goal.findMany({ where: { organization_id: orgId, level: 'quarterly', is_deleted: false }, select: { id: true, title: true } }),
+      this.prisma.goal.findMany({ where: { organization_id: orgId, is_deleted: false }, select: { id: true, title: true } }),
       this.checklistAccess.listAccessibleTemplates(orgId, userId),
       this.assigneeVisibility.resolve(orgId, userId),
       this.assigneeVisibility.getProfiles(orgId),
