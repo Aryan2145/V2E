@@ -121,7 +121,7 @@ export default function NotificationBell() {
         <button
           onClick={openPanel}
           aria-label="Notifications"
-          className="relative w-10 h-10 rounded-[8px] flex items-center justify-center text-[#64748B] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+          className="relative w-10 h-10 rounded-[8px] flex items-center justify-center text-white hover:bg-white/15 transition-colors"
         >
           {unreadCount > 0 ? <BellRing size={18} /> : <Bell size={18} />}
           {unreadCount > 0 && (
